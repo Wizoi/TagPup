@@ -681,7 +681,7 @@ export function deleteActivePhoto() {
 
     const filename = state.folderPhotos[index].filename || 'this photo';
     // A photo of a folder the library does not hold: say that only the file moves. And on a network
-    // share there is no Recycle Bin: say it is gone for good, before it goes.
+    // share there is no Recycle Bin: it goes through this PC's (#694), and where it restores to is said before it goes.
     const alone = isJustLooking()
         ? `\n\n${libraryName()} does not hold this folder: only the file is deleted, and nothing in ${libraryName()} changes.`
         : '';
@@ -689,8 +689,9 @@ export function deleteActivePhoto() {
         ? (state.folderMembership.permanent_reason || 'on a drive without a Recycle Bin') : '';
     const reason = known || (isUnc(path) ? 'on a network share' : '');
     const question = reason
-        ? `This file is ${reason}: it will be deleted permanently, not moved to the Recycle Bin.\n\n`
-            + `Are you sure you want to delete "${filename}"?`
+        ? `This file is ${reason}, where there is no Recycle Bin: it is copied to this PC, the copy goes to this PC's Recycle Bin, `
+            + `and then the file is deleted. Restored from the Recycle Bin, the copy goes to your Downloads folder, under `
+            + `"TagPup deleted from shares", not back to where it was.\n\nAre you sure you want to delete "${filename}"?`
         : `Are you sure you want to delete "${filename}" and move it to the Windows Recycle Bin?`;
     if (!confirm(question + alone)) {
         return;

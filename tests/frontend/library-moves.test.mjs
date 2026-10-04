@@ -1,8 +1,9 @@
 /**
  * The move between a folder on disk and its view of the library (web/tagpup/library-moves.js, library-banner.js,
- * sync-state.js; phase 9c): Show in library, Show on disk, this folder only / with its subfolders, the banner for photos
- * the disk holds and the library does not (asked after the view paints, with a deadline, and shown only as an offer), and
- * "Library last in step with its folders" in the strip. Fictional names only.
+ * sync-state.js; phase 9c): Show in library, a folder opened in Organize from a view (openInOrganize: the strip's Show on
+ * disk and This folder only went with #670), the banner for photos the disk holds and the library does not (asked after the
+ * view paints, with a deadline, and shown only as an offer), and when the library was last in step -- said only when something
+ * is wrong (#670). Fictional names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -99,39 +100,23 @@ describe("Show in library", () => {
   });
 });
 
-describe("Show on disk, and the scope of a folder's view", () => {
+describe("a folder opened in Organize from a view (openInOrganize)", () => {
   const FOLDER_VIEW = `?view=folder&value=${encodeURIComponent(FOLDER)}&recursive=1`;
+  const organize = (ctx, folder = FOLDER) => ctx.module("library-moves.js").openInOrganize(folder);
 
-  test("buttons for a folder's view only: a keyword's view has neither", async (t) => {
+  test("the strip has neither Show on disk nor This folder only, nor Back to folder view; Refresh view stays (#670)", async (t) => {
     const folder = await loadViewPage(t, { search: FOLDER_VIEW });
-    assert.ok(!folder.document.getElementById("btn-show-on-disk").classList.contains("hidden"));
-    assert.ok(!folder.document.getElementById("btn-library-scope").classList.contains("hidden"));
-    assert.equal(folder.document.getElementById("btn-library-scope").textContent, "This folder only");
-    const keyword = await loadViewPage(t, { search: "?view=keyword&value=Trips" });
-    assert.ok(keyword.document.getElementById("btn-show-on-disk").classList.contains("hidden"));
-    assert.ok(keyword.document.getElementById("btn-library-scope").classList.contains("hidden"));
+    for (const id of ["btn-show-on-disk", "btn-library-scope", "library-strip-back"]) assert.equal(folder.document.getElementById(id), null, id);
+    assert.ok(folder.document.getElementById("btn-library-refresh"));
+    assert.doesNotMatch(folder.stripText(), /Show on disk|This folder only|Back to folder view/);
   });
 
-  test("this folder only: another view of the same folder, in the history; the button then offers the subfolders", async (t) => {
-    const ctx = await loadViewPage(t, { search: FOLDER_VIEW });
-    ctx.document.getElementById("btn-library-scope").click();
-    await ctx.settle();
-    assert.equal(ctx.state.library.recursive, false);
-    assert.match(ctx.idsAsked.at(-1), /recursive=0$/);
-    assert.doesNotMatch(ctx.window.location.search, /recursive/);
-    assert.equal(ctx.document.getElementById("btn-library-scope").textContent, "With subfolders");
-    assert.match(ctx.stripText(), /Folder D:.*Event 01$|Folder D:.*Event 01 /);
-    ctx.document.getElementById("btn-library-scope").click();
-    await ctx.settle();
-    assert.equal(ctx.state.library.recursive, true);
-  });
-
-  test("Show on disk opens the folder view of the same path, scanned, with the view gone and the selection cleared", async (t) => {
-    const ctx = await loadViewPage(t, { search: FOLDER_VIEW, scan: scan(60) });
+  test("it opens the folder in Organize, scanned, with the view gone and the selection cleared; Back returns to the view", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=year&value=2020", scan: scan(60) });
     await ctx.settle(100);
     ctx.real()[0].click();
     assert.equal(ctx.selectedIds().length, 1);
-    ctx.document.getElementById("btn-show-on-disk").click();
+    assert.equal(await organize(ctx), true);
     await ctx.settle(200);
     assert.equal(ctx.state.library, null);
     assert.equal(ctx.state.scannedFolder, FOLDER);
@@ -140,10 +125,12 @@ describe("Show on disk, and the scope of a folder's view", () => {
     assert.equal(ctx.state.selectedThumbnails.length, 0);
     assert.doesNotMatch(ctx.window.location.search, /view=/);
     assert.equal(ctx.state.nav.shown, "folder");
-    assert.ok(!ctx.document.getElementById("btn-show-in-library").classList.contains("hidden"));
+    ctx.window.history.back();
+    await ctx.settle(300);
+    assert.equal(ctx.state.library && ctx.state.library.kind, "year", "Back is the view it was opened from");
   });
 
-  test("Show on disk lands on the photo that was at the top of the view", async (t) => {
+  test("it lands on the photo that was at the top of the view, when the folder holds it", async (t) => {
     const ids = Array.from({ length: 400 }, (_, i) => 1000 + i);
     const cards = new Map(ids.map((id, i) => [id, cardOf(id, { path: photo(i + 1).path, name: photo(i + 1).filename })]));
     const ctx = await loadViewPage(t, {
@@ -152,7 +139,7 @@ describe("Show on disk, and the scope of a folder's view", () => {
     });
     await ctx.scrollTo(GRID_TOP + 40 * STRIDE);
     await ctx.settle(300);
-    ctx.document.getElementById("btn-show-on-disk").click();
+    await organize(ctx);
     await ctx.settle(300);
     assert.equal(ctx.state.library, null);
     assert.equal(ctx.here.scrollTop, GRID_TOP + 40 * STRIDE, "the 161st photo is at the top again (no strip above a folder view)");
@@ -163,7 +150,7 @@ describe("Show on disk, and the scope of a folder's view", () => {
     const said = [];
     ctx.window.alert = (text) => said.push(text);
     ctx.server.first("/api/folder/scan", { error: "Path is not a valid directory: D:\\Library\\2020\\Event 01" }, { status: 400 });
-    ctx.document.getElementById("btn-show-on-disk").click();
+    assert.equal(await organize(ctx), false);
     await ctx.settle(200);
     assert.ok(ctx.state.library, "the view is still open");
     assert.equal(ctx.state.library.status, "ready");
@@ -172,13 +159,13 @@ describe("Show on disk, and the scope of a folder's view", () => {
     assert.deepEqual(said, [], "no alert");
     assert.match(ctx.window.location.search, /view=folder/);
     assert.equal(ctx.document.getElementById("folder-path-input").value, "");
-    assert.equal(ctx.document.getElementById("btn-show-on-disk").disabled, false, "and the button can be tried again");
+    assert.equal(ctx.state.moves.leaving, false, "and it can be tried again");
   });
 
-  test("a scan that cannot be had for another reason keeps the view too, with the server's sentence", async (t) => {
+  test("a scan that cannot be had for another reason (a share away) keeps the view too, with the server's sentence", async (t) => {
     const ctx = await loadViewPage(t, { search: FOLDER_VIEW });
     ctx.server.first("/api/folder/scan", { error: "The share did not answer." }, { status: 500 });
-    ctx.document.getElementById("btn-show-on-disk").click();
+    await organize(ctx);
     await ctx.settle(200);
     assert.ok(ctx.state.library);
     assert.match(ctx.stripText(), /Could not open that folder on disk: The share did not answer\./);
@@ -190,8 +177,8 @@ describe("Show on disk, and the scope of a folder's view", () => {
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
     ctx.server.first("/api/folder/scan", () => gate.then(() => scan(60)()));
-    ctx.document.getElementById("btn-show-on-disk").click();
-    ctx.document.getElementById("btn-show-on-disk").click();
+    organize(ctx);
+    organize(ctx);
     await ctx.settle(60);
     assert.ok(ctx.state.library, "still the view while the scan is out");
     assert.equal(ctx.server.urls().filter((url) => url.includes("/api/folder/scan")).length, 1);
@@ -363,27 +350,55 @@ describe("the banner: the disk holds photos the library does not", () => {
   });
 });
 
-describe("when the library was last in step", () => {
+describe("when the library was last in step: said only when something is wrong (#670)", () => {
   const stamp = (date) => {
     const pad = (n) => String(n).padStart(2, "0");
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   };
+  const ago = (hours) => stamp(new Date(Date.now() - hours * 3600 * 1000));
   const sync = (ctx) => ctx.document.getElementById("library-strip-sync");
+  const inStep = { whole: false, in_step: true };
 
-  test("the strip says how long ago, from the sync state the Activity page reads; asked once when a view opens", async (t) => {
-    const ago = new Date(Date.now() - 5 * 60 * 1000);
-    const ctx = await loadViewPage(t, { search: "?view=all", sync: { library: "photo_index", last_run: null, last_in_step: stamp(ago), syncing: false } });
-    assert.equal(sync(ctx).textContent, "Library last in step with its folders: 5 min ago");
-    assert.equal(sync(ctx).title, stamp(ago));
-    assert.equal(ctx.syncAsked.length, 1);
+  test("in step 5 minutes ago: nothing is said, and the strip is one line of the view, its count and Refresh view", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", sync: { library: "photo_index", last_run: inStep, last_in_step: ago(5 / 60), syncing: false } });
+    assert.equal(sync(ctx).textContent, "");
+    assert.ok(sync(ctx).classList.contains("hidden"));
+    assert.equal(ctx.syncAsked.length, 1, "asked once when the view opens");
     assert.match(ctx.syncAsked[0], /^\/photo_index\/api\/sync$/);
+    assert.equal(ctx.stripText(), "The whole library 8 photos Refresh view");
   });
 
-  test("never; and a sync under way is said", async (t) => {
+  test("never in step, and a sync under way, are said", async (t) => {
     const never = await loadViewPage(t, { search: "?view=all" });
-    assert.equal(sync(never).textContent, "Library last in step with its folders: never");
-    const running = await loadViewPage(t, { search: "?view=all", sync: { library: "photo_index", last_run: null, last_in_step: stamp(new Date(Date.now() - 3 * 3600 * 1000)), syncing: true } });
-    assert.equal(sync(running).textContent, "Library last in step with its folders: 3 h ago. A sync is running now.");
+    assert.equal(sync(never).textContent, "Never in step with its folders: no sync of the whole library has finished.");
+    assert.ok(sync(never).classList.contains("library-strip-problem"));
+    const running = await loadViewPage(t, { search: "?view=all", sync: { library: "photo_index", last_run: inStep, last_in_step: ago(3), syncing: true } });
+    assert.equal(sync(running).textContent, "A sync is running now. Last in step with its folders: 3 h ago.");
+  });
+
+  test("the newest sync left it out of step: said, with when it was last in step", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", sync: { library: "photo_index", last_run: { whole: false, in_step: false }, last_in_step: ago(1), syncing: false } });
+    assert.equal(sync(ctx).textContent, "The last sync found photos not in step with the library yet. Last in step with its folders: 1 h ago.");
+    assert.equal(sync(ctx).title, ctx.state.syncInfo.lastInStep);
+  });
+
+  test("last in step more than two days ago (the daily catch-up has not left it in step): said", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", sync: { library: "photo_index", last_run: inStep, last_in_step: ago(72), syncing: false } });
+    assert.equal(sync(ctx).textContent, "Last in step with its folders: 3 days ago.");
+    const fresh = await loadViewPage(t, { search: "?view=all", sync: { library: "photo_index", last_run: inStep, last_in_step: ago(47), syncing: false } });
+    assert.equal(sync(fresh).textContent, "");
+  });
+
+  test("the disk holds photos the library does not: the banner says how many, the strip when it was last in step", async (t) => {
+    const FOLDER_VIEW = `?view=folder&value=${encodeURIComponent(FOLDER)}&recursive=1`;
+    const ctx = await loadViewPage(t, {
+      search: FOLDER_VIEW, membership: { folder: FOLDER, photos: 12, photos_held: 7, photos_not_held: 5, folders_not_held: 1 },
+      sync: { library: "photo_index", last_run: inStep, last_in_step: ago(5 / 60), syncing: false },
+    });
+    assert.equal(ctx.document.getElementById("moves-banner-text").textContent, "5 photos in this folder are not in photo_index.");
+    assert.equal(sync(ctx).textContent, "Last in step with its folders: 5 min ago.");
+    ctx.document.getElementById("btn-moves-dismiss").click();
+    assert.equal(sync(ctx).textContent, "", "dismissed: nothing wrong is left to say");
   });
 
   test("the request failing: the strip says it could not be read, and the view is untouched", async (t) => {
@@ -407,9 +422,9 @@ describe("when the library was last in step", () => {
     let calls = 0;
     const ctx = await loadViewPage(t, {
       search: "?view=all",
-      sync: () => ({ library: "photo_index", last_in_step: stamp(new Date(Date.now() - ++calls * 3600 * 1000)), syncing: false }),
+      sync: () => ({ library: "photo_index", last_run: { whole: false, in_step: false }, last_in_step: ago(++calls), syncing: false }),
     });
-    assert.equal(sync(ctx).textContent, "Library last in step with its folders: 1 h ago");
+    assert.match(sync(ctx).textContent, /Last in step with its folders: 1 h ago\.$/);
     ctx.hold.sync = true;
     ctx.document.getElementById("btn-library-refresh").click();      // the second ask, held
     await ctx.settle(100);
@@ -419,16 +434,15 @@ describe("when the library was last in step", () => {
     ctx.held = [];
     third.release();
     await ctx.settle(40);
-    assert.equal(sync(ctx).textContent, "Library last in step with its folders: 3 h ago");
+    assert.match(sync(ctx).textContent, /Last in step with its folders: 3 h ago\.$/);
     second.release();
     await ctx.settle(40);
-    assert.equal(sync(ctx).textContent, "Library last in step with its folders: 3 h ago", "the older answer came late and was dropped");
+    assert.match(sync(ctx).textContent, /Last in step with its folders: 3 h ago\.$/, "the older answer came late and was dropped");
   });
 
-  test("a folder view says nothing of it, and closing the view clears it", async (t) => {
+  test("a folder in Organize says nothing of it, and closing the view clears it", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all" });
-    ctx.document.getElementById("library-strip-back").click();
-    await ctx.settle(100);
+    await ctx.popTo("");
     assert.equal(sync(ctx).textContent, "");
     assert.ok(ctx.strip().classList.contains("hidden"));
     assert.deepEqual(ctx.syncAsked.length, 1, "a folder view never asks");

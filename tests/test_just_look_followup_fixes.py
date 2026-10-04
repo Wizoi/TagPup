@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import damaged_photos  # noqa: E402
 import test_just_look_edits as jl  # noqa: E402
 
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import paths, processes  # noqa: E402
 from tagpup.files import images, recycle_bin  # noqa: E402
 from tagpup.services import file_only  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -156,8 +156,9 @@ class ARealSubstDrive(jl.Base):
             self.assertEqual(recycle_bin.SUBST, recycle_bin.no_bin_reason(on_subst))
             self.assertFalse(recycle_bin.goes_to_bin(on_subst))
             self.assertTrue(recycle_bin.goes_to_bin(self.loose[0]), "the same file by its own path")
-            body = self.post("/photo/delete", {"path": on_subst}).get_json()
-            self.assertTrue(body["permanent"], body)
+            with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
+                body = self.post("/photo/delete", {"path": on_subst}).get_json()
+            self.assertTrue(body["through_this_pc"], body)
             self.assertIn("substituted", body["message"])
         finally:
             processes.run(["subst", letter + ":", "/D"], capture_output=True, text=True)
@@ -185,15 +186,21 @@ class TheReasonIsTheTrueOne(jl.Base):
                recycle_bin.SUBST: "substituted", recycle_bin.NO_BIN: "without a Recycle Bin"}
 
     def test_the_reply_names_each_reason(self):
-        for reason, phrase in self.PHRASES.items():
-            with mock.patch.object(recycle_bin, "no_bin_reason", return_value=reason), \
-                    mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: True):
-                body = self.post("/photo/delete", {"path": self.loose[0]}).get_json()
-            self.assertTrue(body["permanent"])
+        downloads = recycle_bin.downloads_folder()
+        for n, (reason, phrase) in enumerate(self.PHRASES.items()):
+            photo = self.loose[n % len(self.loose)]
+            if not os.path.exists(photo):
+                damaged_photos.whole_jpeg(photo, seed=n)
+            # The original's place has no Bin; the Downloads folder, where the copy goes, has one.
+            judged = lambda path, reason=reason: None if paths.key(path).startswith(paths.key(downloads)) else reason  # noqa: E731
+            with mock.patch.object(recycle_bin, "no_bin_reason", side_effect=judged), \
+                    mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
+                body = self.post("/photo/delete", {"path": photo}).get_json()
+            self.assertTrue(body["through_this_pc"], body)
             self.assertIn(phrase, body["message"], reason)
             if reason != recycle_bin.NETWORK:
                 self.assertNotIn("network share", body["message"], reason)
-            self.assertEqual(reason, body["permanent_reason"])
+            self.assertEqual(reason, body["no_bin_reason"])
 
     def test_the_membership_answer_names_it_before_the_delete(self):
         for reason in self.PHRASES:

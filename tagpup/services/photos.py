@@ -454,7 +454,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
 @roots_service.canonical_args("photo_path")
 def delete(library, photo_path):
     """Send a photo to the Recycle Bin, and forget it: its row, faces and cached
-    embedding. Clicking Delete.
+    embedding. Clicking Delete (Organize's, and each photo of a library view's bulk Delete).
 
     The file goes first. A photo that could not be moved stays in the library, and its
     rows with it.
@@ -464,44 +464,41 @@ def delete(library, photo_path):
 
     Only an existing photo FILE is deleted, in a held folder or not: a folder, a .txt, a path
     that is not there or ends in a separator is refused, and nothing is moved (#520). A file on
-    a network share, or a drive with no Recycle Bin, is deleted permanently (the Bin is per local
-    volume; tagpup.files.recycle_bin): `permanent` says so, for the reply to say it, never "the
-    Bin" when it was not.
+    a network share, or a drive with no Recycle Bin, is never deleted for good (#694): it goes
+    THROUGH THIS PC (tagpup.files.recycle_bin.delete_file) -- copied under the Downloads folder's
+    "TagPup deleted from shares", the copy checked, the copy to this PC's Recycle Bin, then the
+    original -- and any step that fails leaves it, and its rows, where they are.
 
     details: `removed`, the rows removed from each table (None for such a photo);
-    `file_only` and `with_rows`, 1 for the way it was done; `permanent`.
+    `file_only` and `with_rows`, 1 for the way it was done; `through_this_pc`, `no_bin_reason`
+    (why its place has no Bin, as a phrase) and `copy` (where its copy was put, and so where the
+    Bin restores it).
     """
     result = Result(attempted=1)
     why = recycle_bin.problem(photo_path)
     if why:
         result.refuse(why)
         return result
-    reason = recycle_bin.no_bin_reason(photo_path)
-    permanent = reason is not None
     _held, loose = libraries.split(library, [photo_path])
     if loose:
         result = file_only.delete(photo_path)
-        result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0, "permanent": permanent,
-                               "permanent_reason": reason})
+        result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
         return result
     # A damaged photo may be deleted: nothing is written into it.
     if libraries.refuse_writes(result, library, [photo_path], damaged_ok=True):
         return result
     try:
-        moved = recycle_bin.send_to_recycle_bin(photo_path)
+        went = recycle_bin.delete_file(photo_path)
     except Exception as e:
         result.fail(photo_path, e)
-        return result
-    if not moved:
-        result.fail(photo_path, "Failed to move file to Recycle Bin")
         return result
     result.changed = 1
     # The thumbnail goes with the photo: its id is read first, while the row is there to name it.
     ids = thumbnails.ids_of(library, [photo_path])
     result.details["removed"] = photos.forget_photo(library.path, photo_path)
     thumbnails.forget(library, ids)
-    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1, "permanent": permanent,
-                               "permanent_reason": reason})
+    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1, "through_this_pc": went["through_this_pc"],
+                           "no_bin_reason": went["reason"], "copy": went["copy"]})
     return result
 
 

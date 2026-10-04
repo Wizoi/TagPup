@@ -287,17 +287,14 @@ def rotate(photo_path, direction, exiftool_path) -> Result:
 
 
 def delete(photo_path):
-    """Send a photo to the Recycle Bin and forget nothing: it has no row. details: `removed`
-    None."""
+    """Send a photo to the Recycle Bin -- through this PC where its place has none (recycle_bin.delete_file, #694) -- and forget
+    nothing: it has no row. details: `removed` None; `through_this_pc`, `no_bin_reason` and `copy` as recycle_bin says them."""
     result = Result(attempted=1)
     try:
-        moved = recycle_bin.send_to_recycle_bin(photo_path)
+        went = recycle_bin.delete_file(photo_path)
     except Exception as e:
         result.fail(photo_path, e)
         return result
-    if not moved:
-        result.fail(photo_path, "Failed to move file to Recycle Bin")
-        return result
     result.changed = 1
-    result.details["removed"] = None
+    result.details.update(removed=None, through_this_pc=went["through_this_pc"], no_bin_reason=went["reason"], copy=went["copy"])
     return result

@@ -7,7 +7,7 @@ import { loadRules } from './common/validate.js';
 import { upper } from './hooks.js';
 import {
     btnAddPerson, btnAddTag, btnApplyAllSingleSugg, btnApplyTimeshift, btnBrowseFolder,
-    btnBulkAddPeople, btnBulkAddTags, btnCarryForward, btnCreateDb, btnDeletePhoto,
+    btnBulkAddPeople, btnBulkAddTags, btnCarryForward, btnCreateDb, btnDeletePhoto, btnDeleteSelection,
     btnFolderAutoApply, btnRefreshList, btnRotateLeft, btnRotateRight, btnSaveTitle,
     btnSelectAllThumbnails, btnSelectNoneThumbnails, btnSuggestTags, btnSuggestTitleWand,
     btnUndo, bulkAddPeopleInput, bulkAddTagsInput, dbSelect, detailPath, folderPathInput,
@@ -21,14 +21,16 @@ import {
 } from './folder.js';
 import { wireTagPupGear } from './gear.js';
 import {
-    leaveLibraryView, libraryChanged, openViewFromAddress, refreshFolderOrView, wireLibraryView
+    leaveLibraryView, libraryChanged, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
 } from './library-view.js';
+import { deleteSelection } from './bulk-edit.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
 import { navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
 import { addedFromView, wireBanner } from './library-banner.js';
 import { attachBulk, wireBulk } from './bulk-job.js';
+import { renderSyncInfo } from './sync-state.js';
 import { photosWritten } from './tally.js';
-import { landOnAnchor, libraryViewPainted, wireMoves } from './library-moves.js';
+import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
 import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
     carryTagsForward, deleteActivePhoto, openPhotoInDefaultApp, renderTags, rotatePhoto,
@@ -56,10 +58,11 @@ import {
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
-    addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
-    renderFileList, renderSuggestionsPanel, renderTags, renderThumbnails, selectPhoto,
-    landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows,
-    photosWritten, reloadChangedPhoto,
+    addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, deleteSelection,
+    populateCameraModelsDropdown, recordUndo,
+    renderFileList, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, selectPhoto,
+    landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
+    photosDeleted, photosWritten, reloadChangedPhoto,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
 });
@@ -95,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     btnSelectAllThumbnails.addEventListener('click', selectAllThumbnails);
     btnSelectNoneThumbnails.addEventListener('click', selectNoneThumbnails);
+    btnDeleteSelection.addEventListener('click', () => deleteSelection());
     btnBulkAddPeople.addEventListener('click', bulkAddPeopleToSelection);
     btnBulkAddTags.addEventListener('click', bulkAddTagsToSelection);
     bulkAddPeopleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') bulkAddPeopleToSelection(); });

@@ -7,7 +7,11 @@ An EDIT is what is done to every photo of a selection:
 * `people`: add and take off people, by name, `{"add": [...], "remove": [...]}`: a name is filed as a click on a person's chip
   files it (`vocabulary.person_tag`, the one rule), a person a file already names by their leaf is not added again, and no
   node of the tag tree is made;
-* `time_shift`: move Date Taken by `{"minutes": n}` (tagpup.services.photos.date_shift_plan).
+* `time_shift`: move Date Taken by `{"minutes": n}` (tagpup.services.photos.date_shift_plan);
+* `delete`: send each photo's file to the Recycle Bin and forget its row, faces and thumbnail, as the folder view's Delete
+  does it (tagpup.services.photos.delete, the one owner: not journaled, as that is not; a photo whose place has no Recycle Bin
+  goes through this PC's, #694), `{"token": text}` -- the token of the photos the question named (selection.where_deleted: the
+  start is refused when the selection no longer resolves to exactly them, #691).
 
 `prepare` reads and checks one up front and refuses with a sentence, before a photo is touched. `run_chunk` does it to a few
 photos: each id is resolved to its row's path NOW (a photo renamed meanwhile is found by id, one deleted is skipped and
@@ -23,8 +27,8 @@ import os
 from dataclasses import dataclass, field
 
 from tagpup.core import dates, paths, validation, vocabulary
-from tagpup.core.result import Refused, Result
-from tagpup.files import exiftool_session, job_files
+from tagpup.core.result import Conflict, Refused, Result
+from tagpup.files import exiftool_session, job_files, recycle_bin
 from tagpup.services import damaged_photos, file_changes, file_only, libraries, library_view, tagging
 from tagpup.services import photos as photo_actions
 from tagpup.store import file_journal, taxonomy
@@ -32,8 +36,8 @@ from tagpup.store import library_view as store
 
 logger = logging.getLogger(__name__)
 
-TAGS, PEOPLE, TIME_SHIFT = "tags", "people", "time_shift"
-OPS = (TAGS, PEOPLE, TIME_SHIFT)
+TAGS, PEOPLE, TIME_SHIFT, DELETE = "tags", "people", "time_shift", "delete"
+OPS = (TAGS, PEOPLE, TIME_SHIFT, DELETE)
 
 #: The most tags, or people, one edit adds, and the same of what it takes off.
 MOST_NAMED = 200
@@ -47,7 +51,7 @@ MOST_TEXT = 200
 
 #: What the journal calls the changes of a job (History's `operation`): the work's own name, then the job, so that the
 #: files a job wrote are found by it (tagpup.store.file_journal.photo_ids_done).
-OPERATIONS = {TAGS: "bulk tags", PEOPLE: "bulk people", TIME_SHIFT: "bulk time shift"}
+OPERATIONS = {TAGS: "bulk tags", PEOPLE: "bulk people", TIME_SHIFT: "bulk time shift", DELETE: "bulk delete"}
 
 
 def operation_of(op, job):
@@ -58,26 +62,31 @@ def operation_of(op, job):
 @dataclass
 class Edit:
     """What is done to each photo. `add` and `remove` are tags as they are written (a person's already filed as a tag),
-    `persons` the tags of `add` that are people, `minutes` a time shift's."""
+    `persons` the tags of `add` that are people, `minutes` a time shift's; a delete's `token` (of the photos its question
+    named)."""
     op: str
     add: list = field(default_factory=list)
     remove: list = field(default_factory=list)
     persons: list = field(default_factory=list)
     minutes: int = 0
+    token: str = ""
 
     def to_json(self):
-        return {"op": self.op, "add": self.add, "remove": self.remove, "persons": self.persons, "minutes": self.minutes}
+        return {"op": self.op, "add": self.add, "remove": self.remove, "persons": self.persons, "minutes": self.minutes,
+                "token": self.token}
 
     @classmethod
     def from_json(cls, found):
         return cls(found["op"], list(found.get("add") or []), list(found.get("remove") or []),
-                   list(found.get("persons") or []), int(found.get("minutes") or 0))
+                   list(found.get("persons") or []), int(found.get("minutes") or 0), str(found.get("token") or ""))
 
     def describe(self):
         """What it does, in words that name no tag or person (a record the Activity page lists, which can be read over a
         shoulder): "add 2 and remove 1 tag", "shift Date Taken by 90 minutes"."""
         if self.op == TIME_SHIFT:
             return "shift Date Taken by %d minute(s)" % self.minutes
+        if self.op == DELETE:
+            return "delete the files to the Recycle Bin (through this PC's where their place has none)"
         parts = []
         if self.add:
             parts.append("add %d" % len(self.add))
@@ -116,6 +125,11 @@ def prepare(library, op, params):
         if minutes == 0:
             raise Refused("A shift of 0 minutes changes nothing.")
         return Edit(TIME_SHIFT, minutes=minutes)
+    if op == DELETE:
+        token = params.get("token")
+        if not isinstance(token, str) or not token:
+            raise Refused("A delete names the photos its question was about (token, from delete-check): ask again.")
+        return Edit(DELETE, token=token)
     add, remove = _list_of(params, "add"), _list_of(params, "remove")
     if op == TAGS:
         # The rules read the tag as typed ("A//B" has an empty level); what is written is its one spelling.
@@ -311,6 +325,8 @@ def run_chunk(library, edit, ids, exiftool_path, operation, on_planned=None):
     present = _reachable(present, out)
     if not present:
         return out
+    if edit.op == DELETE:
+        return _delete(library, edit, present, out)
     by_key = {paths.key(path): photo_id for photo_id, path in present}
     chosen = [path for _photo_id, path in present]
     # The chunk's own ExifTool, with a deadline of its own and started before the lock is asked for. The whole chunk then runs
@@ -329,6 +345,65 @@ def run_chunk(library, edit, ids, exiftool_path, operation, on_planned=None):
                     library, chosen, edit.add, edit.remove, exiftool_path, operation=operation, stop_at_first_error=False,
                     persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None, et=et)
     _count(out, result, present, by_key)
+    return out
+
+
+def _cannot_keep(present):
+    """{photo id: why} of the photos of a chunk that go through this PC, when this PC cannot keep their copies; {} when it can."""
+    bins, through, largest = {}, [], 0
+    for photo_id, path in present:
+        folder = paths.key(os.path.dirname(path))
+        if folder not in bins:
+            bins[folder] = recycle_bin.no_bin_reason(path)
+        if bins[folder]:
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                continue
+            through.append((photo_id, size))
+            largest = max(largest, size)
+    if not through:
+        return {}
+    why = recycle_bin.can_copy_here(sum(size for _id, size in through), largest)
+    return {photo_id: why for photo_id, _size in through} if why else {}
+
+
+#: What a delete's start says when the selection no longer resolves to the photos its question named (#691).
+CHANGED = ("The selection changed since you were asked (photos came into it or left it): nothing was deleted. Ask again: "
+           "click Delete once more.")
+
+
+def refuse_if_changed(edit, photo_ids, token_of):
+    """A delete is started only on exactly the photos its question named: Conflict (CHANGED), nothing begun, when `photo_ids`
+    (the selection resolved at the start) is not the set whose token the question carried. `token_of` is
+    tagpup.services.selection.token_of, the one hash of both."""
+    if edit.op == DELETE and token_of(photo_ids) != edit.token:
+        raise Conflict(CHANGED)
+
+
+def _delete(library, edit, present, out):
+    """Delete the photos `present` ([(id, path)], reachable) as Organize's Delete does each (photos.delete: the file to the
+    Recycle Bin -- through this PC's where its place has none, #694 -- then its row, faces and thumbnail), under the one lock of
+    changes of photo files, so that no write of one of them runs while it goes. A file gone already is counted missing and its
+    row kept (sync reports it); one refused, or not moved (any step of going through this PC that failed), is an error, the
+    original and its row kept. Before the chunk copies anything through this PC, it asks whether this PC can keep the chunk's
+    copies (recycle_bin.can_copy_here: the Bin fills during a long job, #703); if not, those photos are errors with the
+    sentence and nothing of them is touched; the others go on."""
+    with file_changes.exclusively():
+        there = [(photo_id, path) for photo_id, path in present if os.path.isfile(path)]
+        out.skipped_missing += len(present) - len(there)
+        refused = _cannot_keep(there)
+        for photo_id, path in there:
+            name = os.path.basename(path)[:MOST_TEXT]
+            if photo_id in refused:
+                out.errors.append((photo_id, name, refused[photo_id][:MOST_TEXT]))
+                continue
+            result = photo_actions.delete(library, path)
+            if result.ok and result.changed:
+                out.changed += 1
+            else:
+                why = result.refused or result.message() or "it could not be deleted"
+                out.errors.append((photo_id, name, str(why)[:MOST_TEXT]))
     return out
 
 

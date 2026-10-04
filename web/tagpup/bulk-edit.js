@@ -1,20 +1,21 @@
-// TagPup's page: the edits of a library view's selection -- Add tag, Add person, the pills' Remove and Apply, Shift Date Taken -- each
+// TagPup's page: the edits of a library view's selection -- Add tag, Add person, the pills' Remove and Apply, Delete -- each
 // asked of the owner by name and count, and started as a bulk JOB (bulk-job.js) with the selection BY ID (selected.js). The folder
 // view's bulk writes are selection.js's and are not touched: a path, 5,000 of them, one request.
 //
 // What is asked is what is sent: the selection is read BEFORE the question and the request carries that, whatever is clicked while a
 // question or a placement dialog is open. A limit of the request (more than 20,000 ids, more than 200,000 photos) is said in a sentence
-// before anything is asked of the server. Smart Rename stays off in a view: a name is per folder.
-import { ruleProblem } from './common/validate.js';
+// before anything is asked of the server. Smart Rename and Shift Date Taken are Organize's, not a view's (#669): the server's bulk time
+// shift (op `time_shift`) is still there, and a job of it found running or stopped is shown and resumed by the strip (bulk-job.js).
+import { api } from './common/api.js';
 import { tagProblem } from './common/vocabulary.js';
 import { state } from './state.js';
-import { bulkAddPeopleInput, bulkAddTagsInput, timeshiftDirection, timeshiftMinutesInput } from './elements.js';
-import { flagField, setStatus } from './status.js';
+import { bulkAddPeopleInput, bulkAddTagsInput } from './elements.js';
+import { setStatus } from './status.js';
 import { resolveTagOrPerson, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { selectionCount, selectionRequest } from './selected.js';
 import { BUSY_SENTENCE, bulkBusy, startBulk } from './bulk-job.js';
 import {
-    ASK_TWICE_ABOVE, MOST_MINUTES, confirmSentence, describeShift, describeTags, secondQuestion
+    ASK_TWICE_ABOVE, confirmSentence, deleteQuestion, describeDelete, describeTags, photosOf, secondQuestion
 } from './bulk-words.js';
 
 /** The selection, as a request, and how many photos it is; or null, the owner told why not (nothing is asked of the server). */
@@ -102,44 +103,60 @@ export async function editByPill({ kind, name, remove }) {
     }
 }
 
-/** The minutes typed, as a signed whole number (earlier is negative), or null with the reason said beside the field. */
-function shiftTyped() {
-    const typed = Number(timeshiftMinutesInput.value.trim());
-    const rule = ruleProblem('time shift', typed);
-    if (rule || !Number.isFinite(typed)) {
-        flagField(timeshiftMinutesInput, rule || 'Enter a shift in minutes (not zero)');
-        return null;
-    }
-    if (typed === 0) {
-        flagField(timeshiftMinutesInput, 'Enter a shift in minutes (not zero)');
-        return null;
-    }
-    if (typed < 0) {
-        flagField(timeshiftMinutesInput, 'Enter the minutes as a positive number and choose Earlier or Later.');
-        return null;
-    }
-    if (typed > MOST_MINUTES) {
-        flagField(timeshiftMinutesInput, `A shift of more than 10 years (${MOST_MINUTES.toLocaleString()} minutes) is more likely a typing mistake than a clock that far out.`);
-        return null;
-    }
-    return timeshiftDirection.value === 'earlier' ? -typed : typed;
-}
-
-/** Shift Date Taken of the selection of a library view: the minutes and a direction, no camera. Resolves true when a job began. */
-export async function shiftSelectionInView() {
-    if (!state.library) return false;
-    const minutes = shiftTyped();
-    if (minutes === null) return false;
-    // While another edit's question or placement dialog is open, this one asks nothing (as Add and the pills).
+/**
+ * Delete the selection of a library view (#674): the photos' files go to the Recycle Bin -- or for good, on a share or a drive with
+ * none -- and their rows leave the library, each as the folder view's Delete does it (the server's photos.delete), as a bulk JOB:
+ * progress, Cancel, one at a time (bulkBusy, lockBulkControls). The selection is read first (a limit is said, nothing asked); then
+ * the server is asked where the files would go (POST /api/library/selection/delete-check, one answer a folder); then the question
+ * names the server's count of the photos, how long it takes and whether any are deleted for good, and over ASK_TWICE_ABOVE it is
+ * asked again. What is sent is what was asked: the selection as read, the answer's `token` -- the server refuses the start, nothing
+ * begun, when the selection no longer resolves to exactly those photos (#691) -- and the folders the question named as having no
+ * Recycle Bin (#694: nothing is deleted for good; those go through this PC's, and the question says so and where they restore to). Rapid clicks ask once (`state.bulk.asking`). `again`: the
+ * strip's Start again of a delete, `{selection, count}` of the one stopped, asked about afresh exactly as a click is (never sent as
+ * it was). Resolves true when a job began.
+ */
+export async function deleteSelection(again = null) {
     if (state.bulk.asking) return false;
-    const picked = readSelection();
+    if (again && bulkBusy()) {
+        alert(BUSY_SENTENCE);
+        return false;
+    }
+    const picked = again ? { selection: again.selection, count: again.count } : (state.library ? readSelection() : null);
     if (!picked) return false;
-    const desc = describeShift(minutes);
     state.bulk.asking = true;
     try {
-        if (!confirmed(desc, picked.count)) return false;
-        const started = await startBulk({ op: 'time_shift', selection: picked.selection, params: { minutes }, desc, picked: picked.count });
-        if (started.ok) timeshiftMinutesInput.value = 0;
+        setStatus('busy', `Looking where the files of ${photosOf(picked.count)} are...`);
+        let where;
+        try {
+            const res = await api.fetch('/api/library/selection/delete-check', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selection: picked.selection }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error((body && body.error) || `TagPup answered ${res.status}`);
+            where = body;
+        } catch (err) {
+            setStatus('error', `Could not tell where the files are, so nothing was deleted: ${err.message}`, { transient: false });
+            return false;
+        }
+        setStatus('ready', 'Ready');
+        // Copies from places with no Recycle Bin that this PC has not room for: said, and nothing asked (#694).
+        if (where.no_room) {
+            setStatus('error', where.no_room, { transient: false });
+            alert(where.no_room);
+            return false;
+        }
+        // The server's count of the photos, which the token is of: the question names exactly what would be deleted.
+        const count = Number.isFinite(where.total) ? where.total : picked.count;
+        if (count === 0) {
+            setStatus('ready', 'Nothing to delete: none of these photos is in the library any more.', { transient: false });
+            return false;
+        }
+        if (!confirm(deleteQuestion(where, count))) return false;
+        if (count > ASK_TWICE_ABOVE && !confirm(secondQuestion(count))) return false;
+        const desc = describeDelete(where, count);
+        const started = await startBulk({ op: 'delete', selection: picked.selection,
+            params: { token: where.token },
+            desc, picked: count });
         return started.ok;
     } finally {
         state.bulk.asking = false;

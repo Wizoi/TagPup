@@ -7,7 +7,8 @@ import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
     btnApplyRename, bulkAddPeopleInput, bulkAddTagsInput, folderSelectionSidebar,
-    selectedThumbnailsCount, selectionDateLabel, selectionDateValue, selectionEmptyHint, selectionNote,
+    selectedThumbnailsCount, selectionDateGroup, selectionDateLabel, selectionDateValue, selectionEmptyHint,
+    selectionFoldersGroup, selectionNote,
     selectionPeopleList, selectionSuggestedPeopleList, selectionSuggestedTagsList,
     selectionSummaryCount, selectionSummaryScroll, selectionTagsList, statusDot, statusText
 } from './elements.js';
@@ -62,6 +63,9 @@ export function updateSelectedThumbnailsCount() {
         showLibrarySelection();
         return;
     }
+    // Organize's panel: Date Taken, and no Folders to Organize (the folder is open).
+    if (selectionDateGroup) selectionDateGroup.classList.remove('hidden');
+    if (selectionFoldersGroup) selectionFoldersGroup.classList.add('hidden');
     if (state.selectedThumbnails.length > 0) {
         
         // Gather statistics
@@ -272,8 +276,9 @@ export function updateSelectedThumbnailsCount() {
  * selection carries is counted by the server (tally.js).
  */
 function showLibrarySelection() {
-    selectionDateLabel.textContent = 'Date Taken';
-    selectionDateValue.textContent = '--';
+    // No Date Taken in a view (#675: a range across the library says nothing); the folders the selection is in instead.
+    if (selectionDateGroup) selectionDateGroup.classList.add('hidden');
+    if (selectionFoldersGroup) selectionFoldersGroup.classList.remove('hidden');
     if (selectionSuggestedPeopleList) selectionSuggestedPeopleList.innerHTML = '';
     if (selectionSuggestedTagsList) selectionSuggestedTagsList.innerHTML = '';
     // What the selection carries is counted by the server, 250 ms after the selection stops changing (tally.js); none, nothing.

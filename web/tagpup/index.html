@@ -92,11 +92,12 @@
         <main class="app-content">
             <!-- Sidebar: Folder Control & File list -->
             <aside class="sidebar">
-                <!-- The switch between the library's navigator and the open folder's list (web/tagpup/navigator.js).
+                <!-- The switch between the library's navigator and Organize, the open folder's list (web/tagpup/navigator.js; the
+                     button is "Organize" since #668: "Folder" was taken for the library's Folders tab).
                      The same pattern as the navigator's own tabs: arrow keys move between them. -->
                 <div id="sidebar-switch" class="sidebar-switch" role="tablist" aria-label="Show in the sidebar" data-own-keys>
                     <button type="button" id="sidebar-tab-library" class="sidebar-switch-tab" role="tab" aria-selected="false" aria-controls="sidebar-pane-library" tabindex="-1" title="Browse the whole library by folder, keyword, person or date">Library</button>
-                    <button type="button" id="sidebar-tab-folder" class="sidebar-switch-tab active" role="tab" aria-selected="true" aria-controls="sidebar-pane-folder" tabindex="0" title="The folder that is open, and its photos">Folder</button>
+                    <button type="button" id="sidebar-tab-folder" class="sidebar-switch-tab active" role="tab" aria-selected="true" aria-controls="sidebar-pane-folder" tabindex="0" title="Organize one folder on disk: its photos, Smart Rename, Camera Time Shift and the folder's own tools">Organize</button>
                 </div>
                 <!-- The library's navigator: Folders, Keywords, People and Dates, each built by navigator.js on first use. -->
                 <div id="sidebar-pane-library" class="sidebar-pane hidden" role="tabpanel" aria-labelledby="sidebar-tab-library"></div>
@@ -285,18 +286,16 @@
                 <!-- Folder View Content -->
                 <div class="folder-view-content hidden" id="folder-view-content">
                     <div class="folder-view-main" id="folder-view-main">
-                        <!-- Which view of the library is open, how many photos it holds, and the way back
-                             (web/tagpup/library-view.js). Shown only while one is. -->
+                        <!-- Which view of the library is open and how many photos it holds, in one small line, and Refresh view
+                             (web/tagpup/library-view.js). When the library was last in step is said only when something is wrong
+                             (sync-state.js, #670). Shown only while a view is open. -->
                         <div id="library-strip" class="library-strip hidden" role="status">
                             <strong id="library-strip-source" class="library-strip-source"></strong>
                             <span id="library-strip-total" class="folder-stats-badge"></span>
                             <span id="library-strip-status" class="library-strip-status"></span>
                             <span id="library-strip-sync" class="library-strip-sync"></span>
                             <span class="library-strip-actions">
-                                <button id="btn-library-scope" class="btn btn-secondary btn-sm hidden" title="Show only the photos directly in this folder, or its subfolders' too">This folder only</button>
-                                <button id="btn-show-on-disk" class="btn btn-secondary btn-sm hidden" title="Open this folder on disk, as a folder view: the files themselves are read">Show on disk</button>
                                 <button id="btn-library-refresh" class="btn btn-secondary btn-sm" title="Ask the library for this view's photos again; the place in the view is kept">Refresh view</button>
-                                <a id="library-strip-back" class="library-strip-back" href="#">Back to folder view</a>
                             </span>
                         </div>
                         <!-- The disk holds photos of this folder the library does not (web/tagpup/library-moves.js). -->
@@ -319,6 +318,8 @@
                                 <div class="selection-actions">
                                     <button id="btn-select-all-thumbnails" class="btn btn-secondary btn-sm">Select All</button>
                                     <button id="btn-select-none-thumbnails" class="btn btn-secondary btn-sm">Select None</button>
+                                    <!-- In a library view only: delete the selected photos, files and rows, as a job (web/tagpup/bulk-edit.js, #674). -->
+                                    <button id="btn-delete-selection" type="button" class="btn btn-danger btn-sm hidden" title="Delete the selected photos: their files go to the Recycle Bin (for good where there is none, and you are asked first) and their rows leave the library">🗑️ Delete</button>
                                     <span id="selected-thumbnails-count" class="selected-count-label">Selected: 0</span>
                                 </div>
                                 <div class="thumbnail-size-toggle">
@@ -326,6 +327,7 @@
                                     <button id="btn-size-medium" class="btn-size-toggle active" title="Medium Thumbnails">Medium</button>
                                     <button id="btn-size-large" class="btn-size-toggle" title="Large Thumbnails">Large</button>
                                 </div>
+                                <!-- Organize only (a folder on disk): a library view has neither (#669; web/tagpup/library-view.js). -->
                                 <button id="btn-toggle-timeshift" class="btn btn-secondary btn-sm" title="Camera Time Shift" disabled>⏰</button>
                                 <button id="btn-toggle-rename" class="btn btn-secondary btn-sm" title="Smart Rename Files" disabled>🏷️ Smart Rename</button>
                             </div>
@@ -362,7 +364,7 @@
                                 <span class="timeshift-description">Shift Date Taken forward or backward to correct clock drift between multiple cameras.</span>
                             </div>
                             <div class="timeshift-controls-row">
-                                <div class="timeshift-field" id="timeshift-camera-field">
+                                <div class="timeshift-field">
                                     <label for="timeshift-camera-select">Camera Model:</label>
                                     <select id="timeshift-camera-select">
                                         <!-- Dynamically populated -->
@@ -372,17 +374,8 @@
                                     <label for="timeshift-minutes-input">Shift (Minutes):</label>
                                     <input type="number" id="timeshift-minutes-input" value="0" step="1" style="width: 80px;">
                                 </div>
-                                <!-- In a library view only: the shift is the minutes and a direction, not a sign (web/tagpup/bulk-edit.js). -->
-                                <div class="timeshift-field hidden" id="timeshift-direction-field">
-                                    <label for="timeshift-direction">Direction:</label>
-                                    <select id="timeshift-direction">
-                                        <option value="later">Later</option>
-                                        <option value="earlier">Earlier</option>
-                                    </select>
-                                </div>
                                 <button id="btn-apply-timeshift" class="btn btn-secondary btn-sm">Apply Time Shift</button>
                             </div>
-                            <p id="timeshift-view-note" class="timeshift-view-note hidden">Shifts the selected photos of the library view, across folders, as a job you can watch and cancel. A photo that holds both Date Taken fields (the capture date and the creation date) has both moved; a photo with no Date Taken is left as it is.</p>
                         </div>
                         
                         <!-- Thumbnails Grid -->
@@ -404,6 +397,14 @@
                         </div>
 
                         <div class="selection-summary-scroll">
+                            <!-- In a library view only: the folders the selected photos are in, each opening in Organize, when there
+                                 are 10 or fewer; more are counted (web/tagpup/tally.js, #675). -->
+                            <div class="selection-summary-group hidden" id="selection-folders-group">
+                                <span class="detail-label">Folders to Organize</span>
+                                <div id="selection-folders-list" class="selection-folders-list"></div>
+                            </div>
+
+                            <!-- Organize only: a library view's panel has no Date Taken (#675). -->
                             <div class="selection-date-group" id="selection-date-group" style="padding: 12px 20px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px;">
                                 <span class="detail-label" id="selection-date-label">Date Taken</span>
                                 <span class="detail-value" id="selection-date-value" style="font-size: 13px; font-weight: 500;">Unknown</span>

@@ -187,7 +187,8 @@ def membership(library, folder, roots=(), ignored=()):
     "photos_not_held" (photos in folders under it the library holds none directly in,
     ignored folders left out),
     "folders_not_held", "first_not_held" (the first such folder, or None),
-    "permanent_delete" (a photo deleted there is deleted for good) and "permanent_reason" (why, as a phrase:
+    "permanent_delete" (the place has no Recycle Bin: since #694 a photo deleted there is not deleted for good but goes
+    through this PC's Recycle Bin, tagpup.files.recycle_bin.delete_file; the name is kept) and "permanent_reason" (why, as a phrase:
     "on a network share", "on a removable drive", "on a substituted (SUBST) drive", "on a drive without a
     Recycle Bin"; None otherwise; tagpup.files.recycle_bin.no_bin_reason), "has_roots",
     "under_roots" (the folder is one of `roots` or under one), "ignored" (likewise, of

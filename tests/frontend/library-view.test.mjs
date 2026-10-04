@@ -179,8 +179,8 @@ describe("opening a view from the address", () => {
     assert.deepEqual(kept.filter((key) => key.startsWith("tagpup_cache_")), [], "no scan of a folder is kept for a view");
     assert.equal(ctx.document.getElementById("add-folder-modal").classList.contains("active"), false);
     assert.equal(ctx.document.getElementById("btn-suggest-tags").disabled, true);
-    assert.equal(ctx.document.getElementById("btn-toggle-rename").disabled, true);
-    assert.equal(ctx.document.getElementById("btn-toggle-timeshift").disabled, false, "Shift Date Taken works on a view's selection (9d-2)");
+    assert.ok(ctx.document.getElementById("btn-toggle-rename").classList.contains("hidden"), "Smart Rename is Organize's (#669)");
+    assert.ok(ctx.document.getElementById("btn-toggle-timeshift").classList.contains("hidden"), "and so is the time shift (#669)");
     assert.equal(ctx.document.getElementById("photo-search").disabled, true);
     assert.match(ctx.document.getElementById("photo-search").title, /later stages/);
   });
@@ -643,14 +643,14 @@ describe("the way there and back", () => {
     assert.match(ctx.idsAsked.at(-1), /kind=folder&folder=D%3A%5CLibrary%5C2020&recursive=1$/);
   });
 
-  test("Back to folder view in the strip returns to the folder that was open, and the grid draws it", async (t) => {
+  test("Back returns to the folder that was open, and the grid draws it (the strip's own link went with #670)", async (t) => {
     const ctx = await load(t, { search: "", ids: [], total: 0 });
     await openFolder(ctx, FOLDER);
     pageExports(ctx.window, "web/tagpup/library-view.js").openLibraryView({ kind: "all" });
     await ctx.settle();
     assert.equal(ctx.state.library.kind, "all");
-    click(ctx.window, ctx.document.getElementById("library-strip-back"));
-    await ctx.settle(200);
+    ctx.window.history.back();
+    await ctx.settle(300);
     assert.equal(ctx.state.library, null);
     assert.equal(ctx.state.scannedFolder, FOLDER);
     assert.equal(ctx.cards().length, 2);

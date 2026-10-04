@@ -1408,7 +1408,8 @@ panel and selection. Nothing is migrated and nothing of a folder's machinery run
   Keywords, People and Dates call it, and `/api/library/navigator` is asked again after an edit (a count is read at each call). The
   strip is where its "header says which source" lives; the sidebar is empty in a view (the navigator takes its place). A card carries
   `damaged` and `damage` only: 9c's staleness marks (size and modified time, "missing") are new card fields, and a card whose photo is
-  gone shows a broken picture today (the thumbnail route answers a 404 sentence). `state.libraryReturn` is the folder Back returns to.
+  gone shows a broken picture today (the thumbnail route answers a 404 sentence). `state.libraryReturn` is the folder Back returns to
+  *(gone with #670, with the strip's Back to folder view)*.
   The folder cache and the folder's scroll are not restored by Back (a folder is read again from the cache of the scan, at the top).
 - **What 9d builds on.** `selected.js` is by path because every write route is; a card has its `id`, and `selectInLibrary` is the one
   place that turns a range of ids into paths -- with id-based writes it disappears and Select all of 68,000 is instant. The selection
@@ -1448,7 +1449,8 @@ The page, and two small routes and a card field under it. Nothing is migrated. T
   pages: nothing of one's navigator can reach the other's.
 - **The move between disk and library** (`library-moves.js`): **Show in library** (beside Select All, with a folder open on disk) opens the folder's library
   view with its subfolders; **Show on disk** (in the strip of a folder's view) scans the folder FIRST and closes the view only when the scan has answered, through the history entry Back to folder view uses -- a folder that is not on disk any more (400), or cannot be read, keeps the view and says so in its strip, so the page is never left with neither a view nor a folder (#569);
-  **This folder only / With subfolders** is another view of the same folder. The selection is cleared by every one (a view opening or closing clears it, 9b-1). The
+  **This folder only / With subfolders** is another view of the same folder *(Show on disk and This folder only went with #670; the scan-first move is
+  `openInOrganize`, a folder of the selection's Folders to Organize)*. The selection is cleared by every one (a view opening or closing clears it, 9b-1). The
   photo at the top of the grid is the one to land on: a folder view finds it by `pathKey` in `shownIndex`, a library view asks the library which id a path is
   (`GET /api/library/find?path=` -> `{id}`, `null` for a photo it does not hold: one seek of `idx_photos_path_nocase`, `COVERING INDEX (path=?)` on photo_index) and
   `scrollToIndex(..., 'start')`s there, below the sticky strip (`topInset`). Best effort: a photo in neither leaves the grid at the top.
@@ -1996,6 +1998,113 @@ and one index-only migration (22).
   inside a union is canonicalised by `source_of`; going to another library takes the view's parameters away, the order with them,
   by the one list `common/library.js VIEW_PARAMS` (#697),, but the response does not carry the ingress's moved-root header. The People
   tab is about 100 ms slower to open than the flat list was (see Measured).
+
+### The owner's first review of the library views *(2026-10-04; #668-#670, #674, #675 on `arch/library-review-1`; #671-#673 beside it)*
+The owner installed phase 9 and reviewed the TagPup page. A library view is for seeing the library at a high level; the work on one
+folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Organize**, the pane that was called Folder.
+
+- **#668, Organize.** The switch beside Library says **Organize** (it said Folder, which was taken for the navigator's Folders tab). Only
+  the words changed: the code still calls the pane `folder` (`sidebar-tab-folder`, `state.nav.shown === 'folder'`).
+- **#669, no Smart Rename and no time shift in a view.** `showChrome` (library-view.js) hides both buttons in every kind of view, and
+  `hideChrome` shows them again for a folder; 9d-2's Shift Date Taken of a view's selection (`shiftSelectionInView`, the direction field,
+  the note) is gone from the page. **The server's bulk time shift is kept** (`op: time_shift`, resume and all, 9d-1): nothing on the
+  library page starts one now, and a job of it found running or stopped part-way is still shown in the strip and resumed by it.
+- **#670, the strip.** One small line: the view, its count, the status sentence when there is one, and **Refresh view**. When the library
+  was last in step is said only when something is wrong (`sync-state.js syncSentence`): the read failed; a sync is running; never in step;
+  the newest sync (`last_run.in_step`, now read) left it out of step; last in step more than 48 hours ago (`QUIET_FOR_HOURS`: the daily
+  catch-up has not left it in step); or the view's folder holds photos on disk the library does not (the banner's offer: the strip then
+  says when it was last in step). *Decided, not copied:* a card marked changed on disk does not make the strip speak -- the card says so,
+  and the strip would have to follow every batch of cards (library-source.js has no hook for it). On the live libraries every one's newest
+  run was in step and the last whole sync this morning (counted read-only, 2026-10-04): the line is empty. **Back to folder view** is gone.
+  Why it did not work: it returned to `state.libraryReturn`, set only when a view opened while a folder was open in Organize (or from a
+  `?path` in the address); a view opened from the navigator, a bookmark or the gear with no folder open had nothing to return to, and
+  the link closed the view onto an empty page with "No folder was open". `libraryReturn` went with it; Back (the browser's) returns to
+  the folder a view was opened from, as it always did. **This folder only** and **Show on disk** went from the strip; `showOnDisk`
+  became `openInOrganize(folder)` -- scan first, close the view only when the scan answered (#569), a folder gone or a share away keeps
+  the view and says so in the strip -- used by #675's Folders to Organize. Show in File Explorer (the grid's context menu) stays.
+- **#675, Folders to Organize.** The tally's answer gains `folders: {count, listed}` (`tagpup.services.selection._folders` over
+  `tagpup.store.selection_folders`, a module of its own beside `store.library_view`, which another branch has this week): one
+  `SELECT folder_id, COUNT(*) FROM photo_folder WHERE photo_id IN (<the tally's selection>) GROUP BY folder_id`, in the tally's own read
+  transaction and over its own `sel` table (`library_view._selected`, private there and used, not copied: the counts and the folders are
+  of one set of photos), and the `folders` rows by key only when 10 or fewer (`MAX_FOLDERS_LISTED`). The page never holds the paths of
+  the selected photos. Plans on a sandbox copy of photo_index: a list of ids seeks `photo_folder` by key for each (`SEARCH photo_folder
+  USING INTEGER PRIMARY KEY`, the ids from `sel`); a Select all scans the covering path index of `photos`, as the tally's own reads do.
+  **Measured** (sandbox copy of photo_index, 68,324 photos, its own TAGPUP_HOME, deleted afterwards; the route through Flask's client, 7
+  warm rounds): Select all's tally 179 ms median without the folders (172-218), 218 ms with them (209-244); the folder read alone 33 ms
+  for 2,672 folders; the reply 34.8 KB. `tally.js` draws them: a button a folder, its name as text (two of one name show the folder
+  above), "(N photos)"; a click is `openInOrganize` through `upper` (rapid clicks: one scan, `state.moves.leaving`). More than 10 is a
+  sentence with the count. The Date Taken group is hidden in a view's panel (it showed "--": a view's selection holds no records) and
+  shown in Organize's, which keeps its range; *decided*, as the finding names the library page's panel.
+- **#674, Delete of a view's selection** -- a **bulk job op** (`op: delete` of 9d-1's `tagpup.jobs.bulk_edits`), not batches of the
+  one-photo route: it is how a selection across folders and of thousands is named (by id, the source less the excluded), and the job
+  gives progress, Cancel, one bulk edit at a time in a library and in another process (`job_runs`), the strip, and the Activity
+  page's record, for nothing new. Not resumable: its list of photos is fixed when it starts, and Start again of a cancelled one
+  asks the question again (#691, below). The chunk
+  (`bulk_edit._delete`) deletes each photo through **the one owner of a delete**, `tagpup.services.photos.delete` (the file to the
+  Recycle Bin or, where its place has none, through this PC's, #694; then `forget_photo` -- row, faces -- and the thumbnail), under the lock of changes
+  of photo files for the chunk, so no single save of one of them interleaves. **History/journal: as the folder view's delete, none**
+  -- a delete of a held photo has never been a journal change, so History neither lists nor undoes it; the Activity page lists the
+  job with its counts. **The question is asked of the server first**: `POST /api/library/selection/delete-check`
+  (`selection.where_deleted`: the folders of the selection, `recycle_bin.no_bin_reason` once a folder -- 2,672 folders of
+  photo_index in 2.1 s on this machine, counted read-only, every one with a Bin), and the question says how many go through this
+  PC, how much they take and where they restore to (#694, below). *(It said, until #692/#694, "params.permanent ... a photo found
+  with no Bin that the question did not name is left": not so -- the flag was one bool for the whole job, so a photo found binless
+  in a folder the question had not named WAS deleted for good. Since #694 nothing is deleted for good, and the flag is gone.)* A file already gone is `skipped_missing` and keeps its row (sync reports it). A share that does not answer is an
+  error a photo (`_reachable`, as the other ops). The cap is the other bulk edits' (200,000, refused before any request). When the
+  job ends the page reads the view's order again (`library-view.js photosDeleted`, through `upper`), which drops the deleted photos
+  from the view, its total and the selection, and closes the open photo onto the grid if it was deleted; the navigator's counts and
+  the folder scans are let go as for any job. **What is accepted:** each photo of the job is the one-photo delete's cost --
+  `libraries.split`, `refuse_writes`, `forget_photo` with `derived.prune` and the thumbnail, each its own read or write of the
+  library -- rather than a per-chunk version of them, so as not to make a second owner of a delete; not measured on the live
+  library (it would delete). Deleting the open photo while a job runs is not stopped: its save fails as its file is gone.
+- **#691, a delete deletes exactly what its question named.** delete-check resolves the selection (`selection.resolve`) and answers
+  its `total` and a `token`, the SHA-256 of the sorted ids (`selection.token_of`; 68,000 ids are about 20 ms). The page's question
+  names that total, and the start carries the token; the route resolves the selection again and `bulk_edit.refuse_if_changed`
+  refuses, `409`, nothing begun, when the token differs ("The selection changed since you were asked ...: nothing was deleted. Ask
+  again"). The job's own list of ids is the one resolved at that start, so nothing that comes into the source afterwards is in it. A
+  delete is not resumable (`bulk_edits.resumable` is the time shift's alone); the strip's Start again of a delete goes through
+  `deleteSelection` (delete-check, the question, a new token) through `upper`, never `startBulk(request)`. Reproduced on the old
+  code by the reviewer (question "3 photos", one photo indexed meanwhile, 4 deleted); `test_bulk_delete` holds it.
+- **#693, how long, and what waits.** Measured on a sandbox copy of photo_index (its own TAGPUP_HOME, roots placed at sandbox
+  folders, throwaway JPEGs made at 200 and 400 of its rows' places, the real Recycle Bin, the job run through Flask's client; the
+  sandbox deleted afterwards): 200 photos in 12.8 s (63.8 ms a photo, 15.7 a second), 400 in 25.0 s (62.6 ms, 16.0 a second).
+  The question says the time at 15 a second (`DELETE_PER_SECOND`; 68,000 photos: about 1 hour 16 minutes) and that saving a
+  photo elsewhere waits for the photos being deleted at that moment (each chunk of 25 holds the lock of changes of photo files,
+  about 1.6 s). A photo copied from a share costs its copy too; that was not measured (no share here).
+- **#694, nothing is deleted for good** *(the owner's decision, 2026-10-04)*. A photo in a place with no Recycle Bin (a network share,
+  a removable drive, a SUBST drive) goes through this PC: `tagpup.files.recycle_bin.delete_file` -- the one way every delete of a
+  photo takes, Organize's (`photos.delete`, `file_only.delete`) and the bulk Delete's -- copies it to
+  <Downloads>\TagPup deleted from shares\<server>\<share>\<path> (`mirror_of`; the Downloads known folder by `SHGetKnownFolderPath(FOLDERID_Downloads)`,
+  wherever the owner moved it, the profile's Downloads if Windows cannot say, and a test home's own through `TAGPUP_DOWNLOADS`,
+  which `tests/own_home.py` sets: no test writes the owner's Downloads), checks the copy (size, then SHA-256 of each), sends the
+  COPY to this PC's Recycle Bin (`send_to_recycle_bin`, the existing owner), and only then deletes the original. **Restored, a copy
+  goes to that folder under Downloads, not to the share**: the question, the reply and the SPEC say so. Each step that fails
+  leaves the original and its row, the photo an error: a copy that fails or differs is taken away; this PC's Bin refusing the copy,
+  the copy taken away; a crash or a refusal of the original's delete after the copy is in the Bin leaves the original AND a copy
+  in the Bin -- the photo is there twice, and the error says so. A name already in the mirror folder is kept, the copy takes
+  `name (2).jpg`. **Free space**: the Downloads folder's drive must have room for the copy and 1 GB spare (`room_for`, before each
+  copy); delete-check answers `copy_bytes` (the index's sizes of the photos in places with no Bin) and `no_room`, and the page then
+  says the sentence and asks nothing. Nothing is deleted for good any more: only if this PC's own Recycle Bin refuses is the photo
+  an error, its original kept. `/api/folder/membership`'s `permanent_delete` keeps its name and now means "this place has no
+  Recycle Bin: a delete goes through this PC".
+- **#703-#706, a copy is made only where it is kept** (`recycle_bin.can_copy_here`, before every copy and, for the bulk Delete, before
+  each chunk's copies, `bulk_edit._cannot_keep`; delete-check asks it with the Bin's size fresh). **#703:** Windows makes room in a
+  full Recycle Bin by deleting its OLDEST items for good, so "nothing for good" holds only while the Bin of the Downloads volume can
+  keep what it holds plus the copies: its capacity is the volume's `HKCU\...\Explorer\BitBucket\Volume\{guid}` MaxCapacity (no
+  key: 5 % of the volume, a guess on the safe side), `NukeOnDelete=1` refuses everything (nothing would be kept), a photo larger
+  than the capacity is refused, and `used + copies > capacity * 0.95` refuses with the sizes. `SHQueryRecycleBinW` is slow -- **11.8 s**
+  for this PC's Bin (3,353 items), read once 2026-10-04 -- so its answer is kept per volume and counted on with what this process
+  sends (`note_binned`), and asked again after 10 minutes (`BIN_FRESH`); a copy sent by another program meanwhile is not seen until
+  then (accepted: the 5 % margin). **This PC's Bin was full when read** (49,707 of 49,710 MB): every delete from a share will be
+  refused, with the sentence, until the owner empties it. Out of scope, said: the same capacity check for a photo deleted from a LOCAL
+  folder with its own Bin -- that is Windows' ordinary behaviour for any file the owner deletes, and the Bin is not TagPup's copy; it
+  could share `room_for_copies` if wanted. **#704:** a copy's path (or its `.partial`) of 260 characters or more is refused up front,
+  the sentence naming the length and the folder (`too_long`); delete-check counts them and the question says they are left. **#705:**
+  the question's time for photos through this PC adds the copies at **200 MB a second** (`COPY_BYTES_PER_SECOND`: copy, two hashes,
+  rename, measured on this PC's disk, 100 throwaway files of 3.4 MB: 204 and 210 MB a second) and says "at least", since a share
+  reads slower and was not measurable here. **#706:** `.partial` copies a crash left for the same name are taken away on the way in
+  (they no longer push the name to "(2)"); a Downloads folder under a OneDrive folder (`OneDrive`, `OneDriveConsumer`,
+  `OneDriveCommercial`) is refused. Tests set `TAGPUP_RECYCLE_BIN` (own_home: a large empty Bin) so none reads the owner's.
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag

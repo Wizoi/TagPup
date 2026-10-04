@@ -511,8 +511,7 @@ describe("following the view that is open", () => {
   test("Back to a folder view: the sidebar returns to the pane a folder view has", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all" });
     assert.equal(ctx.state.nav.shown, "library");
-    ctx.document.getElementById("library-strip-back").click();
-    await ctx.settle(60);
+    await ctx.popTo("");
     assert.equal(ctx.state.library, null);
     assert.equal(ctx.state.nav.shown, "folder");
     assert.equal(ctx.selectedRows("folders").length, 0);

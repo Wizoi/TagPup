@@ -1,4 +1,4 @@
-// TagPup's page: Smart Rename and Shift Date Taken.
+// TagPup's page: Smart Rename and Shift Date Taken -- Organize's, a folder's; a library view offers neither (#669).
 import { api } from './common/api.js';
 import { ruleProblem } from './common/validate.js';
 import { samePath } from './common/paths.js';
@@ -16,7 +16,6 @@ import { renderThumbnails } from './grid.js';
 import { updateSelectedThumbnailsCount } from './selection.js';
 import { BULK_LIMIT, clearSelection } from './selected.js';
 import { whereWritten } from './write-queue.js';
-import { shiftSelectionInView } from './bulk-edit.js';
 
 /**
  * Why a Smart Rename grouping cannot be used, or null if it can: the server's rule
@@ -186,11 +185,8 @@ export function onCamera(photo, camera) {
 }
 
 export function applyTimeShift() {
-    // A library view shifts its selection of photos across folders, as a job (bulk-edit.js); a folder shifts a camera's photos.
-    if (state.library) {
-        shiftSelectionInView();
-        return;
-    }
+    // A folder shifts a camera's photos; a library view has no time shift (#669).
+    if (state.library) return;
     const folder = state.scannedFolder;
     if (!folder) return;
     

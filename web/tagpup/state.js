@@ -15,11 +15,9 @@ export const state = {
     // The library view that is open (library-source.js, library-view.js), or null while a folder is: the
     // source's kind and value, the order of its photos (`ids`), the cards held, what is being fetched.
     // While it is open a folder's own state below is idle: scannedFolder is null and folderPhotos holds
-    // only the photo being edited in full. libraryTokens numbers the views opened; libraryReturn is the
-    // folder to go back to.
+    // only the photo being edited in full. libraryTokens numbers the views opened.
     library: null,
     libraryTokens: 0,
-    libraryReturn: '',
     // The navigator beside the grid (navigator.js, navigator-model.js; docs/ARCHITECTURE.md, phase 9c). `shown` is the
     // sidebar's pane ('library' | 'folder'), `choice` the pane each kind of view shows, as the person last chose it
     // (until the page is left); `tab` the section shown; `followed` the source of the view that is open ({ kind,
@@ -53,7 +51,8 @@ export const state = {
     // (library-banner.js).
     moves: { anchor: null, dismissed: new Set(), banner: null, asked: 0, controller: null, addFor: null, cache: new Map(), leaving: false },
     // When the library was last in step with its folders, for the view's strip (sync-state.js).
-    syncInfo: { status: 'idle', lastInStep: null, syncing: false, known: false, asked: 0, controller: null },
+    // `lastRunInStep`: whether the newest sync, of the whole library or a folder, left it in step (null: none, or not known).
+    syncInfo: { status: 'idle', lastInStep: null, lastRunInStep: null, syncing: false, known: false, asked: 0, controller: null },
     // The grid's keys (grid-keys.js): the index of the card the arrow keys are on (or -1), where a Shift run began
     // (-1: none), and whether the focus waits on the grid for a card that has not arrived.
     gridKeys: { index: -1, anchor: -1, waiting: false },
