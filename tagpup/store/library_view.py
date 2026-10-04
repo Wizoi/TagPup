@@ -6,8 +6,8 @@ subfolders; a keyword and everything under it, or its node alone (`keyword_only`
 photos of a year whose date names no month of it (`year_other`); a month; or ANY OF a list of those (a
 union: the rows a person selected in the navigator, phase 9 #672 -- one statement, a photo in two of
 them once). Every source is ordered by when the photo was taken and then by id, those with no date at
-the end (by id), unless another order is asked (ORDERS: Date Taken or file name, either way), and paged
-by a KEYSET -- the (taken, id) of the last photo of the page before -- never by OFFSET, so a page costs
+the end (by id), unless another order is asked (ORDERS: Date Taken, file name or caption, either way), and
+paged by a KEYSET -- the (taken, id) of the last photo of the page before -- never by OFFSET, so a page costs
 what a page costs however far down it is, and a photo added, taken away or re-dated between two pages
 neither repeats nor skips another.
 
@@ -50,17 +50,27 @@ Source = collections.namedtuple("Source", "kind value recursive", defaults=(None
 
 #: Where a page begins and after what: (phase, taken, id). Phase 0 holds the photos with a date, ordered by
 #: (taken, id); phase 1 those with none, ordered by id (taken is None). None begins at the start. In an order by name
-#: `taken` holds the file name of the last photo and the phase is 0: every photo has a name.
+#: `taken` holds the file name of the last photo and the phase is 0: every photo has a name. In an order by caption
+#: phase 0 holds the captioned photos, `taken` the caption's key (caption_sql), and phase 1 those with none.
 Cursor = collections.namedtuple("Cursor", "phase taken id")
 
-#: The orders a source is read in (phase 9, #671): by Date Taken -- the photos with none AFTER the dated ones in both
-#: directions, by id in the order's direction -- or by file name, without case (NOCASE, as the index holds it), either way;
-#: ties broken by id, in the order's direction.
-TAKEN, TAKEN_DESC, NAME, NAME_DESC = "taken", "taken-desc", "name", "name-desc"
-ORDERS = (TAKEN, TAKEN_DESC, NAME, NAME_DESC)
+#: The orders a source is read in (phase 9, #671, #714): by Date Taken -- the photos with none AFTER the dated ones in both
+#: directions, by id in the order's direction --, by file name, or by caption -- the photos with none after the captioned
+#: ones in both directions, as the undated are --, the names and captions without case (NOCASE, as the indexes hold
+#: them), either way; ties broken by id, in the order's direction.
+TAKEN, TAKEN_DESC, NAME, NAME_DESC, CAPTION, CAPTION_DESC = (
+    "taken", "taken-desc", "name", "name-desc", "caption", "caption-desc")
+ORDERS = (TAKEN, TAKEN_DESC, NAME, NAME_DESC, CAPTION, CAPTION_DESC)
+#: The orders read last first.
+DESCENDING = (TAKEN_DESC, NAME_DESC, CAPTION_DESC)
 
 #: The index migration 22 makes: the photos by file name, without case, then id.
 NAME_INDEX = "idx_photos_name"
+#: The index migration 23 makes: the photos by caption (caption_sql), without case, then id.
+CAPTION_INDEX = "idx_photos_caption"
+#: The characters of a caption an order by caption compares: two captions alike in their first CAPTION_KEY are in the
+#: order of their ids. It bounds what a page token holds (the longest caption of photo_index is 616 characters).
+CAPTION_KEY = 200
 
 
 def name_sql(column="path"):
@@ -69,6 +79,17 @@ def name_sql(column="path"):
     query names it with the same text, its column qualified as it likes, for SQLite to use the index."""
     return ("substr(%s, length(rtrim(%s, replace(replace(%s, '/', ''), char(92), ''))) + 1)"
             % (column, column, column))
+
+
+def caption_sql(column="captions"):
+    """The caption an order by caption reads of the captions JSON in `column`, in SQL: the first of the list (the one the
+    page shows, vocabulary.extract_captions), its first CAPTION_KEY characters, NULL for a photo with none (an empty
+    list, an empty text). Text that is not JSON is NULL too, never an error -- an index of an expression that raised would
+    refuse the write of that row. Built-in, deterministic functions only, so that it can be indexed (CAPTION_INDEX), as
+    name_sql is: nothing writes the index but SQLite and no writer of a caption has to know of it."""
+    return ("NULLIF(substr(CASE WHEN json_valid(%s) THEN json_extract(%s, '$[0]') END, 1, %d), '')"
+            % (column, column, CAPTION_KEY))
+
 
 #: Ids read in one statement.
 CHUNK = 500
@@ -269,47 +290,70 @@ def spellings(conn, name):
 _PAST_LAST_ID = 2 ** 62
 
 
-def has_name_index(conn):
-    """Has the library on `conn` the index of file names (migration 22)? Without it an order by name is a sort of the
-    source, as it was before; remembered on the connection once true."""
-    if getattr(conn, "name_index_ready", False):
+#: The orders read by the index of an expression: {order: (the expression of `p`, the index, whether a photo may have
+#: none)}. A photo with none comes after those that have one, by id in the order's direction, as an undated photo does.
+_KEYED = {}
+for _orders, _key, _index, _nullable in (((NAME, NAME_DESC), name_sql("p.path"), NAME_INDEX, False),
+                                         ((CAPTION, CAPTION_DESC), caption_sql("p.captions"), CAPTION_INDEX, True)):
+    for _order in _orders:
+        _KEYED[_order] = (_key, _index, _nullable)
+
+
+def has_index(conn, index):
+    """Has the library on `conn` the index `index` (NAME_INDEX, migration 22; CAPTION_INDEX, migration 23)? Without it an
+    order by that key is a sort of the source, the same order; remembered on the connection once true."""
+    held = getattr(conn, "view_indexes", None)
+    if held is not None and index in held:
         return True
-    found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (NAME_INDEX,)).fetchone() is not None
+    found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (index,)).fetchone() is not None
     if found:
         try:
-            conn.name_index_ready = True
+            conn.view_indexes = (held or frozenset()) | {index}
         except AttributeError:
             pass   # a connection that is not db.connect's cannot remember
     return found
 
 
-def _by_name(conn, scope):
-    """(FROM, WHERE, params) that read the photos of `scope` in the order of the name index: the index walked in order
-    and each entry tested for the source -- 5 to 25 ms whatever the source's size on photo_index, where sorting 15,000
+def _by_index(conn, scope, index):
+    """(FROM, WHERE, params) that read the photos of `scope` in the order of `index`: the index walked in order and each
+    entry tested for the source -- by name 5 to 25 ms whatever the source's size on photo_index, where sorting 15,000
     photos by a name computed for each was 130 ms. A source joined to another table is asked as a subquery."""
     where = scope.where if scope.from_ == "photos p" else "p.id IN (SELECT p.id FROM %s WHERE %s)" % (scope.from_, scope.where)
-    from_ = "photos p INDEXED BY %s" % NAME_INDEX if has_name_index(conn) else "photos p"
+    from_ = "photos p INDEXED BY %s" % index if has_index(conn, index) else "photos p"
     return from_, "(%s)" % where, scope.params
 
 
-def _name_page(conn, scope, cursor, limit, desc):
-    from_, where, params = _by_name(conn, scope)
-    name = name_sql("p.path")
-    way, beyond = (" DESC", "<") if desc else ("", ">")
-    sql = "SELECT %s, p.id FROM %s WHERE %s" % (name, from_, where)
-    values = list(params)
-    if cursor is not None:
-        # The bound on the name alone is what the index seeks; the pair with the id is the keyset.
-        sql += " AND %s COLLATE NOCASE %s= ? AND (%s COLLATE NOCASE, p.id) %s (?, ?)" % (name, beyond, name, beyond)
-        values += [cursor.taken, cursor.taken, cursor.id]
-    sql += " ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?" % (name, way, way)
-    rows = [(photo_id, key) for key, photo_id in conn.execute(sql, values + [limit + 1])]
+def _keyed_page(conn, scope, cursor, limit, order):
+    """A page in an order of _KEYED: those with a key by (key without case, id), then -- for a key a photo may lack --
+    those with none by id, each phase one statement, as _page reads the dated and the undated."""
+    key, index, nullable = _KEYED[order]
+    from_, where, params = _by_index(conn, scope, index)
+    way, beyond = (" DESC", "<") if order in DESCENDING else ("", ">")
+    want = limit + 1
+    rows = []
+    if cursor is None or cursor.phase == 0:
+        sql = "SELECT %s, p.id FROM %s WHERE %s" % (key, from_, where)
+        values = list(params)
+        if nullable:
+            sql += " AND %s IS NOT NULL" % key
+        if cursor is not None:
+            # The bound on the key alone is what the index seeks; the pair with the id is the keyset.
+            sql += " AND %s COLLATE NOCASE %s= ? AND (%s COLLATE NOCASE, p.id) %s (?, ?)" % (key, beyond, key, beyond)
+            values += [cursor.taken, cursor.taken, cursor.id]
+        sql += " ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?" % (key, way, way)
+        rows = [(photo_id, value) for value, photo_id in conn.execute(sql, values + [want])]
+    if nullable and len(rows) < want:
+        start = _PAST_LAST_ID if order in DESCENDING else 0
+        after = cursor.id if cursor is not None and cursor.phase == 1 else start
+        rows += [(photo_id, None) for (photo_id,) in conn.execute(
+            "SELECT p.id FROM %s WHERE %s AND %s IS NULL AND p.id %s ? ORDER BY p.id%s LIMIT ?" % (from_, where, key, beyond, way),
+            list(params) + [after, want - len(rows)])]
     return rows[:limit], len(rows) > limit
 
 
 def _page(conn, scope, cursor, limit, order=TAKEN):
-    if order in (NAME, NAME_DESC):
-        return _name_page(conn, scope, cursor, limit, order == NAME_DESC)
+    if order in _KEYED:
+        return _keyed_page(conn, scope, cursor, limit, order)
     desc = order == TAKEN_DESC
     way, beyond = (" DESC", "<") if desc else ("", ">")
     want = limit + 1   # one more than the page says whether another page follows
@@ -336,16 +380,22 @@ def _page(conn, scope, cursor, limit, order=TAKEN):
 def all_ids(conn, source, cap, order=TAKEN):
     """([photo id] of the whole source in the order `page` gives, how many photos the source holds): at most `cap`
     ids, the total counted when the source holds more. Two statements at most, one per phase, each an index-ordered
-    read of ids alone -- the keyset page's order without the keyset. By name, one: the name index walked in order."""
+    read of ids alone -- the keyset page's order without the keyset. By name, one: the name index walked in order. By
+    caption, the caption index walked in order, the captioned and then those with none."""
     scope = _scope(conn, source)
     if scope is None:
         return [], 0
-    if order in (NAME, NAME_DESC):
-        from_, where, params = _by_name(conn, scope)
-        way = " DESC" if order == NAME_DESC else ""
+    if order in _KEYED:
+        key, index, nullable = _KEYED[order]
+        from_, where, params = _by_index(conn, scope, index)
+        way = " DESC" if order in DESCENDING else ""
         ids = [photo_id for (photo_id,) in conn.execute(
-            "SELECT p.id FROM %s WHERE %s ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?"
-            % (from_, where, name_sql("p.path"), way, way), list(params) + [cap + 1])]
+            "SELECT p.id FROM %s WHERE %s%s ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?"
+            % (from_, where, " AND %s IS NOT NULL" % key if nullable else "", key, way, way), list(params) + [cap + 1])]
+        if nullable and len(ids) <= cap:
+            ids += [photo_id for (photo_id,) in conn.execute(
+                "SELECT p.id FROM %s WHERE %s AND %s IS NULL ORDER BY p.id%s LIMIT ?" % (from_, where, key, way),
+                list(params) + [cap + 1 - len(ids)])]
     else:
         way = " DESC" if order == TAKEN_DESC else ""
         ids = [photo_id for (photo_id,) in conn.execute(
@@ -417,8 +467,8 @@ def total(conn, source):
 def page(conn, source, cursor=None, limit=100, order=TAKEN):
     """([(photo id, taken)] of the page after `cursor`, whether there are more after it): `limit` photos of
     `source` in order, those with a date first by (taken, id), then those with none by id (in `order`; by name the
-    second of each pair is the file name). One statement for each phase it reaches; `next_cursor` of the last photo
-    continues."""
+    second of each pair is the file name, by caption the caption's key or None). One statement for each phase it
+    reaches; `next_cursor` of the last photo continues."""
     scope = _scope(conn, source)
     return ([], False) if scope is None else _page(conn, scope, cursor, limit, order)
 
@@ -433,7 +483,7 @@ def view(conn, source, cursor=None, limit=100, order=TAKEN):
 
 
 def next_cursor(row):
-    """The cursor that continues after `row`, (photo id, taken -- or name, by name)."""
+    """The cursor that continues after `row`, (photo id, taken -- or name, by name; caption, by caption)."""
     photo_id, taken = row
     return Cursor(0 if taken is not None else 1, taken, photo_id)
 
