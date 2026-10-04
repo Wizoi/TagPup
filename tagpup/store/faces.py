@@ -414,26 +414,38 @@ def named_elsewhere_in_photo(conn, photo_path, person_name, face_id):
                         params + (person_name, face_id)).fetchone() is not None
 
 
-def _scope(conn, photo_path=None, folder=None):
-    if photo_path is not None:
-        return _on_photo(conn, photo_path, "f.photo_id")
-    return _under(conn, folder, "f.photo_id")
+#: The faces of the photos under a folder, the photos found first: their range on
+#: idx_photos_path_nocase, then each one's faces by idx_faces_photo_id. CROSS JOIN keeps
+#: that order. Asked as faces whose photo is IN the folder, SQLite started from the
+#: unnamed faces of the whole library (idx_faces_identify): 190,000 of them in the
+#: largest, for a folder of 2,400 (docs/findings.md, #644).
+UNDER_FROM_PHOTOS = " FROM photos p CROSS JOIN faces f ON f.photo_id = p.id"
+
+
+def _photos_under(conn, folder):
+    """WHERE clause and parameters for the photos `p` under a folder, at any depth."""
+    return store_roots.sql_under(conn, "p.path", folder)
 
 
 def unnamed(conn, photo_path=None, folder=None):
     """(id, embedding bytes, photo_path) of the unnamed, unexcluded faces in one photo, or
     under a folder at any depth."""
-    where, params = _scope(conn, photo_path, folder)
+    if photo_path is not None:
+        where, params = _on_photo(conn, photo_path, "f.photo_id")
+        source = " FROM faces f" + PHOTO
+    else:
+        where, params = _photos_under(conn, folder)
+        source = UNDER_FROM_PHOTOS
     return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, f.embedding, p.path FROM faces f" + PHOTO + " WHERE " + where
+        "SELECT f.id, f.embedding, p.path" + source + " WHERE " + where
         + " AND f.name IS NULL AND f.excluded = 0", params).fetchall(), 2)
 
 
 def unnamed_counts(conn, folder):
     """{photo_path as stored: faces still unnamed} for the photos under a folder."""
-    where, params = _under(conn, folder, "f.photo_id")
+    where, params = _photos_under(conn, folder)
     return dict(store_roots.natives(conn, conn.execute(
-        "SELECT p.path, COUNT(*) FROM faces f" + PHOTO + " WHERE " + where
+        "SELECT p.path, COUNT(*)" + UNDER_FROM_PHOTOS + " WHERE " + where
         + " AND f.name IS NULL GROUP BY f.photo_id", params).fetchall(), 0))
 
 

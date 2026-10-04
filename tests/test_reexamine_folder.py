@@ -31,6 +31,7 @@ from tests.test_service_faces import FacesCase, vector  # noqa: E402
 
 from tagpup.services import faces  # noqa: E402
 from tagpup.store import db  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 
 ROWAN = "Rowan Thackeray"
@@ -142,6 +143,42 @@ class ReexamineInTheService(FacesCase):
         self.assertEqual(result.changed, 1)
         self.assertIsNone(self.face_row(odd)[0])
         self.assertEqual(self.face_row(self.lookalike)[0], ROWAN)
+
+
+class AFolderIsReadFromItsPhotos(FacesCase):
+    """docs/findings.md, #644: the folder's queries started from every unnamed face in the
+    library and kept those under the folder -- 190,364 for a folder of 2,407. They start
+    from the folder's photos, by the path index, and take each one's faces by photo."""
+
+    def plans(self, ask):
+        asked = []
+        conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
+
+        class Recording:
+            def __getattr__(self, attr):
+                return getattr(conn, attr)
+
+            def execute(self, sql, params=()):
+                asked.append((sql, params))
+                return conn.execute(sql, params)
+        try:
+            ask(Recording())
+            return [" | ".join(row[-1] for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params))
+                    for sql, params in asked if "faces" in sql]
+        finally:
+            conn.close()
+
+    def test_the_photos_come_first_and_their_faces_by_photo(self):
+        photo = self.photo("a.jpg")
+        self.face(photo, embedding=vector(1))
+        self.face(photo, name=ROWAN, embedding=vector(2))
+        for ask in (lambda conn: store_faces.unnamed(conn, folder=self.folder),
+                    lambda conn: store_faces.unnamed_counts(conn, self.folder)):
+            for plan in self.plans(ask):
+                self.assertTrue(plan.startswith("SEARCH p USING COVERING INDEX idx_photos_path_nocase"), plan)
+                self.assertIn("idx_faces_photo_id", plan)
+                self.assertNotIn("idx_faces_identify", plan)
+                self.assertNotIn("idx_faces_name", plan)
 
 
 if __name__ == "__main__":
