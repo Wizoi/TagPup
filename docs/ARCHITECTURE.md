@@ -1892,6 +1892,19 @@ folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Or
   the folder a view was opened from, as it always did. **This folder only** and **Show on disk** went from the strip; `showOnDisk`
   became `openInOrganize(folder)` -- scan first, close the view only when the scan answered (#569), a folder gone or a share away keeps
   the view and says so in the strip -- used by #675's Folders to Organize. Show in File Explorer (the grid's context menu) stays.
+- **#675, Folders to Organize.** The tally's answer gains `folders: {count, listed}` (`tagpup.services.selection._folders` over
+  `tagpup.store.selection_folders`, a module of its own beside `store.library_view`, which another branch has this week): one
+  `SELECT folder_id, COUNT(*) FROM photo_folder WHERE photo_id IN (<the tally's selection>) GROUP BY folder_id`, in the tally's own read
+  transaction and over its own `sel` table (`library_view._selected`, private there and used, not copied: the counts and the folders are
+  of one set of photos), and the `folders` rows by key only when 10 or fewer (`MAX_FOLDERS_LISTED`). The page never holds the paths of
+  the selected photos. Plans on a sandbox copy of photo_index: a list of ids seeks `photo_folder` by key for each (`SEARCH photo_folder
+  USING INTEGER PRIMARY KEY`, the ids from `sel`); a Select all scans the covering path index of `photos`, as the tally's own reads do.
+  **Measured** (sandbox copy of photo_index, 68,324 photos, its own TAGPUP_HOME, deleted afterwards; the route through Flask's client, 7
+  warm rounds): Select all's tally 179 ms median without the folders (172-218), 218 ms with them (209-244); the folder read alone 33 ms
+  for 2,672 folders; the reply 34.8 KB. `tally.js` draws them: a button a folder, its name as text (two of one name show the folder
+  above), "(N photos)"; a click is `openInOrganize` through `upper` (rapid clicks: one scan, `state.moves.leaving`). More than 10 is a
+  sentence with the count. The Date Taken group is hidden in a view's panel (it showed "--": a view's selection holds no records) and
+  shown in Organize's, which keeps its range; *decided*, as the finding names the library page's panel.
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag

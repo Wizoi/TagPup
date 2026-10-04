@@ -19,6 +19,7 @@ from tagpup.core import vocabulary
 from tagpup.core.result import Refused
 from tagpup.services import library_view
 from tagpup.store import library_view as store
+from tagpup.store import selection_folders as store_folders
 
 #: The most ids a selection lists (`ids`, or `excluded`).
 MAX_LISTED = 20_000
@@ -70,9 +71,16 @@ def read(library, body):
     return Selection(None, source, _id_list(body.get("excluded", []), "excluded"))
 
 
+#: The most folders the panel lists under "Folders to Organize" (#675); more are counted and the owner asked to narrow.
+MAX_FOLDERS_LISTED = 10
+
+
 def tally(library, selection):
     """What the photos of `selection` hold: {"total" (the photos that exist), "tags": [{"tag", "count"}], "people":
-    [{"name", "count"}], "more_tags", "more_people"} -- the tags and people the selection carries, each with the number of
+    [{"name", "count"}], "more_tags", "more_people", "folders": {"count", "listed": [{"path", "name", "photos"}]}} -- the
+    folders the selection is in, counted, and named (native path, the folder's own name, its photos selected) only when
+    there are MAX_FOLDERS_LISTED or fewer, by name (#675: what the panel offers to open in Organize; 68,000 photos are
+    one grouped read of photo_folder, never 68,000 paths); and the tags and people the selection carries, each with the number of
     its photos, tags alphabetically by the shared order (vocabulary.tag_sort_key) and people by it too, at most MAX_TALLIED
     of each (the rest are counted in `more_*`, the most used kept). From photo_tags and photo_people, one grouped read over
     the selection: a source is joined in SQL and its excluded ids taken out there, so 68,000 photos are no list in
@@ -82,13 +90,28 @@ def tally(library, selection):
     conn = library_view.opened(library)
     try:
         found = store.tally(conn, selection.ids, selection.source, selection.excluded)
+        # In the tally's read transaction: the folders are of the photos just counted.
+        folders = _folders(conn, selection)
     finally:
         conn.close()
     tags = _kept([(tag, count) for tag, count in found["tags"]])
     people = _kept(found["people"])
     return {"total": found["total"],
             "tags": [{"tag": tag, "count": count} for tag, count in tags[0]], "more_tags": tags[1],
-            "people": [{"name": name, "count": count} for name, count in people[0]], "more_people": people[1]}
+            "people": [{"name": name, "count": count} for name, count in people[0]], "more_people": people[1],
+            "folders": folders}
+
+
+def _folders(conn, selection):
+    """{"count": folders the selection is in, "listed": [{"path", "name", "photos"}]}: named only when MAX_FOLDERS_LISTED or
+    fewer, in the shared order of their names (then their paths)."""
+    counted = store_folders.counts(conn, selection.ids, selection.source, selection.excluded)
+    if not counted or len(counted) > MAX_FOLDERS_LISTED:
+        return {"count": len(counted), "listed": []}
+    named = store_folders.described(conn, counted)
+    listed = [{"path": path, "name": name, "photos": counted[folder_id]} for folder_id, (path, name) in named.items()]
+    listed.sort(key=lambda each: (vocabulary.tag_sort_key(each["name"]), each["path"]))
+    return {"count": len(counted), "listed": listed}
 
 
 def _kept(counted):

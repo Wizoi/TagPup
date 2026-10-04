@@ -949,6 +949,36 @@ body {
     flex: 1;
 }
 
+/* Folders to Organize (#675): each folder's name, a button that opens it in Organize, and its photos selected. */
+.selection-folders-list {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.selection-folder-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 13px;
+    color: var(--accent);
+    cursor: pointer;
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+
+.selection-folder-link:hover,
+.selection-folder-link:focus-visible {
+    text-decoration: underline;
+}
+
+.selection-folder-count {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
 .selection-summary-group {
     display: flex;
     flex-direction: column;

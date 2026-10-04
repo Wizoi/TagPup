@@ -17,6 +17,7 @@ export const upper = {
     libraryViewPainted: null,
     navigatorCountsChanged: null,
     navigatorFollows: null,
+    openInOrganize: null,
     photosWritten: null,
     populateCameraModelsDropdown: null,
     recordUndo: null,

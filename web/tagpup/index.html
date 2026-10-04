@@ -395,6 +395,14 @@
                         </div>
 
                         <div class="selection-summary-scroll">
+                            <!-- In a library view only: the folders the selected photos are in, each opening in Organize, when there
+                                 are 10 or fewer; more are counted (web/tagpup/tally.js, #675). -->
+                            <div class="selection-summary-group hidden" id="selection-folders-group">
+                                <span class="detail-label">Folders to Organize</span>
+                                <div id="selection-folders-list" class="selection-folders-list"></div>
+                            </div>
+
+                            <!-- Organize only: a library view's panel has no Date Taken (#675). -->
                             <div class="selection-date-group" id="selection-date-group" style="padding: 12px 20px; border-bottom: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 4px;">
                                 <span class="detail-label" id="selection-date-label">Date Taken</span>
                                 <span class="detail-value" id="selection-date-value" style="font-size: 13px; font-weight: 500;">Unknown</span>

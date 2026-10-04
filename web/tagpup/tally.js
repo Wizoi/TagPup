@@ -2,12 +2,15 @@
 // counted by the server (POST /api/library/selection/tally), because the page holds only the cards near the window and a count of a
 // part would read as the whole (docs/ARCHITECTURE.md, phase 9d-2; 9d-1 for the route). Asked 250 ms after the selection stops changing,
 // and a request the selection has left behind is aborted and its answer dropped. While it is out the lists say "counting...".
-// A folder view's panel is selection.js's own and is not touched.
+// The same answer names the folders the selection is in (#675): ten or fewer are listed by name, each a button that opens it in
+// Organize (library-moves.js openInOrganize, through `upper`); more are counted, and the owner is asked to narrow the selection.
+// Names are text, never markup. A folder view's panel is selection.js's own and is not touched.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { sortedTags } from './common/vocabulary.js';
+import { upper } from './hooks.js';
 import { state } from './state.js';
-import { selectionPeopleList, selectionTagsList } from './elements.js';
+import { selectionFoldersList, selectionPeopleList, selectionTagsList } from './elements.js';
 import { selectionCount, tallyRequest } from './selected.js';
 import { editByPill } from './bulk-edit.js';
 import { lockBulkControls } from './bulk-job.js';
@@ -51,6 +54,41 @@ function listOf(entries, more, total, kind, key) {
     return shown;
 }
 
+/** The most folders listed by name: the server's MAX_FOLDERS_LISTED (tagpup.services.selection). */
+export const FOLDERS_LISTED = 10;
+
+/** The last two parts of a path, for two listed folders of one name ("2020\Event 01" beside "2021\Event 01"). */
+function twoParts(path) {
+    const parts = String(path).split(/[\\/]+/).filter(Boolean);
+    return parts.slice(-2).join('\\');
+}
+
+/** Folders to Organize: each listed folder a button opening it in Organize, or how many there are and to narrow the selection. */
+function foldersOf(folders) {
+    if (!folders || !Number.isFinite(folders.count)) return [note('')];
+    if (folders.count === 0) return [note('None')];
+    const listed = Array.isArray(folders.listed) ? folders.listed : [];
+    if (folders.count > FOLDERS_LISTED || !listed.length) {
+        return [note(`These photos are in ${folders.count.toLocaleString()} folders. Narrow the selection to ${FOLDERS_LISTED} folders or fewer to open one in Organize.`)];
+    }
+    const names = new Map();
+    for (const each of listed) names.set(each.name, (names.get(each.name) || 0) + 1);
+    return listed.map(each => {
+        const label = names.get(each.name) > 1 ? twoParts(each.path) : String(each.name || each.path);
+        const open = buildElement('button', {
+            className: 'selection-folder-link', text: label, title: `Open ${each.path} in Organize`, attrs: { type: 'button' },
+        });
+        open.addEventListener('click', (event) => {
+            event.stopPropagation();
+            upper.openInOrganize(each.path);
+        });
+        const photos = Number(each.photos) || 0;
+        return buildElement('span', {}, [open, ' ', buildElement('span', {
+            className: 'selection-folder-count', text: `(${photos.toLocaleString()} ${photos === 1 ? 'photo' : 'photos'})`,
+        })]);
+    });
+}
+
 /** Draw what the panel holds: counting, the tally, or why there is none. */
 export function drawTally() {
     const tally = state.tally;
@@ -58,13 +96,16 @@ export function drawTally() {
     if (tally.status === 'counting' || tally.status === 'idle') {
         replaceContent(selectionPeopleList, note('counting…'));
         replaceContent(selectionTagsList, note('counting…'));
+        if (selectionFoldersList) replaceContent(selectionFoldersList, note('counting…'));
     } else if (tally.status === 'error') {
         replaceContent(selectionPeopleList, note(tally.message));
         replaceContent(selectionTagsList, note(tally.message));
+        if (selectionFoldersList) replaceContent(selectionFoldersList, note(tally.message));
     } else if (tally.data) {
         const data = tally.data;
         replaceContent(selectionPeopleList, ...listOf(data.people, data.more_people, data.total, 'person', 'name'));
         replaceContent(selectionTagsList, ...listOf(data.tags, data.more_tags, data.total, 'tag', 'tag'));
+        if (selectionFoldersList) replaceContent(selectionFoldersList, ...foldersOf(data.folders));
     }
     lockBulkControls();
 }
@@ -146,6 +187,7 @@ export function selectionTallied() {
                     total: Number.isFinite(body.total) ? body.total : 0,
                     tags: Array.isArray(body.tags) ? body.tags : [], more_tags: body.more_tags || 0,
                     people: Array.isArray(body.people) ? body.people : [], more_people: body.more_people || 0,
+                    folders: body.folders && typeof body.folders === 'object' ? body.folders : null,
                 };
                 tally.status = 'ready';
                 drawTally();
