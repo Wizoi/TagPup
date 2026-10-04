@@ -11,6 +11,7 @@ tagpup.store.faces.accounted_write and return `fingerprints` (before, after) and
 grids instead of rebuilding them. The rest move the fingerprint, and a grid built before
 them is rebuilt.
 """
+import collections
 import json
 import logging
 import os
@@ -221,16 +222,24 @@ def automatch_photo(library, photo_path, named):
     unit vectors -- the matrix TagTuner keeps -- and is asked only when there are faces
     to match; a matrix of None names nobody.
 
-    `changed`: the faces named."""
+    `changed`: the faces named. details as _automatch's."""
     return _automatch(library, named, photo_path=photo_path)
 
 
-def automatch_folder(library, folder, named):
+def automatch_folder(library, folder, named, rehearse=False):
     """Automatch every photo in a folder, and the folders under it. As automatch_photo.
+    Re-examine this folder, in TagTuner.
 
-    details: `remaining_counts`, each photo's faces still unnamed, keyed as stored.
+    `rehearse`: decide by the same rules and write nothing -- what Re-examine asks before
+    it names anyone. `changed` is then 0 and details say what would be named. Applying
+    afterwards decides again: faces named, excluded or renamed in between change it.
+
+    details: as _automatch's; applied, `remaining_counts` as well, each photo's faces still
+    unnamed, keyed as stored.
     """
-    result = _automatch(library, named, folder=folder)
+    result = _automatch(library, named, folder=folder, rehearse=rehearse)
+    if rehearse:
+        return result
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         result.details["remaining_counts"] = faces.unnamed_counts(conn, folder)
@@ -281,15 +290,26 @@ def remove_folder(library, folder):
     return result
 
 
-def _automatch(library, named, photo_path=None, folder=None):
+def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     """Automatch the unnamed faces in a photo, or under a folder. A face is given the name of the named
     face it most resembles, when it may be named unasked (clustering.names_unasked), unless that name is already
     in its photo or proposed for two faces there.
 
     The faces are compared before the write lock is taken -- building the named matrix
-    can take half a second -- and a face named meanwhile is left as it is."""
+    can take half a second, comparing thousands of faces a few seconds more -- and a face
+    named or excluded meanwhile is left as it is, as is a face whose name no face carries
+    any longer by the time of the write: its person was renamed, or unnamed everywhere,
+    after the matrix was read, and writing the old spelling would bring back somebody
+    who no longer exists.
+
+    `rehearse`: decide on a read-only connection and write nothing.
+
+    details: `dry_run`; `faces`, the faces named (or that would be); `photos`, the photos
+    they are in; `people`, {name: faces}; `renamed`, the faces left because their person's
+    name had gone. The same keys whether rehearsed or applied, so the page can say how the
+    two differ."""
     _library_there(library)
-    result = Result()
+    result = Result(details={"dry_run": bool(rehearse), "faces": 0, "photos": 0, "people": {}, "renamed": 0})
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         unnamed = faces.unnamed(conn, photo_path=photo_path, folder=folder)
@@ -302,18 +322,14 @@ def _automatch(library, named, photo_path=None, folder=None):
     if matrix is None:
         return result
 
-    proposed = {}
-    for face_id, blob, face_photo in unnamed:
-        similarities = np.dot(matrix, np.frombuffer(blob, dtype=np.float32))
-        best = int(np.argmax(similarities))
-        # As alike as naming a face with no one looking allows (tagpup.core.clustering).
-        if clustering.names_unasked(float(similarities[best])):
-            proposed.setdefault(face_photo, []).append((face_id, names[best]))
+    proposed = _closest_named(unnamed, names, matrix)
     if not proposed:
         return result
 
-    def match(conn):
-        count = 0
+    def decide(conn):
+        """[(face_id, name, photo)] to name, and how many were left for a name gone."""
+        given = faces.names_given(conn, {name for found in proposed.values() for _fid, name in found})
+        chosen, gone = [], 0
         for face_photo, faces_proposed in proposed.items():
             # Only the photos a name is proposed for, each by an index. Reading every
             # named face under the folder scanned the whole table inside the write lock,
@@ -323,13 +339,71 @@ def _automatch(library, named, photo_path=None, folder=None):
             for face_id, name in faces_proposed:
                 if proposed_names.count(name) > 1 or name in taken:
                     continue
-                # A bulk guess, not a per-face human decision, so it is left as an
-                # automatic assignment that re-clustering may revise.
-                count += faces.name_if_unnamed(conn, face_id, name)
-        return count
+                if name not in given:
+                    gone += 1
+                    continue
+                chosen.append((face_id, name, face_photo))
+        return chosen, gone
 
-    result.changed = db.write_with_connection(library.path, match, label="automatch faces")
+    def match(conn):
+        # The write lock first, then the reads it decides by: a rename committed by the
+        # other app or the CLI between the guard and the first UPDATE was written under
+        # the old spelling, the connection being in no transaction until it wrote
+        # (docs/findings.md, #645).
+        db.begin(conn, immediate=True)
+        chosen, gone = decide(conn)
+        # A bulk guess, not a per-face human decision, so it is left as an automatic
+        # assignment that re-clustering may revise. Only the faces still unnamed and in
+        # play are named (faces.name_if_unnamed), and only those are counted.
+        return [(name, face_photo) for face_id, name, face_photo in chosen
+                if faces.name_if_unnamed(conn, face_id, name)], gone
+
+    if rehearse:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            chosen, gone = decide(conn)
+        finally:
+            conn.close()
+        done = [(name, face_photo) for _fid, name, face_photo in chosen]
+    else:
+        done, gone = db.write_with_connection(library.path, match, label="automatch faces")
+        result.changed = len(done)
+    result.details.update(faces=len(done), photos=len({face_photo for _name, face_photo in done}),
+                          people=dict(collections.Counter(name for name, _photo in done)), renamed=gone)
+    if not rehearse:
+        result.details["photos_named"] = sorted({face_photo for _name, face_photo in done})
     return result
+
+
+#: How many unnamed faces are compared with every named face at once: a block of named x
+#: this many similarities, 70 MB for 35,000 named faces.
+COMPARE_BLOCK = 512
+
+
+def _closest_named(unnamed, names, matrix):
+    """{photo: [(face_id, name)]} for each of `unnamed` (id, embedding, photo) whose closest
+    named face it may be named after unasked. Compared a block at a time: one product per
+    face made Re-examine on a folder of 2,600 photos and 9,400 unnamed faces, against
+    36,000 named ones, take 32 to 47 seconds; a block at a time, 2 to 5. A face whose
+    embedding is not the matrix's width is compared with nobody, where it failed the
+    whole folder."""
+    width = matrix.shape[1]
+    usable = [(face_id, blob, face_photo) for face_id, blob, face_photo in unnamed
+              if blob and len(blob) == width * 4]
+    proposed = {}
+    for start in range(0, len(usable), COMPARE_BLOCK):
+        block = usable[start:start + COMPARE_BLOCK]
+        vectors = np.stack([np.frombuffer(blob, dtype=np.float32) for _fid, blob, _photo in block])
+        # A row per unnamed face: the closest named face is found along a row, in memory
+        # order. Down a column of the transposed product the argmax alone took 2.6 s.
+        similarities = vectors @ matrix.T
+        best = np.argmax(similarities, axis=1)
+        for row, (face_id, _blob, face_photo) in enumerate(block):
+            closest = int(best[row])
+            # As alike as naming a face with no one looking allows (tagpup.core.clustering).
+            if clustering.names_unasked(float(similarities[row, closest])):
+                proposed.setdefault(face_photo, []).append((face_id, names[closest]))
+    return proposed
 
 
 def _library_there(library):

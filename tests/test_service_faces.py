@@ -218,6 +218,11 @@ class Automatching(FacesCase):
         super().setUp()
         self.wren, self.ada = vector(1), vector(2)
         self.asked = []
+        # The matrix TagTuner keeps is made of named faces; the names it offers are on
+        # faces in the library, as here. Automatch names nobody whose name no face has.
+        known = self.photo("known.jpg")
+        self.face(known, name="Wren Halloway", embedding=self.wren)
+        self.face(known, name="Ada Pembrook", embedding=self.ada)
 
     def named(self):
         self.asked.append(True)
@@ -292,10 +297,10 @@ class TheWriteLockIsNotHeldThroughAScan(FacesCase):
 
         with mock.patch.object(store_faces, "names_in_photo", side_effect=names_in_photo):
             faces.automatch_folder(self.lib.library, self.folder,
-                                   lambda: ([1], ["Wren Halloway"], np.stack([vector(1)])))
+                                   lambda: ([1], ["Kit Morrow"], np.stack([vector(1)])))
         self.assertEqual(asked, [photo])
         self.assertEqual(self.face_row(self.lib.rows("SELECT id FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)",
-                                                     (photo,))[0][0])[0], "Wren Halloway")
+                                                     (photo,))[0][0])[0], "Kit Morrow")
 
 
 class RemovingAFolder(FacesCase):

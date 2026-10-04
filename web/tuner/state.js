@@ -88,6 +88,10 @@ export const state = {
 
     pendingIgnore: null,
 
+    // The folder Re-examine is asking about or naming faces in (reexamine.js), or null:
+    // one at a time, so a second press cannot ask again while the first is answered.
+    reexamining: null,
+
     assignUndoTimer: null,
 
     allTags: [],

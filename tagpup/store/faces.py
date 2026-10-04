@@ -51,6 +51,18 @@ def names_in_photo(conn, photo_path):
         "SELECT name FROM faces WHERE " + where + " AND name IS NOT NULL", params)}
 
 
+def names_given(conn, names):
+    """Which of `names` some face carries now, on `conn`: one indexed query for them all.
+    A name read before a write began may have been renamed, or taken off every face,
+    before it is written."""
+    names = list(names)
+    found = set()
+    for chunk in _chunks(names):
+        found.update(name for (name,) in conn.execute(
+            "SELECT DISTINCT name FROM faces WHERE name IN (" + ",".join("?" * len(chunk)) + ")", chunk))
+    return found
+
+
 def generation(conn):
     """The faces table's generation (tagpup.store.generations), or 0 on a library that
     does not count it yet. It moves when a name changes, which none of the table's
@@ -348,9 +360,11 @@ def name(conn, face_ids, person_name):
 
 def name_if_unnamed(conn, face_id, person_name):
     """Give an unnamed, unexcluded face a name as a guess -- who decided is left alone,
-    so re-clustering may revise it. Returns rows named. The caller commits."""
-    changed = conn.execute("UPDATE faces SET name = ? WHERE id = ? AND name IS NULL AND excluded = 0",
-                           (person_name, face_id)).rowcount
+    so re-clustering may revise it. Not a face somebody unmatched by hand: "this is
+    nobody" is a decision, which a guess does not overrule (docs/findings.md, #643).
+    Returns rows named. The caller commits."""
+    changed = conn.execute("UPDATE faces SET name = ? WHERE id = ? AND name IS NULL AND excluded = 0"
+                           " AND " + NOT_DECIDED_NOBODY % "", (person_name, face_id)).rowcount
     return _rebuilt(conn, _photos_of(conn, [face_id]), changed)
 
 
@@ -364,12 +378,16 @@ def unname(conn, face_ids, source="manual"):
 
 
 def unname_photo(conn, photo_path):
-    """Take the names off every face in a photo, as a decision. Returns rows changed. By
-    equality: a LIKE pass as well cleared every name in IMG-1234.jpg along with
-    IMG_1234.jpg. The caller commits."""
+    """Take the names off every named face in a photo, as a decision. Returns rows
+    changed. By equality: a LIKE pass as well cleared every name in IMG-1234.jpg along
+    with IMG_1234.jpg. The caller commits.
+
+    Only the faces that had a name: marking the photo's nameless faces 'manual' as well
+    called each of them "nobody" for good, and automatch never named them again
+    (docs/findings.md, #656)."""
     where, params = _on_photo(conn, photo_path)
-    changed = conn.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + where,
-                           params).rowcount
+    changed = conn.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + where
+                           + " AND name IS NOT NULL", params).rowcount
     return _rebuilt(conn, {photo_id for (photo_id,) in conn.execute(
         "SELECT DISTINCT photo_id FROM faces WHERE " + where, params)}, changed)
 
@@ -402,27 +420,49 @@ def named_elsewhere_in_photo(conn, photo_path, person_name, face_id):
                         params + (person_name, face_id)).fetchone() is not None
 
 
-def _scope(conn, photo_path=None, folder=None):
-    if photo_path is not None:
-        return _on_photo(conn, photo_path, "f.photo_id")
-    return _under(conn, folder, "f.photo_id")
+#: The faces of the photos under a folder, the photos found first: their range on
+#: idx_photos_path_nocase, then each one's faces by idx_faces_photo_id. CROSS JOIN keeps
+#: that order, and INDEXED BY the index: with `excluded = 0` and `name IS NULL` beside
+#: it, SQLite otherwise took idx_faces_identify for each photo, every unnamed face of
+#: the library once per photo. Asked as faces whose photo is IN the folder, it started
+#: from the unnamed faces of the whole library: 190,000 of them in the largest, for a
+#: folder of 2,400 (docs/findings.md, #644).
+UNDER_FROM_PHOTOS = " FROM photos p CROSS JOIN faces f INDEXED BY idx_faces_photo_id ON f.photo_id = p.id"
+
+
+def _photos_under(conn, folder):
+    """WHERE clause and parameters for the photos `p` under a folder, at any depth."""
+    return store_roots.sql_under(conn, "p.path", folder)
+
+
+#: A nameless face nobody has called nobody: unmatching a face records name_source
+#: 'manual' (unname), and automatch must not name it again. %s: the table's alias and a
+#: dot, or nothing.
+NOT_DECIDED_NOBODY = "COALESCE(%sname_source, '') <> 'manual'"
 
 
 def unnamed(conn, photo_path=None, folder=None):
     """(id, embedding bytes, photo_path) of the unnamed, unexcluded faces in one photo, or
-    under a folder at any depth."""
-    where, params = _scope(conn, photo_path, folder)
+    under a folder at any depth, that automatch may name: not those unmatched by hand
+    (docs/findings.md, #643)."""
+    if photo_path is not None:
+        where, params = _on_photo(conn, photo_path, "f.photo_id")
+        source = " FROM faces f" + PHOTO
+    else:
+        where, params = _photos_under(conn, folder)
+        source = UNDER_FROM_PHOTOS
     return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, f.embedding, p.path FROM faces f" + PHOTO + " WHERE " + where
-        + " AND f.name IS NULL AND f.excluded = 0", params).fetchall(), 2)
+        "SELECT f.id, f.embedding, p.path" + source + " WHERE " + where
+        + " AND f.name IS NULL AND f.excluded = 0 AND " + NOT_DECIDED_NOBODY % "f.", params).fetchall(), 2)
 
 
 def unnamed_counts(conn, folder):
-    """{photo_path as stored: faces still unnamed} for the photos under a folder."""
-    where, params = _under(conn, folder, "f.photo_id")
+    """{photo_path as stored: faces still unnamed} for the photos under a folder. An
+    excluded face is not waiting for a name (docs/findings.md, #642)."""
+    where, params = _photos_under(conn, folder)
     return dict(store_roots.natives(conn, conn.execute(
-        "SELECT p.path, COUNT(*) FROM faces f" + PHOTO + " WHERE " + where
-        + " AND f.name IS NULL GROUP BY f.photo_id", params).fetchall(), 0))
+        "SELECT p.path, COUNT(*)" + UNDER_FROM_PHOTOS + " WHERE " + where
+        + " AND f.name IS NULL AND f.excluded = 0 GROUP BY f.photo_id", params).fetchall(), 0))
 
 
 # ---- What TagTuner's screens read -----------------------------------------------------
@@ -506,18 +546,20 @@ def embedding_row(conn, face_id):
 
 
 def in_photo_with_names(conn, photo_path):
-    """(id, box JSON, name, embedding) of each face in one photo."""
+    """(id, box JSON, name, embedding, excluded) of each face in one photo."""
     where, params = _on_photo(conn, photo_path)
-    return conn.execute("SELECT id, box, name, embedding FROM faces WHERE " + where, params).fetchall()
+    return conn.execute("SELECT id, box, name, embedding, excluded FROM faces WHERE " + where, params).fetchall()
 
 
 def photos_with_unnamed(conn, every=False):
     """(photo_path, unnamed faces, named faces, mtime, year) of every photo
     with a face still unnamed, newest first; with `every`, of every photo with a face,
-    those whose faces are all named too (TagTuner's Show matched)."""
+    those whose faces are all named too (TagTuner's Show matched). An excluded face is
+    neither: it was listed as unmatched, and a photo whose only nameless face had been
+    ruled out stayed in Folder Matches for good (docs/findings.md, #642)."""
     return store_roots.natives(conn, conn.execute(
         "SELECT p.path,"
-        " SUM(CASE WHEN f.name IS NULL THEN 1 ELSE 0 END) AS unmatched,"
+        " SUM(CASE WHEN f.name IS NULL AND f.excluded = 0 THEN 1 ELSE 0 END) AS unmatched,"
         " SUM(CASE WHEN f.name IS NOT NULL THEN 1 ELSE 0 END) AS matched,"
         " p.mtime, p.year"
         " FROM faces f" + PHOTO

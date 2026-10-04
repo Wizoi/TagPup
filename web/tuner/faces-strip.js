@@ -4,7 +4,7 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { samePath } from './common/paths.js';
 import { nameProblem, samePerson, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
-import { emptyState, modeSelect, panelContent, photoList, showMatchedToggle } from './elements.js';
+import { emptyState, panelContent, photoList } from './elements.js';
 import { UNKNOWN_YEAR } from './rules.js';
 import { personExists, updateURLParams } from './shared.js';
 import { openNewPersonModal } from './new-person.js';
@@ -84,8 +84,10 @@ function renderPhotoDetails(details) {
     const items = photoList.getElementsByClassName('photo-item');
     const activeEl = Array.from(items).find(item => item.photo && samePath(item.photo.path, details.path));
     if (activeEl && activeEl.photo) {
-        // Count unmatched and matched faces in details.faces
-        const unmatchedCount = (details.faces || []).filter(f => !f.name).length;
+        // Count unmatched and matched faces in details.faces. An excluded face is neither,
+        // as in the list's counts: counting it here put it back in the badge, and
+        // Re-examine then added it to the matched one (docs/findings.md, #655).
+        const unmatchedCount = (details.faces || []).filter(f => !f.name && !f.excluded).length;
         const matchedCount = (details.faces || []).filter(f => f.name).length;
         activeEl.photo.unmatched_count = unmatchedCount;
         activeEl.photo.matched_count = matchedCount;
@@ -517,76 +519,6 @@ function postAutoMatchAll(photoPath) {
     .finally(() => {
         btnAutomatchAll.disabled = false;
         btnAutomatchAll.textContent = originalText;
-    });
-}
-
-// POST automatch all photos in a folder
-export function postFolderAutoMatch(folderGroup, btn) {
-    btn.disabled = true;
-    // What the button showed, put back as it was: its own nodes, not a copy as markup.
-    const originalContent = [...btn.childNodes];
-    btn.textContent = '⏳';
-    btn.title = 'AutoMatching...';
-
-    api.fetch('/api/folder/automatch', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ folder_path: folderGroup.name })
-    })
-    .then(res => {
-        if (!res.ok) throw new Error('Folder AutoMatch operation failed');
-        return res.json();
-    })
-    .then(data => {
-        if (data.success) {
-            const remaining = data.remaining_counts || {};
-            folderGroup.photos.forEach(p => {
-                const matchedDiff = p.unmatched_count - (remaining[p.path] || 0);
-                p.unmatched_count = remaining[p.path] || 0;
-                p.matched_count = (p.matched_count || 0) + matchedDiff;
-
-                if (p.badgeEl) {
-                    p.badgeEl.textContent = `${p.unmatched_count} unmatched`;
-                }
-                if (p.badgeMatchedEl) {
-                    p.badgeMatchedEl.textContent = `${p.matched_count} matched`;
-                }
-                if (p.unmatched_count === 0 && p.liEl) {
-                    // Show matched keeps a finished photo in the list, marked done.
-                    if (modeSelect.value === 'folder-match' && !(showMatchedToggle && showMatchedToggle.checked)) {
-                        p.liEl.style.display = 'none';
-                    } else {
-                        p.liEl.classList.add('all-matched');
-                    }
-                }
-            });
-
-            const totalUnmatched = folderGroup.photos.reduce((sum, p) => sum + p.unmatched_count, 0);
-            if (folderGroup.countEl) {
-                folderGroup.countEl.textContent = ` (${totalUnmatched})`;
-            }
-
-            if (totalUnmatched === 0 && folderGroup.btnEl && !(showMatchedToggle && showMatchedToggle.checked)) {
-                folderGroup.btnEl.style.display = 'none';
-            }
-
-            if (state.activePhotoPath) {
-                selectPhoto(state.activePhotoPath);
-            }
-        } else {
-            alert('Failed to AutoMatch faces in this folder.');
-        }
-    })
-    .catch(err => {
-        console.error('Error during Folder AutoMatch:', err);
-        alert('Error during Folder AutoMatch: ' + err.message);
-    })
-    .finally(() => {
-        btn.disabled = false;
-        replaceContent(btn, ...originalContent);
-        btn.title = 'AutoMatch all photos in this folder';
     });
 }
 

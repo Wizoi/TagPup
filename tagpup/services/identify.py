@@ -155,7 +155,7 @@ def photo_details(library, photo_path, named):
     _known_ids, _known_names, known_matrix = named()
 
     found = []
-    for fid, box_str, fname, emb_bytes in face_rows:
+    for fid, box_str, fname, emb_bytes, excluded in face_rows:
         try:
             box = json.loads(box_str)
         except Exception:
@@ -169,7 +169,10 @@ def photo_details(library, photo_path, named):
             sims = np.dot(known_matrix, np.frombuffer(emb_bytes, dtype=np.float32))
             if len(sims) > 0:
                 max_sim = float(np.max(sims))
-        found.append({"id": fid, "box": box, "name": fname, "max_similarity": max_sim})
+        # Excluded: the page counts a photo's unmatched faces from these, and an excluded
+        # face is not one, as the list's counts say (docs/findings.md, #642, #655).
+        found.append({"id": fid, "box": box, "name": fname, "max_similarity": max_sim,
+                      "excluded": bool(excluded)})
 
     return {
         "path": photo_path,
