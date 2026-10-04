@@ -155,7 +155,10 @@ class ThePlans(Captioned):
                     self.assertEqual(2, len(plans), "the captioned, then those with none")
                     for sql, plan in plans.items():
                         self.assertIn(store.CAPTION_INDEX, plan)
-                        if "IS NOT NULL" in sql or kind == "all":
+                        if kind == "all":
+                            # Both phases a range of the index: neither computes a caption again from the photo's row.
+                            self.assertIn("SEARCH p USING INDEX %s (<expr>" % store.CAPTION_INDEX, plan)
+                        if ">= ''" in sql or kind == "all":
                             # The captioned: the index walked in order. Of a source given by a list of ids (a keyword, a
                             # person) the uncaptioned are a seek for each id and a sort of those ids alone.
                             self.assertNotIn("TEMP B-TREE", plan, sql)

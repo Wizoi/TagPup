@@ -293,6 +293,9 @@ _PAST_LAST_ID = 2 ** 62
 #: The orders read by the index of an expression: {order: (the expression of `p`, the index, whether a photo may have
 #: none)}. A photo with none comes after those that have one, by id in the order's direction, as an undated photo does.
 _KEYED = {}
+#: Those that have a key, in SQL of the key: a range of the index (a key is text and never empty: caption_sql), where `IS NOT
+#: NULL` read every photo's row to compute it again -- 227 ms for the whole of photo_index, against 20.
+_HAS_KEY = " AND %s COLLATE NOCASE >= ''"
 for _orders, _key, _index, _nullable in (((NAME, NAME_DESC), name_sql("p.path"), NAME_INDEX, False),
                                          ((CAPTION, CAPTION_DESC), caption_sql("p.captions"), CAPTION_INDEX, True)):
     for _order in _orders:
@@ -335,7 +338,7 @@ def _keyed_page(conn, scope, cursor, limit, order):
         sql = "SELECT %s, p.id FROM %s WHERE %s" % (key, from_, where)
         values = list(params)
         if nullable:
-            sql += " AND %s IS NOT NULL" % key
+            sql += _HAS_KEY % key
         if cursor is not None:
             # The bound on the key alone is what the index seeks; the pair with the id is the keyset.
             sql += " AND %s COLLATE NOCASE %s= ? AND (%s COLLATE NOCASE, p.id) %s (?, ?)" % (key, beyond, key, beyond)
@@ -391,7 +394,7 @@ def all_ids(conn, source, cap, order=TAKEN):
         way = " DESC" if order in DESCENDING else ""
         ids = [photo_id for (photo_id,) in conn.execute(
             "SELECT p.id FROM %s WHERE %s%s ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?"
-            % (from_, where, " AND %s IS NOT NULL" % key if nullable else "", key, way, way), list(params) + [cap + 1])]
+            % (from_, where, _HAS_KEY % key if nullable else "", key, way, way), list(params) + [cap + 1])]
         if nullable and len(ids) <= cap:
             ids += [photo_id for (photo_id,) in conn.execute(
                 "SELECT p.id FROM %s WHERE %s AND %s IS NULL ORDER BY p.id%s LIMIT ?" % (from_, where, key, way),
