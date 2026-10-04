@@ -1867,7 +1867,7 @@ and refused, the time left, **Cancel** -- which is still there after the view ch
   bulk edit and the strip work on it unchanged. `state.nav.followed` is still where "within what the navigator has selected" is read. `lockBulkControls` and `bulkBusy` are the one place that says an
   edit may not start.
 
-### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1, the rest design)*
+### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag
 is a path (`People/<name>`) in the files and in `photos.tags`; CLAUDE.md's rule exists because
 every site converting between the two by hand shipped a bug. `tag_taxonomy` already gives every
@@ -1895,6 +1895,96 @@ node an integer id and a parent id, and a person is a node with `has_face` set. 
   with different ids; the tree edited in TagTuner while a bulk tag write is under way; an
   undo that replays a name recorded before the change; a restore of a snapshot taken before ids
   were used; a backfill read of 225,000 faces (one lookup per name, not per row).
+
+**Stage 1, built** *(2026-10-04; the owner moved it before 9e)*. Additive: `faces.tag_id` and
+`photo_people.tag_id` sit beside `name`, and **every read still reads the name**. One module,
+`tagpup.store.person_ids`, owns the conversion and every write of the column, as `paths.to_row` /
+`from_row` own a path's (`tests/test_person_ids_single_owner.py`):
+- **The rule.** A person is a node with `has_face` set that is not a root (a root holding faces is a
+  category, as `PeopleVocabulary` reads it). A name is that node when exactly one such node is called
+  it, compared as names are compared everywhere (`vocabulary.key`: trimmed, without case). A name no
+  person node is called, or two are (#27), gets NULL: never a guess. The doctor lists those names by
+  count, and by name only with `--show` ("names with no person node", "names with several person
+  nodes"); they are reported, not broken, and settling them is the owner's (file the person, or merge
+  the two nodes). Counted read-only on 2026-10-04: photo_index's faces hold 284 distinct names
+  (35,803 named of 226,246 faces), 279 of them one node, 4 none (40 faces), 1 several (1 face); its
+  `photo_people` 413 names (80,060 rows), 408 one, 4 none (40 rows), 1 several (12 rows). kr-track:
+  faces 73 names, 61 one, 12 none (198 faces), none several; `photo_people` 75, 62 one, 13 none (200
+  rows). The three rules weighed -- exact name, `vocabulary.key`, and `find_person_path`'s (a leaf
+  under a face root) -- give the same counts on every library; nothing on any of them differs only in
+  case or spacing, and every node's `name` is the leaf of its `tag`.
+- **The id is derived in stage 1**: what the name gives now, under the tree as it stands. So it is
+  kept wherever either changes, **in the same transaction**, with the tree read inside it and never
+  cached across transactions (a rename committed by another process between two writes is what the
+  second reads): every writer of the faces store, through `faces._rebuilt` (`follow_faces`, the faces
+  of the photos it touched); `people.rebuild` (`follow_listed`); `people.rename` (`follow_names`);
+  every tree edit, through `people.tree_edit` (`follow_tree`: the tree's people read before and after,
+  and every name matched again only when they differ -- two reads of ~400 nodes otherwise); and the
+  journal's `_derive` after an apply, an undo or a settle (`follow_faces` for the photos whose faces it
+  wrote, `sync` when it wrote the tree). Sync, index reads, Suggest's apply, automatch, clustering and
+  file changes reach it through those; `file_only` writes no row.
+- **Not a key yet, so a rename has a window.** TagTuner's rename moves the node (one transaction),
+  rewrites the files, then renames the faces (another). In between, the faces' old name names no node
+  and their id is NULL -- never the renamed node's under a name it no longer has. Stage 2 removes the
+  window: the rename is then the node's alone.
+- **The journal.** `tag_id` is a derived column of `faces` (`journal.DERIVED_COLUMNS`): an undo never
+  holds a row to it, a face put back by an undo -- one recorded before the column existed among them --
+  is given its id by `_derive`, and a rehearsal compares it after `_derive` on both sides. Migration 21
+  adds only that column to a journaled table (`schema.ADDS_DERIVED_COLUMNS`), so it blocks no undo of a
+  change made before it (`journal.schema_gap_blocker`); a test holds the declaration to the columns the
+  migration really adds.
+- **Migration 21** adds the two columns and `idx_faces_person` (`name`, `tag_id`) first, then fills
+  them by `person_ids.sync`: the pairs of name and id held, read from the index (never a face's row or
+  vector), one UPDATE per pair that is wrong, by the index. One transaction under the write lock: a
+  crash leaves the library at 20, and the next open runs it again. **Measured** on a sandbox copy of
+  photo_index (68,466 photos, 226,246 faces), through the runner: **17.5 s** the first time (a copy
+  just written, cold); warm, the steps are the index 1.6 s, the backfill 1.8 s (35,762 faces and 80,008
+  listed people given an id), and the runner's standard checks on `faces` 6.5 s (quick_check 2.8 s,
+  foreign_key_check 3.7 s). Writers in other processes wait (the busy timeout is 30 s). A whole re-sync
+  afterwards, as a tree edit that changes who the people are does, takes 0.23 s. The plans, checked on
+  the copy: the pairs `SEARCH faces USING COVERING INDEX idx_faces_person`; the UPDATE `SEARCH faces USING
+  INDEX idx_faces_person (name=? AND tag_id=?)`; a photo's faces `idx_faces_photo_id`; `photo_people`'s
+  pairs a scan of its 80,060 small rows by `idx_photo_people_name`. The new index also serves every
+  lookup `idx_faces_name` served (the planner now picks it, covering).
+- **What stage 1 cannot see.** A version of the app from before 21 still writing to the library writes
+  names without ids; the doctor's `face_person_ids_out_of_step` and `listed_person_ids_out_of_step`
+  (in `checks.RULES`, so the MCP's checks too; the examples are face ids and photo ids) count them, and
+  `tools/doctor.py --rebuild-derived --apply` puts them right with the derived tables, touching no name.
+  A snapshot from before 21 restored comes back at 20 and is migrated again by `snapshots.restore`'s
+  `schema.ensure`. Two libraries are two trees: the same person has an id in each, and nothing reads an
+  id across libraries. Ids are AUTOINCREMENT, never given again, so an id left behind by a node deleted
+  by an older writer names nothing rather than someone else.
+
+**Stage 2, the plan** *(not built; asked about before it runs)*. The id becomes the key and the name a
+view of the tree:
+1. **Settle the unresolved names first.** A name with no node or with two cannot become an id. Before
+   stage 2's migration the doctor's two lists must be empty, by the owner's hand (photo_index: 4 and 1
+   names; kr-track: 12 and 0), or the migration must say what it does with them -- making a node under
+   the library's people parent (as the indexer's `add_people` does) is a default the owner has not
+   chosen, so it is asked.
+2. **Every name a write is handed resolves to an id at the boundary**, by the same rule: a page or the
+   API still sends a name or a path; `person_ids` turns it into the node (a path picks one of two nodes of
+   one name, as `resolveTagOrPerson` already sends), and naming a face with a name no node has makes the
+   node first (`taxonomy.add_path` under the people parent), in the same transaction. On the way out the
+   name is the node's (`tag_taxonomy.name`, by the id), the way `from_row` gives a path.
+3. **Reads move to the id**: a person's faces (`count_named`, `person_embeddings`, `person_page`), the
+   counts by person (`counts_by_name`, the navigator's people), `library_view`'s person source (no more
+   `_spellings`), Identify's and clustering's known faces, `photo_people` in the views. `idx_faces_tag`
+   (`tag_id`) and `photo_people(tag_id, photo_id)` serve them; `idx_faces_name` and `idx_faces_person`
+   go when nothing reads by name.
+4. **Rename and merge become tree changes.** A rename is `move_branch` alone: faces and lists follow by
+   id, `people.rename` retires, and the window above closes. A merge of two people is one
+   `UPDATE faces SET tag_id = ? WHERE tag_id = ?` (and `photo_people`), then the node goes. The files
+   still take their keyword rewrites, as now.
+5. **The journal records the id.** `tag_id` leaves `journal.DERIVED_COLUMNS` and becomes a recorded
+   column; stage 2's migration is DATA (it rewrites the name column's meaning), so it blocks the undo of
+   older changes, or translates their recorded names to ids as the adoption translates paths. Which, is
+   decided when it is designed.
+6. **A node deleted while faces name it** is refused, or unnames them, in the same transaction (a
+   trigger with `idx_faces_tag`, so any connection does it): the owner's choice, asked then. Stage 1
+   leaves the name and sets the id NULL.
+7. **What must hold** is unchanged: ids stable, never reused, never compared across libraries; the
+   files and the pages keep names and paths.
 
 ### Ideas taken from Windows Live Photo Gallery's database *(2026-10-02)*
 The owner's WLPG index (`Pictures.pd6`, a SQL Server Compact 3.1 file: 73,184 files, 836
