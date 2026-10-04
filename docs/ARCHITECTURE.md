@@ -1946,9 +1946,11 @@ node an integer id and a parent id, and a person is a node with `has_face` set. 
   listed people given an id), and the runner's standard checks on `faces` 6.5 s (quick_check 2.8 s,
   foreign_key_check 3.7 s). Writers in other processes wait (the busy timeout is 30 s). **It runs as the
   server starts** (#661): `tagpup_web` starts a thread, before it serves, that brings every library it
-  serves up to date (`bring_up_to_date_in_background`). The server answers at once -- `/api/server`, which
-  the supervisor's hand-over waits 60 s for, names no library -- and a page's request for a library still
-  migrating waits on its write lock (the page's spinner) and then finds it current; before, the first
+  serves up to date (`libraries.bring_up_to_date_in_background`). The server answers at once --
+  `/api/server`, which the supervisor's hand-over waits 60 s for, names no library, and lists the thread
+  as busy ("bringing N library(ies) up to date"), and a drain waits for it (#664). A page opened while a
+  library migrates gets a blank tab until the migration ends (every URL under the library's name waits on
+  its write lock); a page already open shows its own spinner for its requests (#666). Before, the first
   request naming the library ran the migration itself. A library held past the busy timeout is logged and
   left for its first request. The CLI and the MCP still migrate a library when they first open it. A whole re-sync
   afterwards, as a tree edit that changes who the people are does, takes 0.23 s. The plans, checked on

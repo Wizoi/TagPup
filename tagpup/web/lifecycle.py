@@ -32,6 +32,7 @@ from flask import Blueprint, current_app, jsonify, request
 from tagpup.jobs import bulk_edits as bulk_edit_jobs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
+from tagpup.services import libraries as library_actions
 from tagpup.supervisor import TOKEN_HEADER
 from tagpup.web import responses
 
@@ -99,6 +100,9 @@ def long_work():
     edits = bulk_edit_jobs.running()
     if edits:
         found.append("%d bulk edit(s)" % edits)
+    bringing = library_actions.bringing_up_to_date()
+    if bringing:
+        found.append("bringing %d library(ies) up to date" % bringing)   # the startup migrations (#664)
     return found
 
 
