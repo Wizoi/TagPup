@@ -46,6 +46,11 @@ class TheServerMigratesAtStart(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual([schema.LATEST] * 2, [version(path) for path in self.behind])
 
+    def test_a_library_that_is_not_there_is_not_made(self):
+        missing = os.path.join(self.home.data, "photo_index.db")
+        tagpup_web.bring_up_to_date_in_background([Library(missing)]).join(60)
+        self.assertFalse(os.path.exists(missing))
+
     def test_one_that_cannot_be_is_logged_and_the_rest_are_done(self):
         real = schema.ensure
 

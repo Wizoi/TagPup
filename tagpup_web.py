@@ -124,9 +124,12 @@ def bring_up_to_date_in_background(libraries_served):
     migrated waits for it on the library's write lock (its URL brings it up to date too,
     libraries.LibraryFromUrl), then finds it current. A library that cannot be brought up to date now
     -- held by another program past the busy timeout -- is logged and left for its first request, as
-    before. Returns the thread."""
+    before. A library whose file is not there is left alone: bringing it up to date would make it, and
+    the picker offers the default library in an empty data folder (#100). Returns the thread."""
     def run():
         for library in libraries_served:
+            if not os.path.exists(library.path):
+                continue
             started = time.time()
             try:
                 applied = library_actions.bring_up_to_date(library.path)
