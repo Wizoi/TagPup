@@ -84,6 +84,24 @@ describe("several rows at once", () => {
     assert.equal(ctx.selectedRows("people").length, 1);
   });
 
+  test("rapid Ctrl-clicks, no answer awaited between them, each add to the union; only the last view's order is used", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all" });
+    await ctx.openTab("people");
+    ctx.hold.ids = true;
+    const rows = ctx.rows("people");
+    click(ctx.window, rows[0]);
+    click(ctx.window, rows[1], { ctrlKey: true });
+    click(ctx.window, rows[2], { ctrlKey: true });
+    click(ctx.window, rows[3], { ctrlKey: true });
+    ctx.hold.ids = false;
+    await ctx.release("ids");
+    await ctx.settle();
+    assert.equal(asked(ctx).value.length, 4);
+    assert.equal(ctx.state.library.value.length, 4);
+    assert.equal(ctx.state.library.status, "ready");
+    assert.equal(ctx.selectedRows("people").length, 4);
+  });
+
   test("a parent selects its children; Ctrl-click takes one off and the parent's own photos stay in", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all" });
     click(ctx.window, ctx.rows("folders")[0]);   // the library folder: opened, and every folder under it selected
