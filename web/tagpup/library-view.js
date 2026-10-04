@@ -8,6 +8,7 @@
 // viewSpecFromSearch), pushed when a view is opened, so Back and Forward move between views and
 // folders, and a bookmark opens one. A `?view` wins over a `?path`. The navigator (navigator.js) opens views
 // through here and follows them (phase 9c): `upper.navigatorFollows` as one opens or closes.
+import { VIEW_PARAMS } from './common/library.js';
 import { baseName } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -40,9 +41,6 @@ function isOpen(spec) {
     const lib = state.library;
     return Boolean(lib) && !lib.invalid && sameView(lib, spec);
 }
-
-/** The address's parameters a view names. */
-const VIEW_PARAMS = ['view', 'value', 'recursive', 'order'];
 
 // ---- The folder, put to rest -----------------------------------------------------------------
 

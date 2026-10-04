@@ -703,9 +703,9 @@ describe("the way there and back", () => {
 });
 
 describe("another library", () => {
-  test("choosing one goes to its address without the view", async () => {
+  test("choosing one goes to its address without the view, its order too (#697)", async () => {
     const calls = [];
-    globalThis.window = { location: { search: "?view=keyword&value=Trips&recursive=1&path=D%3A%5CX", set href(v) { calls.push(v); } } };
+    globalThis.window = { location: { search: "?view=keyword&value=Trips&recursive=1&order=name-desc&path=D%3A%5CX", set href(v) { calls.push(v); } } };
     globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
     try {
       const { goToLibrary } = await import("../../web/common/library.js");
