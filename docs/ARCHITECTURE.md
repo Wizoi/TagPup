@@ -1940,7 +1940,13 @@ node an integer id and a parent id, and a person is a node with `has_face` set. 
   photo_index (68,466 photos, 226,246 faces), through the runner: **17.5 s** the first time (a copy
   just written, cold); warm, the steps are the index 1.6 s, the backfill 1.8 s (35,762 faces and 80,008
   listed people given an id), and the runner's standard checks on `faces` 6.5 s (quick_check 2.8 s,
-  foreign_key_check 3.7 s). Writers in other processes wait (the busy timeout is 30 s). A whole re-sync
+  foreign_key_check 3.7 s). Writers in other processes wait (the busy timeout is 30 s). **It runs as the
+  server starts** (#661): `tagpup_web` starts a thread, before it serves, that brings every library it
+  serves up to date (`bring_up_to_date_in_background`). The server answers at once -- `/api/server`, which
+  the supervisor's hand-over waits 60 s for, names no library -- and a page's request for a library still
+  migrating waits on its write lock (the page's spinner) and then finds it current; before, the first
+  request naming the library ran the migration itself. A library held past the busy timeout is logged and
+  left for its first request. The CLI and the MCP still migrate a library when they first open it. A whole re-sync
   afterwards, as a tree edit that changes who the people are does, takes 0.23 s. The plans, checked on
   the copy: the pairs `SEARCH faces USING COVERING INDEX idx_faces_person`; the UPDATE `SEARCH faces USING
   INDEX idx_faces_person (name=? AND tag_id=?)`; a photo's faces `idx_faces_photo_id`; `photo_people`'s

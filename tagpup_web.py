@@ -25,6 +25,7 @@ import logging
 import os
 import socket
 import sys
+import threading
 import time
 import webbrowser
 
@@ -115,6 +116,32 @@ def served_libraries(startup=None):
             for name in libraries.picker_names(files, False)]
 
 
+def bring_up_to_date_in_background(libraries_served):
+    """Bring each library the server serves to the current schema on a thread of its own, started as the
+    server starts (docs/findings.md, #661): a migration -- 21 takes 17.5 s on photo_index cold -- runs
+    then, not in the first request that names the library. The server answers meanwhile: /api/server,
+    which the supervisor's hand-over asks, names no library; a page's request for a library being
+    migrated waits for it on the library's write lock (its URL brings it up to date too,
+    libraries.LibraryFromUrl), then finds it current. A library that cannot be brought up to date now
+    -- held by another program past the busy timeout -- is logged and left for its first request, as
+    before. Returns the thread."""
+    def run():
+        for library in libraries_served:
+            started = time.time()
+            try:
+                applied = library_actions.bring_up_to_date(library.path)
+            except Exception as e:
+                logger.warning("Could not bring %s up to date at start: %s", library.path, e)
+                continue
+            if applied:
+                logger.info("Brought %s up to date at start (%s) in %.1fs", library.path, ", ".join(applied),
+                            time.time() - started)
+
+    thread = threading.Thread(target=run, name="BringUpToDateThread", daemon=True)
+    thread.start()
+    return thread
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tagpup-port", type=int, default=PORTS["tagpup"])
@@ -199,6 +226,8 @@ def main(argv=None):
     lifecycle = Lifecycle(version=version, token=token, background=background)
     apps = {ports[kind]: web.create_app(kind, startup=startup, runtime=runtime, ports=ports, lifecycle=lifecycle)
             for kind in ("tagpup", "tuner")}
+    # Each library's migrations now, beside the serving, not in the first request (#661).
+    bring_up_to_date_in_background(served_libraries(startup))
     if not os.environ.get("TAGPUP_WEB_NO_WARMUP"):
         runtime.warm_up_in_background(served_libraries(startup))
     background.start()
