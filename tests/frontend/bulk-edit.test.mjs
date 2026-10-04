@@ -1,6 +1,6 @@
 /**
  * Editing the selection of a library view (web/tagpup/bulk-edit.js, bulk-job.js, bulk-words.js; docs/ARCHITECTURE.md, phase 9d-2):
- * Add tag, Add person, the pills' Remove and Apply and Shift Date Taken each ask first, by name and count, and then start a JOB
+ * Add tag, Add person and the pills' Remove and Apply each ask first, by name and count, and then start a JOB
  * with the selection BY ID -- the source and the few ids excluded, never 68,000 ids or paths. A limit is said in a sentence before any
  * request; a refused question sends nothing; the selection edited meanwhile changes nothing that was asked. Fictional names only.
  */
@@ -166,78 +166,13 @@ describe("Add person", () => {
   });
 });
 
-describe("Shift Date Taken in a view", () => {
-  async function shifting(t, n = 400) {
-    const ctx = await view(t, n);
-    click(ctx.window, el(ctx, "btn-toggle-timeshift"));
-    return ctx;
-  }
-  const shift = async (ctx, minutes, direction = "later") => {
-    el(ctx, "timeshift-minutes-input").value = String(minutes);
-    el(ctx, "timeshift-direction").value = direction;
-    click(ctx.window, el(ctx, "btn-apply-timeshift"));
-    await ctx.settle(60);
-  };
-
-  test("the panel offers minutes and a direction, no camera, and says both Date Taken fields move", async (t) => {
-    const ctx = await shifting(t);
-    assert.ok(!el(ctx, "timeshift-panel").classList.contains("hidden"));
-    assert.ok(el(ctx, "timeshift-camera-field").classList.contains("hidden"), "the camera filter is not offered");
-    assert.ok(!el(ctx, "timeshift-direction-field").classList.contains("hidden"));
-    assert.match(el(ctx, "timeshift-view-note").textContent, /both Date Taken fields/);
-    assert.ok(!el(ctx, "timeshift-view-note").classList.contains("hidden"));
-  });
-
-  test("90 minutes earlier: the question names it, and the job's minutes are negative", async (t) => {
-    const ctx = await shifting(t);
-    click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
-    ctx.bulk.start = { op: "time_shift", total: 1 };
-    await shift(ctx, 90, "earlier");
-    assert.equal(ctx.questions[0], "Shift Date Taken 90 minutes earlier in 1 photo? This changes the photo files and takes less than a minute. It cannot be undone as one step; shift them later by the same minutes to reverse it.");
-    const body = plain(starts(ctx)[0].body);
-    assert.equal(body.op, "time_shift");
-    assert.deepEqual(body.params, { minutes: -90 });
-    assert.deepEqual(body.selection, { ids: [2] });
-    assert.equal(el(ctx, "timeshift-minutes-input").value, "0");
-  });
-
-  test("0, a negative number, a fraction, nothing and a huge number are refused with a sentence beside the field, and nothing is asked", async (t) => {
-    const ctx = await shifting(t);
-    click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
-    for (const [typed, expected] of [
-      ["0", /not zero/], ["-5", /positive number/], ["1.5", /whole number of minutes/], ["", /not zero/],
-      ["5259600", /more than 10 years/],
-    ]) {
-      await shift(ctx, typed);
-      assert.match(status(ctx), expected, `"${typed}"`);
-    }
-    assert.equal(ctx.questions.length, 0);
-    assert.equal(starts(ctx).length, 0);
-  });
-
-  test("ten years of minutes is the most that is taken", async (t) => {
-    const ctx = await shifting(t);
-    click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
-    ctx.bulk.start = { op: "time_shift", total: 1 };
-    await shift(ctx, 5256000);
-    assert.equal(starts(ctx).length, 1);
-  });
-
-  test("a folder's time shift is as it was: the camera, the sign, and its own route", async (t) => {
-    const ctx = await loadViewPage(t, { search: "" });
-    assert.ok(!el(ctx, "timeshift-camera-field").classList.contains("hidden"));
-    assert.ok(el(ctx, "timeshift-direction-field").classList.contains("hidden"));
-    assert.ok(el(ctx, "timeshift-view-note").classList.contains("hidden"));
-  });
-});
-
 describe("only one bulk edit at a time", () => {
   test("a second start while one runs is refused by the page first: the controls are off, with a tooltip", async (t) => {
     const ctx = await view(t, 400);
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
     await addTag(ctx);
     assert.equal(starts(ctx).length, 1);
-    for (const id of ["btn-bulk-add-tags", "btn-bulk-add-people", "btn-apply-timeshift"]) {
+    for (const id of ["btn-bulk-add-tags", "btn-bulk-add-people"]) {
       assert.equal(el(ctx, id).disabled, true, id);
       assert.match(el(ctx, id).title, /A bulk edit is running/);
     }

@@ -7,9 +7,6 @@ export const ASSUMED_PER_SECOND = 15;
 /** A bulk edit over more photos than this is asked about twice. */
 export const ASK_TWICE_ABOVE = 5000;
 
-/** The longest shift the page takes, in minutes: ten years. More is a typing mistake, and the file's date could not hold it. */
-export const MOST_MINUTES = 10 * 365 * 24 * 60;
-
 /** `1 photo`, `3,412 photos`. */
 export function photosOf(count) {
     return `${count.toLocaleString()} ${count === 1 ? 'photo' : 'photos'}`;
@@ -40,14 +37,6 @@ export function describeTags({ op, add = [], remove = [] }) {
             reverse: people ? 'remove the person to reverse it' : `remove the ${noun} to reverse it` };
     }
     return { op, verb: 'Remove', past: 'Removed', what: names, prep: 'from', reverse: `add the ${noun} again to reverse it` };
-}
-
-/** The same for Shift Date Taken by `minutes` (negative is earlier). */
-export function describeShift(minutes) {
-    const count = Math.abs(minutes).toLocaleString();
-    const how = `${count} ${Math.abs(minutes) === 1 ? 'minute' : 'minutes'} ${minutes < 0 ? 'earlier' : 'later'}`;
-    return { op: 'time_shift', verb: 'Shift', past: 'Shifted', what: `Date Taken ${how}`, prep: 'in',
-        reverse: `shift them ${minutes < 0 ? 'later' : 'earlier'} by the same minutes to reverse it`, minutes };
 }
 
 /** The question before a bulk edit: it names the write and the count, what it touches, how long, and how to undo it. */

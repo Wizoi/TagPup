@@ -1867,6 +1867,17 @@ and refused, the time left, **Cancel** -- which is still there after the view ch
   bulk edit and the strip work on it unchanged. `state.nav.followed` is still where "within what the navigator has selected" is read. `lockBulkControls` and `bulkBusy` are the one place that says an
   edit may not start.
 
+### The owner's first review of the library views *(2026-10-04; #668-#670, #674, #675 on `arch/library-review-1`; #671-#673 beside it)*
+The owner installed phase 9 and reviewed the TagPup page. A library view is for seeing the library at a high level; the work on one
+folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Organize**, the pane that was called Folder.
+
+- **#668, Organize.** The switch beside Library says **Organize** (it said Folder, which was taken for the navigator's Folders tab). Only
+  the words changed: the code still calls the pane `folder` (`sidebar-tab-folder`, `state.nav.shown === 'folder'`).
+- **#669, no Smart Rename and no time shift in a view.** `showChrome` (library-view.js) hides both buttons in every kind of view, and
+  `hideChrome` shows them again for a folder; 9d-2's Shift Date Taken of a view's selection (`shiftSelectionInView`, the direction field,
+  the note) is gone from the page. **The server's bulk time shift is kept** (`op: time_shift`, resume and all, 9d-1): nothing on the
+  library page starts one now, and a job of it found running or stopped part-way is still shown in the strip and resumed by it.
+
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag
 is a path (`People/<name>`) in the files and in `photos.tags`; CLAUDE.md's rule exists because

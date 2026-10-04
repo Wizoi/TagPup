@@ -2440,12 +2440,6 @@ select {
     border: 0;
 }
 
-.timeshift-view-note {
-    margin: 8px 0 0;
-    font-size: 12px;
-    color: var(--text-muted);
-}
-
 /* While a bulk edit runs, the controls that would start another say so and do nothing. */
 .selection-summary-chip-remove[aria-disabled="true"],
 .selection-summary-chip-apply[aria-disabled="true"] {

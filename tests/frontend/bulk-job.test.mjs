@@ -160,11 +160,10 @@ describe("when it ends", () => {
 
   test("a time shift's summary says what it shifted, and the photos with no Date Taken", async (t) => {
     const ctx = await started(t, { begin: false, total: 5 });
-    click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
-    click(ctx.window, el(ctx, "btn-toggle-timeshift"));
-    el(ctx, "timeshift-minutes-input").value = "90";
+    // A library view no longer starts a time shift (#669); the server's job is still there, and the strip shows one as it did.
     ctx.bulk.start = { op: "time_shift", total: 5 };
-    click(ctx.window, el(ctx, "btn-apply-timeshift"));
+    await ctx.module("bulk-job.js").startBulk({ op: "time_shift", selection: { ids: [2] }, params: { minutes: 90 },
+      desc: { op: "time_shift", verb: "Shift", past: "Shifted", what: "Date Taken 90 minutes later", prep: "in", reverse: "shift them earlier by the same minutes to reverse it" }, picked: 1 });
     await ctx.settle(40);
     ctx.bulk.status = jobStatus({ op: "time_shift", total: 5, done: 5, changed: 4, unchanged: 1, state: "done", finished: 1760000100 });
     await ctx.settle(60);
@@ -251,11 +250,9 @@ describe("the server not answering", () => {
 
   test("a server that restarted: the job is abandoned, and the strip says how far it got; a time shift offers Resume", async (t) => {
     const ctx = await started(t, { begin: false, total: 60 });
-    click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
-    click(ctx.window, el(ctx, "btn-toggle-timeshift"));
-    el(ctx, "timeshift-minutes-input").value = "30";
     ctx.bulk.start = { op: "time_shift", total: 60 };
-    click(ctx.window, el(ctx, "btn-apply-timeshift"));
+    await ctx.module("bulk-job.js").startBulk({ op: "time_shift", selection: { ids: [2] }, params: { minutes: 30 },
+      desc: { op: "time_shift", verb: "Shift", past: "Shifted", what: "Date Taken 30 minutes later", prep: "in", reverse: "shift them earlier by the same minutes to reverse it" }, picked: 1 });
     await ctx.settle(40);
     ctx.bulk.status = jobStatus({
       op: "time_shift", total: 60, done: 25, changed: 25, state: "abandoned", resumable: true,

@@ -70,10 +70,6 @@ export const timeshiftPanel = document.getElementById('timeshift-panel');
 export const timeshiftCameraSelect = document.getElementById('timeshift-camera-select');
 export const timeshiftMinutesInput = document.getElementById('timeshift-minutes-input');
 export const btnApplyTimeshift = document.getElementById('btn-apply-timeshift');
-export const timeshiftCameraField = document.getElementById('timeshift-camera-field');
-export const timeshiftDirectionField = document.getElementById('timeshift-direction-field');
-export const timeshiftDirection = document.getElementById('timeshift-direction');
-export const timeshiftViewNote = document.getElementById('timeshift-view-note');
 export const btnToggleTimeshift = document.getElementById('btn-toggle-timeshift');
 
 export const btnToggleRename = document.getElementById('btn-toggle-rename');

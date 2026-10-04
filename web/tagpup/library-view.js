@@ -14,7 +14,6 @@ import { state } from './state.js';
 import {
     btnApplyRename, btnFolderAutoApply, btnLibraryRefresh, btnLibraryScope, btnRefreshList, btnShowOnDisk,
     btnToggleRename, btnToggleTimeshift,
-    timeshiftCameraField, timeshiftDirectionField, timeshiftViewNote,
     folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, indexProgressContainer,
     libraryStrip, libraryStripBack, libraryStripSource, libraryStripStatus, libraryStripTotal,
     photoList, photoSearch, renamePanel, suggestProgressContainer, timeshiftPanel
@@ -33,7 +32,6 @@ import {
 } from './library-source.js';
 
 const SEARCH_OFF = 'Search arrives with the library views’ later stages.';
-const FOLDER_ONLY = 'Not in a library view: this works on a folder, and arrives for photos across folders with editing from a library view.';
 
 /** Is this the view that is open? */
 function isOpen(spec) {
@@ -72,18 +70,16 @@ function quietTheFolder() {
     updateCurrentFolderLabel();
 }
 
-/** The page as a library view has it: no list, no filter, no folder-only buttons. */
+/**
+ * The page as a library view has it: no list, no filter, and none of Organize's buttons. Smart Rename and Camera Time Shift
+ * are work on one folder (#669: the owner, 2026-10-04): a library view is for seeing the library, and offers neither.
+ */
 function showChrome() {
     photoList.querySelectorAll('.photo-item-file').forEach(el => el.remove());
     photoSearch.disabled = true;
     photoSearch.title = SEARCH_OFF;
-    btnToggleRename.title = FOLDER_ONLY;
-    // Shift Date Taken works on the selection of a view, by minutes and a direction: no camera (bulk-edit.js).
-    btnToggleTimeshift.disabled = false;
-    btnToggleTimeshift.title = 'Shift Date Taken of the selected photos';
-    timeshiftCameraField.classList.add('hidden');
-    timeshiftDirectionField.classList.remove('hidden');
-    timeshiftViewNote.classList.remove('hidden');
+    btnToggleRename.classList.add('hidden');
+    btnToggleTimeshift.classList.add('hidden');
     btnRefreshList.title = 'Ask the library for this view again';
     libraryStrip.classList.remove('hidden');
     folderViewHeader.classList.remove('hidden');
@@ -92,11 +88,8 @@ function showChrome() {
 function hideChrome() {
     photoSearch.disabled = false;
     photoSearch.title = '';
-    btnToggleRename.title = 'Smart Rename Files';
-    btnToggleTimeshift.title = 'Camera Time Shift';
-    timeshiftCameraField.classList.remove('hidden');
-    timeshiftDirectionField.classList.add('hidden');
-    timeshiftViewNote.classList.add('hidden');
+    btnToggleRename.classList.remove('hidden');
+    btnToggleTimeshift.classList.remove('hidden');
     // A folder's own scan enables it again; with no folder open there is nothing to shift.
     btnToggleTimeshift.disabled = true;
     btnToggleTimeshift.classList.remove('active');

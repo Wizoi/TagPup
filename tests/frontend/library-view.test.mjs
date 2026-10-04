@@ -179,8 +179,8 @@ describe("opening a view from the address", () => {
     assert.deepEqual(kept.filter((key) => key.startsWith("tagpup_cache_")), [], "no scan of a folder is kept for a view");
     assert.equal(ctx.document.getElementById("add-folder-modal").classList.contains("active"), false);
     assert.equal(ctx.document.getElementById("btn-suggest-tags").disabled, true);
-    assert.equal(ctx.document.getElementById("btn-toggle-rename").disabled, true);
-    assert.equal(ctx.document.getElementById("btn-toggle-timeshift").disabled, false, "Shift Date Taken works on a view's selection (9d-2)");
+    assert.ok(ctx.document.getElementById("btn-toggle-rename").classList.contains("hidden"), "Smart Rename is Organize's (#669)");
+    assert.ok(ctx.document.getElementById("btn-toggle-timeshift").classList.contains("hidden"), "and so is the time shift (#669)");
     assert.equal(ctx.document.getElementById("photo-search").disabled, true);
     assert.match(ctx.document.getElementById("photo-search").title, /later stages/);
   });

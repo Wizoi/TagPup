@@ -139,22 +139,6 @@ describe("#608: the tally follows an edit of the details panel", () => {
 });
 
 describe("#609: the small things", () => {
-  test("Shift Date Taken does not start while a question or placement dialog of another edit is open", async (t) => {
-    const ctx = await view(t, 400);
-    pick(ctx, 2);
-    click(ctx.window, el(ctx, "btn-toggle-timeshift"));
-    el(ctx, "timeshift-minutes-input").value = "30";
-    ctx.state.bulk.asking = true;
-    click(ctx.window, el(ctx, "btn-apply-timeshift"));
-    await ctx.settle(60);
-    assert.equal(ctx.questions.length, 0, "nothing asked");
-    assert.equal(calls(ctx, "/bulk/start").length, 0);
-    ctx.state.bulk.asking = false;
-    click(ctx.window, el(ctx, "btn-apply-timeshift"));
-    await ctx.settle(60);
-    assert.equal(calls(ctx, "/bulk/start").length, 1, "and when nothing is open it starts");
-  });
-
   test("the open photo is found by path, as a path: another spelling of it is still the photo", async (t) => {
     const ctx = await view(t, 400);
     ctx.bulk.start = { total: 1 };

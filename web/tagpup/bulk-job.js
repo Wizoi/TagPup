@@ -14,7 +14,7 @@ import { samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    btnApplyTimeshift, btnBulkAddPeople, btnBulkAddTags, folderSelectionSidebar
+    btnBulkAddPeople, btnBulkAddTags, folderSelectionSidebar
 } from './elements.js';
 import { setStatus } from './status.js';
 import { libraryName } from './looking.js';
@@ -63,7 +63,7 @@ function repaint() {
  */
 export function lockBulkControls() {
     const lock = Boolean(state.library) && bulkBusy();
-    for (const button of [btnBulkAddPeople, btnBulkAddTags, btnApplyTimeshift]) {
+    for (const button of [btnBulkAddPeople, btnBulkAddTags]) {
         if (!button) continue;
         if (lock) {
             if (button.dataset.bulkTitle === undefined) button.dataset.bulkTitle = button.title || '';
