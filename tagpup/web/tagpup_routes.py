@@ -641,7 +641,7 @@ def library_page():
     recursive = (request.args.get("recursive") or "").lower() in YES
     try:
         return jsonify(library_view.view(library, kind, value, recursive, request.args.get("after"),
-                                         request.args.get("limit")))
+                                         request.args.get("limit"), request.args.get("order")))
     except (Refused, NotFound, paths.RootsError) as why:
         return _view_error(why)
     except Exception as e:
@@ -660,7 +660,7 @@ def library_ids():
     value = (request.args.get("folder") or request.args.get("value")) if kind == "folder" else request.args.get("value")
     recursive = (request.args.get("recursive") or "").lower() in YES
     try:
-        return jsonify(library_view.ids(library, kind, value, recursive))
+        return jsonify(library_view.ids(library, kind, value, recursive, order=request.args.get("order")))
     except (Refused, NotFound, paths.RootsError) as why:
         return _view_error(why)
     except Exception as e:

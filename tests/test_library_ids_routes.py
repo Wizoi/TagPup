@@ -111,9 +111,9 @@ class TheIds(Routes):
         seen = []
         real = library_view.store.all_ids
 
-        def spy(conn, source, cap):
+        def spy(conn, source, cap, order=library_view.store.TAKEN):
             conn.set_trace_callback(seen.append)
-            return real(conn, source, cap)
+            return real(conn, source, cap, order)
         with mock.patch.object(library_view.store, "all_ids", spy):
             self.ids(kind="all")
         self.assertTrue(seen)
