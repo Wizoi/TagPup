@@ -9,6 +9,7 @@ no row changes, touches no table (findings #464: nothing checks that by itself, 
 Photos are rows as the indexer records a read (tests/view_library.py); a caption changed is what a save records
 (store.photos.record_saved). Fictional names only.
 """
+import base64
 import os
 import sys
 import unittest
@@ -181,6 +182,29 @@ class ThePlans(Captioned):
         captioned = [sql for sql in seen if "FROM photos" in sql and "p.id >" not in sql and "p.id <" not in sql]
         self.assertTrue(captioned and all(sql.count(">= ") + sql.count("<= ") == 1 for sql in captioned),
                         "after a cursor the key has one bound, the cursor's, for the index to seek")
+
+
+class AForgedToken(unittest.TestCase):
+    def test_a_key_holding_a_lone_surrogate_is_refused_not_a_server_error(self):
+        # #723: JSON may spell a lone surrogate; SQLite cannot bind one.
+        vl = ViewLibrary(self)
+        vl.photo("A", "a.jpg", caption="Bay")
+        lone = chr(92) + "ud800"
+        for order in ("caption", "caption-desc", "name", "name-desc"):
+            with self.subTest(order=order):
+                raw = '["%s",0,"x%s",1]' % (order, lone)
+                token = base64.urlsafe_b64encode(raw.encode("ascii")).decode("ascii").rstrip("=")
+                with self.assertRaises(Refused):
+                    library_view.view(vl.library, "all", after=token, limit=1, order=order)
+
+    def test_the_route_answers_400(self):
+        app, home = web_client.app_for(self, "tagpup")
+        vl = ViewLibrary(self, "library", home=home)
+        vl.photo("A", "a.jpg", caption="Bay")
+        raw = '["caption",0,"x%sud800",1]' % chr(92)
+        token = base64.urlsafe_b64encode(raw.encode("ascii")).decode("ascii").rstrip("=")
+        reply = app.test_client().get("/library/api/library/view", query_string={"kind": "all", "order": "caption", "after": token})
+        self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
 
 
 class TheRoute(unittest.TestCase):

@@ -248,6 +248,12 @@ def decode(token, order=store.TAKEN):
     if not (isinstance(found, list) and len(found) == 3):
         raise Refused("That page token is not one this server made.")
     phase, taken, photo_id = found
+    if isinstance(taken, str):
+        try:
+            taken.encode("utf-8")
+        except UnicodeEncodeError:
+            # JSON may spell a lone surrogate, which SQLite cannot bind: a forged token, refused, never a 500 (#723).
+            raise Refused("That page token is not one this server made.") from None
     longest = {store.TAKEN: 64, store.TAKEN_DESC: 64, store.CAPTION: store.CAPTION_KEY,
                store.CAPTION_DESC: store.CAPTION_KEY}.get(order, 260)
     ok = (phase in (0, 1) and type(phase) is int and type(photo_id) is int and 0 <= photo_id < 2 ** 62
