@@ -849,6 +849,20 @@ body {
     min-width: 0;
 }
 
+/* The view and its total, one line: a long name is cut short (its tooltip is the whole), never put on a line of its own. */
+.library-strip-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.library-strip-name .folder-stats-badge {
+    flex: none;
+    white-space: nowrap;
+}
+
 .library-strip-source {
     margin: 0;
     font-family: var(--font-heading);
