@@ -184,6 +184,69 @@ class ThePlans(Captioned):
                         "after a cursor the key has one bound, the cursor's, for the index to seek")
 
 
+class ThePlanOfEachKindOfSource(unittest.TestCase):
+    """#722: the name or caption index is walked for the whole library, a list of ids (a keyword, a person) and a range
+    that holds much of the library; a smaller range of another index (a month, a year's Other, a folder with its
+    subfolders) is read by its range and sorted -- forced, it walked every photo of the library for each page."""
+
+    def setUp(self):
+        vl = self.vl = ViewLibrary(self)
+        vl.tree("Trips/Coast", "People/" + WREN, face_root="People")
+        for n in range(36):
+            vl.photo("Bulk", "IMG_%04d.jpg" % n, taken="2019:03:%02d 10:00:00" % (n % 28 + 1), caption="Harbour %d" % n,
+                     tags=["Trips/Coast"] if n % 2 else ["People/" + WREN])
+        vl.photo("Bulk", "loose_1.jpg")
+        vl.photo("Bulk", "loose_2.jpg", caption="No date")
+        vl.photo(os.path.join("Small", "Deep"), "a.jpg", taken="2020:07:01 09:00:00", caption="Late")
+        vl.photo("Small", "b.jpg", taken="2020-02-02 09:00:00")   # dashes: a year's Other
+
+    def first_phase_plan(self, kind, value, order, recursive=False):
+        source = library_view.source_of(self.vl.library, kind, value, recursive)
+        conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
+        try:
+            statements, _ms = store.id_plans(conn, source, 1000, order)
+        finally:
+            conn.close()
+        # The read of the photos that have the key (not the counts that decide how, nor those with none).
+        keyed = [lines for sql, lines in statements if sql.startswith("SELECT p.id FROM photos") and "'') IS NULL" not in sql]
+        self.assertEqual(1, len(keyed), statements)
+        return " | ".join(keyed[0])
+
+    def test_a_small_range_is_read_by_its_own_index_and_sorted(self):
+        for kind, value, recursive, index in (("month", "2020-07", False, "idx_photos_taken"),
+                                              ("year_other", "2020", False, "idx_photos_year"),
+                                              ("folder", os.path.join(self.vl.pictures, "Small"), True, "idx_photos_path_nocase")):
+            for order in ("caption", "caption-desc", "name", "name-desc"):
+                with self.subTest(kind=kind, order=order):
+                    plan = self.first_phase_plan(kind, value, order, recursive)
+                    self.assertIn(index, plan)
+                    self.assertNotIn(store.CAPTION_INDEX if order.startswith("caption") else store.NAME_INDEX, plan)
+
+    def test_the_library_a_list_of_ids_and_a_range_holding_much_of_it_walk_the_index(self):
+        for kind, value, recursive in (("all", None, False), ("keyword", "Trips", False), ("person", WREN, False),
+                                       ("year", "2019", False), ("folder", self.vl.pictures, True)):
+            for order in ("caption", "caption-desc", "name", "name-desc"):
+                with self.subTest(kind=kind, order=order):
+                    plan = self.first_phase_plan(kind, value, order, recursive)
+                    self.assertIn(store.CAPTION_INDEX if order.startswith("caption") else store.NAME_INDEX, plan)
+                    self.assertNotIn("TEMP B-TREE", plan)
+
+    def test_either_way_the_pages_are_the_list(self):
+        for kind, value, recursive in (("month", "2020-07", False), ("folder", os.path.join(self.vl.pictures, "Small"), True),
+                                       ("year", "2019", False), ("all", None, False)):
+            for order in ("caption", "caption-desc", "name", "name-desc"):
+                with self.subTest(kind=kind, order=order):
+                    listed = library_view.ids(self.vl.library, kind, value, recursive, order=order)["ids"]
+                    token, paged = None, []
+                    while True:
+                        page = library_view.view(self.vl.library, kind, value, recursive, token, 3, order)
+                        paged += page["ids"]
+                        token = page["next"]
+                        if token is None:
+                            break
+                    self.assertEqual(listed, paged)
+
+
 class AForgedToken(unittest.TestCase):
     def test_a_key_holding_a_lone_surrogate_is_refused_not_a_server_error(self):
         # #723: JSON may spell a lone surrogate; SQLite cannot bind one.

@@ -1916,7 +1916,8 @@ and one index-only migration (22).
   Checked by hand against #464 (nothing checks a migration's declared `touches`): a test holds that 22 adds exactly one index on
   `photos` and no column or trigger, that every table's rows are unchanged, and that a change journaled at 21 is still undoable. An
   order by name reads `photos p INDEXED BY idx_photos_name`, walking the index in order and testing each entry for the source (5 to
-  25 ms on photo_index whatever the source's size; sorting 15,000 photos by a name computed for each was 130 ms, the whole library
+  25 ms on photo_index for the sources then measured -- *not* for a small range of another index, which walked the whole library
+  for each page until #722: see the owner's second review; sorting 15,000 photos by a name computed for each was 130 ms, the whole library
   630 ms); without the index (a library not yet migrated) it is the sort, the same order. On the sandbox copy migration 22 took 0.7 to 1.1 s.
 - **The navigator** (`navigator.js`, `navigator-model.js`, `navigator-tree.js`): every tab is a multi-selectable tree
   (`aria-multiselectable`). A click selects the row **and every row under it** (shown selected) and opens a closed branch; Ctrl-click
@@ -2155,6 +2156,21 @@ folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Or
   descending 215 to 230 ms; the largest keyword by Caption 544 to 595 ms, descending 229 to 253; the other orders 235 to 1,122 ms on
   the same runs (a noisy machine: Date Taken's own first open was 404 to 2,330). Bulk edits, the tally and the selection resolve the
   view's source in Date Taken order whatever the view's: the order is not part of a selection.
+- **#722, which sources walk the index.** Name and caption order forced `INDEXED BY` for every source, so a month, a year's Other
+  or a folder with its subfolders walked all 68,324 index entries for each page. `_walks` (store.library_view) now walks the index for
+  the whole library and for a source given by a list of ids (a keyword, a person, a folder alone, a union holding one of those), and
+  leaves a range of another index (`Scope.ranged`: a month, a year, a year's Other, a folder with its subfolders, a union of months and
+  years) to SQLite -- the range read and sorted -- unless it holds more than 1/16 of the library (`RANGE_SHARE`; counted at each read,
+  one covering count): the top folder of the Folders tab is the whole library through the path range, 114 to 949 ms a page sorted,
+  0.2 to 1.8 walked. **Measured** on a sandbox copy of photo_index, caption and name, either way, the first page of 200 and the
+  eleventh, then the id list, the walk forced everywhere (before) against the rule: a month (1,201) 1-117 / 44-156 ms against 2-11 /
+  7-9; a year's Other (50) 45-149 against 4-10 every time; a folder with subfolders of 3,573, 2-34 / 47-157 against 8-40 / 16-22; the
+  top folder 0.2-1.8 / 69-193 against 7-9 / 78-184 (the count, about 7 ms, paid on each read); a year of 5,579 (walked either way)
+  0.2-33 / 47-153; a keyword (14,838) 2-4 / 14-24, a person (14,840) 8-16 / 19-29, a folder alone (759) 0.3-7 / 6-7 and unions
+  (3,251 to 17,463) 3-29 / 27-175, unchanged. A test asserts the plan for each kind: the range's own index and a sort for a small
+  range, the name or caption index and no sort for the library, a keyword, a person, a year holding most of it and the top folder.
+- **#723.** A forged caption- or name-order token whose key held a lone surrogate passed `decode` and reached SQLite, which cannot
+  bind it: a 500. `decode` refuses a key that does not encode as UTF-8 (400).
 - **Found on the way.** The page token was refused over 400 characters, and an order by name's token holds the file name in JSON, six
   characters for each one that is not ASCII: the page after a photo named with some 50 Cyrillic or Greek letters could not be asked for.
   `MAX_TOKEN` is 5,000. No name on the live libraries came near 400 (counted).

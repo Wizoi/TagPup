@@ -42,6 +42,8 @@ ANY_OF = "any_of"
 KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER, ANY_OF)
 #: The kinds a union may hold.
 MEMBER_KINDS = KINDS[:-1]
+#: The kinds whose photos are a range of another index of photos (Scope.ranged): a union of only these is one too.
+RANGED = (YEAR, MONTH, YEAR_OTHER)
 
 #: A source: its kind, its value -- a folder's path (native), a keyword's tag as the tree spells it, a person's
 #: name, a year as an integer, a month as "YYYY-MM", a union's tuple of Sources; None for all -- and, for a folder,
@@ -119,9 +121,11 @@ def month_range(month):
 
 
 #: The photos a source holds, for the statements that read them: `from_` and `where` (the photos table is `p`),
-#: the `params` of the where, the (SQL, parameters) that count them, and whether every one has a date
-#: (a month does: the undated photos are not looked for).
-Scope = collections.namedtuple("Scope", "from_ where params count dated", defaults=(False,))
+#: the `params` of the where, the (SQL, parameters) that count them, whether every one has a date
+#: (a month does: the undated photos are not looked for), and whether the where is a RANGE of another index of photos
+#: (a month, a year, a year's Other, a folder with its subfolders, a union of months and years): such a source is read
+#: by that range and sorted, never by walking the name or caption index past every photo of the library (#722).
+Scope = collections.namedtuple("Scope", "from_ where params count dated ranged", defaults=(False, False))
 
 
 def _months_of(year):
@@ -216,7 +220,8 @@ def _union_scope(conn, members):
         return None
     where, params = _any(clauses)
     dated = all(member.kind == MONTH for member in members)
-    return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), dated)
+    ranged = all(member.kind in RANGED for member in members)
+    return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), dated, ranged)
 
 
 def _scope(conn, source):
@@ -229,22 +234,22 @@ def _scope(conn, source):
         return _union_scope(conn, source.value)
     if kind == YEAR_OTHER:
         where, params = _year_other(int(source.value))
-        return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params))
+        return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), ranged=True)
     if kind == KEYWORD_ONLY:
         tag = (resolve_tag(conn, source.value),)
         inner = "SELECT photo_id FROM photo_tags WHERE tag_id IN (SELECT id FROM tag_taxonomy WHERE tag = ?)"
         return Scope("photos p", "p.id IN (%s)" % inner, tag, ("SELECT COUNT(DISTINCT photo_id) FROM (%s)" % inner, tag))
     if kind == YEAR:
         year = (int(source.value),)
-        return Scope("photos p", "p.year = ?", year, ("SELECT COUNT(*) FROM photos WHERE year = ?", year))
+        return Scope("photos p", "p.year = ?", year, ("SELECT COUNT(*) FROM photos WHERE year = ?", year), ranged=True)
     if kind == MONTH:
         bounds = month_range(source.value)
         return Scope("photos p", "p.taken >= ? AND p.taken < ?", bounds,
-                     ("SELECT COUNT(*) FROM photos WHERE taken >= ? AND taken < ?", bounds), dated=True)
+                     ("SELECT COUNT(*) FROM photos WHERE taken >= ? AND taken < ?", bounds), dated=True, ranged=True)
     if kind == FOLDER:
         if source.recursive:
             where, params = store_roots.sql_under(conn, "p.path", source.value)
-            return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params))
+            return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), ranged=True)
         where, params = store_roots.sql_equals(conn, "path", source.value)
         row = conn.execute("SELECT id FROM folders WHERE " + where, params).fetchone()
         if row is None:
@@ -317,12 +322,38 @@ def has_index(conn, index):
     return found
 
 
+#: Read every source by the name or caption index, as before #722: what a measurement compares against.
+FORCE_ALWAYS = False
+
+#: A range of another index holding at most 1/RANGE_SHARE of the library is read by that range and sorted; a larger one is
+#: read by walking the name or caption index (#722). Measured on a sandbox copy of photo_index (68,324 photos; a page of 200,
+#: the first and the eleventh, and the whole id list; caption and name, either way), by the range against by the walk: a
+#: month of 1,201 photos 2-11 ms a page and 7-9 its ids, against 1-117 and 44-156; a year's Other of 50, 4-10 ms against
+#: 45-149 every time; a folder with its subfolders of 3,573, 8-40 ms a page and 16-22 its ids, against 2-34 and 47-157. A
+#: range of much of the library is walked: the top folder by its path range was 114-949 ms a page, walked 0.2-1.8 (7-9 with
+#: the count that decides it), and a year of 5,579 (8 %) 8-97 ms against 0.2-33. 1/16 is 4,270 photos of photo_index.
+RANGE_SHARE = 16
+
+
+def _walks(conn, scope, index):
+    """Is `scope` read in the order of `index` by walking the index (`INDEXED BY`)? The whole library and a source given by a
+    list of ids -- a keyword, a person, a folder alone, a union holding one of those -- are: left to itself SQLite reads the
+    list and sorts it. A range of another index (Scope.ranged: a month, a year, a year's Other, a folder with its
+    subfolders, a union of months and years) is left to SQLite, which reads the range and sorts it, unless it holds more
+    than 1/RANGE_SHARE of the library: forced, a small range walked every photo of the library for each page (#722)."""
+    if not has_index(conn, index):
+        return False
+    if FORCE_ALWAYS or not scope.ranged:
+        return True
+    held = conn.execute(*scope.count).fetchone()[0]
+    return held * RANGE_SHARE > conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+
+
 def _by_index(conn, scope, index):
-    """(FROM, WHERE, params) that read the photos of `scope` in the order of `index`: the index walked in order and each
-    entry tested for the source -- by name 5 to 25 ms whatever the source's size on photo_index, where sorting 15,000
-    photos by a name computed for each was 130 ms. A source joined to another table is asked as a subquery."""
+    """(FROM, WHERE, params) that read the photos of `scope` in the order of `index`: walking the index where `_walks` says
+    so, else as SQLite chooses. A source joined to another table is asked as a subquery."""
     where = scope.where if scope.from_ == "photos p" else "p.id IN (SELECT p.id FROM %s WHERE %s)" % (scope.from_, scope.where)
-    from_ = "photos p INDEXED BY %s" % index if has_index(conn, index) else "photos p"
+    from_ = "photos p INDEXED BY %s" % index if _walks(conn, scope, index) else "photos p"
     return from_, "(%s)" % where, scope.params
 
 
