@@ -28,6 +28,13 @@
  * no such retry: one that fails makes the page ask how the server is, and once it has
  * seen the server away and answering again, it asks for the image again
  * (imagesAfterAnUpdate).
+ *
+ * Every response names the version answering (X-TagPup-Version). A page left open while
+ * its server was replaced by another version -- a launch of a newer one, the always-on
+ * process moving -- would run its old code against the new server: the first response
+ * naming a version other than the one before is announced as a `tagpup:updated` event,
+ * which web/common/roots-banner.js shows as a banner asking to reload. Not reloaded for
+ * the owner: a caption half typed would go with it.
  */
 
 /** How long a request waits out a server moving onto a new version. */
@@ -108,6 +115,27 @@ function announceRootsMoved(res) {
     document.dispatchEvent(new CustomEvent('tagpup:roots-moved', { detail: { root } }));
 }
 
+/** The version the page's first response named, and whether another has been announced. */
+let versionSeen = null;
+let updateAnnounced = false;
+
+/**
+ * A response naming a version other than the one the page's first response named: the server
+ * was replaced while the page was open. Announced once as a `tagpup:updated` event.
+ */
+function announceVersion(res) {
+    if (updateAnnounced || !res || !res.headers || typeof res.headers.get !== 'function') return;
+    const version = res.headers.get('X-TagPup-Version');
+    if (!version) return;
+    if (versionSeen === null) {
+        versionSeen = version;
+        return;
+    }
+    if (version === versionSeen || typeof document === 'undefined') return;
+    updateAnnounced = true;
+    document.dispatchEvent(new CustomEvent('tagpup:updated', { detail: { from: versionSeen, to: version } }));
+}
+
 function pause(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -119,6 +147,7 @@ function pause(ms) {
 function fetchThroughAnUpdate(url, options, started = Date.now(), updating = false) {
     const again = (ms) => pause(ms).then(() => fetchThroughAnUpdate(url, options, started, true));
     return fetch(url, options).then(res => {
+        announceVersion(res);
         announceRootsProblem(res);
         announceRootsMoved(res);
         if (refusedForAnUpdate(res) && Date.now() - started < UPDATE_WAIT_MS) {

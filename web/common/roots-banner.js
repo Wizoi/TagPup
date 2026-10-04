@@ -58,12 +58,29 @@ export function rootsMoved(root) {
     return true;
 }
 
-/** Listen for the problem; the page's main.js calls this once. */
+/** The event api.js raises when a response names another version than the page's first did. */
+export const UPDATED = 'tagpup:updated';
+
+/**
+ * The server was replaced by another version while this page was open (a launch of a newer
+ * one, tagpup/launcher.py): say so in the banner. The page is not reloaded for the owner --
+ * an unsaved edit would go with it -- and runs its old code until they reload.
+ */
+export function serverUpdated(detail) {
+    const to = detail && detail.to && detail.to !== 'checkout' ? ` (${detail.to})` : '';
+    showRootsBanner(`Reload this page to use it${to}; until then it runs the version it was opened with.`,
+        'TagPup was updated while this page was open. ');
+}
+
+/** Listen for the problem, and for an update; the page's main.js calls this once. */
 export function wireRootsBanner() {
     document.addEventListener(ROOTS_PROBLEM, (event) => {
         showRootsBanner(event.detail && event.detail.message, 'This computer does not know where this library keeps its photos. ');
     });
     document.addEventListener('tagpup:roots-moved', (event) => {
         rootsMoved(event.detail && event.detail.root);
+    });
+    document.addEventListener(UPDATED, (event) => {
+        serverUpdated(event.detail);
     });
 }
