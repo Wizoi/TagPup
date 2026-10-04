@@ -145,6 +145,59 @@ class TestAutomatchLeavesExcludedFacesAlone(ExcludedFaceBase):
         self.assertIsNone(self.row(target)["name"],
                           "automatch named a face after one that had been ruled out")
 
+    def test_a_manual_excluded_face_is_not_a_reference_either(self):
+        # Decided by hand, then ruled out: still not what a guess is compared with (#640).
+        ref_photo = self.add_photo("ruled_out.jpg")
+        centre = identity_vector(9)
+        ruled_out = self.add_face(ref_photo, centre)
+        self.exclude(ruled_out)
+        conn = tagpup_db.connect(self.TEST_DB)
+        conn.execute("UPDATE faces SET name = ?, name_source = 'manual' WHERE id = ?", (NAMED, ruled_out))
+        conn.commit()
+        conn.close()
+
+        photo = self.add_photo("next.jpg")
+        target = self.add_face(photo, near(centre, 2))
+        status, body = self.post("/api/photo/automatch", {"photo_path": photo})
+        self.assertEqual(status, 200, body)
+        self.assertIsNone(self.row(target)["name"])
+
+
+class TestAutomatchGuessesAreNotReferences(ExcludedFaceBase):
+    """#640 through the routes: the only near match is a face automatch named itself."""
+
+    def _guess_and_lookalike(self):
+        centre = identity_vector(11)
+        guess_photo = self.add_photo("guess.jpg")   # no keyword names the person here
+        guess = self.add_face(guess_photo, centre, name=NAMED)
+        photo = self.add_photo("next.jpg")
+        target = self.add_face(photo, near(centre, 3))
+        return guess, photo, target
+
+    def test_folder_apply_names_nothing_from_a_guess(self):
+        _guess, _photo, target = self._guess_and_lookalike()
+        status, body = self.post("/api/folder/automatch", {"folder_path": self.tmpdir, "dry_run": False})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body.get("matched_count"), 0, body)
+        self.assertIsNone(self.row(target)["name"])
+
+    def test_folder_dry_run_would_name_nothing_from_a_guess(self):
+        _guess, _photo, target = self._guess_and_lookalike()
+        status, body = self.post("/api/folder/automatch", {"folder_path": self.tmpdir, "dry_run": True})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body.get("faces"), 0, body)
+        self.assertIsNone(self.row(target)["name"])
+
+    def test_the_same_face_is_a_reference_once_its_photo_carries_the_keyword(self):
+        centre = identity_vector(11)
+        ref_photo = self.add_photo("keyworded.jpg", people=[NAMED])
+        self.add_face(ref_photo, centre, name=NAMED)
+        photo = self.add_photo("next.jpg")
+        target = self.add_face(photo, near(centre, 3))
+        status, body = self.post("/api/folder/automatch", {"folder_path": self.tmpdir})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.row(target)["name"], NAMED)
+
 
 class TestExcludeAndRestoreReportWhatChanged(ExcludedFaceBase):
     def test_exclude_counts_rows_changed_not_ids_sent(self):
