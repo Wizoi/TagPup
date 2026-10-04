@@ -27,18 +27,22 @@ export const state = {
     // navigator-model.js), what is open in it (`expanded`, row ids), its filter text, the row the arrow keys are on
     // (`currentId`), the rows last drawn (`rows`, for the keys), and `asked`, the number of the request whose answer
     // counts: an older answer is dropped. `stale`: counts changed since it was read. `reveal`: the followed source
-    // is to be shown in it once it is here.
+    // is to be shown in it once it is here. Several rows are selected at once (#672): the selection is the followed source
+    // itself (a union of the rows' sources, held in the address), so a section keeps only `anchor`, the row a Shift-click
+    // runs from, `notice`, a sentence about the last click (too many rows), and `opened`, whether its first index was opened
+    // (People's branches start open). `order` is the order views are read in, as last chosen or opened (#671).
     nav: {
         shown: 'folder',
         choice: { library: 'library', folder: 'folder' },
         tab: 'folders',
         followed: null,
+        order: 'taken',
         timer: null,
         sections: {
-            folders: { status: 'idle', message: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, rows: [], asked: 0, stale: false, reveal: false },
-            keywords: { status: 'idle', message: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, rows: [], asked: 0, stale: false, reveal: false },
-            people: { status: 'idle', message: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, rows: [], asked: 0, stale: false, reveal: false },
-            dates: { status: 'idle', message: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, rows: [], asked: 0, stale: false, reveal: false },
+            folders: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false },
+            keywords: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false },
+            people: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false },
+            dates: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false },
         },
     },
     // Moving between a folder on disk and its view of the library (library-moves.js): the photo to land on in the

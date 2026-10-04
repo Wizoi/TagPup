@@ -4,12 +4,20 @@
 // can be found in them again. navigator.js asks, paints and listens; this is what can be tested and measured alone.
 //
 // A row is { id, level, label, count, hint, title, expandable, expanded, spec } where `spec` is what
-// openLibraryView takes ({ kind, value, recursive }) or null for a row that only groups (the junk years).
+// openLibraryView takes ({ kind, value, recursive }) or null for a row that only groups (the junk years, a branch of people).
 // The lists are the whole library's -- 2,746 folders, 895 keyword nodes, 413 people, 61 years on photo_index -- and
 // a tree shows only what is expanded, at most NAV_MAX_ROWS rows (a flat list, NAV_MAX_LIST_ROWS): the page never draws them
 // all at once, and when it draws fewer than there are it says how many it left out, counted over the whole tree.
+//
+// SEVERAL ROWS ARE SELECTED AT ONCE (the owner's review, #672): the view shows the union of what they hold. A row holds
+// photos of its own (a folder's own photos, a keyword's node alone, a person, a month, the "Other" of a year) and, with
+// the rows under it, its whole (a folder and its subfolders, a keyword and everything under it, a year); selecting a row
+// selects every row under it, and taking one of those off leaves the row's own photos in. `rowTree` is a section's rows
+// as that tree, `compress` turns the rows selected into the fewest sources that hold the same photos (a row whose every
+// row below is selected is its whole), and `selectedRows` turns a view's sources back into the rows -- so the address
+// holds the selection and Back, Forward and a bookmark restore it.
 import { baseName, pathKey } from './common/paths.js';
-import { compareTagNames } from './common/vocabulary.js';
+import { compareTagNames, leafOf } from './common/vocabulary.js';
 
 /** The most rows one section draws; the rest are said in a line and reached by the filter. */
 export const NAV_MAX_ROWS = 1500;
@@ -112,27 +120,90 @@ function navKeywordRow(node, level, expanded) {
 
 // ---- People ----------------------------------------------------------------------------------
 
-/** The people of the route's list, [{ name, count }], alphabetically (names differing in case are one: the route merges them). */
-export function indexPeople(list) {
+/** The row that gathers the people no branch of the tag tree files (no node, a branch of that name, or two nodes). */
+export const UNFILED_ID = 'g:';
+
+/**
+ * The people of the route's answer -- `list` [{ name, count, group }], `groups` [{ tag, name, parent, count }], `unfiled` the
+ * photos naming someone not filed -- as a tree (#673): each person under the branch of the tag tree they are filed in
+ * (Family/Immediate apart from Friends), the branches nested as the tree nests them, alphabetically, the branches before
+ * the people in each; those not filed under one row at the end. A library whose people are filed nowhere is the flat
+ * list it was. Names differing in case are one: the route merges them.
+ */
+export function indexPeople(list, groups = [], unfiled = 0) {
     const people = [];
     const byLower = new Map();
+    const byTag = new Map();
+    for (const each of Array.isArray(groups) ? groups : []) {
+        if (!each || typeof each.tag !== 'string' || byTag.has(each.tag)) continue;
+        byTag.set(each.tag, {
+            id: `g:${each.tag}`, tag: each.tag, name: each.name || leafOf(each.tag), parentTag: each.parent || null,
+            count: Number(each.count) || 0, group: true, subgroups: [], people: [], children: [],
+        });
+    }
     for (const each of Array.isArray(list) ? list : []) {
         if (!each || typeof each.name !== 'string') continue;
-        people.push({ id: `p:${each.name}`, name: each.name, count: Number(each.count) || 0 });
+        people.push({ id: `p:${each.name}`, name: each.name, count: Number(each.count) || 0, groupTag: each.group || null, children: [] });
     }
     people.sort((a, b) => compareTagNames(a.name, b.name));
     for (const person of people) if (!byLower.has(person.name.toLowerCase())) byLower.set(person.name.toLowerCase(), person);
-    return { people, byLower, size: people.length };
+    const alphabetical = (a, b) => compareTagNames(a.name, b.name) || compareTagNames(a.tag, b.tag);
+    const tops = [];
+    for (const group of [...byTag.values()].sort(alphabetical)) {
+        const parent = group.parentTag !== null ? byTag.get(group.parentTag) : null;
+        if (parent && parent !== group) parent.subgroups.push(group);
+        else tops.push(group);
+    }
+    const loose = [];
+    for (const person of people) {
+        const group = person.groupTag !== null ? byTag.get(person.groupTag) : null;
+        if (group) group.people.push(person);
+        else loose.push(person);
+    }
+    for (const group of byTag.values()) group.children = [...group.subgroups, ...group.people];
+    const grouped = byTag.size > 0;
+    if (grouped && loose.length) {
+        tops.push({
+            id: UNFILED_ID, tag: '', name: 'Not filed in the tag tree', parentTag: null, count: Number(unfiled) || 0, group: true,
+            unfiled: true, subgroups: [], people: loose, children: loose,
+        });
+    }
+    return { people, byLower, groups: byTag, tops: grouped ? tops : loose, grouped, size: people.length };
 }
 
-function navPersonRow(person) {
+function navPersonRow(person, level = 1) {
     return {
-        id: person.id, level: 1, label: person.name, count: person.count,
-        title: `${person.name}\n${navPlural(person.count, 'photo', 'photos')}`,
+        id: person.id, level, label: person.name, count: person.count,
+        title: `${person.name}${person.groupTag ? ` (${person.groupTag})` : ''}\n${navPlural(person.count, 'photo', 'photos')}`,
         aria: `${person.name}, ${navPlural(person.count, 'photo', 'photos')}`,
         hint: '', expandable: false, expanded: false,
         spec: { kind: 'person', value: person.name, recursive: false },
     };
+}
+
+function navPeopleRow(node, level, expanded) {
+    if (!node.group) return navPersonRow(node, level);
+    const open = expanded.has(node.id);
+    const people = node.unfiled ? node.people.length : navPeopleUnder(node);
+    return {
+        id: node.id, level, label: node.name, count: node.count,
+        title: node.unfiled
+            ? `${navPlural(people, 'person', 'people')} no branch of the tag tree files\n${navPlural(node.count, 'photo', 'photos')} naming one of them`
+            : `${node.tag}\n${navPlural(people, 'person', 'people')}, ${navPlural(node.count, 'photo', 'photos')} naming one of them`,
+        aria: `${node.name}, ${navPlural(people, 'person', 'people')}, ${navPlural(node.count, 'photo', 'photos')}`,
+        hint: '', expandable: node.children.length > 0, expanded: open && node.children.length > 0, spec: null,
+    };
+}
+
+function navPeopleUnder(group) {
+    let found = group.people.length;
+    for (const sub of group.subgroups) found += navPeopleUnder(sub);
+    return found;
+}
+
+/** The ids of every branch row of the people, to be open when the section is first drawn: the people show under their headers. */
+export function peopleGroupIds(index) {
+    return index && index.grouped ? [...[...index.groups.values()].map(group => group.id), UNFILED_ID] : [];
 }
 
 // ---- Dates -----------------------------------------------------------------------------------
@@ -188,9 +259,9 @@ function navMonthRows(each, level) {
         // Photos of the year whose date names no month of it: counted, and reached by the year.
         rows.push({
             id: `o:${each.year}`, level, label: 'Other', count: each.other,
-            title: `${navPlural(each.other, 'photo', 'photos')} of ${each.year} with no month. Open the year to see them.`,
+            title: `${navPlural(each.other, 'photo', 'photos')} of ${each.year} whose date names no month of it`,
             aria: `Other, ${navPlural(each.other, 'photo', 'photos')} of ${each.year} with no month`,
-            hint: '', expandable: false, expanded: false, spec: { kind: 'year', value: String(each.year), recursive: false },
+            hint: '', expandable: false, expanded: false, spec: { kind: 'year_other', value: String(each.year), recursive: false },
         });
     }
     return rows;
@@ -229,8 +300,22 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
     const needle = String(filter || '').trim().toLowerCase();
     const out = [];
     if (section === 'people') {
+        if (!needle) {
+            navWalk(index.tops, 1, expanded, navPeopleRow, out);
+            return navCapped(out, index.grouped ? treeCap : cap, out.length);
+        }
+        for (const group of index.groups.values()) {
+            if (!navMatches(group.name, needle) && !navMatches(group.tag, needle)) continue;
+            const row = navPeopleRow(group, 1, new Set());
+            row.expandable = false;
+            row.hint = group.tag;
+            out.push(row);
+        }
         for (const person of index.people) {
-            if (!needle || navMatches(person.name, needle)) out.push(navPersonRow(person));
+            if (!navMatches(person.name, needle)) continue;
+            const row = navPersonRow(person);
+            row.hint = person.groupTag || '';
+            out.push(row);
         }
         return navCapped(out, cap, out.length);
     }
@@ -327,7 +412,7 @@ export function locate(section, index, spec) {
         }
         return { id, open };
     }
-    if (section === 'keywords' && spec.kind === 'keyword') {
+    if (section === 'keywords' && (spec.kind === 'keyword' || spec.kind === 'keyword_only')) {
         let node = index.byTag.get(spec.value) || index.byLower.get(String(spec.value).toLowerCase());
         if (!node) return null;
         const id = node.id;
@@ -342,14 +427,25 @@ export function locate(section, index, spec) {
     }
     if (section === 'people' && spec.kind === 'person') {
         const person = index.byLower.get(String(spec.value).toLowerCase());
-        return person ? { id: person.id, open: [] } : null;
+        if (!person) return null;
+        const open = [];
+        for (let tag = person.groupTag; tag && index.groups && index.groups.has(tag) && open.length < 64; tag = index.groups.get(tag).parentTag) {
+            open.push(index.groups.get(tag).id);
+        }
+        if (index.grouped && !(person.groupTag && index.groups.has(person.groupTag))) open.push(UNFILED_ID);
+        return { id: person.id, open };
     }
-    if (section === 'dates' && (spec.kind === 'year' || spec.kind === 'month')) {
-        const year = spec.kind === 'year' ? Number(spec.value) : Number(String(spec.value).slice(0, 4));
+    if (section === 'dates' && (spec.kind === 'year' || spec.kind === 'month' || spec.kind === 'year_other')) {
+        const year = spec.kind === 'month' ? Number(String(spec.value).slice(0, 4)) : Number(spec.value);
         const each = index.byYear.get(year);
         if (!each) return null;
         const open = [];
         if (index.odd.includes(each)) open.push(OTHER_YEARS_ID);
+        if (spec.kind === 'year_other') {
+            if (!each.other) return null;
+            open.push(`y:${year}`);
+            return { id: `o:${year}`, open };
+        }
         if (spec.kind === 'month') {
             if (!each.months.some(m => m.month === spec.value)) return null;
             open.push(`y:${year}`);
@@ -360,12 +456,187 @@ export function locate(section, index, spec) {
     return null;
 }
 
-/** Which tab (section) a source belongs to; null for the whole library, which no tab names. */
+/** Which tab (section) a source belongs to; null for the whole library, which no tab names. A union: its first source's. */
 export function sectionOf(spec) {
     if (!spec) return null;
+    if (spec.kind === 'any_of') return Array.isArray(spec.value) && spec.value.length ? sectionOf(spec.value[0]) : null;
     if (spec.kind === 'folder') return 'folders';
-    if (spec.kind === 'keyword') return 'keywords';
+    if (spec.kind === 'keyword' || spec.kind === 'keyword_only') return 'keywords';
     if (spec.kind === 'person') return 'people';
-    if (spec.kind === 'year' || spec.kind === 'month') return 'dates';
+    if (spec.kind === 'year' || spec.kind === 'month' || spec.kind === 'year_other') return 'dates';
     return null;
+}
+
+// ---- Several rows selected: the union (#672) ---------------------------------------------------
+
+/** The sources a view's source is the union of: a union's list, a source alone, nothing for the whole library. */
+export function membersOf(spec) {
+    if (!spec || spec.kind === 'all') return [];
+    if (spec.kind === 'any_of') return Array.isArray(spec.value) ? spec.value : [];
+    return [{ kind: spec.kind, value: spec.value, recursive: Boolean(spec.recursive) }];
+}
+
+/** The source of these sources: null for none, the source itself for one, else their union. */
+export function specOfMembers(members) {
+    if (!members.length) return null;
+    if (members.length === 1) return { kind: members[0].kind, value: members[0].value, recursive: Boolean(members[0].recursive) };
+    return { kind: 'any_of', value: members.map(m => ({ kind: m.kind, value: m.value, recursive: Boolean(m.recursive) })), recursive: false };
+}
+
+/**
+ * A section's rows as the tree selection works on, whatever is drawn: { tops, children, own, whole, parent } -- the rows
+ * under each, what it holds of its own and with everything under it (a source, or null for a row that only groups:
+ * a branch of people, the junk years, a year, whose photos are all in its months and its "Other"). Made once for an index.
+ */
+export function rowTree(section, index) {
+    if (!index) return null;
+    if (index.rowTree) return index.rowTree;
+    const children = new Map();
+    const own = new Map();
+    const whole = new Map();
+    const parent = new Map();
+    let tops = [];
+    const add = (id, kids, mine, all) => {
+        children.set(id, kids);
+        own.set(id, mine);
+        whole.set(id, all);
+        for (const kid of kids) if (!parent.has(kid)) parent.set(kid, id);
+    };
+    if (section === 'folders') {
+        for (const node of index.byKey.values()) {
+            add(node.id, node.children.map(c => c.id), { kind: 'folder', value: node.path, recursive: false },
+                { kind: 'folder', value: node.path, recursive: true });
+        }
+        tops = index.tops.map(n => n.id);
+    } else if (section === 'keywords') {
+        for (const node of index.byTag.values()) {
+            add(node.id, node.children.map(c => c.id), { kind: 'keyword_only', value: node.tag, recursive: false },
+                { kind: 'keyword', value: node.tag, recursive: false });
+        }
+        tops = index.tops.map(n => n.id);
+    } else if (section === 'people') {
+        const visit = (node) => {
+            if (children.has(node.id)) return;
+            if (node.group) {
+                add(node.id, node.children.map(c => c.id), null, null);
+                node.children.forEach(visit);
+            } else {
+                const spec = { kind: 'person', value: node.name, recursive: false };
+                add(node.id, [], spec, spec);
+            }
+        };
+        index.tops.forEach(visit);
+        tops = index.tops.map(n => n.id);
+    } else if (section === 'dates') {
+        for (const each of [...index.usual, ...index.odd]) {
+            const months = each.months.map(m => `m:${m.month}`);
+            for (const m of each.months) {
+                const spec = { kind: 'month', value: m.month, recursive: false };
+                add(`m:${m.month}`, [], spec, spec);
+            }
+            if (each.other > 0) {
+                const spec = { kind: 'year_other', value: String(each.year), recursive: false };
+                add(`o:${each.year}`, [], spec, spec);
+                months.push(`o:${each.year}`);
+            }
+            add(`y:${each.year}`, months, null, { kind: 'year', value: String(each.year), recursive: false });
+        }
+        tops = index.usual.map(each => `y:${each.year}`);
+        if (index.odd.length) {
+            add(OTHER_YEARS_ID, index.odd.map(each => `y:${each.year}`), null, null);
+            tops.push(OTHER_YEARS_ID);
+        }
+    }
+    index.rowTree = { tops, children, own, whole, parent };
+    return index.rowTree;
+}
+
+/** `ids` and every row under each of them, as a Set (selecting a row selects the rows under it). */
+export function withRowsUnder(tree, ids) {
+    const found = new Set();
+    const stack = [...ids];
+    while (stack.length) {
+        const id = stack.pop();
+        if (found.has(id) || !tree.children.has(id)) continue;
+        found.add(id);
+        stack.push(...tree.children.get(id));
+    }
+    return found;
+}
+
+/**
+ * The fewest sources that hold what the `selected` rows hold: a row with every row under it selected is its whole (a
+ * folder with its subfolders, a keyword and everything under it, a year); a row selected without all of them is its own
+ * photos, and the rows under it that are selected are read the same way. A branch of people or the junk years, which
+ * hold nothing of their own, are the people or years under them.
+ */
+export function compress(tree, selected) {
+    const complete = new Map();
+    const touched = new Map();
+    const isComplete = (id) => {
+        if (complete.has(id)) return complete.get(id);
+        complete.set(id, false);   // a damaged tree that loops ends here
+        const found = selected.has(id) && tree.children.get(id).every(isComplete);
+        complete.set(id, found);
+        return found;
+    };
+    const isTouched = (id) => {
+        if (touched.has(id)) return touched.get(id);
+        touched.set(id, false);
+        const found = selected.has(id) || tree.children.get(id).some(isTouched);
+        touched.set(id, found);
+        return found;
+    };
+    const out = [];
+    const seen = new Set();
+    const emit = (id) => {
+        if (seen.has(id) || !tree.children.has(id) || !isTouched(id)) return;
+        seen.add(id);
+        if (isComplete(id) && tree.whole.get(id)) {
+            out.push(tree.whole.get(id));
+            return;
+        }
+        if (selected.has(id) && tree.own.get(id)) out.push(tree.own.get(id));
+        for (const kid of tree.children.get(id)) emit(kid);
+    };
+    for (const id of tree.tops) emit(id);
+    for (const id of selected) if (!seen.has(id) && !tree.parent.has(id)) emit(id);   // a top a damaged tree hides
+    return out;
+}
+
+/**
+ * The rows of a section that a view's source selects, as a Set, and the rows to open so that each shows: { rows, open }.
+ * A source that is a row's whole selects the row and every row under it; its own, the row alone. A source no row is (a
+ * keyword with no node, a person no photo names, another section's) selects nothing here.
+ */
+export function selectedRows(section, index, spec) {
+    const rows = new Set();
+    const open = [];
+    const tree = rowTree(section, index);
+    if (!tree) return { rows, open };
+    for (const member of membersOf(spec)) {
+        if (sectionOf(member) !== section) continue;
+        const found = locate(section, index, member);
+        if (!found || !tree.children.has(found.id)) continue;
+        if (open.length < 2000) open.push(...found.open);
+        const mine = tree.own.get(found.id);
+        const isOwn = mine && mine.kind === member.kind && Boolean(mine.recursive) === Boolean(member.recursive)
+            && tree.children.get(found.id).length > 0;
+        if (isOwn) rows.add(found.id);
+        else for (const id of withRowsUnder(tree, [found.id])) rows.add(id);
+    }
+    // A row that holds nothing of its own (a branch of people, the junk years) is selected when every row under it is.
+    const full = new Map();
+    const isFull = (id) => {
+        if (full.has(id)) return full.get(id);
+        full.set(id, false);   // a damaged tree that loops ends here
+        const kids = tree.children.get(id);
+        const found = rows.has(id) || (tree.own.get(id) === null && kids.length > 0 && kids.every(isFull));
+        full.set(id, found);
+        return found;
+    };
+    if (rows.size) {
+        for (const [id, mine] of tree.own) if (mine === null && isFull(id)) rows.add(id);
+    }
+    return { rows, open };
 }
