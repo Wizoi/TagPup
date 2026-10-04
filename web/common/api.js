@@ -24,7 +24,13 @@
  * answers a request 503 with X-TagPup-Updating, having done nothing with it, and then
  * answers nothing while it restarts. A request so turned away is sent again after the
  * Retry-After it was given, and again while nothing answers, for up to UPDATE_WAIT_MS:
- * the page waits out the update rather than showing it as an error. An /api/ image has
+ * the page waits out the update rather than showing it as an error. A request that finds
+ * nothing answering (a TypeError, as a browser says it) with no update said is sent once
+ * more after FIRST_FAILURE_RETRY_MS:
+ * a launch replacing the server (tagpup/launcher.py) ends the old one and listens on its
+ * ports within a second, and a page that sent nothing while the old one drained meets
+ * that gap with its first request. Nothing answering means nothing was received; a
+ * server that crashed under it is not back within the retry. An /api/ image has
  * no such retry: one that fails makes the page ask how the server is, and once it has
  * seen the server away and answering again, it asks for the image again
  * (imagesAfterAnUpdate).
@@ -42,6 +48,9 @@ const UPDATE_WAIT_MS = 120000;
 
 /** How long to wait before sending again when nothing answered. */
 const RESTART_RETRY_MS = 1000;
+
+/** How long to wait before the one more try of a request nothing answered, no update said. */
+const FIRST_FAILURE_RETRY_MS = 1500;
 
 /** First URL parts that are no library's name: the routes (tagpup.core.library.ROUTES). */
 const NOT_A_LIBRARY = ['activity', 'api', 'common', 'gui', 'gui_tagpup'];
@@ -144,8 +153,8 @@ function pause(ms) {
  * fetch(url, options), sent again while the server is moving onto a new version: after
  * a refusal saying so, and -- once one has said so -- while nothing answers.
  */
-function fetchThroughAnUpdate(url, options, started = Date.now(), updating = false) {
-    const again = (ms) => pause(ms).then(() => fetchThroughAnUpdate(url, options, started, true));
+function fetchThroughAnUpdate(url, options, started = Date.now(), updating = false, retried = false) {
+    const again = (ms) => pause(ms).then(() => fetchThroughAnUpdate(url, options, started, true, retried));
     return fetch(url, options).then(res => {
         announceVersion(res);
         announceRootsProblem(res);
@@ -157,6 +166,9 @@ function fetchThroughAnUpdate(url, options, started = Date.now(), updating = fal
         return res;
     }, err => {
         if (updating && Date.now() - started < UPDATE_WAIT_MS) return again(RESTART_RETRY_MS);
+        if (!updating && !retried && err && err.name === 'TypeError') {
+            return pause(FIRST_FAILURE_RETRY_MS).then(() => fetchThroughAnUpdate(url, options, started, false, true));
+        }
         throw err;
     });
 }

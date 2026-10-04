@@ -62,10 +62,26 @@ describe("api.js through an update", () => {
     assert.equal(calls.length, 1);
   });
 
-  test("nothing answering, with no update said, is an error at once", async () => {
+  test("nothing answering, with no update said, is an error after one more try", async () => {
     globalThis.location = new URL("http://localhost:8090/kr-track/");
-    const calls = scripted([new TypeError("Failed to fetch")]);
+    const calls = scripted([new TypeError("Failed to fetch"), new TypeError("Failed to fetch")]);
     await assert.rejects(api.fetch("/api/tags"), /Failed to fetch/);
+    assert.equal(calls.length, 2);
+  });
+
+  test("a first request that meets a launch replacing the server gets the new one (#746)", async () => {
+    // The old server ended and the new not yet listening: the second it takes to bind.
+    globalThis.location = new URL("http://localhost:8090/kr-track/");
+    const calls = scripted([new TypeError("Failed to fetch"), reply(200, { success: true, saved: 1 })]);
+    const answer = await api.json("/api/photo/save", { method: "POST", body: "{}" });
+    assert.deepEqual(answer, { success: true, saved: 1 });
+    assert.equal(calls.length, 2);
+  });
+
+  test("a failure that is not a connection's is not sent again", async () => {
+    globalThis.location = new URL("http://localhost:8090/kr-track/");
+    const calls = scripted([new Error("offline")]);
+    await assert.rejects(api.fetch("/api/tags"), /offline/);
     assert.equal(calls.length, 1);
   });
 
