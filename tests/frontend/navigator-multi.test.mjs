@@ -17,12 +17,20 @@ afterEach(() => {
 
 const YEAR = new Date().getFullYear();
 
-/** The source the last ids request named: { kind, value (a union's list parsed), order }. */
+/**
+ * The source the last ids request named: { kind, value (a union's list), order }. A union is POSTed in a body (#696), any
+ * other source asked by its address's words.
+ */
 function asked(ctx) {
-  const query = new URLSearchParams(ctx.idsAsked.at(-1).split("?")[1]);
+  const call = ctx.server.calls.filter((each) => each.url.includes("/api/library/ids")).at(-1);
+  if (call.method === "POST") {
+    assert.equal(call.body.kind, "any_of", "only a union is posted");
+    return { kind: call.body.kind, value: call.body.value, order: call.body.order ?? null, recursive: null };
+  }
+  const query = new URLSearchParams(call.url.split("?")[1]);
   const kind = query.get("kind");
-  const value = kind === "any_of" ? JSON.parse(query.get("value")) : (query.get("value") ?? query.get("folder"));
-  return { kind, value, order: query.get("order"), recursive: query.get("recursive") };
+  assert.notEqual(kind, "any_of", "a union is never put in a request's address");
+  return { kind, value: query.get("value") ?? query.get("folder"), order: query.get("order"), recursive: query.get("recursive") };
 }
 
 async function filter(ctx, name, text) {
@@ -159,6 +167,30 @@ describe("several rows at once", () => {
     await ctx.settle();
     assert.equal(ctx.idsAsked.length, before);
     assert.match(ctx.status("folders"), /selects 2,705 rows; a view shows at most 1,000 at once/);
+  });
+
+  test("rows whose union is too long for the page's address: a sentence and no request, though under 1,000 (#696)", async (t) => {
+    const share = "\\\\photo-server-in-the-hall\\family-pictures-archive";
+    const folders = [{ path: share, name: "family-pictures-archive", parent: null, direct: 0, recursive: 0 }];
+    for (let i = 0; i < 600; i++) {
+      folders.push({ path: `${share}\\${String(i).padStart(4, "0")} ${"a long event name ".repeat(6)}`, name: `${String(i).padStart(4, "0")} event`, parent: share, direct: 1, recursive: 1 });
+    }
+    const ctx = await loadViewPage(t, { search: "?view=all", navigator: { folders: { folders } } });
+    await filter(ctx, "folders", "event");
+    assert.equal(ctx.rows("folders").length, 600);
+    const before = ctx.idsAsked.length;
+    ctx.rows("folders")[0].focus();
+    ctx.key(ctx.rows("folders")[0], "a", { ctrlKey: true });
+    await ctx.settle();
+    assert.equal(ctx.idsAsked.length, before, "nothing asked");
+    assert.match(ctx.status("folders"), /600 rows are too many to name in the page's address/);
+    // 300 of them fit: the address is under the limit, and the union goes in a body.
+    click(ctx.window, ctx.rows("folders")[0]);
+    await ctx.settle();
+    click(ctx.window, ctx.rows("folders")[299], { shiftKey: true });
+    await ctx.settle();
+    assert.equal(asked(ctx).value.length, 300);
+    assert.ok(ctx.window.location.search.length < ctx.module("library-source.js").MAX_ADDRESS);
   });
 
   test("Ctrl-click in another tab adds to the same union; switching tabs keeps the selection", async (t) => {

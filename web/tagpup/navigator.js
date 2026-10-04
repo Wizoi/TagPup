@@ -30,7 +30,7 @@ import {
     sidebarPaneFolder, sidebarPaneLibrary, sidebarSwitch, sidebarTabFolder, sidebarTabLibrary
 } from './elements.js';
 import { openLibraryView } from './library-view.js';
-import { DEFAULT_ORDER, LIBRARY_ORDERS, MAX_MEMBERS, ORDER_LABELS } from './library-source.js';
+import { DEFAULT_ORDER, LIBRARY_ORDERS, MAX_MEMBERS, ORDER_LABELS, addressTooLong } from './library-source.js';
 import {
     compress, indexDates, indexFolders, indexKeywords, indexPeople, membersOf, peopleGroupIds, rowTree, sectionOf, sectionRows,
     selectedRows, specOfMembers, withRowsUnder
@@ -339,9 +339,16 @@ function chooseRow(name, id, { ctrl = false, shift = false } = {}) {
         paintSection(name);
         return;
     }
+    const spec = specOfMembers(members);
+    if (addressTooLong({ ...spec, order: state.nav.order })) {
+        // The address holds the selection, and one this long could not be reloaded or bookmarked (#696).
+        sec.notice = `Those ${members.length.toLocaleString()} rows are too many to name in the page's address. Select fewer, or a row above them.`;
+        paintSection(name);
+        return;
+    }
     sec.notice = '';
     paintSection(name);
-    openLibraryView(specOfMembers(members));
+    openLibraryView(spec);
 }
 
 /** Ctrl+A: every row drawn, and the rows under them. */

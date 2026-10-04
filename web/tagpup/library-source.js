@@ -30,8 +30,13 @@ export const LIBRARY_KINDS = ['all', 'folder', 'keyword', 'person', 'year', 'mon
 export const MEMBER_KINDS = LIBRARY_KINDS.filter(kind => kind !== 'any_of');
 /** The most sources a union holds: as the server takes (services.library_view.MAX_MEMBERS). */
 export const MAX_MEMBERS = 1000;
-/** The longest union an address may name, in characters of its JSON. */
-export const MAX_UNION_VALUE = 200000;
+/**
+ * The longest query an address of a view may have, in characters as it is sent (percent-encoded): the page's own address is
+ * read by the same server, which reads at most 262,144 bytes of a request's first line and headers, so a longer one could
+ * be shown but never reloaded or bookmarked. A union is asked of the server in a body, which has no such limit (#696):
+ * this, not the 1,000 sources, is the limit that bites for long paths (about 1,000 rows of short ones, 400 of a share's).
+ */
+export const MAX_ADDRESS = 100000;
 
 /**
  * The orders a view is read in (#671): by Date Taken -- photos with none after the dated ones, either way -- or by file
@@ -109,7 +114,7 @@ function memberOf(kind, raw, recursive) {
 /** The sources a union's JSON names, or { error }: a list of at least two and at most MAX_MEMBERS, none a union. */
 function unionFromText(text) {
     if (!text.trim()) return { error: 'This address names a view of several rows without saying which.' };
-    if (text.length > MAX_UNION_VALUE) return { error: 'This address names more rows than a view can show at once.' };
+    if (text.length > MAX_ADDRESS) return { error: 'This address names more rows than a view can show at once.' };
     let found;
     try {
         found = JSON.parse(text);
@@ -201,6 +206,21 @@ export function emptySentence(spec) {
     return `The library holds no ${spec.kind === 'year' ? 'photo of the year' : 'photo of'} ${spec.value}.`;
 }
 
+/** Is the address of this view too long to be read again (MAX_ADDRESS)? */
+export function addressTooLong(spec) {
+    return viewSearch(spec).length > MAX_ADDRESS;
+}
+
+/** The request for a view's ids: a GET of its address's words, or a POST of a union, which may be longer than an address (#696). */
+function idsRequest(lib, signal) {
+    if (lib.kind !== 'any_of') return [idsUrl(lib), { signal }];
+    const body = { kind: lib.kind, value: JSON.parse(unionText(lib.value)) };
+    if (lib.order && lib.order !== DEFAULT_ORDER) body.order = lib.order;
+    return ['/api/library/ids', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+    }];
+}
+
 function idsUrl(lib) {
     const query = [`kind=${encodeURIComponent(lib.kind)}`];
     if (lib.kind === 'folder') query.push(`folder=${encodeURIComponent(lib.value)}`, `recursive=${lib.recursive ? 1 : 0}`);
@@ -256,7 +276,7 @@ export function loadLibraryIds(lib, refreshing = false) {
     if (!refreshing) lib.status = 'loading';
     upper.libraryChanged();
     const current = () => lib === state.library && controller === lib.controller;
-    return api.fetch(idsUrl(lib), { signal: controller.signal })
+    return api.fetch(...idsRequest(lib, controller.signal))
         .then(res => res.json().catch(() => ({})).then(body => ({ ok: res.ok, body })))
         .then(({ ok, body }) => {
             if (!current()) return false;
