@@ -8,6 +8,7 @@ process; one transaction, one journaled change that `undo` reverses; and a crash
 before the commit leaves the library exactly as it was.
 """
 import hashlib
+import itertools
 import json
 import os
 import shutil
@@ -827,6 +828,13 @@ class TheNoteSaysWhatIsTrue(AdoptionCase):
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class TheBackupHoldsTheLock(AdoptionCase):
+    def copies_take(self, seconds):
+        """Every backup copy is timed at `seconds`. The fixture is about 270 KB, and a speed
+        below MIN_BACKUP_RATE (1 MB/s) is not kept: a copy that took over a quarter of a
+        second -- a disk busy with a full test run -- left no rate to read."""
+        clock = mock.Mock(side_effect=itertools.cycle([0.0, seconds]))
+        return mock.patch.object(adoption, "time", mock.Mock(monotonic=clock))
+
     def test_the_dry_run_says_how_long_and_to_stop_the_apps(self):
         from click.testing import CliRunner
         from tagpup_cli import cli
@@ -839,7 +847,8 @@ class TheBackupHoldsTheLock(AdoptionCase):
                       "the copy (about", " ".join(said.split()))
 
     def test_the_estimate_uses_the_speed_the_last_backup_ran_at(self):
-        self.assertTrue(self.adopt().ok)
+        with self.copies_take(0.01):
+            self.assertTrue(self.adopt().ok)
         with open(adoption._rate_file(self.side.db_path), encoding="utf-8") as handle:
             rate = json.load(handle)["bytes_per_second"]
         self.assertGreater(rate, 0)
@@ -965,11 +974,12 @@ class TheBackupHoldsTheLock(AdoptionCase):
         with mock.patch.object(adoption, "_library_bytes", return_value=10):
             adoption.backup(self.side.db_path)
         self.assertFalse(os.path.exists(file), "a rate below the least believed was kept")
-        adoption.backup(self.side.db_path)
+        with self.copies_take(0.01):
+            adoption.backup(self.side.db_path)
         self.assertTrue(os.path.exists(file))
         self.assertIn(os.path.splitext(os.path.basename(self.side.db_path))[0], os.path.basename(file))
         self.assertEqual([], [n for n in os.listdir(os.path.dirname(file)) if n.endswith(".tmp")])
-        with mock.patch("os.replace", side_effect=PermissionError("held")):
+        with mock.patch("os.replace", side_effect=PermissionError("held")), self.copies_take(0.01):
             adoption.backup(self.side.db_path)
         self.assertEqual([], [n for n in os.listdir(os.path.dirname(file)) if n.endswith(".tmp")])
         with open(file, encoding="utf-8") as handle:

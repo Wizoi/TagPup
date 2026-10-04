@@ -27,7 +27,9 @@ from tagpup.core import processes  # noqa: E402
 
 #: The stand-in server: `fake.py MODE VERSION RECORD` notes each start in RECORD, then
 #: crashes, exits as the real one does when the ports are taken, or serves /api/server
-#: and the drain (refused while a file `busy` is beside RECORD) until it is stopped.
+#: and the drain (refused while a file `busy` is beside RECORD) until it is stopped. With
+#: FAKE_SERVER_STARTS_IN in its environment it takes that many seconds to start serving,
+#: as the real one does loading the app, and as any does on a loaded machine.
 FAKE_SERVER = r'''
 import http.server, json, os, sys
 sys.path.insert(0, %(root)r)
@@ -69,6 +71,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+time.sleep(float(os.environ.get("FAKE_SERVER_STARTS_IN") or 0))
 server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
 supervisor.write_server({"tagpup": server.server_address[1]}, version)
 server.serve_forever()
@@ -113,9 +116,10 @@ class Base(unittest.TestCase):
         return thread, found
 
     def wait_until(self, check, seconds=90):
-        # A ceiling, not a delay: it returns as soon as `check` holds. Moving onto a new
-        # version starts real server processes, and under a full run (8 test processes)
-        # that took just over 30 s three times (docs/findings.md).
+        # A ceiling, not a delay: it returns as soon as `check` holds. What it waits for
+        # must be able to come true whatever the timing: a check that can be overtaken (a
+        # state passed through in less than a poll) times out on a loaded machine, and a
+        # longer ceiling would not have changed that (docs/findings.md, #476).
         deadline = time.time() + seconds
         while True:
             found = check()
@@ -214,9 +218,16 @@ class WhatAStoppedSupervisorLeaves(Base):
         env = dict(self.env, **{supervisor.TOKEN: token})
         orphan = processes.start([sys.executable, self.fake, "serve", "orphan", self.record], env=env,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.addCleanup(lambda: orphan.poll() is None and processes.kill_tree(orphan.pid))
+        self.addCleanup(self.end, orphan)
         self.wait_until(supervisor.server)
         return orphan
+
+    def end(self, child):
+        """End `child` if it still runs, and wait for it: one only killed was left to be
+        collected at exit ("subprocess ... is still running"), holding its home."""
+        if child.poll() is None:
+            processes.kill_tree(child.pid)
+        child.wait(30)
 
     def test_a_server_whose_token_it_knows_is_drained_and_ended_before_its_own_starts(self):
         orphan = self.orphan("an-old-token")
@@ -453,6 +464,30 @@ class MovingOntoANewVersion(Base):
         super().setUp()
         self.installed = os.path.join(self.work, "installed")
         self.set_current("20260926-090000-aaaaaaa")
+        # Each server takes longer to start serving than the supervisor takes to look for
+        # an update (update_every): what a loaded machine did to these tests, every time.
+        self.env["FAKE_SERVER_STARTS_IN"] = "0.5"
+
+    def make_busy(self):
+        """The server's drain is refused while the file is there (a Suggest run under way)."""
+        busy = os.path.join(self.work, "busy")
+        with open(busy, "w", encoding="utf-8"):
+            pass
+        return busy
+
+    def not_busy_before_stop(self, busy):
+        """Called after in_thread, so it runs before the supervisor is stopped: a stop waits
+        for the drain, and a busy server would hold it to its 30-minute limit."""
+        self.addCleanup(lambda: os.path.exists(busy) and os.remove(busy))
+
+    def offer_once_serving(self, installs, *offered):
+        """Offer the installs `offered` only once the first version answers. A server not
+        serving yet has nothing in flight, so a move to an update found then is made at
+        once (Supervisor.drain), before the work under way it is to wait for could begin:
+        on a loaded machine the server took longer to start than the supervisor took to
+        find the update, and the version it was to wait on never answered."""
+        self.wait_until(lambda: self.answering_version() == "20260926-090000-aaaaaaa")
+        installs.extend(offered)
 
     def set_current(self, version):
         os.makedirs(os.path.join(self.installed, "versions", version), exist_ok=True)
@@ -468,12 +503,12 @@ class MovingOntoANewVersion(Base):
         return made
 
     def test_waits_for_the_work_under_way_then_the_new_version_answers(self):
-        busy = os.path.join(self.work, "busy")
-        with open(busy, "w", encoding="utf-8"):
-            pass
-        made = self.make_installed([lambda: self.set_current("20260926-120000-bbbbbbb")])
+        busy = self.make_busy()
+        installs = []
+        made = self.make_installed(installs)
         thread, _ended = self.in_thread(made)
-        self.wait_until(lambda: self.answering_version() == "20260926-090000-aaaaaaa")
+        self.not_busy_before_stop(busy)
+        self.offer_once_serving(installs, lambda: self.set_current("20260926-120000-bbbbbbb"))
         first = made._child.pid
 
         # Installed, but a Suggest run is under way: the old version keeps answering.
@@ -539,14 +574,14 @@ class MovingOntoANewVersion(Base):
         self.wait_until(lambda: self.answering_version() == "20260926-130000-ccccccc")
 
     def test_no_update_is_looked_for_while_a_move_waits(self):
-        busy = os.path.join(self.work, "busy")
-        with open(busy, "w", encoding="utf-8"):
-            pass
+        busy = self.make_busy()
         calls = []
-        installs = [lambda: calls.append(1) or self.set_current("20260926-120000-bbbbbbb")] + \
-            [lambda: calls.append(1)] * 50
+        installs = []
         made = self.make_installed(installs)
         thread, _ended = self.in_thread(made)
+        self.not_busy_before_stop(busy)
+        self.offer_once_serving(installs, lambda: calls.append(1) or self.set_current("20260926-120000-bbbbbbb"),
+                                *[lambda: calls.append(1)] * 50)
         self.wait_until(lambda: made._pending)
         time.sleep(1.0)
         self.assertEqual(1, len(calls), "a second version could be installed over the one the server runs")
