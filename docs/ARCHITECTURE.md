@@ -1908,16 +1908,18 @@ folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Or
 - **#674, Delete of a view's selection** -- a **bulk job op** (`op: delete` of 9d-1's `tagpup.jobs.bulk_edits`), not batches of the
   one-photo route: it is how a selection across folders and of thousands is named (by id, the source less the excluded), and the job
   gives progress, Cancel, one bulk edit at a time in a library and in another process (`job_runs`), the strip, and the Activity
-  page's record, for nothing new. Not resumable (a delete done twice changes nothing: Start again re-sends it). The chunk
+  page's record, for nothing new. Not resumable: its list of photos is fixed when it starts, and Start again of a cancelled one
+  asks the question again (#691, below). The chunk
   (`bulk_edit._delete`) deletes each photo through **the one owner of a delete**, `tagpup.services.photos.delete` (the file to the
-  Recycle Bin or, where there is none, for good; then `forget_photo` -- row, faces -- and the thumbnail), under the lock of changes
+  Recycle Bin or, where its place has none, through this PC's, #694; then `forget_photo` -- row, faces -- and the thumbnail), under the lock of changes
   of photo files for the chunk, so no single save of one of them interleaves. **History/journal: as the folder view's delete, none**
   -- a delete of a held photo has never been a journal change, so History neither lists nor undoes it; the Activity page lists the
-  job with its counts. **Permanence is asked, never assumed**: the page first asks `POST /api/library/selection/delete-check`
+  job with its counts. **The question is asked of the server first**: `POST /api/library/selection/delete-check`
   (`selection.where_deleted`: the folders of the selection, `recycle_bin.no_bin_reason` once a folder -- 2,672 folders of
-  photo_index in 2.1 s on this machine, counted read-only, every one with a Bin), the question says how many go for good and why,
-  and the job's `params.permanent` is what the question said: a photo found with no Bin that the question did not name is left, an
-  error saying so. A file already gone is `skipped_missing` and keeps its row (sync reports it). A share that does not answer is an
+  photo_index in 2.1 s on this machine, counted read-only, every one with a Bin), and the question says how many go through this
+  PC, how much they take and where they restore to (#694, below). *(It said, until #692/#694, "params.permanent ... a photo found
+  with no Bin that the question did not name is left": not so -- the flag was one bool for the whole job, so a photo found binless
+  in a folder the question had not named WAS deleted for good. Since #694 nothing is deleted for good, and the flag is gone.)* A file already gone is `skipped_missing` and keeps its row (sync reports it). A share that does not answer is an
   error a photo (`_reachable`, as the other ops). The cap is the other bulk edits' (200,000, refused before any request). When the
   job ends the page reads the view's order again (`library-view.js photosDeleted`, through `upper`), which drops the deleted photos
   from the view, its total and the selection, and closes the open photo onto the grid if it was deleted; the navigator's counts and
@@ -1925,6 +1927,36 @@ folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Or
   `libraries.split`, `refuse_writes`, `forget_photo` with `derived.prune` and the thumbnail, each its own read or write of the
   library -- rather than a per-chunk version of them, so as not to make a second owner of a delete; not measured on the live
   library (it would delete). Deleting the open photo while a job runs is not stopped: its save fails as its file is gone.
+- **#691, a delete deletes exactly what its question named.** delete-check resolves the selection (`selection.resolve`) and answers
+  its `total` and a `token`, the SHA-256 of the sorted ids (`selection.token_of`; 68,000 ids are about 20 ms). The page's question
+  names that total, and the start carries the token; the route resolves the selection again and `bulk_edit.refuse_if_changed`
+  refuses, `409`, nothing begun, when the token differs ("The selection changed since you were asked ...: nothing was deleted. Ask
+  again"). The job's own list of ids is the one resolved at that start, so nothing that comes into the source afterwards is in it. A
+  delete is not resumable (`bulk_edits.resumable` is the time shift's alone); the strip's Start again of a delete goes through
+  `deleteSelection` (delete-check, the question, a new token) through `upper`, never `startBulk(request)`. Reproduced on the old
+  code by the reviewer (question "3 photos", one photo indexed meanwhile, 4 deleted); `test_bulk_delete` holds it.
+- **#693, how long, and what waits.** Measured on a sandbox copy of photo_index (its own TAGPUP_HOME, roots placed at sandbox
+  folders, throwaway JPEGs made at 200 and 400 of its rows' places, the real Recycle Bin, the job run through Flask's client; the
+  sandbox deleted afterwards): 200 photos in 12.8 s (63.8 ms a photo, 15.7 a second), 400 in 25.0 s (62.6 ms, 16.0 a second).
+  The question says the time at 15 a second (`DELETE_PER_SECOND`; 68,000 photos: about 1 hour 16 minutes) and that saving a
+  photo elsewhere waits for the photos being deleted at that moment (each chunk of 25 holds the lock of changes of photo files,
+  about 1.6 s). A photo copied from a share costs its copy too; that was not measured (no share here).
+- **#694, nothing is deleted for good** *(the owner's decision, 2026-10-04)*. A photo in a place with no Recycle Bin (a network share,
+  a removable drive, a SUBST drive) goes through this PC: `tagpup.files.recycle_bin.delete_file` -- the one way every delete of a
+  photo takes, Organize's (`photos.delete`, `file_only.delete`) and the bulk Delete's -- copies it to
+  <Downloads>\TagPup deleted from shares\<server>\<share>\<path> (`mirror_of`; the Downloads known folder by `SHGetKnownFolderPath(FOLDERID_Downloads)`,
+  wherever the owner moved it, the profile's Downloads if Windows cannot say, and a test home's own through `TAGPUP_DOWNLOADS`,
+  which `tests/own_home.py` sets: no test writes the owner's Downloads), checks the copy (size, then SHA-256 of each), sends the
+  COPY to this PC's Recycle Bin (`send_to_recycle_bin`, the existing owner), and only then deletes the original. **Restored, a copy
+  goes to that folder under Downloads, not to the share**: the question, the reply and the SPEC say so. Each step that fails
+  leaves the original and its row, the photo an error: a copy that fails or differs is taken away; this PC's Bin refusing the copy,
+  the copy taken away; a crash or a refusal of the original's delete after the copy is in the Bin leaves the original AND a copy
+  in the Bin -- the photo is there twice, and the error says so. A name already in the mirror folder is kept, the copy takes
+  `name (2).jpg`. **Free space**: the Downloads folder's drive must have room for the copy and 1 GB spare (`room_for`, before each
+  copy); delete-check answers `copy_bytes` (the index's sizes of the photos in places with no Bin) and `no_room`, and the page then
+  says the sentence and asks nothing. Nothing is deleted for good any more: only if this PC's own Recycle Bin refuses is the photo
+  an error, its original kept. `/api/folder/membership`'s `permanent_delete` keeps its name and now means "this place has no
+  Recycle Bin: a delete goes through this PC".
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag

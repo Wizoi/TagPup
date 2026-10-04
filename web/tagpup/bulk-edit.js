@@ -108,13 +108,20 @@ export async function editByPill({ kind, name, remove }) {
  * none -- and their rows leave the library, each as the folder view's Delete does it (the server's photos.delete), as a bulk JOB:
  * progress, Cancel, one at a time (bulkBusy, lockBulkControls). The selection is read first (a limit is said, nothing asked); then
  * the server is asked where the files would go (POST /api/library/selection/delete-check, one answer a folder); then the question
- * names the count and whether any are deleted for good, and over ASK_TWICE_ABOVE it is asked again. What is sent is what was asked:
- * the selection as read, and `permanent` only when the question said so -- a photo found with no Recycle Bin that the question did
- * not name is left by the server. Rapid clicks ask once (`state.bulk.asking`). Resolves true when a job began.
+ * names the server's count of the photos, how long it takes and whether any are deleted for good, and over ASK_TWICE_ABOVE it is
+ * asked again. What is sent is what was asked: the selection as read, the answer's `token` -- the server refuses the start, nothing
+ * begun, when the selection no longer resolves to exactly those photos (#691) -- and the folders the question named as having no
+ * Recycle Bin (#694: nothing is deleted for good; those go through this PC's, and the question says so and where they restore to). Rapid clicks ask once (`state.bulk.asking`). `again`: the
+ * strip's Start again of a delete, `{selection, count}` of the one stopped, asked about afresh exactly as a click is (never sent as
+ * it was). Resolves true when a job began.
  */
-export async function deleteSelection() {
-    if (!state.library || state.bulk.asking) return false;
-    const picked = readSelection();
+export async function deleteSelection(again = null) {
+    if (state.bulk.asking) return false;
+    if (again && bulkBusy()) {
+        alert(BUSY_SENTENCE);
+        return false;
+    }
+    const picked = again ? { selection: again.selection, count: again.count } : (state.library ? readSelection() : null);
     if (!picked) return false;
     state.bulk.asking = true;
     try {
@@ -132,11 +139,24 @@ export async function deleteSelection() {
             return false;
         }
         setStatus('ready', 'Ready');
-        if (!confirm(deleteQuestion(where, picked.count))) return false;
-        if (picked.count > ASK_TWICE_ABOVE && !confirm(secondQuestion(picked.count))) return false;
-        const desc = describeDelete(where, picked.count);
-        const started = await startBulk({ op: 'delete', selection: picked.selection, params: { permanent: desc.permanent > 0 },
-            desc, picked: picked.count });
+        // Copies from places with no Recycle Bin that this PC has not room for: said, and nothing asked (#694).
+        if (where.no_room) {
+            setStatus('error', where.no_room, { transient: false });
+            alert(where.no_room);
+            return false;
+        }
+        // The server's count of the photos, which the token is of: the question names exactly what would be deleted.
+        const count = Number.isFinite(where.total) ? where.total : picked.count;
+        if (count === 0) {
+            setStatus('ready', 'Nothing to delete: none of these photos is in the library any more.', { transient: false });
+            return false;
+        }
+        if (!confirm(deleteQuestion(where, count))) return false;
+        if (count > ASK_TWICE_ABOVE && !confirm(secondQuestion(count))) return false;
+        const desc = describeDelete(where, count);
+        const started = await startBulk({ op: 'delete', selection: picked.selection,
+            params: { token: where.token },
+            desc, picked: count });
         return started.ok;
     } finally {
         state.bulk.asking = false;

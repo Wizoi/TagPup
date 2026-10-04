@@ -35,8 +35,8 @@ export function baseName(p) {
 
 /** Whether two spellings name the same file or folder. *//**
  * Is `p` spelled as a network share (\\\\server\\share\\..., or //server/share/...)? Windows has no
- * Recycle Bin there: a delete is permanent. (A mapped drive letter is not told by its spelling; the
- * server says it in the folder's membership, `permanent_delete`.)
+ * Recycle Bin there: a delete goes through this PC's (#694). (A mapped drive letter is not told by its
+ * spelling; the server says it in the folder's membership, `permanent_delete`.)
  */
 export function isUnc(p) {
     return /^[\\/]{2}[^\\/]/.test(String(p || '').trim());

@@ -38,3 +38,14 @@ def described(conn, folder_ids):
         for folder_id, path, name in store_roots.natives(conn, rows, 1):
             found[folder_id] = (path, name)
     return found
+
+
+def bytes_by_folder(conn, ids=None, source=None, excluded=()):
+    """{folder id: the bytes (photos.size, as the index last read them) of the photos of the selection it holds}: what copies of
+    them would take on this PC (a delete from a place with no Recycle Bin goes through this PC's, #694). One grouped read."""
+    selected, params = library_view._selected(conn, ids, source, excluded)
+    if selected is None:
+        return {}
+    return dict(conn.execute(
+        "SELECT pf.folder_id, COALESCE(SUM(p.size), 0) FROM photo_folder pf JOIN photos p ON p.id = pf.photo_id"
+        " WHERE pf.photo_id IN (%s) GROUP BY pf.folder_id" % selected, params))

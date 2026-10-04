@@ -789,6 +789,8 @@ def library_bulk_start():
         edit = bulk_edit.prepare(library, body.get("op"), body.get("params", {}))
         chosen = selection_service.read(library, body.get("selection"))
         resolved = selection_service.resolve(library, chosen)
+        # A delete deletes exactly the photos its question named, or nothing (#691).
+        bulk_edit.refuse_if_changed(edit, resolved.ids, selection_service.token_of)
         job = bulk_jobs.start(library, edit, resolved.ids, state.exiftool(library),
                               after_write=lambda: forget_scans(library))
     except (Refused, NotFound, Conflict, paths.RootsError) as why:
@@ -1000,17 +1002,19 @@ def photo_delete():
     except Exception as e:
         logger.error("Error deleting image %s: %s", photo_path, e)
         return responses.error(500, str(e))
-    # What happened, never what was meant: a file on a network share has no Recycle Bin to go to.
-    permanent = bool(result.details.get("permanent"))
+    # What happened, never what was meant: a file on a network share has no Recycle Bin of its own, and went through this PC (#694).
+    through = bool(result.details.get("through_this_pc"))
     name = picker_name(os.path.basename(library.path))
-    reason = result.details.get("permanent_reason")
-    where = ("The file was deleted permanently: it was %s, so it could not go to the Recycle Bin." % reason
-             if permanent else "Moved to the Recycle Bin.")
-    reply = {"success": True, "permanent": permanent, "permanent_reason": reason, **_where(result)}
+    reason = result.details.get("no_bin_reason")
+    copy = result.details.get("copy")
+    where = ("It was %s, which has no Recycle Bin: a copy went to this PC's Recycle Bin and the original was deleted. Restored, the "
+             "copy goes to %s, not back to where it was." % (reason, os.path.dirname(copy or "") or "the Downloads folder")
+             if through else "Moved to the Recycle Bin.")
+    reply = {"success": True, "through_this_pc": through, "no_bin_reason": reason, "restores_to": copy, **_where(result)}
     if result.details.get(file_only.FILE_ONLY):
         # A photo of a folder the library does not hold: the file only.
         reply["message"] = "%s Nothing in %s changed: it does not hold this folder." % (where, name)
-    elif permanent:
+    elif through:
         reply["message"] = where
     return jsonify(reply)
 

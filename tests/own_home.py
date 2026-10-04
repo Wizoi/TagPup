@@ -42,7 +42,10 @@ class OwnHome:
         _reap_after_exit(self.root)
         self.data = os.path.join(self.root, "data")
         os.makedirs(self.data)
-        self._environ = mock.patch.dict(os.environ, {"TAGPUP_HOME": self.root})
+        # The Downloads folder a delete from a share is copied through is the home's too (tagpup.files.recycle_bin, #694):
+        # a test never writes the owner's Downloads.
+        self._environ = mock.patch.dict(os.environ, {"TAGPUP_HOME": self.root,
+                                                     "TAGPUP_DOWNLOADS": os.path.join(self.root, "Downloads")})
         self._environ.start()
         self._open = True
 

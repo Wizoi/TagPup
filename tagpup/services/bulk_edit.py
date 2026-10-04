@@ -9,9 +9,9 @@ An EDIT is what is done to every photo of a selection:
   node of the tag tree is made;
 * `time_shift`: move Date Taken by `{"minutes": n}` (tagpup.services.photos.date_shift_plan);
 * `delete`: send each photo's file to the Recycle Bin and forget its row, faces and thumbnail, as the folder view's Delete
-  does it (tagpup.services.photos.delete, the one owner: not journaled, as that is not), `{"permanent": bool}` -- whether the
-  owner was told that some are on a share or a drive with no Recycle Bin and are deleted for good; a photo there is left, an
-  error saying so, when they were not (#674).
+  does it (tagpup.services.photos.delete, the one owner: not journaled, as that is not; a photo whose place has no Recycle Bin
+  goes through this PC's, #694), `{"token": text}` -- the token of the photos the question named (selection.where_deleted: the
+  start is refused when the selection no longer resolves to exactly them, #691).
 
 `prepare` reads and checks one up front and refuses with a sentence, before a photo is touched. `run_chunk` does it to a few
 photos: each id is resolved to its row's path NOW (a photo renamed meanwhile is found by id, one deleted is skipped and
@@ -27,8 +27,8 @@ import os
 from dataclasses import dataclass, field
 
 from tagpup.core import dates, paths, validation, vocabulary
-from tagpup.core.result import Refused, Result
-from tagpup.files import exiftool_session, job_files, recycle_bin
+from tagpup.core.result import Conflict, Refused, Result
+from tagpup.files import exiftool_session, job_files
 from tagpup.services import damaged_photos, file_changes, file_only, libraries, library_view, tagging
 from tagpup.services import photos as photo_actions
 from tagpup.store import file_journal, taxonomy
@@ -62,23 +62,23 @@ def operation_of(op, job):
 @dataclass
 class Edit:
     """What is done to each photo. `add` and `remove` are tags as they are written (a person's already filed as a tag),
-    `persons` the tags of `add` that are people, `minutes` a time shift's, `permanent` a delete's: may a file with no Recycle
-    Bin to go to be deleted for good."""
+    `persons` the tags of `add` that are people, `minutes` a time shift's; a delete's `token` (of the photos its question
+    named)."""
     op: str
     add: list = field(default_factory=list)
     remove: list = field(default_factory=list)
     persons: list = field(default_factory=list)
     minutes: int = 0
-    permanent: bool = False
+    token: str = ""
 
     def to_json(self):
         return {"op": self.op, "add": self.add, "remove": self.remove, "persons": self.persons, "minutes": self.minutes,
-                "permanent": self.permanent}
+                "token": self.token}
 
     @classmethod
     def from_json(cls, found):
         return cls(found["op"], list(found.get("add") or []), list(found.get("remove") or []),
-                   list(found.get("persons") or []), int(found.get("minutes") or 0), bool(found.get("permanent")))
+                   list(found.get("persons") or []), int(found.get("minutes") or 0), str(found.get("token") or ""))
 
     def describe(self):
         """What it does, in words that name no tag or person (a record the Activity page lists, which can be read over a
@@ -86,8 +86,7 @@ class Edit:
         if self.op == TIME_SHIFT:
             return "shift Date Taken by %d minute(s)" % self.minutes
         if self.op == DELETE:
-            return "delete the files (permanently where there is no Recycle Bin)" if self.permanent else \
-                "delete the files to the Recycle Bin"
+            return "delete the files to the Recycle Bin (through this PC's where their place has none)"
         parts = []
         if self.add:
             parts.append("add %d" % len(self.add))
@@ -127,10 +126,10 @@ def prepare(library, op, params):
             raise Refused("A shift of 0 minutes changes nothing.")
         return Edit(TIME_SHIFT, minutes=minutes)
     if op == DELETE:
-        permanent = params.get("permanent", False)
-        if type(permanent) is not bool:
-            raise Refused("permanent must be true or false: whether the files with no Recycle Bin may be deleted for good.")
-        return Edit(DELETE, permanent=permanent)
+        token = params.get("token")
+        if not isinstance(token, str) or not token:
+            raise Refused("A delete names the photos its question was about (token, from delete-check): ask again.")
+        return Edit(DELETE, token=token)
     add, remove = _list_of(params, "add"), _list_of(params, "remove")
     if op == TAGS:
         # The rules read the tag as typed ("A//B" has an empty level); what is written is its one spelling.
@@ -349,29 +348,30 @@ def run_chunk(library, edit, ids, exiftool_path, operation, on_planned=None):
     return out
 
 
-#: What an error says of a photo a delete leaves because it would be deleted for good, which the owner was not told (#674).
-NOT_ASKED = ("it is %s, where there is no Recycle Bin: it would be deleted permanently, and the question said the Recycle Bin, "
-             "so it was left")
+#: What a delete's start says when the selection no longer resolves to the photos its question named (#691).
+CHANGED = ("The selection changed since you were asked (photos came into it or left it): nothing was deleted. Ask again: "
+           "click Delete once more.")
+
+
+def refuse_if_changed(edit, photo_ids, token_of):
+    """A delete is started only on exactly the photos its question named: Conflict (CHANGED), nothing begun, when `photo_ids`
+    (the selection resolved at the start) is not the set whose token the question carried. `token_of` is
+    tagpup.services.selection.token_of, the one hash of both."""
+    if edit.op == DELETE and token_of(photo_ids) != edit.token:
+        raise Conflict(CHANGED)
 
 
 def _delete(library, edit, present, out):
-    """Delete the photos `present` ([(id, path)], reachable) as the folder view's Delete does each (photos.delete: the file to
-    the Recycle Bin, or for good where there is none; then its row, faces and thumbnail), under the one lock of changes of photo
-    files, so that no write of one of them runs while it goes. A file gone already is counted missing and its row kept (sync
-    reports it); one with no Recycle Bin is left, an error, unless the owner was told (`edit.permanent`); one refused or not
-    moved is an error, its row kept. Whether a folder has a Recycle Bin is asked once a chunk."""
-    bins = {}
+    """Delete the photos `present` ([(id, path)], reachable) as Organize's Delete does each (photos.delete: the file to the
+    Recycle Bin -- through this PC's where its place has none, #694 -- then its row, faces and thumbnail), under the one lock of
+    changes of photo files, so that no write of one of them runs while it goes. A file gone already is counted missing and its
+    row kept (sync reports it); one refused, or not moved (any step of going through this PC that failed), is an error, the
+    original and its row kept."""
     with file_changes.exclusively():
         for photo_id, path in present:
             name = os.path.basename(path)[:MOST_TEXT]
             if not os.path.isfile(path):
                 out.skipped_missing += 1
-                continue
-            folder = paths.key(os.path.dirname(path))
-            if folder not in bins:
-                bins[folder] = recycle_bin.no_bin_reason(path)
-            if bins[folder] and not edit.permanent:
-                out.errors.append((photo_id, name, (NOT_ASKED % bins[folder])[:MOST_TEXT]))
                 continue
             result = photo_actions.delete(library, path)
             if result.ok and result.changed:

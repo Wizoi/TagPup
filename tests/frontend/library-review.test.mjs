@@ -165,7 +165,7 @@ describe("#674: Delete of a view's selection", () => {
   const plain = (value) => JSON.parse(JSON.stringify(value));
   const pick = (ctx, id) => click(ctx.window, ctx.cardById(id).querySelector(".thumbnail-checkbox"));
   const calls = (ctx, part) => ctx.server.calls.filter((call) => call.url.includes(part));
-  const BIN = { total: 3, folders: 1, permanent: 0, reasons: [] };
+  const BIN = { total: 3, token: "t-three", folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, restores_to: "C:\\Users\\wren\\Downloads\\TagPup deleted from shares", no_room: null };
 
   async function view(t, n = 40, { where = BIN, ...options } = {}) {
     const ctx = await loadViewPage(t, { search: "?view=all", ids: range(n), ...options });
@@ -198,23 +198,34 @@ describe("#674: Delete of a view's selection", () => {
     for (const id of [2, 5, 9]) pick(ctx, id);
     await remove(ctx);
     assert.deepEqual(plain(calls(ctx, "/selection/delete-check")[0].body), { selection: { ids: [2, 5, 9] } });
-    assert.deepEqual(ctx.questions, ["Delete 3 photos? The files go to the Recycle Bin, where they can be restored. Their rows leave the library, with their faces. It runs as a job you can watch and cancel; it cannot be undone in TagPup."]);
+    assert.deepEqual(ctx.questions, ["Delete 3 photos? The files go to the Recycle Bin, where they can be restored. Their rows leave the library, with their faces. It takes less than a minute and runs as a job you can watch and cancel; while it runs, saving a photo elsewhere waits for the photos being deleted at that moment. It cannot be undone in TagPup."]);
     const [start] = calls(ctx, "/bulk/start");
-    assert.deepEqual(plain(start.body), { op: "delete", selection: { ids: [2, 5, 9] }, params: { permanent: false } });
+    assert.deepEqual(plain(start.body), { op: "delete", selection: { ids: [2, 5, 9] }, params: { token: "t-three" } },
+      "the token of the photos the question named");
     assert.ok(!calls(ctx, "/api/photo/delete").length, "never the one-photo route, once a photo");
     assert.equal(el(ctx, "bulk-strip-title").textContent, "Delete 3 photos to the Recycle Bin");
   });
 
-  test("some on a share with no Recycle Bin: the question says how many are deleted for good, and only then is that sent", async (t) => {
-    const ctx = await view(t, 40, { where: { total: 3, folders: 2, permanent: 1, reasons: [{ reason: "on a network share", photos: 1 }] } });
+  test("some on a share with no Recycle Bin: the question says they go through this PC, how much, and where they restore to (#694)", async (t) => {
+    const ctx = await view(t, 40, { where: { ...BIN, folders: 2, through_this_pc: 1, reasons: [{ reason: "on a network share", photos: 1 }], copy_bytes: 3 * 1024 * 1024 + 1 } });
     for (const id of [2, 5, 9]) pick(ctx, id);
     await remove(ctx);
-    assert.match(ctx.questions[0], /^Delete 3 photos\? 1 of them is deleted PERMANENTLY, not moved to the Recycle Bin: there is none where it is \(1 on a network share\)\. The other 2 go to the Recycle Bin\./);
-    assert.deepEqual(plain(calls(ctx, "/bulk/start")[0].body.params), { permanent: true });
-    const all = await view(t, 40, { where: { total: 1, folders: 1, permanent: 1, reasons: [{ reason: "on a removable drive", photos: 1 }] } });
+    assert.match(ctx.questions[0], /^Delete 3 photos\? 1 of them is where there is no Recycle Bin \(1 on a network share\): it is copied to this PC \(4 MB\), the copy goes to this PC's Recycle Bin, and then the original is deleted\. Restored from the Recycle Bin, a copy goes to C:\\Users\\wren\\Downloads\\TagPup deleted from shares, not back to where it was\. The other 2 go to the Recycle Bin\./);
+    assert.doesNotMatch(ctx.questions[0], /PERMANENTLY|permanently/);
+    assert.deepEqual(plain(calls(ctx, "/bulk/start")[0].body.params), { token: "t-three" });
+    const all = await view(t, 40, { where: { ...BIN, total: 1, through_this_pc: 1, reasons: [{ reason: "on a removable drive", photos: 1 }], copy_bytes: 1000 } });
     pick(all, 4);
     await remove(all);
-    assert.match(all.questions[0], /^Delete 1 photo\? It is deleted PERMANENTLY, not moved to the Recycle Bin: there is none where it is \(1 on a removable drive\), so the file cannot be restored\./);
+    assert.match(all.questions[0], /^Delete 1 photo\? It is where there is no Recycle Bin \(1 on a removable drive\): it is copied to this PC \(1 MB\)/);
+  });
+
+  test("no room on this PC for the copies: said, nothing asked, nothing started (#694)", async (t) => {
+    const ctx = await view(t, 40, { where: { ...BIN, through_this_pc: 3, copy_bytes: 9e12, no_room: "There is not room on this PC for the copies: 8,583,068 MB needed. Nothing was deleted." } });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    await remove(ctx);
+    assert.equal(ctx.questions.length, 0);
+    assert.match(ctx.alerts[0], /not room on this PC/);
+    assert.equal(calls(ctx, "/bulk/start").length, 0);
   });
 
   test("the question refused deletes nothing; rapid clicks ask once and start one job", async (t) => {
@@ -233,13 +244,13 @@ describe("#674: Delete of a view's selection", () => {
   });
 
   test("Select all of 68,000 less 2: the source and the 2, a second question, never 68,000 ids", async (t) => {
-    const ctx = await view(t, 68000, { where: { total: 67998, folders: 2672, permanent: 0, reasons: [] } });
+    const ctx = await view(t, 68000, { where: { ...BIN, total: 67998, token: "t", folders: 2672 } });
     el(ctx, "btn-select-all-thumbnails").click();
     pick(ctx, 3);
     pick(ctx, 4);
     await remove(ctx);
     assert.equal(ctx.questions.length, 2);
-    assert.match(ctx.questions[0], /^Delete 67,998 photos\?/);
+    assert.match(ctx.questions[0], /^Delete 67,998 photos\?.* It takes about 1 hour 16 minutes and runs as a job/, "the measured 15 a second (#693)");
     assert.equal(ctx.questions[1], "This is 67,998 photos. Continue?");
     assert.deepEqual(plain(calls(ctx, "/bulk/start")[0].body.selection), { source: { kind: "all", value: null, recursive: false }, excluded: [3, 4] });
   });
@@ -318,5 +329,76 @@ describe("#674: Delete of a view's selection", () => {
     await ctx.settle(40);
     assert.equal(el(ctx, "bulk-strip-title").textContent, "Delete 100 photos");
     assert.match(el(ctx, "bulk-strip-message").textContent, /Deleted 40 photos; 0 errors\. Select the photos that are left and delete them again to finish it\.$/);
+  });
+});
+
+describe("#691-#693: a Delete deletes exactly what its question named", () => {
+  const range = (n, from = 1) => Array.from({ length: n }, (_, i) => from + i);
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  const pick = (ctx, id) => click(ctx.window, ctx.cardById(id).querySelector(".thumbnail-checkbox"));
+  const calls = (ctx, part) => ctx.server.calls.filter((call) => call.url.includes(part));
+
+  async function view(t, where) {
+    const ctx = await loadViewPage(t, { search: "?view=all", ids: range(40) });
+    speedUp(ctx);
+    ctx.where = where;
+    ctx.server.on("/api/library/selection/delete-check", () => (typeof ctx.where === "function" ? ctx.where() : ctx.where));
+    ctx.questions = [];
+    ctx.window.confirm = (text) => { ctx.questions.push(text); return true; };
+    ctx.bulk.start = { op: "delete", total: 3 };
+    ctx.bulk.status = jobStatus({ op: "delete", total: 3 });
+    return ctx;
+  }
+
+  test("the question names the server's count, which its token is of, not the page's", async (t) => {
+    const ctx = await view(t, { total: 4, token: "four", folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, no_room: null });
+    el(ctx, "btn-select-all-thumbnails").click();
+    click(ctx.window, el(ctx, "btn-delete-selection"));
+    await ctx.settle(80);
+    assert.match(ctx.questions[0], /^Delete 4 photos\?/);
+    assert.equal(plain(calls(ctx, "/bulk/start")[0].body.params).token, "four");
+  });
+
+  test("the server refuses a start whose selection changed: its sentence is shown and nothing runs", async (t) => {
+    const ctx = await view(t, { total: 3, token: "three", folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, no_room: null });
+    ctx.server.first("/api/library/bulk/start", { error: "The selection changed since you were asked (photos came into it or left it): nothing was deleted. Ask again: click Delete once more." }, { status: 409 });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    click(ctx.window, el(ctx, "btn-delete-selection"));
+    await ctx.settle(80);
+    assert.match(el(ctx, "bulk-strip-message").textContent, /The selection changed since you were asked/);
+    assert.equal(el(ctx, "bulk-strip-title").textContent, "The edit did not start");
+    assert.ok(el(ctx, "btn-bulk-show").classList.contains("hidden"), "no job to show");
+  });
+
+  test("Start again of a cancelled delete asks again -- where the files are, the question, a new token -- never re-sends", async (t) => {
+    let n = 0;
+    const ctx = await view(t, () => ({ total: 3, token: `token-${++n}`, folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, no_room: null }));
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    click(ctx.window, el(ctx, "btn-delete-selection"));
+    await ctx.settle(60);
+    ctx.bulk.status = jobStatus({ op: "delete", total: 3, done: 1, changed: 1, state: "cancelled", message: "Cancelled after 1 of 3 photos." });
+    await ctx.until(() => !el(ctx, "btn-bulk-again").classList.contains("hidden"));
+    ctx.bulk.status = jobStatus({ op: "delete", total: 3, job: 8 });
+    ctx.bulk.start = { job: 8, op: "delete", total: 2 };
+    click(ctx.window, el(ctx, "btn-bulk-again"));
+    await ctx.settle(80);
+    assert.equal(calls(ctx, "/selection/delete-check").length, 2, "asked where the files are again");
+    assert.equal(ctx.questions.length, 2, "and the question asked again");
+    const [first, second] = calls(ctx, "/bulk/start");
+    assert.deepEqual(plain(second.body.selection), plain(first.body.selection));
+    assert.equal(plain(second.body.params).token, "token-2", "the new answer's token, not the first");
+  });
+
+  test("Start again refused at the question deletes nothing", async (t) => {
+    const ctx = await view(t, { total: 3, token: "t", folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, no_room: null });
+    for (const id of [2, 5, 9]) pick(ctx, id);
+    click(ctx.window, el(ctx, "btn-delete-selection"));
+    await ctx.settle(60);
+    ctx.bulk.status = jobStatus({ op: "delete", total: 3, done: 1, changed: 1, state: "cancelled", message: "Cancelled." });
+    await ctx.until(() => !el(ctx, "btn-bulk-again").classList.contains("hidden"));
+    ctx.window.confirm = () => false;
+    click(ctx.window, el(ctx, "btn-bulk-again"));
+    await ctx.settle(80);
+    assert.equal(calls(ctx, "/bulk/start").length, 1);
   });
 });

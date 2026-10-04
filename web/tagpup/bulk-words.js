@@ -4,6 +4,12 @@
 /** Photos a second the page assumes of a bulk edit until the job reports its own pace: about what 9d-1 measured, 15 to 23. */
 export const ASSUMED_PER_SECOND = 15;
 
+/**
+ * Photos a second a Delete deletes, to the Recycle Bin: measured 2026-10-04 on a sandbox copy of photo_index with throwaway files,
+ * 15.7 and 16.0 a second (200 and 400 photos, 63.8 and 62.6 ms a photo, each the one-photo delete's own reads and writes) (#693).
+ */
+export const DELETE_PER_SECOND = 15;
+
 /** A bulk edit over more photos than this is asked about twice. */
 export const ASK_TWICE_ABOVE = 5000;
 
@@ -46,34 +52,46 @@ function phrase(desc, form, count) {
 
 /**
  * What a Delete of the selection is, in words (#674): `where` is the server's answer of where the files would go
- * (/api/library/selection/delete-check: `permanent`, the photos with no Recycle Bin), `count` the photos selected.
+ * (/api/library/selection/delete-check: `through_this_pc`, the photos in places with no Recycle Bin), `count` the photos.
  */
 export function describeDelete(where, count) {
-    const forGood = Math.min((where && where.permanent) || 0, count);
-    const after = !forGood ? ' to the Recycle Bin' : forGood >= count ? ' permanently' : ', those with no Recycle Bin permanently';
-    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', after, permanent: forGood };
+    const through = Math.min((where && where.through_this_pc) || 0, count);
+    const after = !through ? ' to the Recycle Bin'
+        : through >= count ? " through this PC's Recycle Bin" : ", those from places with no Recycle Bin through this PC's";
+    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', after, throughThisPc: through };
 }
 
-/** The question before a Delete: how many, where the files go -- the Recycle Bin, or for good and why -- and that the rows go too. */
+/** `2,345 MB`: bytes as the question says them, rounded up. */
+function megabytes(bytes) {
+    return `${Math.max(1, Math.ceil((Number(bytes) || 0) / (1024 * 1024))).toLocaleString()} MB`;
+}
+
+/**
+ * The question before a Delete: how many, where the files go -- the Recycle Bin, or, for photos in places with none (a network
+ * share, a removable drive), through this PC (#694): copied to it, the copies to its Recycle Bin, then the originals deleted, and a
+ * copy restored goes to the folder under Downloads, not back to the share -- how long, and that the rows go too.
+ */
 export function deleteQuestion(where, count) {
-    const forGood = Math.min((where && where.permanent) || 0, count);
+    const through = Math.min((where && where.through_this_pc) || 0, count);
     const head = `Delete ${photosOf(count)}?`;
     const rows = count === 1 ? ' Its row leaves the library, with its faces.' : ' Their rows leave the library, with their faces.';
-    const job = ' It runs as a job you can watch and cancel; it cannot be undone in TagPup.';
-    if (!forGood) {
+    const job = ` It takes ${howLong(count / DELETE_PER_SECOND)} and runs as a job you can watch and cancel; while it runs, `
+        + 'saving a photo elsewhere waits for the photos being deleted at that moment. It cannot be undone in TagPup.';
+    if (!through) {
         const bin = count === 1 ? 'The file goes to the Recycle Bin, where it can be restored.' : 'The files go to the Recycle Bin, where they can be restored.';
         return `${head} ${bin}${rows}${job}`;
     }
     const why = ((where && where.reasons) || []).map(each => `${Number(each.photos).toLocaleString()} ${each.reason}`).join(', ');
-    if (forGood >= count) {
-        const they = count === 1 ? 'It is' : 'They are';
-        return `${head} ${they} deleted PERMANENTLY, not moved to the Recycle Bin: there is none where ${count === 1 ? 'it is' : 'they are'} `
-            + `(${why}), so ${count === 1 ? 'the file' : 'the files'} cannot be restored.${rows}${job}`;
+    const one = through === 1;
+    const copied = `${one ? 'it is' : 'they are'} copied to this PC (${megabytes(where.copy_bytes)}), ${one ? 'the copy goes' : 'the copies go'} `
+        + `to this PC's Recycle Bin, and then ${one ? 'the original is' : 'the originals are'} deleted. Restored from the Recycle Bin, `
+        + `a copy goes to ${where.restores_to || 'your Downloads folder'}, not back to where it was.`;
+    if (through >= count) {
+        return `${head} ${one ? 'It is' : 'They are'} where there is no Recycle Bin (${why}): ${copied}${rows}${job}`;
     }
-    const rest = count - forGood;
-    return `${head} ${forGood.toLocaleString()} of them ${forGood === 1 ? 'is' : 'are'} deleted PERMANENTLY, not moved to the Recycle `
-        + `Bin: there is none where ${forGood === 1 ? 'it is' : 'they are'} (${why}). The other ${rest.toLocaleString()} `
-        + `${rest === 1 ? 'goes' : 'go'} to the Recycle Bin.${rows}${job}`;
+    const rest = count - through;
+    return `${head} ${through.toLocaleString()} of them ${one ? 'is' : 'are'} where there is no Recycle Bin (${why}): ${copied} `
+        + `The other ${rest.toLocaleString()} ${rest === 1 ? 'goes' : 'go'} to the Recycle Bin.${rows}${job}`;
 }
 
 /** The question before a bulk edit: it names the write and the count, what it touches, how long, and how to undo it. */

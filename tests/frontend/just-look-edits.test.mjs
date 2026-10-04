@@ -209,7 +209,9 @@ describe("the other file edits", () => {
     click(ctx.window, ctx.$("btn-delete-photo"));
     await flush(ctx.window, 8);
     // FOLDER is a network share: no Recycle Bin, said BEFORE the delete (#520).
-    assert.match(asked, /This file is on a network share: it will be deleted permanently, not moved to the Recycle Bin/);
+    assert.match(asked, /This file is on a network share, where there is no Recycle Bin: it is copied to this PC, the copy goes to this PC's Recycle Bin/);
+    assert.match(asked, /not back to where it was/);
+    assert.doesNotMatch(asked, /permanently/, "nothing is deleted for good (#694)");
     assert.doesNotMatch(asked, /and move it to the Windows Recycle Bin/);
     assert.match(asked, /kr-track does not hold this folder: only the file is deleted, and nothing in kr-track changes/);
     assert.equal(ctx.posts("/api/photo/delete").length, 1, "Delete was held back");
@@ -217,7 +219,7 @@ describe("the other file edits", () => {
     assert.equal(ctx.document.querySelectorAll(".photo-item-file").length, 1, "the photo stayed in the list");
   });
 
-  test("a local photo's delete says the Recycle Bin; a mapped drive the server names is permanent too", async (t) => {
+  test("a local photo's delete says the Recycle Bin; a drive the server names as having none goes through this PC", async (t) => {
     const s = server().first("/api/folder/membership", () => ({ ...HELD, permanent_delete: false }));
     const local = await loadApp("tagpup", { t, url: "http://localhost:8090/kr-track/", server: s });
     local.window.alert = () => {};
@@ -240,7 +242,7 @@ describe("the other file edits", () => {
     click(ctx.window, ctx.document.querySelectorAll(".photo-item-file")[0]);
     await flush(ctx.window, 6);
     click(ctx.window, ctx.document.getElementById("btn-delete-photo"));
-    assert.match(asked, /This file is on a removable drive: it will be deleted permanently, not moved to the Recycle Bin/);
+    assert.match(asked, /This file is on a removable drive, where there is no Recycle Bin: it is copied to this PC/);
     assert.doesNotMatch(asked, /network share/, "the reason is the server's, not always a share");
   });
 

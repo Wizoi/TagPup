@@ -354,10 +354,17 @@ export function resumeBulk() {
         });
 }
 
-/** Start again what was cancelled, failed or abandoned: the same selection and edit, as started. */
+/**
+ * Start again what was cancelled, failed or abandoned: the same selection and edit, as started. A Delete is never sent again as it
+ * was: it is asked about afresh, as a click on Delete is (bulk-edit.js deleteSelection: where the files are, the question, a new
+ * token), so that what it deletes is what the new question names (#691).
+ */
 export function startAgain() {
     const request = state.bulk.request;
     if (!request || bulkBusy()) return Promise.resolve({ ok: false });
+    if (request.op === 'delete') {
+        return upper.deleteSelection({ selection: request.selection, count: request.picked }).then(ok => ({ ok }));
+    }
     state.bulk.job = null;
     return startBulk(request);
 }

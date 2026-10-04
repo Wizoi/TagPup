@@ -67,8 +67,12 @@ class Delete(unittest.TestCase):
         return paths.stored(os.path.join(self.vl.pictures, name))
 
     def start(self, selection_body, params=None, expect=200):
+        """Start a delete as the page does: asked first (delete-check), then started with the answer's token. `params`: sent as
+        they are."""
+        if params is None:
+            params = {"token": self.check(selection_body)["token"]}
         reply = self.client.post("/library/api/library/bulk/start", json={"op": "delete", "selection": selection_body,
-                                                                         "params": params if params is not None else {}})
+                                                                         "params": params})
         self.assertEqual(expect, reply.status_code, reply.get_json())
         return reply.get_json()
 
@@ -111,17 +115,66 @@ class Deleting(Delete):
         self.assertEqual((2, 1, 0), (done["changed"], done["skipped_missing"], done["error_count"]))
         self.assertEqual([self.coast[1]], self.held(self.coast[:3]))
 
-    def test_a_folder_with_no_recycle_bin_is_left_unless_the_owner_was_told(self):
+    def test_a_folder_with_no_recycle_bin_goes_through_this_pcs_and_nothing_is_deleted_for_good_694(self):
         self.binless.add(paths.key(self.folder("2023 Lakes")))
+        lakes = [self.vl.path_of(photo_id) for photo_id in self.lakes]
         done = self.finish(self.start({"ids": self.coast[:2] + self.lakes})["job"])
-        self.assertEqual((2, 5), (done["changed"], done["error_count"]))
-        self.assertIn("deleted permanently", done["errors"][0]["why"])
-        self.assertIn("on a network share", done["errors"][0]["why"])
-        self.assertEqual(self.lakes, self.held(self.lakes), "not deleted for good without being asked")
-        self.assertTrue(all(os.path.exists(self.vl.path_of(photo_id)) for photo_id in self.lakes))
-        done = self.finish(self.start({"ids": self.lakes}, {"permanent": True})["job"])
-        self.assertEqual((5, 0), (done["changed"], done["error_count"]))
-        self.assertEqual([], self.held(self.lakes))
+        self.assertEqual((7, 0), (done["changed"], done["error_count"]))
+        self.assertEqual([], self.held(self.coast[:2] + self.lakes))
+        sent = {paths.key(path) for path in self.sent}
+        for path in lakes:
+            self.assertIn(paths.key(recycle_bin.mirror_of(path)), sent, "the copy went to this PC's Bin")
+            self.assertNotIn(paths.key(path), sent, "the original never went to a Bin it does not have")
+            self.assertFalse(os.path.exists(path))
+
+    def test_a_folder_found_with_no_bin_after_the_question_goes_through_this_pc_too_692(self):
+        asked = self.check({"ids": self.coast[:2]})
+        self.assertEqual(0, asked["through_this_pc"])
+        self.binless.add(paths.key(self.folder("2024 Coast")))     # a drive mounted, a link, since the question
+        done = self.finish(self.start({"ids": self.coast[:2]}, {"token": asked["token"]})["job"])
+        self.assertEqual((2, 0), (done["changed"], done["error_count"]))
+        sent = {paths.key(path) for path in self.sent}
+        self.assertTrue(all(paths.key(recycle_bin.mirror_of(self.folder(os.path.join("2024 Coast", "c%02d.jpg" % n)))) in sent
+                            for n in range(2)), "never for good: through this PC")
+
+    def test_a_copy_that_cannot_be_made_keeps_the_photo_and_its_row(self):
+        self.binless.add(paths.key(self.folder("2023 Lakes")))
+        with mock.patch("tagpup.files.recycle_bin.shutil.copy2", side_effect=OSError("the share went away")):
+            done = self.finish(self.start({"ids": self.lakes[:2]})["job"])
+        self.assertEqual((0, 2), (done["changed"], done["error_count"]))
+        self.assertIn("left where it is", done["errors"][0]["why"])
+        self.assertEqual(self.lakes[:2], self.held(self.lakes[:2]))
+
+    def test_a_photo_that_joins_the_selection_after_the_question_refuses_the_delete_691(self):
+        asked = self.check(ALL)
+        self.assertEqual(35, asked["total"])
+        fresh = self.vl.photo("2025 New", "fresh.jpg", taken="2025:01:01 10:00:00", real=True, size=(16, 16))
+        refused = self.start(ALL, {"token": asked["token"]}, expect=409)
+        self.assertIn("changed since you were asked", refused["error"])
+        self.assertEqual([], self.sent, "nothing deleted")
+        self.assertEqual({}, bulk_edits._held(self.library), "nothing begun")
+        self.assertTrue(os.path.exists(self.vl.path_of(fresh)))
+        # Asked again, the question names 36 and the delete deletes exactly those.
+        done = self.finish(self.start(ALL)["job"])
+        self.assertEqual((36, 36), (done["total"], done["changed"]))
+
+    def test_a_photo_that_leaves_the_selection_refuses_too_and_one_outside_it_does_not(self):
+        asked = self.check({"source": {"kind": "year", "value": "2024"}})
+        self.vl.photo("2023 Lakes", "late.jpg", taken="2023:05:01 10:00:00", real=True, size=(16, 16))   # not in 2024
+        done = self.finish(self.start({"source": {"kind": "year", "value": "2024"}},
+                                      {"token": asked["token"]})["job"])
+        self.assertEqual(30, done["changed"])
+        asked = self.check({"ids": self.lakes})
+        os.remove(self.vl.path_of(self.lakes[0]))
+        self.vl.conn.execute("DELETE FROM photos WHERE id = ?", (self.lakes[0],))
+        self.vl.conn.commit()
+        self.start({"ids": self.lakes}, {"token": asked["token"]}, expect=409)
+
+    def test_a_delete_with_no_token_is_refused_and_starts_nothing(self):
+        for params in ({}, {"permanent": True}, {"token": 5}, {"token": ""}):
+            with self.subTest(params=params):
+                self.start({"ids": self.coast[:1]}, params, expect=400)
+        self.assertEqual([], self.sent)
 
     def test_a_file_the_bin_refuses_is_an_error_and_keeps_its_row_and_the_rest_go_on(self):
         refused = paths.key(self.vl.path_of(self.coast[1]))
@@ -137,12 +190,13 @@ class Deleting(Delete):
         self.assertEqual([self.coast[1]], self.held(self.coast[:3]))
 
     def test_what_a_delete_asks_for_is_checked_up_front(self):
-        for params in ({"permanent": "yes"}, {"permanent": 1}, []):
+        token = self.check({"ids": self.coast[:1]})["token"]
+        for params in ({"token": [token]}, {}, []):
             with self.subTest(params=params):
                 self.assertIn("error", self.start({"ids": self.coast[:1]}, params, expect=400))
         self.assertEqual(self.coast[:1], self.held(self.coast[:1]))
         with mock.patch.object(selection, "MAX_SELECTED", 10):
-            refused = self.start(ALL, expect=400)
+            refused = self.start(ALL, {"token": "0" * 64}, expect=400)
         self.assertIn("at most", refused["error"])
         self.assertEqual([], self.sent)
 
@@ -190,16 +244,24 @@ class Deleting(Delete):
         self.assertNotIn("c00", what)
 
     def test_the_edit_says_what_it_does_without_a_name(self):
-        self.assertEqual("delete the files to the Recycle Bin", bulk_edit.prepare(self.library, "delete", {}).describe())
+        self.assertEqual("delete the files to the Recycle Bin (through this PC's where their place has none)",
+                         bulk_edit.prepare(self.library, "delete", {"token": "a" * 64}).describe())
 
 
 class Asking(Delete):
     def test_how_many_and_how_many_for_good_by_folder(self):
         self.binless.add(paths.key(self.folder("2023 Lakes")))
         found = self.check({"ids": self.coast[:3] + self.lakes})
-        self.assertEqual({"total": 8, "folders": 2, "permanent": 5, "reasons": [{"reason": "on a network share", "photos": 5}]}, found)
+        token = found.pop("token")
+        self.assertEqual(64, len(token))
+        lakes_bytes = sum(os.path.getsize(self.vl.path_of(photo_id)) for photo_id in self.lakes)
+        self.assertEqual({"total": 8, "folders": 2, "through_this_pc": 5, "reasons": [{"reason": "on a network share", "photos": 5}],
+                          "copy_bytes": lakes_bytes, "restores_to": recycle_bin.mirror_root(), "no_room": None}, found)
+        self.assertEqual(token, self.check({"ids": list(reversed(self.coast[:3] + self.lakes))})["token"],
+                         "the token is of the photos, not of the order they were named in")
         found = self.check({"source": {"kind": "all"}, "excluded": self.lakes})
-        self.assertEqual((30, 1, 0, []), (found["total"], found["folders"], found["permanent"], found["reasons"]))
+        self.assertEqual((30, 1, 0, [], 0), (found["total"], found["folders"], found["through_this_pc"], found["reasons"],
+                                             found["copy_bytes"]))
         self.assertEqual([], self.sent, "asking deletes nothing")
 
     def test_the_bin_is_asked_once_a_folder_never_once_a_photo(self):

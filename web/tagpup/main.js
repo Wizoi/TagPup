@@ -58,7 +58,8 @@ import {
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
-    addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
+    addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, deleteSelection,
+    populateCameraModelsDropdown, recordUndo,
     renderFileList, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
     photosDeleted, photosWritten, reloadChangedPhoto,
@@ -97,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     btnSelectAllThumbnails.addEventListener('click', selectAllThumbnails);
     btnSelectNoneThumbnails.addEventListener('click', selectNoneThumbnails);
-    btnDeleteSelection.addEventListener('click', deleteSelection);
+    btnDeleteSelection.addEventListener('click', () => deleteSelection());
     btnBulkAddPeople.addEventListener('click', bulkAddPeopleToSelection);
     btnBulkAddTags.addEventListener('click', bulkAddTagsToSelection);
     bulkAddPeopleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') bulkAddPeopleToSelection(); });

@@ -14,6 +14,7 @@ A selection holds at most MAX_SELECTED photos; a larger one is Refused, with how
 connection; a root this machine does not place raises paths.RootsError (the web layer's gate answers that first).
 """
 import collections
+import hashlib
 
 from tagpup.core import vocabulary
 from tagpup.core.result import Refused
@@ -127,27 +128,43 @@ def _kept(counted):
     return sorted(counted, key=lambda each: vocabulary.tag_sort_key(each[0])), left
 
 
+def token_of(photo_ids):
+    """The token of a set of photos: a hash of their ids, sorted (the order they were named in is no matter). What a Delete's
+    question was about, and what its start must still resolve to (#691). 68,000 ids are about 20 ms."""
+    return hashlib.sha256(",".join(str(each) for each in sorted(set(photo_ids))).encode("ascii")).hexdigest()
+
+
 def where_deleted(library, selection):
-    """Where a Delete of `selection` would send its files, for the question asked before it (#674): {"total" (photos), "folders",
-    "permanent" (photos in folders with no Recycle Bin: a network share, a mapped or SUBST drive, a removable one -- deleted for
-    good), "reasons": [{"reason", "photos"}]}, the reasons as recycle_bin says them ("on a network share"). Asked once a folder,
-    never once a photo (a Select all of photo_index is 2,672 folders, about 2 s); a UNC path and a mapped drive are told by
-    their spelling and the drive's type, without reading the share. Refused, as `resolve` refuses it, over MAX_SELECTED."""
+    """Where a Delete of `selection` would send its files, for the question asked before it (#674): {"total" (photos), "token"
+    (token_of the photos: the start of the delete must carry it, and is refused when the selection no longer resolves to
+    them, #691), "folders", "through_this_pc" (photos in folders with no Recycle Bin -- a network share, a mapped or SUBST drive,
+    a removable one -- which are copied to this PC and the copies recycled there, #694), "reasons": [{"reason", "photos"}],
+    "copy_bytes" (what those copies take, by the index's sizes), "restores_to" (the folder the copies are put in, and so where
+    Windows restores them: <Downloads>\\TagPup deleted from shares), "no_room" (None, or the sentence when this PC has not room
+    for the copies and 1 GB to spare: nothing is to be asked then)}; the reasons as recycle_bin says them ("on a network share").
+    Asked once a folder, never once a photo (a Select all of photo_index is 2,672 folders, about 2 s); a UNC path and a mapped
+    drive are told by their spelling and the drive's type, without reading the share. Refused, as `resolve` refuses it, over
+    MAX_SELECTED."""
+    resolved = resolve(library, selection)
     conn = library_view.opened(library)
     try:
-        counted = store_folders.counts(conn, selection.ids, selection.source, selection.excluded)
-        total = sum(counted.values())
-        _refuse_if_large(total)
+        counted = store_folders.counts(conn, resolved.ids, None, ())
+        sizes = store_folders.bytes_by_folder(conn, resolved.ids, None, ())
         named = store_folders.described(conn, counted)
     finally:
         conn.close()
     reasons = collections.Counter()
+    copy_bytes = 0
     for folder_id, (path, _name) in named.items():
         reason = recycle_bin.no_bin_reason(path)
         if reason:
             reasons[reason] += counted[folder_id]
-    return {"total": total, "folders": len(counted), "permanent": sum(reasons.values()),
-            "reasons": [{"reason": reason, "photos": photos} for reason, photos in reasons.most_common()]}
+            copy_bytes += sizes.get(folder_id) or 0
+    through = sum(reasons.values())
+    return {"total": len(resolved.ids), "token": token_of(resolved.ids), "folders": len(counted), "through_this_pc": through,
+            "reasons": [{"reason": reason, "photos": photos} for reason, photos in reasons.most_common()],
+            "copy_bytes": copy_bytes, "restores_to": recycle_bin.mirror_root(),
+            "no_room": recycle_bin.room_for(copy_bytes) if through else None}
 
 
 def _refuse_if_large(count):
