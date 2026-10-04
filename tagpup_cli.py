@@ -1160,8 +1160,10 @@ def prune_journal(ctx, days, apply_):
     if not apply_:
         console.print("%d change(s) older than %d days would be pruned (%d value(s)). --apply prunes them."
                       % (result.attempted, days, result.details["values"]))
-        return
-    console.print("Pruned %d change(s), %d value(s)." % (result.changed, result.details["values"]))
+    else:
+        console.print("Pruned %d change(s), %d value(s)." % (result.changed, result.details["values"]))
+    if result.details["note"]:
+        console.print(result.details["note"])
 
 
 #: What `sync` says of each thing it counts.

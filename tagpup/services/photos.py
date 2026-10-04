@@ -380,6 +380,25 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     return result
 
 
+def date_shift_plan(minutes, strict=False):
+    """The `plan_one` of a Date Taken shift by `minutes` (tagpup.services.file_changes.write_fields): each date the photo
+    holds is moved by the same minutes; one it does not hold is not made, and a photo holding none is skipped. The one plan
+    of Camera Time Shift (shift_date_taken) and of the bulk job (tagpup.services.bulk_edit). `strict` (the job): a date the
+    shift would move out of range (dates.ShiftOutOfRange) is raised, and so the photo's error with a sentence; Camera Time
+    Shift leaves such a photo alone, as it always did."""
+    shift = dates.shifted_strictly if strict else dates.shifted
+
+    def plan_one(_path, held):
+        after = {}
+        for field in dates.SHIFTED_FIELDS:
+            values = held.get(field) or []
+            moved = shift(values[0], minutes) if len(values) == 1 else None
+            if moved is not None:
+                after[field] = [moved]
+        return file_changes.Plan(after=after) if after else file_changes.skip("holds no Date Taken to move")
+    return plan_one
+
+
 @roots_service.canonical_args("photo_paths")
 def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     """Move Date Taken in each photo by `minutes`, and tell the index. Time Shift.
@@ -411,16 +430,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     if loose and file_only.refuse_unwritable(refused, loose):
         return refused
 
-    def plan_one(_path, held):
-        after = {}
-        # Each date the photo holds is moved by the same minutes; one it does not hold is
-        # not made.
-        for field in dates.SHIFTED_FIELDS:
-            values = held.get(field) or []
-            moved = dates.shifted(values[0], minutes) if len(values) == 1 else None
-            if moved is not None:
-                after[field] = [moved]
-        return file_changes.Plan(after=after) if after else file_changes.skip("holds no Date Taken to move")
+    plan_one = date_shift_plan(minutes)
 
     try:
         journaled = file_changes.write_fields(

@@ -136,11 +136,11 @@ def claim(db_path, job, library, now, due=None):
     return db.write_with_connection(db_path, work, label="claim the job %s" % job)
 
 
-def finish(db_path, run_id, outcome, now, changed=None, note=None):
+def finish(db_path, run_id, outcome, now, changed=None, note=None, keep=()):
     """End run `run_id`, this process's: `outcome` done or failed, `changed` its counts.
     False when it is no longer this process's to end -- taken over as abandoned, or the
     library restored from a snapshot without it. Older runs of the job beyond KEEP_RUNS
-    are deleted."""
+    are deleted, but never one whose id is in `keep` (the first run of a job that can still be resumed: its id is the job's)."""
     if outcome not in (DONE, FAILED):
         raise ValueError("a run ends done or failed, not %r" % (outcome,))
 
@@ -152,12 +152,58 @@ def finish(db_path, run_id, outcome, now, changed=None, note=None):
             (outcome, stamp(now), json.dumps(changed or {}, sort_keys=True), note, run_id,
              file_journal.owner())).rowcount == 1
         if found is not None:
+            kept = [int(each) for each in keep]
             conn.execute("DELETE FROM job_runs WHERE job = ? AND library IS ? AND id NOT IN"
-                         " (SELECT id FROM job_runs WHERE job = ? AND library IS ? ORDER BY id DESC LIMIT ?)",
-                         (found[0], found[1], found[0], found[1], KEEP_RUNS))
+                         " (SELECT id FROM job_runs WHERE job = ? AND library IS ? ORDER BY id DESC LIMIT ?)"
+                         + (" AND id NOT IN (%s)" % ",".join("?" * len(kept)) if kept else ""),
+                         [found[0], found[1], found[0], found[1], KEEP_RUNS] + kept)
         return ended
 
     return db.write_with_connection(db_path, work, label="finish run %d" % run_id)
+
+
+def discard(db_path, run_id):
+    """Delete run `run_id`, this process's and still running, as if it had not been claimed: a claim that was made for work that
+    was then refused (a resume that could not go on) must not use up one of the KEEP_RUNS rows a job's history is kept in. False
+    when it was not this process's running run."""
+    def work(conn):
+        return conn.execute("DELETE FROM job_runs WHERE id = ? AND outcome = 'running' AND owner = ?",
+                            (run_id, file_journal.owner())).rowcount == 1
+
+    return db.write_with_connection(db_path, work, label="discard run %d" % run_id)
+
+
+def amend(db_path, run_id, changed, note):
+    """Replace the counts and the note of run `run_id`, whatever its outcome: the record of a run that ended, corrected after
+    the fact (the files a bulk edit could have been resumed from were removed for age). False when there is no such run."""
+    def work(conn):
+        return conn.execute("UPDATE job_runs SET changed = ?, note = ? WHERE id = ?",
+                            (json.dumps(changed or {}, sort_keys=True), note, run_id)).rowcount == 1
+
+    return db.write_with_connection(db_path, work, label="amend run %d" % run_id)
+
+
+def progress(db_path, run_id, changed):
+    """Record the counts of run `run_id` so far, while it runs: `changed` as the run's counts (what the Activity page lists
+    of a run in progress). False when the run is no longer this process's and running -- taken over as abandoned, ended, or
+    the library restored from a snapshot without it. One small write; a job calls it every few seconds, never per photo."""
+    def work(conn):
+        return conn.execute("UPDATE job_runs SET changed = ? WHERE id = ? AND outcome = 'running' AND owner = ?",
+                            (json.dumps(changed or {}, sort_keys=True), run_id, file_journal.owner())).rowcount == 1
+
+    return db.write_with_connection(db_path, work, label="progress of run %d" % run_id)
+
+
+def get(db_path, run_id):
+    """The run `run_id` of the library, or None. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_table(conn):
+            return None
+        found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE id = ?", (run_id,)).fetchone()
+        return _run(found) if found else None
+    finally:
+        conn.close()
 
 
 def latest(db_path):

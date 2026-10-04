@@ -18,7 +18,7 @@ rest are put back. Its rehearsal reads every file and writes none. Undoing one n
 library's ExifTool, which the caller names.
 """
 from tagpup.core.result import NotFound, Result
-from tagpup.services import file_changes
+from tagpup.services import bulk_edit, file_changes
 from tagpup.services import settings as library_settings
 from tagpup.store import journal
 
@@ -108,14 +108,34 @@ def undo(library, change_id, apply=False, exiftool_path=None):
     return result
 
 
+#: The line a prune says of the changes it leaves.
+KEPT_SAYS = "kept for a resumable bulk job: %d"
+
+
+def kept_operations(library):
+    """The operations whose changes no prune takes: those of the bulk time shifts the library holds a record of (the list of
+    photos and the state a resume reads, kept 30 days from the job's last activity, and while the job runs). Their journal changes
+    are the only account of which photos of the chunk in flight were shifted, and a resume that cannot read it could shift them
+    twice. Once the record goes (the job is done, or too old) its changes are pruned like any other."""
+    return {bulk_edit.operation_of(bulk_edit.TIME_SHIFT, job) for job in bulk_edit.resumable_heads(library)}
+
+
 def prune(library, days=RETENTION_DAYS, apply=False):
     """Take away the values of every change older than `days`, keeping its summary; it
     can no longer be undone. A dry run unless `apply`: `attempted` is the changes it
-    would prune, details["values"] the column values it would delete."""
-    changes, values = journal.prunable(library.path, days)
-    result = Result(attempted=changes, details={"dry_run": not apply, "days": days, "values": values})
+    would prune, details["values"] the column values it would delete, details["kept"] the
+    changes it leaves for a bulk time shift that can be resumed (kept_operations) and
+    details["kept_jobs"] those jobs' ids: this is said in `note`, the line a caller prints."""
+    keep = kept_operations(library)
+    changes, values = journal.prunable(library.path, days, keep=keep)
+    held = journal.held_back(library.path, days, keep=keep) if keep else {}
+    kept = sum(held.values())
+    result = Result(attempted=changes, details={"dry_run": not apply, "days": days, "values": values, "kept": kept,
+                                                "kept_jobs": sorted(job for job in bulk_edit.resumable_heads(library)
+                                                                    if bulk_edit.operation_of(bulk_edit.TIME_SHIFT, job) in held)})
+    result.details["note"] = KEPT_SAYS % kept if kept else None
     if apply and changes:
-        pruned, deleted = journal.prune(library.path, days)
+        pruned, deleted = journal.prune(library.path, days, keep=lambda: kept_operations(library))
         result.changed = pruned
         result.details["values"] = deleted
     return result

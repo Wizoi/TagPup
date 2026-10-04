@@ -13,9 +13,15 @@ command that sets the rest. It was a second command, and a crash between the two
 file holding neither what it held nor what it was to hold (docs/findings.md, #271). The
 photo's identity goes in that command too (#282).
 """
+import logging
+
+from exiftool.exceptions import ExifToolNotRunning
+
 from tagpup.core import fields, paths
-from tagpup.files import identity
+from tagpup.files import exiftool_session, identity
 from tagpup.files.keywords import MIME_TYPE
+
+logger = logging.getLogger(__name__)
 
 #: Photos read in one ExifTool command.
 READ_BATCH = 200
@@ -50,6 +56,15 @@ def read(et, photo_paths, wanted, also=(), records=None):
         batch = photo_paths[start:start + READ_BATCH]
         try:
             rows = et.get_tags(batch, tags=asked)
+        except (exiftool_session.ExifToolTimeout, ExifToolNotRunning) as stalled:
+            # ExifTool did not answer (its process was killed): a share gone away, a disk that stopped. Each photo read again
+            # singly would wait its own deadline -- 25 photos of a bad share were two hours -- so the whole batch is unreadable
+            # and nothing is retried; one bad path ExifTool refuses (below) is.
+            said = "ExifTool did not answer in %s s" % getattr(et, "timeout", "time")
+            logger.warning("%s; %d photo(s) of the batch were not read: %s", said, len(batch), stalled)
+            for one in batch:
+                found[paths.key(one)] = Unreadable(said)
+            continue
         except Exception:
             rows = None
         if rows is not None:

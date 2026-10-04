@@ -29,6 +29,7 @@ import time
 
 from flask import Blueprint, current_app, jsonify, request
 
+from tagpup.jobs import bulk_edits as bulk_edit_jobs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.supervisor import TOKEN_HEADER
@@ -95,6 +96,9 @@ def long_work():
     indexing = indexing_jobs.running()
     if indexing:
         found.append("indexing in %d library(ies)" % indexing)
+    edits = bulk_edit_jobs.running()
+    if edits:
+        found.append("%d bulk edit(s)" % edits)
     return found
 
 

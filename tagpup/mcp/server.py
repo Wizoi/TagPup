@@ -341,7 +341,8 @@ def build():
 
     @write_tool("Prune the library's journal: the changes older than `days` (%d unless given) keep their "
                 "summary and lose their values, and can no longer be undone. The default is a dry run "
-                "saying how many changes and values it would take away; apply=true does it."
+                "saying how many changes and values it would take away; apply=true does it. The changes of a bulk time shift "
+                "that can still be resumed are never taken (`kept`, and `note` says it)."
                 % library_journal.RETENTION_DAYS)
     def prune_journal(library: str, days: int = library_journal.RETENTION_DAYS,
                       apply: bool = False) -> dict[str, Any]:
@@ -349,7 +350,8 @@ def build():
             found = find_library(library, photos=False)
             result = library_journal.prune(found, days, apply=apply)
             return {"ok": result.ok, "dry_run": not apply, "changes": result.attempted,
-                    "pruned": result.changed, "values": result.details["values"], "days": days}
+                    "pruned": result.changed, "values": result.details["values"], "days": days,
+                    "kept": result.details["kept"], "note": result.details["note"]}
         return _answer(act)
 
     return server

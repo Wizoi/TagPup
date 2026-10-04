@@ -52,6 +52,28 @@ def shifted(value, minutes):
     return moved.strftime("%Y:%m:%d %H:%M:%S") + found.group(7)
 
 
+class ShiftOutOfRange(ValueError):
+    """A date a shift would move out of the years a date can be (1 to 9999); its message says which way."""
+
+
+def shifted_strictly(value, minutes):
+    """shifted, but a date the shift would move out of range is a ShiftOutOfRange (saying before the year 1, or after 9999)
+    and not None, which is the answer for a value that is no date: a bulk job reports the first as the photo's error, where
+    Camera Time Shift leaves such a photo alone (shifted)."""
+    found = _EXIF_TIME.match(str(value).strip()) if value is not None else None
+    if not found:
+        return None
+    try:
+        when = datetime.datetime(*(int(part) for part in found.groups()[:6]))
+    except ValueError:
+        return None
+    try:
+        moved = when + datetime.timedelta(minutes=minutes)
+    except OverflowError:
+        raise ShiftOutOfRange("the shifted date would be %s" % ("before the year 1" if minutes < 0 else "after the year 9999")) from None
+    return moved.strftime("%Y:%m:%d %H:%M:%S") + found.group(7)
+
+
 def shown_year(year):
     """A photo's year as the pages show it: `year` as it is, or UNKNOWN_YEAR for none."""
     return year if year else UNKNOWN_YEAR

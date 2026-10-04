@@ -24,7 +24,7 @@ import collections
 import time
 
 from tagpup.core import paths, vocabulary
-from tagpup.store import damaged_files, derived
+from tagpup.store import damaged_files, db, derived
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -170,6 +170,39 @@ def all_ids(conn, source, cap):
     return ids[:cap], conn.execute(*scope.count).fetchone()[0]
 
 
+def source_ids(conn, source, cap):
+    """all_ids, read in ONE transaction: the dated photos and the undated are two statements, and a photo dated
+    between them (a bulk time shift of the library is under way, a sync) would be listed twice or not at all by two
+    snapshots. The transaction is the connection's own and read-only; it ends with the connection."""
+    db.begin(conn)
+    return all_ids(conn, source, cap)
+
+
+def existing_ids(conn, photo_ids):
+    """The ids of `photo_ids` that have a photo, as a set: one primary-key read in batches of CHUNK."""
+    found = set()
+    ids = list(photo_ids)
+    for start in range(0, len(ids), CHUNK):
+        chunk = ids[start:start + CHUNK]
+        found.update(photo_id for (photo_id,) in conn.execute(
+            "SELECT id FROM photos WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk))
+    return found
+
+
+def paths_of(conn, photo_ids):
+    """{photo id: path -- native --} of the photos `photo_ids` that have a row: one read in batches of CHUNK of ids
+    and paths alone (a bulk edit resolves each chunk of its photos as it reaches them). Raises paths.RootsError for a
+    root this machine does not place."""
+    found = {}
+    ids = list(photo_ids)
+    for start in range(0, len(ids), CHUNK):
+        chunk = ids[start:start + CHUNK]
+        rows = conn.execute("SELECT id, path FROM photos WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk).fetchall()
+        for photo_id, path in store_roots.natives(conn, rows, 1):
+            found[photo_id] = path
+    return found
+
+
 def id_plans(conn, source, cap):
     """([(statement, [plan lines])] of every SELECT `all_ids` runs for `source`, the milliseconds it took): what the
     measurement script prints and a person reads to see that a source's id list searches an index, as SQLite plans it."""
@@ -252,6 +285,59 @@ def photo_row(conn, photo_id):
 def damaged(conn):
     """{paths.key: store.damaged_files.Record} of every record of a damaged photo (a handful)."""
     return {paths.key(each.path): each for each in damaged_files.every(conn)}
+
+
+# ---- A selection's tally ---------------------------------------------------------------------
+
+def _selected(conn, ids, source, excluded):
+    """(SQL that selects the ids of the photos selected -- `SELECT p.id ...` --, its parameters): the photos `ids` that have
+    a row, or those of `source` but the `excluded` ones. The ids are put in a TEMP table of this connection (`sel`, by primary
+    key; a read-only connection may make one), so a selection of 20,000 is one statement and not forty."""
+    conn.execute("CREATE TEMP TABLE IF NOT EXISTS sel (id INTEGER PRIMARY KEY)")
+    conn.execute("DELETE FROM sel")
+    if source is None:
+        conn.executemany("INSERT OR IGNORE INTO sel (id) VALUES (?)", ((photo_id,) for photo_id in ids))
+        # CROSS JOIN fixes the order: the ids first, each photo by its key. Left to itself the planner scans the
+        # library's index and looks each photo up in `sel`, which for one photo is 68,000 steps.
+        return "SELECT p.id FROM sel CROSS JOIN photos p ON p.id = sel.id", ()
+    scope = _scope(conn, source)
+    if scope is None:
+        return None, ()
+    conn.executemany("INSERT OR IGNORE INTO sel (id) VALUES (?)", ((photo_id,) for photo_id in excluded))
+    return ("SELECT p.id FROM %s WHERE %s AND p.id NOT IN (SELECT id FROM sel)" % (scope.from_, scope.where),
+            tuple(scope.params))
+
+
+def tally(conn, ids=None, source=None, excluded=()):
+    """({"total": photos selected, "tags": [(tag, photos)], "people": [(name, photos)]}) of a selection: `ids`, or every photo
+    of `source` but `excluded`. From photo_tags (by tag-tree node: the tag the tree spells, exactly -- not the tags under it --
+    so a keyword no node holds is not counted, as the navigator's counts) and photo_people, each a single grouped statement over
+    the selection; names that are one person without regard to case are one entry under the spelling most photos hold
+    (people_counts). Unsorted: the service orders and cuts them. One read transaction."""
+    db.begin(conn)
+    selected, params = _selected(conn, ids, source, excluded)
+    if selected is None:
+        return {"total": 0, "tags": [], "people": []}
+    total = conn.execute("SELECT COUNT(*) FROM (%s)" % selected, params).fetchone()[0]
+    tags = conn.execute(
+        "SELECT t.tag, COUNT(*) FROM photo_tags pt JOIN tag_taxonomy t ON t.id = pt.tag_id"
+        " WHERE pt.photo_id IN (%s) GROUP BY pt.tag_id" % selected, params).fetchall()
+    held = conn.execute("SELECT name, COUNT(DISTINCT photo_id) FROM photo_people WHERE photo_id IN (%s) GROUP BY name"
+                        % selected, params).fetchall()
+    grouped = collections.defaultdict(list)
+    for name, count in held:
+        grouped[vocabulary.key(name)].append((name, count))
+    people = []
+    for spellings_of in grouped.values():
+        spellings_of.sort(key=lambda each: (-each[1], each[0]))
+        if len(spellings_of) == 1:
+            people.append(spellings_of[0])
+            continue
+        names = [each[0] for each in spellings_of]
+        people.append((names[0], conn.execute(
+            "SELECT COUNT(DISTINCT photo_id) FROM photo_people WHERE name IN (%s) AND photo_id IN (%s)"
+            % (",".join("?" * len(names)), selected), names + list(params)).fetchone()[0]))
+    return {"total": total, "tags": [tuple(each) for each in tags], "people": people}
 
 
 # ---- The navigator's counts ------------------------------------------------------------------

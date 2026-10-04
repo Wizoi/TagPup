@@ -197,10 +197,21 @@ def leave_out_missing(photo_paths):
     return present, [(path, MISSING_WHY) for path in gone]
 
 
+#: What the journal calls a change that adds and removes tags on a selection (History's `operation`).
+ADD_TO_ALL = "add to all selected"
+
+
 @roots_service.canonical_args("photo_paths")
-def change_tags(library, photo_paths, add, remove, exiftool_path):
+def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True,
+                persons=None, et=None):
     """Add the same tags to many photos and take the same tags off them. Adding or
     removing tags on a selection of photos. See _change_each.
+
+    `operation` names the change in the journal. A bulk JOB (tagpup.jobs.bulk_edits) passes its own and
+    `stop_at_first_error=False`: a photo that cannot be read or written is an error and the others are written all the
+    same. `persons` ({paths.key(path): the tags of `add` that are people}): a person the file already names by their
+    leaf is not added again (_change_each). `et`: an ExifTool session the caller opened (a bulk job's chunk gets its own,
+    with a deadline of its own), used instead of one per write.
 
     A photo whose file is gone is left out and listed in the result's skips (details[SKIPPED_MISSING] says how many);
     the photos after it are written. Only a read or write ERROR of a present file stops the run
@@ -213,7 +224,8 @@ def change_tags(library, photo_paths, add, remove, exiftool_path):
     if problem:
         return _refused(len(photo_paths), problem)
     present, gone = leave_out_missing(photo_paths)
-    result = _change_present(library, present, add, remove, exiftool_path) if present else _refused(0, None)
+    result = (_change_present(library, present, add, remove, exiftool_path, operation, stop_at_first_error, persons, et)
+              if present else _refused(0, None))
     if not result.refused:
         result.attempted += len(gone)
         for path, why in gone:
@@ -222,7 +234,8 @@ def change_tags(library, photo_paths, add, remove, exiftool_path):
     return result
 
 
-def _change_present(library, photo_paths, add, remove, exiftool_path):
+def _change_present(library, photo_paths, add, remove, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True,
+                    persons=None, et=None):
     """change_tags for photos whose files are there."""
     refused = _refused(len(photo_paths), None)
     held, loose = libraries.split(library, photo_paths)
@@ -236,20 +249,22 @@ def _change_present(library, photo_paths, add, remove, exiftool_path):
     done = None
     if held or not loose:
         done = libraries.with_skipped(_change_each(library, [(path, add, remove) for path in kept],
-                                                   exiftool_path, "add to all selected"), left)
+                                                   exiftool_path, operation, persons=persons,
+                                                   stop_at_first_error=stop_at_first_error, et=et), left)
     if not loose:
         return file_only.combined(done, None)
     # The photos of folders the library does not hold: their files only, in the same request
     # (tagpup.services.file_only). After the others: a failure stops the run, as always.
-    if done is not None and not done.ok:
+    if stop_at_first_error and done is not None and not done.ok:
         done.attempted += len(loose)
         for path in loose:
             done.skip(path, "not written: an earlier photo failed")
         return file_only.combined(done, None)
     writable, skipped = file_only.leave_out_unwritable(loose)
     files = libraries.with_skipped(
-        _change_each(library, [(path, add, remove) for path in writable], exiftool_path, "add to all selected",
-                     files_only=True) if writable else _refused(0, None), skipped)
+        _change_each(library, [(path, add, remove) for path in writable], exiftool_path, operation,
+                     files_only=True, persons=persons, stop_at_first_error=stop_at_first_error, et=et)
+        if writable else _refused(0, None), skipped)
     return file_only.combined(done, files)
 
 
@@ -360,7 +375,8 @@ def _tags_held(held):
     return vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})
 
 
-def _change_each(library, plan, exiftool_path, operation, files_only=False, persons=None):
+def _change_each(library, plan, exiftool_path, operation, files_only=False, persons=None, stop_at_first_error=True,
+                 et=None):
     """Write each photo in `plan` -- (path, tags to add, tags to take off) -- as one change
     of photo files (tagpup.services.file_changes): planned from what every file holds,
     committed, then written a file at a time, each recorded in its row as it is marked
@@ -373,7 +389,8 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
     a conflict, reported and not overwritten.
 
     Stops at the first photo that cannot be read or written, which is the error; the
-    photos before it keep their changes. details: `written`, path -> (tags, flat,
+    photos before it keep their changes (unless not `stop_at_first_error`: each such photo is an error and the others
+    are written). details: `written`, path -> (tags, flat,
     hierarchical) for each photo written, and `change`. With `files_only` (photos of folders
     the library does not hold: tagpup.services.file_only) the files are written and nothing
     else is: no journal change (`change` is None), no row.
@@ -398,10 +415,10 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
 
     if files_only:
         return file_only.write_fields(exiftool_path, [path for path, _a, _r in plan], KEYWORD_READ, plan_one,
-                                      stop_at_first_error=True)
+                                      stop_at_first_error=stop_at_first_error, et=et)
     return file_changes.write_fields(library, operation, exiftool_path, [path for path, _a, _r in plan],
                                      KEYWORD_READ, plan_one, summary={"photos": len(plan)},
-                                     stop_at_first_error=True)
+                                     stop_at_first_error=stop_at_first_error, et=et)
 
 
 @roots_service.canonical_args("photo_paths")

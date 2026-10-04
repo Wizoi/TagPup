@@ -1277,25 +1277,32 @@ def _cutoff(days, now):
     return time.strftime(TIME, time.localtime((time.time() if now is None else now) - days * 86400))
 
 
-def _prunable(conn, cutoff):
-    """The ids of the changes pruning at `cutoff` takes the values of: applied or undone,
-    and no newer than the newest made before it. A newer change is never pruned before an
-    older one, so an undo's check of the changes after it sees every one that kept its
-    rows."""
+def _eligible(conn, cutoff):
+    """[(id, operation)] of the changes pruning at `cutoff` could take the values of: applied or undone, and no newer than the
+    newest made before it. A newer change is never pruned before an older one, so an undo's check of the changes after it sees
+    every one that kept its rows."""
     last = conn.execute("SELECT MAX(id) FROM changes WHERE created <= ?", (cutoff,)).fetchone()[0]
     if last is None:
         return []
-    return [cid for (cid,) in conn.execute(
-        "SELECT id FROM changes WHERE id <= ? AND status IN ('applied', 'undone') ORDER BY id", (last,))]
+    return conn.execute(
+        "SELECT id, operation FROM changes WHERE id <= ? AND status IN ('applied', 'undone') ORDER BY id", (last,)).fetchall()
 
 
-def prunable(db_path, days=RETENTION_DAYS, now=None):
-    """(changes, values) pruning after `days` would take away. Reads only."""
+def _prunable(conn, cutoff, keep):
+    """The ids of the changes pruning at `cutoff` takes the values of: the eligible ones (_eligible) except those named by an
+    operation in `keep`. THE ONE PLACE this is decided: a prune of any age leaves `keep`'s changes whole. The caller says what
+    to keep (a bulk time shift that can be resumed needs its changes to tell which photos a chunk shifted), and there is no
+    default, so a new caller must decide."""
+    return [cid for cid, operation in _eligible(conn, cutoff) if operation not in keep]
+
+
+def prunable(db_path, days=RETENTION_DAYS, now=None, *, keep):
+    """(changes, values) pruning after `days` would take away, leaving the changes named by the operations in `keep`. Reads only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         if not has_journal(conn):
             return 0, 0
-        ids = _prunable(conn, _cutoff(days, now))
+        ids = _prunable(conn, _cutoff(days, now), keep)
         values = 0
         for start in range(0, len(ids), CHUNK):
             chunk = ids[start:start + CHUNK]
@@ -1306,14 +1313,30 @@ def prunable(db_path, days=RETENTION_DAYS, now=None):
         conn.close()
 
 
-def prune(db_path, days=RETENTION_DAYS, now=None):
+def held_back(db_path, days=RETENTION_DAYS, now=None, *, keep):
+    """{operation: changes} that pruning after `days` would take but for `keep`. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_journal(conn):
+            return {}
+        held = {}
+        for _cid, operation in _eligible(conn, _cutoff(days, now)):
+            if operation in keep:
+                held[operation] = held.get(operation, 0) + 1
+        return held
+    finally:
+        conn.close()
+
+
+def prune(db_path, days=RETENTION_DAYS, now=None, *, keep):
     """Take the values of every change older than `days` out of the journal: its summary
-    stays, and it becomes `pruned`, no longer undoable. Returns (changes pruned, values
-    deleted)."""
+    stays, and it becomes `pruned`, no longer undoable. The changes named by the operations in `keep` are
+    left whole. `keep` may be a function, called INSIDE the write transaction, after the lock is taken, so that what it names
+    cannot be stale by the time the cutoff and the eligible changes are read. Returns (changes pruned, values deleted)."""
     schema.ensure(db_path)
 
     def work(conn):
-        ids = _prunable(conn, _cutoff(days, now))
+        ids = _prunable(conn, _cutoff(days, now), keep() if callable(keep) else keep)
         deleted = 0
         for start in range(0, len(ids), CHUNK):
             chunk = ids[start:start + CHUNK]

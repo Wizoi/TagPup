@@ -260,6 +260,18 @@ def files_of(db_path, change_id):
         conn.close()
 
 
+def highest(db_path):
+    """The highest change id the journal holds (0 for none): a record of a job names the change it last saw, and a journal now
+    below it has lost that change (a snapshot restored). Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_table(conn):
+            return 0
+        return conn.execute("SELECT MAX(id) FROM changes").fetchone()[0] or 0
+    finally:
+        conn.close()
+
+
 def change(db_path, change_id):
     """Change `change_id` (Change), or None."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
@@ -273,6 +285,41 @@ def change(db_path, change_id):
     if found is None:
         return None
     return Change(found[0], found[1], found[2], found[3], found[4], json.loads(found[5] or "{}"))
+
+
+def files_of_operation(db_path, operation, state):
+    """The files, as FileRow, that the changes named exactly `operation` hold in `state` (a bulk job's changes are named after
+    it): a resume asks which of its files a command that stalled left 'conflict', to read them and decide. Driven from `changes`
+    as photo_ids_done is. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_table(conn):
+            return []
+        roots = store_roots.roots_for(conn)
+        columns = ", ".join("f." + each.strip() for each in _FILE_COLUMNS.split(","))
+        return [_row(found, roots) for found in conn.execute(
+            "SELECT " + columns + " FROM changes c CROSS JOIN change_files f ON f.change_id = c.id"
+            " WHERE c.operation = ? AND f.state = ? ORDER BY f.id", (operation, state))]
+    finally:
+        conn.close()
+
+
+def photo_ids_done(db_path, operation):
+    """The ids of the photos whose files a change named exactly `operation` wrote and left done: what a bulk job that
+    names each of its changes after itself asks, to tell which photos it has already changed (a time shift is not safe to
+    repeat). A change undone since leaves its files `undone`, and they are not in it. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_table(conn):
+            return set()
+        # Driven from `changes` (a few thousand rows, filtered by name), each one's files found by idx_change_files_change.
+        # Left to the planner, which has no statistics, the 68,000 rows of a library-wide change were scanned and each looked
+        # up in `changes` (the CROSS JOIN fixes the order).
+        return {photo_id for (photo_id,) in conn.execute(
+            "SELECT f.photo_id FROM changes c CROSS JOIN change_files f ON f.change_id = c.id"
+            " WHERE c.operation = ? AND f.state = 'done' AND f.photo_id IS NOT NULL", (operation,))}
+    finally:
+        conn.close()
 
 
 def writes_files(db_path, change_id):

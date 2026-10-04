@@ -1,5 +1,5 @@
 {
- "version": "27e1c3e63125",
+ "version": "20ef3ba3c82c",
  "blank": "\t\n\u000b\f\r\u001c\u001d\u001e\u001f \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
  "kinds": {
   "tag": {
@@ -176,6 +176,12 @@
     {
      "rule": "integer",
      "message": "A time shift is a whole number of minutes."
+    },
+    {
+     "rule": "range",
+     "min": -52560000,
+     "max": 52560000,
+     "message": "A time shift must be between -52560000 and 52560000."
     }
    ]
   },
