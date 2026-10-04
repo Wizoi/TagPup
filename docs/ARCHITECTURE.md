@@ -1934,6 +1934,60 @@ compared. What is worth lifting, in the order it would be decided:
   table keyed by contact id (identity here is the leaf name, CLAUDE.md); WLPG's own
   database-only flags (flagged, emailed, printed), which no file holds.
 
+### Backlog: face regions and the expensive results in the photo file *(owner, 2026-10-04; after phase 9)*
+The owner's idea: write the face rectangles into the image as WLPG did, and keep what indexing
+computes so that a model change does not lose earlier results, and a folder added to another
+library, or a library that is lost, can read the expensive parts back from the photo (the
+source of truth) instead of computing them again.
+
+What is there today (counted 2026-10-04, read-only, photo_index): 68,472 photos, 57,609 with a
+face, 226,246 faces, 35,803 named. No recorded metadata holds a region field (`RegionName`,
+MWG `RegionAreaX`, Microsoft `RegionRectangle`: 0 rows each) -- but the indexer may not read
+those fields at all, so "no file holds regions" is not established; reading a sample of files
+with ExifTool comes first. `faces.box` is `[x1, y1, x2, y2]` in stored pixels, ignoring EXIF
+Orientation (the tabled orientation redesign); `faces` has no model column, while `embeddings`
+already keeps one CLIP vector per model key.
+
+Analysis, in the order it would be decided:
+- **The names and rectangles are the valuable part.** A named face is a person's decision; the
+  boxes and vectors are machine time. Writing the regions is the cheap, standard half and
+  covers "a library is lost" for the human work.
+- **Which standard.** MWG regions (`XMP-mwg-rs`: `Regions/RegionList` with `Name`, `Type=Face`,
+  `Area` centre x/y, w/h normalised 0-1, and `AppliedToDimensions`) are read by Lightroom,
+  digiKam, Picasa's successors and Windows; WLPG wrote Microsoft's
+  (`XMP-MP:RegionInfo`, `RegionPersonDisplayName`, `RegionRectangle` "x, y, w, h" top-left).
+  ExifTool writes both; writing MWG, and reading both, is the usual choice. Names written are the
+  leaf (identity), matching `PersonInImage`; the hierarchical keyword stays as now.
+- **Orientation must be decided first.** Standards express the area in the image as displayed
+  (orientation applied, `AppliedToDimensions`); our boxes are in stored pixels. Writing them is
+  the moment the tabled orientation redesign stops being optional: convert at the file boundary
+  (one owner, like `paths.to_row`), or move `faces.box` to displayed coordinates.
+- **Which faces.** Named faces only, or every detection? Unnamed and excluded faces in a file
+  mean little to other programs; a "not this person" (manual unmatch) has no standard field.
+  Likely: named, not excluded. Each naming, unnaming, rename or merge then writes the file
+  (through `write_keyword_fields`'s owner, journaled as tag writes are, overwrite-protected by
+  stamp and base) -- a bulk rename touches every photo of that person.
+- **Reading them back.** The indexer reads regions and makes `faces` rows named `manual` from a
+  file's regions when the library has none for that photo (a new library, a folder added to a
+  second library), matching by box overlap when it has its own detections. WLPG-written MP
+  regions, if a sample finds any, become an import for free.
+- **Vectors in the file?** A face vector is 512 float32 (2 KB, about 2.7 KB base64); at 3.9 faces
+  per photo plus a CLIP vector it is about 13 KB of XMP per photo. JPEG's XMP segment holds
+  64 KB (extended XMP beyond that, which some programs drop), and every vector rewrite changes the
+  file. A private namespace (`tagpup:`), keyed by model key so a model change adds and never
+  replaces, would let a lost library come back without a GPU pass. Weigh against: file churn on
+  the owner's master (a NAS copy, backups re-copying 68,000 files), other programs carrying
+  unknown XMP, and that vectors are recomputable. A sidecar-free middle way: write regions now,
+  keep vectors in the database with a model column on `faces` (as `embeddings` has), and export
+  the expensive tables to a per-folder cache file beside the library, not into the photo.
+- **Model changes without loss** is a database change either way: `faces` gains a model key
+  (detector + embedder), so a new model's faces are added beside the old ones and the old ones
+  stay until the owner retires them. Naming moves to the new model's faces by box overlap.
+- **Tests before it is built:** a sideways photo (Orientation 5-8) round-trips its region; a
+  rename of a person rewrites only that person's regions; a file with regions from another
+  program (MP and MWG) is read; regions edited in another program after TagPup wrote them; a
+  folder in two libraries; a photo whose file is replaced by an older copy.
+
 ### Phase 10: Family albums from many sources (idea, after phase 9)
 The owner's idea *(2026-09-25)*: once the local folders, the views and their management
 are right (phases 8 and 9), bring in photos from where the family keeps them --
