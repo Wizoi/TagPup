@@ -627,21 +627,34 @@ def library_navigator():
         return responses.error(500, str(e))
 
 
-@routes.get("/api/library/view")
+def _source_asked():
+    """(kind, value, recursive, order, after, limit) a library view's request names: the query of a GET, or the JSON body
+    of a POST -- a union of 1,000 folders on a share is longer than an address the server reads (#696), so the page sends
+    a union in a body. A folder is named by `folder`, which the Roots ingress resolves through the first place of its root
+    like every path of a request (in the query or the body); the other kinds by `value` (a union's: its list, or that list
+    as JSON text)."""
+    if request.method == "POST":
+        body = request.get_json(silent=True)
+        body = body if isinstance(body, dict) else {}
+        kind = body.get("kind")
+        value = (body.get("folder") or body.get("value")) if kind == "folder" else body.get("value")
+        return kind, value, body.get("recursive") is True, body.get("order"), body.get("after"), body.get("limit")
+    kind = request.args.get("kind")
+    value = (request.args.get("folder") or request.args.get("value")) if kind == "folder" else request.args.get("value")
+    return (kind, value, (request.args.get("recursive") or "").lower() in YES, request.args.get("order"),
+            request.args.get("after"), request.args.get("limit"))
+
+
+@routes.route("/api/library/view", methods=["GET", "POST"])
 def library_page():
     """A page of the photos of a source, ordered by Date Taken, with the total and the cards
     (tagpup.services.library_view.view)."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
-    kind = request.args.get("kind")
-    # A folder is named by `folder`, which the Roots ingress resolves through the first place of its root
-    # like every path of a request; the other kinds by `value`.
-    value = (request.args.get("folder") or request.args.get("value")) if kind == "folder" else request.args.get("value")
-    recursive = (request.args.get("recursive") or "").lower() in YES
+    kind, value, recursive, order, after, limit = _source_asked()
     try:
-        return jsonify(library_view.view(library, kind, value, recursive, request.args.get("after"),
-                                         request.args.get("limit"), request.args.get("order")))
+        return jsonify(library_view.view(library, kind, value, recursive, after, limit, order))
     except (Refused, NotFound, paths.RootsError) as why:
         return _view_error(why)
     except Exception as e:
@@ -649,18 +662,16 @@ def library_page():
         return responses.error(500, str(e))
 
 
-@routes.get("/api/library/ids")
+@routes.route("/api/library/ids", methods=["GET", "POST"])
 def library_ids():
     """The whole ordered id list of a source, for a grid that jumps to the middle of it
     (tagpup.services.library_view.ids)."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
-    kind = request.args.get("kind")
-    value = (request.args.get("folder") or request.args.get("value")) if kind == "folder" else request.args.get("value")
-    recursive = (request.args.get("recursive") or "").lower() in YES
+    kind, value, recursive, order, _after, _limit = _source_asked()
     try:
-        return jsonify(library_view.ids(library, kind, value, recursive, order=request.args.get("order")))
+        return jsonify(library_view.ids(library, kind, value, recursive, order=order))
     except (Refused, NotFound, paths.RootsError) as why:
         return _view_error(why)
     except Exception as e:

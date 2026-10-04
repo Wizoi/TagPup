@@ -135,10 +135,14 @@ def _union_scope(conn, members):
     count counts it once. The members are gathered by kind -- the folders' ids (a folder with its subfolders is its own and
     every folder under it, by the tree's parent ids), the tag tree's node ids, the people's spellings, the years -- each
     gathering one IN (...), the months and the "Other" of years OR'd: a union of 400 people is one seek of the name index
-    for each name, not 400 subqueries. None when no member holds anything."""
+    for each name, not 400 subqueries. None when no member holds anything.
+
+    A folder with its subfolders is read through the derived folder tree and photo_folder, where the same source alone is a
+    range of photos.path: the two agree while the derived tables are in step with the photos (the doctor checks them; #698)."""
     if any(member.kind == ALL for member in members):
         return _scope(conn, Source(ALL))
     folder_ids, tag_ids, names, years, clauses = set(), set(), set(), set(), []
+    walked = set()   # the folders whose subfolders are in: apart from folder_ids, so a folder named alone first is still walked (#695)
     folders = spelled = None
     for member in members:
         kind = member.kind
@@ -153,10 +157,11 @@ def _union_scope(conn, members):
                     folders = collections.defaultdict(list)
                     for folder_id, parent_id in conn.execute("SELECT id, parent_id FROM folders"):
                         folders[parent_id].append(folder_id)
-                below = list(folders.get(row[0], ()))
+                below = [row[0]]
                 while below:
                     folder_id = below.pop()
-                    if folder_id not in folder_ids:
+                    if folder_id not in walked:
+                        walked.add(folder_id)
                         folder_ids.add(folder_id)
                         below.extend(folders.get(folder_id, ()))
         elif kind in (KEYWORD, KEYWORD_ONLY):

@@ -8,10 +8,12 @@ file name, either way, ties by id; photos with no Date Taken come after the date
 
 Photos are rows as the indexer records them (tests/view_library.py), tags nodes made by taxonomy.add_path. Fictional names.
 """
+import itertools
 import json
 import os
 import sys
 import unittest
+import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -85,6 +87,16 @@ class TheUnion(Library):
         self.assertEqual({self.july_21, self.june_21, self.dashed, self.july_22}, set(alone["ids"]))
         only = self.ids("any_of", union(("folder", self.folder, False), ("month", "2099-01", False)))
         self.assertEqual({self.july_21, self.june_21, self.dashed}, set(only["ids"]), "the folder alone, not Later under it")
+
+    def test_a_folder_named_alone_before_its_recursive_parent_keeps_the_parents_subfolders(self):
+        # findings #695: the walk under a recursive folder skipped a folder already gathered, and so never went under it.
+        deeper = self.vl.photo(os.path.join("2021", "Later", "Deeper"), "c.jpg", taken="2022:08:01 10:00:00")
+        later = os.path.join(self.folder, "Later")
+        whole = {self.july_21, self.june_21, self.dashed, self.july_22, deeper}
+        members = [("folder", later, False), ("folder", self.folder, True), ("month", "2099-01", False)]
+        for order in itertools.permutations(members):
+            with self.subTest(order=[m[0] + ("+" if m[2] else "") for m in order]):
+                self.assertEqual(whole, set(self.ids("any_of", union(*order))["ids"]))
 
     def test_a_keyword_alone_is_its_node_without_the_nodes_under_it(self):
         self.assertEqual([self.july_20], self.ids("keyword_only", "Trips/Coast")["ids"])
@@ -241,6 +253,24 @@ class TheRoutes(unittest.TestCase):
             "kind": "any_of", "value": union(("month", "2020-07", False), ("month", "2021-07", False)), "order": "name"})
         self.assertEqual(200, reply.status_code, reply.get_data(as_text=True))
         self.assertEqual(([a, b], 2, "name"), (reply.get_json()["ids"], reply.get_json()["total"], reply.get_json()["order"]))
+        # A union longer than an address goes in a body (#696): 1,000 folders on a share, each path long.
+        share = chr(92) * 2 + "photo-server-in-the-hall" + chr(92) + "family-pictures-archive"
+        long_folders = [{"kind": "folder", "value": share + chr(92) + "%04d %s" % (n, "a long event name " * 6), "recursive": True}
+                        for n in range(997)]
+        members = long_folders + [{"kind": "month", "value": "2020-07"}, {"kind": "month", "value": "2021-07"},
+                                  {"kind": "folder", "value": os.path.join(vl.pictures, "A"), "recursive": True}]
+        self.assertGreater(len(urllib.parse.quote(json.dumps(members))), 262144, "longer than waitress reads of an address")
+        posted = client.post("/library/api/library/ids", json={"kind": "any_of", "value": members, "order": "name"})
+        self.assertEqual(200, posted.status_code, posted.get_data(as_text=True))
+        self.assertEqual(3, posted.get_json()["total"])
+        page = client.post("/library/api/library/view", json={"kind": "any_of", "value": members, "limit": 2})
+        self.assertEqual((200, 2, 3), (page.status_code, len(page.get_json()["ids"]), page.get_json()["total"]))
+        folder = client.post("/library/api/library/ids", json={"kind": "folder", "folder": os.path.join(vl.pictures, "A"),
+                                                                "recursive": True, "order": "taken-desc"})
+        self.assertEqual(3, folder.get_json()["total"])
+        too_many = client.post("/library/api/library/ids", json={"kind": "any_of", "value": members + [
+            {"kind": "month", "value": "2019-%02d" % m} for m in range(1, 3)]})
+        self.assertEqual(400, too_many.status_code)
         refused = client.get("/library/api/library/ids", query_string={"kind": "all", "order": "sideways"})
         self.assertEqual(400, refused.status_code)
         self.assertIn("order must be one of", refused.get_json()["error"])
