@@ -218,9 +218,16 @@ class WhatAStoppedSupervisorLeaves(Base):
         env = dict(self.env, **{supervisor.TOKEN: token})
         orphan = processes.start([sys.executable, self.fake, "serve", "orphan", self.record], env=env,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.addCleanup(lambda: orphan.poll() is None and processes.kill_tree(orphan.pid))
+        self.addCleanup(self.end, orphan)
         self.wait_until(supervisor.server)
         return orphan
+
+    def end(self, child):
+        """End `child` if it still runs, and wait for it: one only killed was left to be
+        collected at exit ("subprocess ... is still running"), holding its home."""
+        if child.poll() is None:
+            processes.kill_tree(child.pid)
+        child.wait(30)
 
     def test_a_server_whose_token_it_knows_is_drained_and_ended_before_its_own_starts(self):
         orphan = self.orphan("an-old-token")
