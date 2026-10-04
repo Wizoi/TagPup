@@ -245,8 +245,93 @@ class ARestoredJournal(HardCrash):
             handle = self.run_until_hard_crash()
         state = bulk_edit.read_state(self.library, handle)
         self.assertEqual((25, 50), (state["done"], state["inflight"]))
+        self.assertIsNone(state["journal_chunk"], "cleared at the write before the chunk: the previous chunk's change is not its")
         self.resume_and_finish(handle)
         self.assert_every_photo_shifted_once()
+
+    def test_the_previous_chunks_change_removed_does_not_stop_a_resume_of_a_chunk_that_died_before_its_plan(self):
+        real, calls = bulk_edit._shift, []
+
+        def shift(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise T.Crash()
+            return real(*args, **kwargs)
+        with mock.patch.object(bulk_edit, "_shift", shift):
+            handle = self.run_until_hard_crash()
+        first = self.vl.rows("SELECT MIN(id) FROM changes WHERE operation = ?", bulk_edit.operation_of("time_shift", handle))[0][0]
+        db.write_with_connection(self.library.path, lambda conn: [
+            conn.execute("DELETE FROM change_files WHERE change_id = ?", (first,)),
+            conn.execute("UPDATE changes SET status = 'pruned' WHERE id = ?", (first,))])
+        self.resume_and_finish(handle)
+        self.assert_every_photo_shifted_once()
+
+    def test_a_record_that_cannot_name_the_planned_change_fails_the_job_and_the_end_records_it(self):
+        real, failed = bulk_edit.write_state, []
+
+        def flaky(library, job, state):
+            if state.get("inflight") == 50 and state.get("journal_chunk") is not None and len(failed) < 5:
+                failed.append(1)
+                raise PermissionError(5, "Access is denied")
+            return real(library, job, state)
+        with mock.patch.object(bulk_edit, "write_state", flaky):
+            handle = self.shift_job(90)["job"]
+            failed_job = self.finish(handle)
+        self.assertEqual("failed", failed_job["state"])
+        newest = self.vl.rows("SELECT MAX(id) FROM changes")[0][0]
+        self.assertEqual(newest, bulk_edit.read_state(self.library, handle)["journal_chunk"])
+        self.resume_and_finish(handle)
+        self.assert_every_photo_shifted_once()
+
+    def test_the_resume_says_a_chunk_you_undid_is_shifted_again(self):
+        handle = self.crash_with_chunk_two_applied()
+        reply = self.post("resume", {"job": handle})
+        self.assertEqual(200, reply.status_code)
+        self.assertIn("A chunk you undid is shifted again", reply.get_json()["message"])
+        self.finish(handle)
+
+    def test_the_prune_asks_what_to_keep_inside_its_transaction(self):
+        handle = self.crash_with_chunk_two_applied()
+        operation = bulk_edit.operation_of("time_shift", handle)
+        real, calls = journal_service.kept_operations, []
+
+        def late(library):
+            calls.append(1)
+            return set() if len(calls) == 1 else real(library)     # a job began between the first look and the write
+        with mock.patch.object(journal_service, "kept_operations", late):
+            journal_service.prune(self.library, 0, apply=True)
+        self.assertEqual(0, self.vl.rows("SELECT COUNT(*) FROM changes WHERE status = 'pruned' AND operation = ?", operation)[0][0])
+
+    def test_a_sync_applys_prune_leaves_a_record_older_than_ninety_days_its_changes(self):
+        from tagpup.services import maintenance
+        from tagpup.store import journal
+        handle = self.crash_with_chunk_two_applied()
+        operation = bulk_edit.operation_of("time_shift", handle)
+        db.write_with_connection(self.library.path, lambda conn: conn.execute(
+            "UPDATE changes SET created = '2020-01-01 00:00:00'"))
+        photo_id = self.ids[0]
+        caption = self.vl.rows("SELECT captions FROM photos WHERE id = ?", photo_id)[0][0]
+
+        def plan(library):
+            return maintenance.Plan(size=1, counts={"things": 1}, ids={"things": [photo_id]}, work=[photo_id])
+
+        def edits(planned):
+            return [journal.update("photos", (photo_id,), {"captions": caption}, {"captions": '["Harbour"]'})]
+        self.assertTrue(maintenance.run(self.library, "test_op", plan, edits, apply=True).changed)
+        self.assertEqual(0, self.vl.rows("SELECT COUNT(*) FROM changes WHERE status = 'pruned' AND operation = ?", operation)[0][0])
+        self.assertGreater(self.vl.rows("SELECT COUNT(*) FROM change_files")[0][0], 0)
+        self.resume_and_finish(handle)
+        self.assert_every_photo_shifted_once()
+
+    def test_prune_journal_on_the_command_line_says_what_it_kept(self):
+        import tagpup_cli
+        from click.testing import CliRunner
+        self.crash_with_chunk_two_applied()
+        for flags in ([], ["--apply"]):
+            with mock.patch.object(tagpup_cli, "_existing_library", lambda ctx: self.library):
+                out = CliRunner().invoke(tagpup_cli.prune_journal, ["--days", "0"] + flags)
+            self.assertEqual(0, out.exit_code, out.output)
+            self.assertIn("kept for a resumable bulk job: 2", out.output)
 
 
 class AnUndoIsNotAResumesToFinish(HardCrash):

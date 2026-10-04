@@ -844,7 +844,8 @@ def library_bulk_resume():
     except Exception as e:
         logger.error("Error resuming a bulk edit: %s", e, exc_info=True)
         return responses.error(500, str(e))
-    return jsonify({"success": True, "job": resumed.handle, "total": resumed.total, "done": resumed.done})
+    return jsonify({"success": True, "job": resumed.handle, "total": resumed.total, "done": resumed.done,
+                    "message": resumed.message})
 
 
 @routes.get("/api/photo-thumb")

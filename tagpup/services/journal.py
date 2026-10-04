@@ -135,7 +135,7 @@ def prune(library, days=RETENTION_DAYS, apply=False):
                                                                     if bulk_edit.operation_of(bulk_edit.TIME_SHIFT, job) in held)})
     result.details["note"] = KEPT_SAYS % kept if kept else None
     if apply and changes:
-        pruned, deleted = journal.prune(library.path, days, keep=keep)
+        pruned, deleted = journal.prune(library.path, days, keep=lambda: kept_operations(library))
         result.changed = pruned
         result.details["values"] = deleted
     return result

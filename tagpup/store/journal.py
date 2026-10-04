@@ -1331,11 +1331,12 @@ def held_back(db_path, days=RETENTION_DAYS, now=None, *, keep):
 def prune(db_path, days=RETENTION_DAYS, now=None, *, keep):
     """Take the values of every change older than `days` out of the journal: its summary
     stays, and it becomes `pruned`, no longer undoable. The changes named by the operations in `keep` are
-    left whole. Returns (changes pruned, values deleted)."""
+    left whole. `keep` may be a function, called INSIDE the write transaction, after the lock is taken, so that what it names
+    cannot be stale by the time the cutoff and the eligible changes are read. Returns (changes pruned, values deleted)."""
     schema.ensure(db_path)
 
     def work(conn):
-        ids = _prunable(conn, _cutoff(days, now), keep)
+        ids = _prunable(conn, _cutoff(days, now), keep() if callable(keep) else keep)
         deleted = 0
         for start in range(0, len(ids), CHUNK):
             chunk = ids[start:start + CHUNK]

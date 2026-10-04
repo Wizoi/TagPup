@@ -117,7 +117,7 @@ def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
     if not applied.settled:
         result.fail("the people and dates of the photos it touched",
                     "not rebuilt yet; they are, the next time the library is opened")
-    result.details["pruned"] = journal.prune(library.path, keep=journal_service.kept_operations(library))[0]
+    result.details["pruned"] = journal.prune(library.path, keep=lambda: journal_service.kept_operations(library))[0]
     if remaining is not None:
         result.details["remaining"] = remaining(library)
     return result

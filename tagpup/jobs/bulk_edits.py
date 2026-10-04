@@ -40,7 +40,10 @@ refusals on a pruned or missing change are a defence for a journal changed some 
 whose record of it was not written (a death between the two) is not named, and a snapshot restore that removes exactly that
 change goes unseen: accepted.
 
-**What is accepted.** The state file is flushed (fsync) and replaced atomically, but its folder is not flushed, and the journal
+**What is accepted.**
+A chunk the owner UNDID before the resume is shifted again (its photos are not in the journal's account of what the job shifted;
+the status says so, RESUME_SAYS); no photo is shifted twice. An undo of the chunk in flight begun in another process between the
+resume's reads of the journal is not seen (the claim blocks resumes, not undos). The state file is flushed (fsync) and replaced atomically, but its folder is not flushed, and the journal
 runs with WAL synchronous=NORMAL: after a POWER LOSS (not a crash of the process, which loses neither) a photo written on another
 volume can survive while the record before its chunk, or the journal's plan, rolls back, and a resume then shifts it again. A
 power loss between volumes is accepted; nothing more is built against it (docs/findings.md, #597).
@@ -236,10 +239,8 @@ class Job:
         """A chunk's change is planned and no file of it written yet: the record names it, durably, or the chunk is not written
         (the exception releases the change, planned, and a resume settles it). A record that names the change is what lets a
         resume tell that the journal lost it."""
-        before = self.chunk
-        self.chunk = change_id
+        self.chunk = change_id      # not undone when the write fails: the change exists, and the end of the job records it
         if not self._persist(mandatory=True):
-            self.chunk = before
             raise OSError("the job's record could not be written")
 
     def _flush(self, force=False):
@@ -612,6 +613,11 @@ JOURNAL_LOST = ("The library's journal no longer holds the last change of this b
 JOURNAL_PRUNED = ("The library's journal pruned the record of this bulk edit's last chunk, so which photos of it were already "
                   "shifted cannot be told, and a resume could shift them twice. It cannot be resumed safely; nothing was changed.")
 
+#: What the status of a resumed job says while it runs, when a chunk was in flight: the journal's account of what was written
+#: decides, and a photo whose shift an undo took back is not in it.
+RESUME_SAYS = ("Resumed: the photos of the last chunk that the journal shows shifted are left alone and the rest are shifted. "
+               "A chunk you undid is shifted again.")
+
 #: What a resume that finds the record moved on says.
 MOVED = "Another TagPup process moved this job on: reload and look at it again."
 
@@ -679,7 +685,8 @@ def _prepare_resume(library, handle, claim, exiftool_path, after_write):
         raise Refused("The record of bulk edit %s (its list of photos) is gone, so it cannot be resumed without risking "
                       "shifting a photo twice. Its journal changes are in History." % handle)
     job = Job(library, handle, claim.run_id, bulk_edit.Edit.from_json(state["edit"]), ids, exiftool_path, after_write, state)
-    job.state, job.message, job.finished = RUNNING, None, None
+    job.state, job.finished = RUNNING, None
+    job.message = RESUME_SAYS if int(state.get("inflight", 0)) > int(state.get("done", 0)) else None
     with _lock:
         _refuse_if_running(library)
     _settle_flight(library, job, state)
