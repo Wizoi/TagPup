@@ -231,6 +231,21 @@ class TheDoctor(Library):
         self.assertEqual([self.cafe], self.found("harbour"))
 
 
+    def test_the_report_says_what_the_rule_cannot_see_and_the_remedy_752(self):
+        # #752: a sample of 500, and a word left behind by a version of the app that does not know the index is never seen.
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import doctor
+        lines = []
+        doctor.report(self.vl.path, out=lines.append)
+        said = "\n".join(lines)
+        self.assertIn("sample of %d" % search_index.SAMPLE, said)
+        self.assertIn("not seen", said)
+        self.assertIn("--rebuild-derived --apply", said)
+        self.vl.conn.execute("DELETE FROM search_words WHERE rowid = ?", (self.cafe,))
+        self.vl.conn.commit()
+        self.assertIn("--rebuild-derived --apply", search_index.problems(self.vl.conn)[0])
+
+
 class MigrationTwentyFour(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self)

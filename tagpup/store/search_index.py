@@ -214,10 +214,17 @@ def stale(conn, sample=SAMPLE):
     return sorted(found)
 
 
+#: What the check of the word index cannot see, and the remedy (#752): said wherever its count is reported.
+LIMITS = ("the word index is checked by a row for every photo and a sample of %d photos' texts; words a photo no longer "
+          "holds, left behind by a version of TagPup that does not know the index, are not seen. "
+          "tools/doctor.py --rebuild-derived --apply makes it again from the photos" % SAMPLE)
+
+
 def problems(conn):
     """What is wrong with the word index, as sentences of counts, [] when nothing (or no index)."""
     wrong = stale(conn)
-    return ["%d photo(s) have word index rows that are not what their rows give" % len(wrong)] if wrong else []
+    return ["%d photo(s) have word index rows that are not what their rows give (tools/doctor.py --rebuild-derived --apply "
+            "makes it again)" % len(wrong)] if wrong else []
 
 
 # ---- A search's words ------------------------------------------------------------------------------

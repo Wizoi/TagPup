@@ -147,7 +147,9 @@ def search_index_out_of_date(conn):
     """Photos whose rows of the word index (tagpup.store.search_index) are not what their rows give: a photo with no row,
     a row of no photo, and of a sample of SAMPLE photos those whose texts are not found in their rows. A writer that
     changed a photo's keywords, captions, people or path and did not refresh, or an older version of the app that does
-    not know the index. `tools/doctor.py --rebuild-derived --apply` makes it so. Waits for migration 24."""
+    not know the index. `tools/doctor.py --rebuild-derived --apply` makes it so. Waits for migration 24. What it cannot see
+    -- a word left behind (a contentless table cannot be read back), a photo outside the sample -- is
+    search_index.LIMITS, which a report says beside the count (#752)."""
     return _check("photos whose word index rows are out of date", search_index.stale(conn))
 
 
