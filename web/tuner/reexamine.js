@@ -85,15 +85,38 @@ function showWhatChanged(done) {
     }
 }
 
-/** What the apply did, said only when it is not what the question said it would do. */
-function differences(plan, done) {
-    if (done.faces === plan.faces) return null;
-    let why = 'Faces were named, excluded or renamed since it looked, or new names matched more.';
-    if (done.renamed) {
-        why = `${plural(done.renamed, 'face was', 'faces were')} left because their person was renamed meanwhile.`;
+/**
+ * What the apply did, said only when it is not what the question said it would do: in
+ * number, or in whose faces -- the same count can be other people (docs/findings.md,
+ * #646). Faces left for a renamed person are said as their own share, and anything
+ * they do not account for is said as well.
+ */
+export function differences(plan, done) {
+    const asked = plan.people || {};
+    const named = done.people || {};
+    const changed = [...new Set([...Object.keys(asked), ...Object.keys(named)])]
+        .filter(name => (asked[name] || 0) !== (named[name] || 0))
+        .sort((a, b) => a.localeCompare(b));
+    if (done.faces === plan.faces && changed.length === 0) return null;
+    const said = [`Named ${plural(done.faces, 'face', 'faces')} in ${plural(done.photos, 'photo', 'photos')};`
+        + ` it asked about ${plural(plan.faces, 'face', 'faces')}.`];
+    if (changed.length) {
+        const shown = changed.slice(0, PEOPLE_SHOWN)
+            .map(name => `${name} ${asked[name] || 0} to ${named[name] || 0}`);
+        const rest = changed.length - shown.length;
+        said.push('Changed: ' + shown.join(', ') + (rest > 0 ? `, and ${rest} more` : '') + '.');
     }
-    return `Named ${plural(done.faces, 'face', 'faces')} in ${plural(done.photos, 'photo', 'photos')},`
-        + ` not the ${plan.faces} asked about. ${why}`;
+    const renamed = done.renamed || 0;
+    if (renamed) {
+        said.push(`${plural(renamed, 'face was', 'faces were')} left because their person was renamed meanwhile.`);
+    }
+    // Wholly the renamed share: the faces asked about, less those, and nobody else's count moved.
+    const onlyRenamed = renamed && done.faces + renamed === plan.faces
+        && changed.every(name => (named[name] || 0) <= (asked[name] || 0));
+    if (!onlyRenamed) {
+        said.push('Faces were named, excluded or unmatched since it asked, or names given since matched more.');
+    }
+    return said.join(' ');
 }
 
 /**

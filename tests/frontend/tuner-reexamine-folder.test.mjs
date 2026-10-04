@@ -123,8 +123,29 @@ describe("Re-examine this folder", () => {
     buttonOf(ctx.document, MEET).button.click();
     await flush(ctx.window, 6);
     assert.equal(ctx.alerts.length, 1);
-    assert.match(ctx.alerts[0], /Named 2 faces in 3 photos, not the 3 asked about/);
-    assert.match(ctx.alerts[0], /renamed/);
+    assert.match(ctx.alerts[0], /Named 2 faces in 3 photos; it asked about 3 faces/);
+    assert.match(ctx.alerts[0], /Wren Halloway 1 to 0/);
+    assert.match(ctx.alerts[0], /1 face was left because their person was renamed/);
+    assert.doesNotMatch(ctx.alerts[0], /since it asked/, "the renamed share was the whole difference");
+  });
+
+  test("the same number of faces, but other people's, is said too", async (t) => {
+    const ctx = await open(t, { done: { ...DONE, people: { "Rowan Thackeray": 1, "Wren Halloway": 1,
+                                                           "Kit Morrow": 1 } } });
+    buttonOf(ctx.document, MEET).button.click();
+    await flush(ctx.window, 6);
+    assert.equal(ctx.alerts.length, 1);
+    assert.match(ctx.alerts[0], /Kit Morrow 0 to 1, Rowan Thackeray 2 to 1/);
+    assert.match(ctx.alerts[0], /since it asked/);
+  });
+
+  test("a renamed share takes only its own part of the difference", async (t) => {
+    const ctx = await open(t, { done: { ...DONE, matched_count: 1, faces: 1, renamed: 1,
+                                        people: { "Wren Halloway": 1 } } });
+    buttonOf(ctx.document, MEET).button.click();
+    await flush(ctx.window, 6);
+    assert.match(ctx.alerts[0], /1 face was left because their person was renamed/);
+    assert.match(ctx.alerts[0], /since it asked/, "two faces fewer, one of them renamed: the other is said");
   });
 
   test("a second press while the first is answered sends nothing", async (t) => {
