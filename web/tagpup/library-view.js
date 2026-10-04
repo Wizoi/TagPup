@@ -272,7 +272,8 @@ export function leaveLibraryView() {
 /**
  * Close the view onto `folder`, opened in Organize, as a new place in the history (Back returns to the view): a folder of the
  * selection's "Folders to Organize" (library-moves.js openInOrganize), whose scan has already answered. Asks first about edits
- * in the open photo.
+ * in the open photo. The sidebar's switch goes to Organize as its own click takes it there (#712): the folder is Organize's,
+ * whichever pane was last chosen for a folder.
  */
 export function closeViewOntoFolder(folder) {
     leavePhotoThen(() => {
@@ -282,6 +283,7 @@ export function closeViewOntoFolder(folder) {
         saveScroll();
         window.history.pushState({}, '', url);
         closeLibraryView({ folder });
+        upper.choosePane('folder');
     });
 }
 

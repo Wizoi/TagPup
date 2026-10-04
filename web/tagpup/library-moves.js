@@ -1,9 +1,10 @@
 // TagPup's page: the move between a folder on disk and its view of the library (docs/ARCHITECTURE.md, phase 9c).
 //
 //  * Show in library (a folder in Organize): the same folder's library view, with its subfolders; openInOrganize (a
-//    folder of the selection's "Folders to Organize", #675): a folder in Organize, scanned first. The selection is
-//    cleared by the move (a view opening or closing clears it, 9b-1). The photo at the top of the grid is the one to
-//    land on in the other, when it is in both: a folder view finds it by its path, a library view by its id
+//    folder of the selection's "Folders to Organize", #675): a folder in Organize, scanned first, the sidebar's switch on
+//    Organize (#712). The selection is cleared by the move (a view opening or closing clears it, 9b-1). The photo at
+//    the top of the grid is the one to land on in the other, when it is in both: a folder view finds it by its path, a
+//    library view by its id
 //    (GET /api/library/find asks the library which id a path is). Best effort -- a photo that is not there leaves the
 //    grid at the top.
 // The strip's Show on disk and This folder only went with #670 (the owner: not needed in the Folders tab).

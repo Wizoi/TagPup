@@ -11,6 +11,7 @@ export const upper = {
     checkDamagedPhotos: null,
     checkFolderMembership: null,
     checkSuggestionsStatus: null,
+    choosePane: null,
     deleteSelection: null,
     landOnAnchor: null,
     leaveLibraryView: null,

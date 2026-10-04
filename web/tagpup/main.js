@@ -25,7 +25,7 @@ import {
 } from './library-view.js';
 import { deleteSelection } from './bulk-edit.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
-import { navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
+import { choosePane, navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
 import { addedFromView, wireBanner } from './library-banner.js';
 import { attachBulk, wireBulk } from './bulk-job.js';
 import { renderSyncInfo } from './sync-state.js';
@@ -58,7 +58,8 @@ import {
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
-    addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, deleteSelection,
+    addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, choosePane,
+    deleteSelection,
     populateCameraModelsDropdown, recordUndo,
     renderFileList, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,

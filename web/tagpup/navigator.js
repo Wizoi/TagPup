@@ -229,8 +229,12 @@ function showPane(name) {
     if (name === 'library') ensureLoaded(nav.tab);
 }
 
-/** The person chose a pane: remembered for this kind of view, until the page is left. */
-function choosePane(name) {
+/**
+ * The person chose a pane: remembered for this kind of view, until the page is left. What the switch's own click does,
+ * and the one way to show a pane as chosen: a folder of the selection's "Folders to Organize" shows Organize through it
+ * once the view has closed onto the folder (library-view.js closeViewOntoFolder, #712).
+ */
+export function choosePane(name) {
     state.nav.choice[state.library ? 'library' : 'folder'] = name;
     showPane(name);
 }
