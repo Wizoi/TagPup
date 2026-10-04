@@ -1961,7 +1961,12 @@ view of the tree:
    stage 2's migration the doctor's two lists must be empty, by the owner's hand (photo_index: 4 and 1
    names; kr-track: 12 and 0), or the migration must say what it does with them -- making a node under
    the library's people parent (as the indexer's `add_people` does) is a default the owner has not
-   chosen, so it is asked.
+   chosen, so it is asked. **Beside them, the owner decides the names whose node has nodes under it**
+   (#660): the rule takes any has_face node that is not a root for a person, as `people_paths` does
+   today, so a group such as `Family/Coast` named on a face holds the group's id. The review counted 9
+   such nodes on photo_index, 4 of them named on 7 faces and 65 listed people; the doctor lists them
+   ("names whose person node has nodes under it", the nodes' ids, the names with `--show`). Whether a
+   person is only a leaf is the owner's call, asked before stage 2 makes the id a key.
 2. **Every name a write is handed resolves to an id at the boundary**, by the same rule: a page or the
    API still sends a name or a path; `person_ids` turns it into the node (a path picks one of two nodes of
    one name, as `resolveTagOrPerson` already sends), and naming a face with a name no node has makes the

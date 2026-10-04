@@ -173,9 +173,10 @@ def listed_person_ids_out_of_step(conn):
 
 
 def names_without_a_person(conn):
-    """(names no person node is called: {name: rows}, names more than one is: {name: rows}) of faces and
-    photos' people. Reported, not broken: such a name has no id, none is guessed, and the tree is the
-    owner's to settle (the ambiguous person path, docs/findings.md, #27)."""
+    """(names no person node is called: {name: rows}, names more than one is: {name: rows}, names whose
+    node has nodes under it: {name: (node id, rows)}) of faces and photos' people (person_ids.unresolved).
+    Reported, not broken: the first two have no id, none is guessed, and the tree is the owner's to settle
+    (the ambiguous person path, docs/findings.md, #27); the third holds a group's id (#660)."""
     return person_ids.unresolved(conn)
 
 

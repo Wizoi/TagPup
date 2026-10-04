@@ -475,5 +475,57 @@ class TheDoctor(Library):
         self.assertEqual([0, 0], in_step(self.path))
 
 
+    def test_a_name_whose_node_has_children_is_reported_with_the_node(self):
+        """docs/findings.md, #660: a has_face node that is not a root but has nodes under it -- a group
+        such as Family/Coast -- is a person by the rule, as people_paths reads the tree today. The id is
+        given; the doctor lists it, so stage 2 does not make a category a person's key unasked."""
+        self.name([self.faces[0]], "Coast")
+        coast = node_id(self.path, "Family/Coast")
+        self.assertEqual(coast, self.face_id(self.faces[0]))
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        try:
+            found = person_ids.unresolved(conn)
+        finally:
+            conn.close()
+        self.assertEqual({"Coast": (coast, 2)}, found.parents, "a face and the photo's list")
+        import io
+        from contextlib import redirect_stdout
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import doctor
+        for show, named in ((0, False), (5, True)):
+            said = io.StringIO()
+            with redirect_stdout(said):
+                doctor.report(self.path, show=show)
+            text = said.getvalue()
+            self.assertIn("names whose person node has nodes under it: 1, on 2 row(s)", text)
+            self.assertIn("node %d" % coast, text)
+            self.assertEqual(named, "Coast" in text.replace("Family/Coast", ""), "names only with --show")
+
+
+class AStrayIdAnOlderAppLeaves(Library):
+    """docs/findings.md, #662: a version from before migration 21 unnames a face (name NULL) and knows
+    nothing of the id, which stays. The doctor counts it, and the repair clears it."""
+
+    def test_is_found_and_cleared(self):
+        self.name([self.faces[0], self.faces[1]], ODA)
+        conn = db.connect(self.path)
+        try:
+            conn.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE id = ?", (self.faces[0],))
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertIsNotNone(self.face_id(self.faces[0]))
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        try:
+            found = person_ids.out_of_step(conn, "faces")
+        finally:
+            conn.close()
+        self.assertEqual((1, [self.faces[0]]), (found.rows, found.examples))
+        self.assertEqual({"faces": 1, "photo_people": 0}, person_ids.repair(self.path))
+        self.assertIsNone(self.face_id(self.faces[0]))
+        self.assertEqual(node_id(self.path, "Family/Coast/" + ODA), self.face_id(self.faces[1]))
+        self.assertEqual([0, 0], in_step(self.path))
+
+
 if __name__ == "__main__":
     unittest.main()

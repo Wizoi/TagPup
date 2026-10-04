@@ -241,17 +241,22 @@ def out_of_step(conn, table, examples=5):
     return Disagreement(rows, sorted(set(found))[:examples])
 
 
-Unresolved = collections.namedtuple("Unresolved", "none several")
+Unresolved = collections.namedtuple("Unresolved", "none several parents")
 
 
 def unresolved(conn):
     """The names faces and photos' people hold that no person node is called (`none`) or that more
-    than one is (`several`): {name: rows of both tables}. Reported, not broken: they have no id, and
-    the tree is the owner's to settle. Reads only."""
+    than one is (`several`): {name: rows of both tables}; and those whose one node has nodes under it
+    (`parents`: {name: (the node's id, rows)}) -- a group such as Family/Coast, a person by the rule
+    as people_paths reads the tree, but perhaps a category (docs/findings.md, #660). Reported, not
+    broken: the tree is the owner's to settle, and which of the three is a person is the owner's
+    before stage 2 makes the id a key. Reads only."""
     if not present(conn):
-        return Unresolved({}, {})
+        return Unresolved({}, {}, {})
     known = read(conn)
-    none, several = collections.Counter(), collections.Counter()
+    above = {parent for (parent,) in conn.execute(
+        "SELECT DISTINCT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL")}
+    none, several, parents = collections.Counter(), collections.Counter(), {}
     for table in TABLES:
         for name, _held, count in _pairs(conn, table):
             why = known.why_not(name)
@@ -259,7 +264,10 @@ def unresolved(conn):
                 none[name] += count
             elif why == "several":
                 several[name] += count
-    return Unresolved(dict(none), dict(several))
+            elif known.id_of(name) in above:
+                node, rows = parents.get(name, (known.id_of(name), 0))
+                parents[name] = (node, rows + count)
+    return Unresolved(dict(none), dict(several), parents)
 
 
 def repair(db_path):
