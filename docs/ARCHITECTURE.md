@@ -1881,10 +1881,20 @@ and one index-only migration (22).
   node alone), the people's spellings (one pass of the name index for the whole union, not one a person), the years -- each one
   `IN (...)`, the months and the years' "Other" OR'd; the clauses are OR'd as a **balanced tree**, since SQLite refuses an expression
   nested 1,000 deep and a chain of ORs is nested as long as it is (a test holds 1,000 months). A photo in two members is one row and
-  counted once; a member that names nothing (a keyword deleted since the address was written) adds nothing. It is a source like
+  counted once; a member that names nothing (a keyword deleted since the address was written) adds nothing. The walk under a
+  folder with its subfolders keeps its own set of folders walked, so a child folder named alone before its recursive parent does
+  not stop the walk at it (#695: every order of the members gives the same photos, a test). It is a source like
   any other: `source_of` reads it (the JSON text of a query's `value`, or a list in a body), so `/api/library/ids`, `/view`, a
   selection by source (`selection.read`), the tally and every bulk edit take it unchanged; the #607 widening notice compares the
   job's total with the page's count as for any source.
+- **A union travels in a body** *(review, #696)*. The 1,000-source count bounds the work, not the length: 1,000 folders of
+  photo_index are a 145,613-character address, and a share's longer paths pass the 262,144 bytes Waitress reads of a request's
+  first line and headers. So `/api/library/ids` and `/view` also take a POST of the same words as JSON (`_source_asked`), and the
+  page asks every union so (a single source stays a GET of its address's words). The page's own address still holds the union, for
+  Back, Forward and a bookmark, and that address is read by the same server: the page refuses, with a sentence and no request, a
+  selection whose address would pass 100,000 characters (`MAX_ADDRESS`, `addressTooLong`), the limit that bites first for long
+  paths (a test: 600 share folders refused, 300 accepted and posted). An address made longer by hand is refused by Waitress before
+  the page loads.
 - **How 9e extends it.** A search is `{"kind": "search", "value": {"any_of": [...], "all_of": [...], "none_of": [...], "words": "..."}}`:
   `any_of` is exactly this list and compiles to this clause (`_union_scope`); `all_of` is the members' clauses joined by AND
   (each member's own `p.id IN (...)`, not gathered, since AND of a gathered IN is "any"); `none_of` is `AND NOT (<its any_of
@@ -1983,7 +1993,8 @@ and one index-only migration (22).
   `NOCASE` folds ASCII only, so "Émile" sorts after "Zed"; a number in a name sorts as text ("IMG_10" before "IMG_9"). A union's
   folders are read through `photo_folder` (the derived table) where a single folder with its subfolders is a range of `photos.path`:
   the two agree while the derived tables are in step (the doctor checks them). A folder spelled by a previous place of its root
-  inside a union is canonicalised by `source_of`, but the response does not carry the ingress's moved-root header. The People
+  inside a union is canonicalised by `source_of`; going to another library takes the view's parameters away, the order with them,
+  by the one list `common/library.js VIEW_PARAMS` (#697),, but the response does not carry the ingress's moved-root header. The People
   tab is about 100 ms slower to open than the flat list was (see Measured).
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
