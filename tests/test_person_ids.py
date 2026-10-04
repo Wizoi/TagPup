@@ -23,7 +23,7 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from test_migrations import at_version  # noqa: E402
 
-from tagpup.store import db, faces, journal, people, person_ids, schema, taxonomy  # noqa: E402
+from tagpup.store import checks, db, faces, journal, people, person_ids, schema, taxonomy  # noqa: E402
 
 WREN = "Wren Halloway"
 ODA = "Oda Castellane"
@@ -145,11 +145,13 @@ class WritesKeepTheId(Library):
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:
             found = person_ids.unresolved(conn)
+            results = {check.name: check.count for check in checks.run(conn)}
         finally:
             conn.close()
         self.assertEqual({ASH: 2}, found.several, "a face and the photo's list")
         self.assertEqual({NOBODY: 2}, found.none)
-        self.assertEqual([0, 0], in_step(self.path))
+        self.assertEqual(0, results["faces whose person id is not their name's"])
+        self.assertEqual(0, results["people listed whose person id is not their name's"])
 
     def test_renaming_a_person_follows_through_the_tree_and_the_faces(self):
         """TagTuner's rename: the tree's node moves (one transaction), the files are rewritten, then the
@@ -419,6 +421,58 @@ class TheJournal(Library):
         applied = journal.apply(self.path, "dedupe faces", edits)
         journal.undo(self.path, applied.change_id)
         self.assertEqual(node_id(self.path, "Family/Coast/" + ODA), self.face_id(self.faces[0]))
+
+
+# ---- What the doctor says --------------------------------------------------------------------
+
+class TheDoctor(Library):
+    def test_a_row_an_older_version_wrote_is_reported_and_repaired(self):
+        """A version of the app from before migration 21 names a face and knows nothing of the id."""
+        self.name([self.faces[0]], ODA)
+        conn = db.connect(self.path)
+        try:
+            conn.execute("UPDATE faces SET name = ? WHERE id = ?", (WREN, self.faces[0]))   # as version 20 wrote it
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual([1, 0], in_step(self.path))
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        try:
+            found = {check.name: check for check in checks.run(conn)}["faces whose person id is not their name's"]
+        finally:
+            conn.close()
+        self.assertEqual((1, [self.faces[0]]), (found.count, found.examples))
+        self.assertEqual({"faces": 1, "photo_people": 0}, person_ids.repair(self.path))
+        self.assertEqual([0, 0], in_step(self.path))
+        self.assertEqual(node_id(self.path, "People/" + WREN), self.face_id(self.faces[0]))
+
+    def test_the_tool_reports_and_with_apply_repairs(self):
+        import io
+        from contextlib import redirect_stdout
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import doctor
+        self.name([self.faces[0]], ODA)
+        self.name([self.faces[2]], ASH)
+        conn = db.connect(self.path)
+        try:
+            conn.execute("UPDATE faces SET tag_id = NULL WHERE id = ?", (self.faces[0],))
+            conn.commit()
+        finally:
+            conn.close()
+        said = io.StringIO()
+        with redirect_stdout(said):
+            self.assertEqual(1, doctor.report(self.path))
+        text = said.getvalue()
+        self.assertIn("faces whose person id is not their name's", text)
+        self.assertIn("names with several person nodes: 1", text)
+        self.assertNotIn(ASH, text, "names only with --show")
+        said = io.StringIO()
+        with redirect_stdout(said):
+            self.assertEqual(1, doctor.rebuild_derived(self.path))
+        self.assertEqual([1, 0], in_step(self.path), "a dry run writes nothing")
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, doctor.rebuild_derived(self.path, apply=True))
+        self.assertEqual([0, 0], in_step(self.path))
 
 
 if __name__ == "__main__":
