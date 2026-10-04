@@ -337,7 +337,9 @@ def _keyed_page(conn, scope, cursor, limit, order):
     if cursor is None or cursor.phase == 0:
         sql = "SELECT %s, p.id FROM %s WHERE %s" % (key, from_, where)
         values = list(params)
-        if nullable:
+        if nullable and cursor is None:
+            # After a cursor its bound is the range, and NULL is neither above nor below it: one lower bound for the index to
+            # seek, not two of which it might take the first.
             sql += _HAS_KEY % key
         if cursor is not None:
             # The bound on the key alone is what the index seeks; the pair with the id is the keyset.

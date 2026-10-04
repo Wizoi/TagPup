@@ -178,6 +178,9 @@ class ThePlans(Captioned):
             conn.close()
         self.assertTrue(all(store.CAPTION_INDEX in plan and "TEMP B-TREE" not in plan for plan in plans), plans)
         self.assertTrue(any("SEARCH p USING INDEX %s (<expr>>?)" % store.CAPTION_INDEX in plan for plan in plans), plans)
+        captioned = [sql for sql in seen if "FROM photos" in sql and "p.id >" not in sql and "p.id <" not in sql]
+        self.assertTrue(captioned and all(sql.count(">= ") + sql.count("<= ") == 1 for sql in captioned),
+                        "after a cursor the key has one bound, the cursor's, for the index to seek")
 
 
 class TheRoute(unittest.TestCase):
