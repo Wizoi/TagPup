@@ -114,7 +114,7 @@ export function saveDetailEdits(fields = { title: true, tags: true, people: true
     const path = state.activePhotoPath;
     // The fields belong to the photo they were typed on. Leaving waits for the
     // queue, so this should always hold; if it does not, the text is not ours.
-    return queueWriteOf(path, () => (state.activePhotoPath === path ? writeDetailEdits(fields) : true));
+    return queueWriteOf(path, () => (samePath(state.activePhotoPath, path) ? writeDetailEdits(fields) : true));
 }
 
 /**
@@ -270,7 +270,7 @@ export async function postPhotoMetadata(photo, { title = photo.title, tags = pho
 
 /** After a write: redraw the panel for this photo, but only if it is still the one open. */
 export function redrawIfShowing(photo) {
-    if (state.activePhotoPath !== photo.path) return;
+    if (!samePath(state.activePhotoPath, photo.path)) return;
     upper.renderTags(photo.tags);
     upper.renderSuggestionsPanel(photo.path);
     upper.updateCarryForwardState();
@@ -278,7 +278,7 @@ export function redrawIfShowing(photo) {
 
 export async function writeDetailEdits(fields) {
     const path = state.activePhotoPath;
-    const photo = path && state.folderPhotos.find(p => p.path === path);
+    const photo = path && state.folderPhotos.find(p => samePath(p.path, path));
     if (!photo) return true;
     if (photo.unreadable) {
         setStatus('error', UNREADABLE_SAVE, { transient: false });
@@ -331,7 +331,7 @@ export async function writeDetailEdits(fields) {
     }
 
     const clearTyped = () => {
-        if (state.activePhotoPath !== photo.path) return;
+        if (!samePath(state.activePhotoPath, photo.path)) return;
         // Only what was written: text typed while the request was out stays.
         if (fields.tags && inputAddTag.value === tagText) inputAddTag.value = '';
         if (fields.people && inputAddPerson.value === personText) inputAddPerson.value = '';
@@ -403,11 +403,12 @@ export async function writeDetailEdits(fields) {
 
 export function refreshAfterDetailSave(photo, path, newTitle, added) {
     saveToLocalStorageCache();
-    if (path !== photo.path && state.activePhotoPath === path) {
+    // `path !== photo.path` asks whether the file's spelling changed (a rename, even of case only): exact on purpose.
+    if (path !== photo.path && samePath(state.activePhotoPath, path)) {
         state.activePhotoPath = photo.path;
         upper.selectPhoto(photo.path);
     }
-    if (state.activePhotoPath === photo.path) upper.renderTags(photo.tags);
+    if (samePath(state.activePhotoPath, photo.path)) upper.renderTags(photo.tags);
     if (newTitle !== null) {
         upper.renderFileList();
         upper.renderThumbnails();
