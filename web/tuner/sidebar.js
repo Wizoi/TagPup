@@ -11,7 +11,8 @@ import { UNKNOWN_YEAR } from './rules.js';
 import { updateURLParams } from './shared.js';
 import { loadTags, renderTagList } from './tags.js';
 import { fetchPeopleWithCounts, selectPerson } from './people.js';
-import { postFolderAutoMatch, selectPhoto } from './faces-strip.js';
+import { selectPhoto } from './faces-strip.js';
+import { REEXAMINE_TITLE, reexamineFolder } from './reexamine.js';
 
 const btnRefreshList = document.getElementById('btn-refresh-list');
 const tagViewContent = document.getElementById('tag-view-content');
@@ -236,11 +237,11 @@ function renderPhotoList() {
             if (totalUnmatched > 0) {
                 const btnFolderAutomatch = document.createElement('button');
                 btnFolderAutomatch.className = 'btn-folder-automatch';
-                btnFolderAutomatch.textContent = '🤖';
-                btnFolderAutomatch.title = 'AutoMatch all photos in this folder';
+                btnFolderAutomatch.textContent = '🤖 Re-examine';
+                btnFolderAutomatch.title = REEXAMINE_TITLE;
                 btnFolderAutomatch.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    postFolderAutoMatch(folderGroup, btnFolderAutomatch);
+                    reexamineFolder(folderGroup, btnFolderAutomatch);
                 });
                 folderHeader.appendChild(btnFolderAutomatch);
                 folderGroup.btnEl = btnFolderAutomatch;
@@ -271,6 +272,8 @@ function renderPhotoList() {
                 li.className = 'photo-item folder-photo-item';
                 if (photo.unmatched_count === 0) li.classList.add('all-matched');
                 li.photo = photo;
+                // Re-examine updates the photos it named faces in, and their group's count.
+                photo.folderGroup = folderGroup;
                 
                 if (samePath(photo.path, state.activePhotoPath)) {
                     li.classList.add('active');
