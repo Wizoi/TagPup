@@ -31,6 +31,10 @@ class InstallCase(unittest.TestCase):
         self.home = tempfile.mkdtemp(prefix="tagpup_install_home_")
         self.addCleanup(remove_sandbox, self.home)
         self.addCleanup(remove_sandbox, self.dest)
+        # The records of the servers running (tagpup.launcher): the test's, not the user's.
+        servers = mock.patch.dict(os.environ, {"TAGPUP_SERVERS": os.path.join(self.home, "servers")})
+        servers.start()
+        self.addCleanup(servers.stop)
         self.said = []
 
     def install(self, name=None, apply=True):
@@ -201,6 +205,76 @@ class KeepingVersions(InstallCase):
         second, _ = self.install(name="20260101-000000-a")
         self.assertNotEqual(first, second)
         self.assertEqual(len(install_app.versions(self.dest)), 2)
+
+
+class AServerOfAnotherVersionRunning(InstallCase):
+    """An install never stops a server; it says the next launch replaces it (tagpup.launcher)."""
+
+    def test_an_install_names_each_server_of_another_version_and_what_replaces_it(self):
+        from tagpup import launcher
+        old = self.install(name="20260101-000000-a")[0]
+        launcher.say_where({"tagpup": 7, "tuner": 8}, old, "t")   # as this process's server would
+        self.addCleanup(launcher.forget, {"tagpup": 7, "tuner": 8})
+        self.said.clear()
+        new = self.install(name="20260102-000000-b")[0]
+        running = [line for line in self.said if line.startswith("running")]
+        self.assertEqual(1, len(running), self.said)
+        self.assertIn(old, running[0])
+        self.assertIn("next launch", running[0])
+        self.assertIn(new, running[0])
+        self.said.clear()
+        launcher.say_where({"tagpup": 7, "tuner": 8}, new, "t")
+        self.install(name="20260103-000000-c")
+        self.assertTrue(any(line.startswith("running") for line in self.said), "the version before is not named")
+        launcher.say_where({"tagpup": 7, "tuner": 8}, "20260103-000000-c", "t")
+        self.said.clear()
+        self.install(name="20260103-000000-c")   # the same version again, a second one
+        self.assertTrue(any(line.startswith("running") for line in self.said))
+
+    def test_the_version_a_launched_server_runs_is_never_removed(self):
+        """Not only the always-on process's: a server started by TagPup.cmd runs from its
+        version until the next launch replaces it."""
+        from tagpup import launcher
+        names = ["20260101-000000-a", "20260102-000000-b", "20260103-000000-c"]
+        for name in names:
+            self.install(name=name)
+        launcher.say_where({"tagpup": 7}, names[0], "t")
+        self.addCleanup(launcher.forget, {"tagpup": 7})
+        self.install(name="20260104-000000-d")
+        self.install(name="20260105-000000-e")
+        self.assertIn(names[0], install_app.versions(self.dest), "the running server's version was removed")
+
+    def test_two_launchers_at_once_install_one_version(self):
+        """TagPup.cmd and TagTuner.cmd clicked together both run the install first; the
+        second waits for the first and finds its version installed."""
+        import threading
+        self.install(name="20260925-115722-0dd8402")
+        made, gate = [], threading.Event()
+        real_install = install_app.install
+
+        def slow_install(*args, **kwargs):
+            gate.set()
+            time.sleep(1.0)
+            made.append(real_install(*args, **kwargs)[0])
+            return made[-1], []
+        answers = {"rev-parse": "bfeb9b7", "status": ""}
+        results = []
+        with mock.patch.object(install_app, "git", side_effect=lambda *a: answers[a[0]]), \
+                mock.patch.object(install_app, "is_ancestor", return_value=True), \
+                mock.patch.object(install_app, "install", side_effect=slow_install):
+            first = threading.Thread(target=lambda: results.append(
+                install_app.update(self.dest, self.home, sys.executable, say=self.said.append)))
+            first.start()
+            self.assertTrue(gate.wait(30))
+            results.append(install_app.update(self.dest, self.home, sys.executable, say=self.said.append))
+            first.join(60)
+        # Before, both installed, into one version's folder when in the same second: one
+        # failed part-way ("could not install").
+        self.assertEqual(1, len([line for line in self.said if "installing" in line]), self.said)
+        self.assertFalse([line for line in self.said if "could not" in line], self.said)
+        self.assertEqual(1, len(made), "two versions installed for one commit")
+        self.assertEqual(made[0], install_app.read_current(self.dest))
+        self.assertEqual(1, len([r for r in results if r]), results)
 
 
 @unittest.skipUnless(os.name == "nt", "the launchers are cmd.exe scripts")

@@ -14,7 +14,9 @@ to it; the two before it are kept, to go back to by editing current.txt.
     .venv/Scripts/python.exe scripts/install_app.py --apply
 
 Start the apps with the launchers it writes: TagPup.cmd and TagTuner.cmd (one server
-for both; the second started opens its page in the running one), TagPup Runner.cmd,
+for both; the second started opens its page in the running one -- or, when the running
+one is another version, has it finish what it is doing and starts in its place:
+tagpup.launcher), TagPup Runner.cmd,
 and TagPup CLI.cmd for indexing and the other CLI commands. It also writes TagPup
 Background.pyw, the always-on process's launcher (tagpup.supervisor), which the Startup
 shortcut scripts/startup.py makes runs: it reads current.txt, so installing again moves
@@ -30,7 +32,13 @@ Each launcher first runs this with --if-changed: when the checkout has moved on 
 newer commit -- the installed one among its ancestors -- and holds no uncommitted code,
 that commit is installed before the app starts, so a merge reaches the apps at their
 next start. An older or unrelated commit (a branch switched back) is never installed so. A checkout in the middle of
-an edit is never installed; the version already installed starts instead.
+an edit is never installed; the version already installed starts instead. Two launchers
+started together install one at a time (INSTALL_LOCK), so the second finds the first's
+version installed rather than making another.
+
+Installing never stops a running server: it says which run another version, and the next
+launch of TagPup or TagTuner replaces them (tagpup.launcher). It never removes a version
+a running server or the always-on process runs from.
 """
 import argparse
 import datetime
@@ -45,11 +53,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _root  # noqa: E402,F401
 from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
+from tagpup import launcher as launches  # noqa: E402
 from tagpup import supervisor  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 
 #: Versions kept: the new one and the two before it.
 KEEP = 3
+
+#: Held, in the installed folder, while a launcher's install looks and installs; and how
+#: long another waits for it.
+INSTALL_LOCK = "install.lock"
+INSTALL_WAIT = 600
 
 #: Launcher file -> the program it starts, and its arguments.
 LAUNCHERS = {
@@ -181,7 +195,20 @@ def stale(current, commit, dirty):
 def update(destination, home, python, say=print):
     """Install the checkout's commit if the installed version is `stale`; what a
     launcher runs before it starts its app. Never stops the app from starting: a
-    failed install leaves the version there was. Returns the version installed, or None."""
+    failed install leaves the version there was. Returns the version installed, or None.
+    One at a time: TagPup.cmd and TagTuner.cmd started together both run this, and the
+    second, once the first is done, finds its version installed."""
+    lock = supervisor.Lock(os.path.join(destination, INSTALL_LOCK))
+    if not lock.acquire(INSTALL_WAIT):
+        say("TagPup: another install has not finished in %ds; starting the installed version." % INSTALL_WAIT)
+        return None
+    try:
+        return _update(destination, home, python, say)
+    finally:
+        lock.release()
+
+
+def _update(destination, home, python, say):
     commit = git("rev-parse", "--short", "HEAD")
     dirty = bool(git("status", "--porcelain", "--untracked-files=no"))
     current = read_current(destination)
@@ -203,8 +230,8 @@ def update(destination, home, python, say=print):
     except Exception as error:   # the app still starts, from the version there was
         say("TagPup: could not install (%s); starting the installed version." % error)
         return None
-    say("TagPup: installed %s. An app already running keeps the old code until it is "
-        "closed and started again." % name)
+    say("TagPup: installed %s. A server of another version still running makes way for it as "
+        "the app starts." % name)
     return name
 
 
@@ -250,8 +277,10 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
         name += "+"
         folder = os.path.join(destination, "versions", name)
     previous = read_current(destination)
-    # The always-on process may still run an older one: a move waiting for a long index.
-    removing = to_remove(versions(destination), name, previous, supervisor.versions_in_use(home))
+    # The always-on process may still run an older one: a move waiting for a long index; and
+    # a server started by a launcher runs from its version until the next launch replaces it.
+    removing = to_remove(versions(destination), name, previous,
+                         supervisor.versions_in_use(home) | launches.versions_running())
 
     say("install      %s" % folder)
     say("home         %s  (data/)" % home)
@@ -306,7 +335,28 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
         else:
             removed.append(old)
     say("\nInstalled %s. Start the apps with the launchers above." % name)
+    for line in still_running(name):
+        say(line)
     return name, removed
+
+
+def still_running(name):
+    """What to say of each server running another version than `name`, just installed:
+    the next launch replaces it; the always-on process moves its own."""
+    lines = []
+    for found in sorted(launches.running(), key=lambda each: sorted((each.get("ports") or {}).values())):
+        if found.get("version") == name:
+            continue
+        ports = ", ".join(str(port) for port in sorted(set((found.get("ports") or {}).values())))
+        version = found.get("version") or "run from a checkout"
+        if found.get("supervised"):
+            lines.append("running      TagPup %s (process %s, port %s): the always-on process moves it onto %s at "
+                         "its next quiet moment" % (version, found.get("pid"), ports, name))
+        else:
+            lines.append("running      TagPup %s (process %s, port %s): the next launch of TagPup or TagTuner "
+                         "replaces it with %s, once it has finished what it is doing" % (version, found.get("pid"),
+                                                                                          ports, name))
+    return lines
 
 
 def main(argv=None):
