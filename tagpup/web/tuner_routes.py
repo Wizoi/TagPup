@@ -532,16 +532,25 @@ def photo_automatch():
 
 @routes.post("/api/folder/automatch")
 def folder_automatch():
-    """Automatch a folder's faces (tagpup.services.faces.automatch_folder)."""
+    """Automatch a folder's faces (tagpup.services.faces.automatch_folder): Re-examine
+    this folder. With "dry_run": true, what it would do, and nothing written."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     folder_path = body.get("folder_path")
     if not folder_path:
         abort(400, description="Missing folder_path")
+    # Anything but no flag, or a false one, rehearses: "false" as text is the safe mistake.
+    rehearse = bool(body.get("dry_run"))
     result = _faces_write(
-        library, lambda lib: faces_service.automatch_folder(lib, folder_path, _named(lib)))
-    return jsonify({"success": True, "matched_count": result.changed,
-                    "remaining_counts": result.details.get("remaining_counts", {})})
+        library, lambda lib: faces_service.automatch_folder(lib, folder_path, _named(lib), rehearse=rehearse))
+    details = result.details
+    answer = {"success": True, "dry_run": rehearse, "matched_count": result.changed,
+              "faces": details.get("faces", 0), "photos": details.get("photos", 0),
+              "people": details.get("people", {}), "renamed": details.get("renamed", 0)}
+    if not rehearse:
+        answer.update(remaining_counts=details.get("remaining_counts", {}),
+                      photos_named=details.get("photos_named", []))
+    return jsonify(answer)
 
 
 @routes.post("/api/faces/exclude")

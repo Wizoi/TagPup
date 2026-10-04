@@ -51,6 +51,18 @@ def names_in_photo(conn, photo_path):
         "SELECT name FROM faces WHERE " + where + " AND name IS NOT NULL", params)}
 
 
+def names_given(conn, names):
+    """Which of `names` some face carries now, on `conn`: one indexed query for them all.
+    A name read before a write began may have been renamed, or taken off every face,
+    before it is written."""
+    names = list(names)
+    found = set()
+    for chunk in _chunks(names):
+        found.update(name for (name,) in conn.execute(
+            "SELECT DISTINCT name FROM faces WHERE name IN (" + ",".join("?" * len(chunk)) + ")", chunk))
+    return found
+
+
 def generation(conn):
     """The faces table's generation (tagpup.store.generations), or 0 on a library that
     does not count it yet. It moves when a name changes, which none of the table's
