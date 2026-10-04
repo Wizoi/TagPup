@@ -29,7 +29,7 @@ import time
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import Refused
-from tagpup.store import damaged_files, db, derived, person_ids, search_index
+from tagpup.store import damaged_files, db, derived, person_ids, schema, search_index
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -62,13 +62,23 @@ Search = collections.namedtuple("Search", "all_of any_of none_of words", default
 
 
 class NoWordIndex(Refused):
-    """A search asked for words of a library that has no word index (migration 24 has not run on it: a library opened to
-    look, or one another program holds): refused with a sentence, wherever the search is read -- a page, the ids, a
-    selection, a bulk edit."""
+    """A search asked for words of a library at the version that makes the word index and without it (its tables dropped
+    by hand): refused with a sentence, wherever the search is read -- a page, the ids, a selection, a bulk edit."""
+
+    def __init__(self, sentence=None):
+        super().__init__(sentence or "This library has no word index, though it is at the version that makes one: search "
+                                     "by tags, people, folders and dates.")
+
+
+class WordIndexComing(NoWordIndex):
+    """A search asked for words of a library below migration 24 (#753). The server brings every library it serves up to
+    date as it starts and as a request first names it, so such a library is one whose migration is under way -- the
+    startup thread, or another program, holds it -- or due: the web layer answers 503 with Retry-After, and the page asks
+    again (docs/ARCHITECTURE.md, phase 9e-1, the contract for 9e-2)."""
 
     def __init__(self):
-        super().__init__("This library cannot search by words yet: it has no word index. Open it in TagPup once, which "
-                         "makes it, or search by tags, people, folders and dates.")
+        super().__init__("The word index is being made now; try again in a few seconds. Searching by tags, people, "
+                         "folders and dates works meanwhile.")
 
 #: Where a page begins and after what: (phase, taken, id). Phase 0 holds the photos with a date, ordered by
 #: (taken, id); phase 1 those with none, ordered by id (taken is None). None begins at the start. In an order by name
@@ -189,6 +199,8 @@ def _words_clause(conn, words):
     """(SQL over `p`, params) of the photos holding every term of `words` (tagpup.store.search_index.clause: a set, never
     ranked), or None when no term says anything; NoWordIndex for a library without the index (before migration 24)."""
     if not search_index.present(conn):
+        if schema.version(conn) < search_index.MIGRATION:
+            raise WordIndexComing()
         raise NoWordIndex()
     return search_index.clause(words)
 

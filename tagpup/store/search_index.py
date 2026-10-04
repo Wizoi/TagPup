@@ -38,6 +38,8 @@ from tagpup.core import paths
 from tagpup.core.result import Refused
 
 WORDS, NAMES = "search_words", "search_names"
+#: The migration that makes the tables (tagpup.store.schema).
+MIGRATION = 24
 TABLES = (WORDS, NAMES)
 #: The tables FTS5 makes for each (contentless: no _content).
 SHADOWS = tuple("%s_%s" % (table, shadow) for table in TABLES for shadow in ("data", "idx", "docsize", "config"))

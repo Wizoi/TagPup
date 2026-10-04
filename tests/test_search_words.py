@@ -16,6 +16,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import web_client  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library  # noqa: E402
 from face_rows import add_face  # noqa: E402
@@ -244,6 +245,50 @@ class TheDoctor(Library):
         self.vl.conn.execute("DELETE FROM search_words WHERE rowid = ?", (self.cafe,))
         self.vl.conn.commit()
         self.assertIn("--rebuild-derived --apply", search_index.problems(self.vl.conn)[0])
+
+
+class WhileTheIndexIsBeingMade(unittest.TestCase):
+    """#753: a library below migration 24 is one whose migration is under way or due -- the server brings every library
+    it serves up to date as it starts and as a request first names it -- so a search of its words is asked again in a few
+    seconds (503, Retry-After), never told to open the library in TagPup."""
+
+    def setUp(self):
+        self.app, self.home = web_client.app_for(self, "tagpup", startup=None)
+        self.path = self.home.library("library.db")
+        at_version(self.path, 23)
+        schema._current.clear()
+        # The startup thread holds the library, migrating it: the request's own bringing up to date waits, then gives up.
+        held = mock.patch("tagpup.services.libraries.bring_up_to_date",
+                          side_effect=db.sqlite3.OperationalError("database is locked"))
+        held.start()
+        self.addCleanup(held.stop)
+
+    def test_a_search_of_words_is_answered_try_again_in_a_moment(self):
+        client = self.app.test_client()
+        for method in ("get", "post"):
+            with self.subTest(method=method):
+                if method == "get":
+                    reply = client.get("/library/api/library/ids", query_string={"kind": "search", "value": words("harbour")})
+                else:
+                    reply = client.post("/library/api/library/view", json={"kind": "search", "value": {"words": "harbour"}})
+                self.assertEqual(503, reply.status_code, reply.get_data(as_text=True))
+                self.assertEqual("5", reply.headers.get("Retry-After"))
+                self.assertIn("being made now", reply.get_json()["error"])
+                self.assertNotIn("Open it in TagPup", reply.get_json()["error"])
+        structured = client.post("/library/api/library/ids", json={"kind": "search", "value": {"none_of": [
+            {"kind": "year", "value": "1900"}]}})
+        self.assertEqual(200, structured.status_code, "a search without words does not wait for the index")
+
+    def test_at_24_with_no_tables_it_is_not_a_wait(self):
+        conn = db.connect(self.path)
+        try:
+            conn.execute("INSERT INTO schema_version VALUES (24, 'photos by their words', '2026-10-04 00:00:00')")
+            conn.commit()
+        finally:
+            conn.close()
+        reply = self.app.test_client().post("/library/api/library/ids", json={"kind": "search", "value": {"words": "x"}})
+        self.assertEqual(400, reply.status_code)
+        self.assertNotIn("being made now", reply.get_json()["error"])
 
 
 class MigrationTwentyFour(unittest.TestCase):

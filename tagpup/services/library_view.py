@@ -78,6 +78,9 @@ MAX_MEMBERS = 1000
 
 ORDERS = store.ORDERS
 
+#: A search of words asked while the library's word index is being made (#753): the web layer answers it 503, Retry-After.
+WordIndexComing = store.WordIndexComing
+
 _MONTH = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 _YEAR = re.compile(r"^\d{1,4}$")
 

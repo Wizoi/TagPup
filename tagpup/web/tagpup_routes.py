@@ -596,6 +596,11 @@ def _this_pc_only():
 
 def _view_error(why):
     """The reply for what a view's service refused or could not read: its own sentence, never a traceback."""
+    if isinstance(why, library_view.WordIndexComing):
+        # Migration 24 is under way or due (#753): the page asks again.
+        reply = responses.error(503, str(why))
+        reply[0].headers["Retry-After"] = "5"
+        return reply
     if isinstance(why, library_view.NotReady):
         return responses.error(409, str(why))
     if isinstance(why, Refused):
