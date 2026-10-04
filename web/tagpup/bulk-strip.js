@@ -11,7 +11,7 @@ import {
     bulkStrip, bulkStripBar, bulkStripCounts, bulkStripErrorList, bulkStripErrors, bulkStripErrorsSummary,
     bulkStripEta, bulkStripLive, bulkStripMessage, bulkStripProgress, bulkStripTitle, thumbnailsGrid
 } from './elements.js';
-import { countsLine, endedSentence, etaText, titleOf } from './bulk-words.js';
+import { countsLine, endedSentence, etaText, isRunningRefusal, titleOf, widenedSentence } from './bulk-words.js';
 
 /** Errors listed with their file's name; the rest are counted ("N more"). The server keeps 50 as well. */
 export const MOST_ERRORS_SHOWN = 50;
@@ -63,6 +63,12 @@ function announce(job, desc) {
     bulkStripLive.textContent = words;
 }
 
+/** Tell a screen reader something that is not progress (a refusal, a job that took more than was picked): once, as it appears. */
+export function say(words) {
+    bulkStripLive.textContent = '';
+    bulkStripLive.textContent = words;
+}
+
 /** Draw the strip from `state.bulk`: hidden when there is nothing to say. */
 export function renderBulkStrip() {
     const bulk = state.bulk;
@@ -77,7 +83,8 @@ export function renderBulkStrip() {
     }
     if (!job) {
         // Starting, or refused because another is running: no job of this page's to draw.
-        bulkStripTitle.textContent = bulk.conflict ? 'Another bulk edit is running' : 'Starting the bulk edit...';
+        const another = Boolean(bulk.conflict) && isRunningRefusal(bulk.conflict);
+        bulkStripTitle.textContent = !bulk.conflict ? 'Starting the bulk edit...' : another ? 'Another bulk edit is running' : 'The edit did not start';
         bulkStripBar.removeAttribute('value');
         show(bulkStripBar, !bulk.conflict);
         bulkStripProgress.textContent = '';
@@ -89,7 +96,7 @@ export function renderBulkStrip() {
         show(btnBulkCancel, false);
         show(btnBulkResume, false);
         show(btnBulkAgain, false);
-        show(btnBulkShow, Boolean(bulk.conflict));
+        show(btnBulkShow, another);
         btnBulkShow.textContent = 'Show it';
         show(btnBulkDismiss, Boolean(bulk.conflict));
         return;
@@ -121,8 +128,9 @@ export function renderBulkStrip() {
         problem = true;
     }
     if (bulk.notice) {
-        message = message ? `${message} ${bulk.notice}` : bulk.notice;
-        problem = true;
+        const noted = widenedSentence(bulk.notice, running);
+        message = message ? `${message} ${noted}` : noted;
+        problem = problem || running;
     }
     bulkStripMessage.textContent = message;
     bulkStripMessage.classList.toggle('bulk-strip-problem', problem);

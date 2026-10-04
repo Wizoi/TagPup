@@ -21,8 +21,8 @@ import { libraryName } from './looking.js';
 import { forgetFolderCaches } from './cache.js';
 import { hasUnsavedEdits } from './edits.js';
 import { refreshHeldCards } from './library-source.js';
-import { isRunning, renderBulkStrip, wireBulkStrip } from './bulk-strip.js';
-import { endedSentence } from './bulk-words.js';
+import { isRunning, renderBulkStrip, say, wireBulkStrip } from './bulk-strip.js';
+import { endedSentence, widenedSentence } from './bulk-words.js';
 
 /** How often a running job is asked about: about once a second; 5 s while the tab is hidden. */
 export const POLL_MS = 1000;
@@ -227,6 +227,7 @@ export function startBulk({ op, selection, params, desc, picked }) {
                 if (!isRunning(bulk.job)) bulk.job = null;
                 repaint();
                 startFailed(bulk.conflict);
+                say(bulk.conflict);
                 return { ok: false, why: bulk.conflict };
             }
             if (!res.ok || !body.success) {
@@ -237,7 +238,7 @@ export function startBulk({ op, selection, params, desc, picked }) {
             }
             beginTracking({ job: body.job, op, state: 'running', total: body.total, done: 0, changed: 0, unchanged: 0,
                 skipped_missing: 0, skipped_damaged: 0, error_count: 0, errors: [], eta_seconds: null },
-                { op, selection, params, desc });
+                { op, selection, params, desc, picked });
             widenedNotice(body.total, picked, selection);
             return { ok: true, missing: body.missing || 0, total: body.total };
         })
@@ -245,9 +246,10 @@ export function startBulk({ op, selection, params, desc, picked }) {
             bulk.starting = false;
             repaint();
             // The request may have been answered and the answer lost: ask what is running, once, in a moment.
-            const why = `${err.message}. If the edit did start, it shows here once TagPup answers.`;
+            // A job that is over by then is not shown (the library offers only one that runs or stopped part-way), so no promise.
+            const why = `${err.message}. If the edit did start, it shows here while it runs; if it is not there, look at the photos before making it again.`;
             startFailed(`Could not start the bulk edit: ${why}`);
-            window.setTimeout(() => attachBulk({ force: true, quiet: true }), 2000);
+            window.setTimeout(() => attachBulk({ force: true, quiet: true, lost: true }), 2000);
             return { ok: false, why };
         });
 }
@@ -261,16 +263,17 @@ export function startBulk({ op, selection, params, desc, picked }) {
 function widenedNotice(took, picked, selection) {
     const bulk = state.bulk;
     if (!selection || !selection.source || !Number.isFinite(picked) || !Number.isFinite(took) || took <= picked) return;
-    bulk.notice = `TagPup took ${took.toLocaleString()} photos but ${picked.toLocaleString()} were selected: ${(took - picked).toLocaleString()} more `
-        + 'came into this view since it was read. Cancel stops it after the photos being written now; the photos already written keep the edit.';
+    bulk.notice = { took, picked };
     repaint();
-    startFailed(bulk.notice);
+    const sentence = widenedSentence(bulk.notice, true);
+    startFailed(sentence);
+    say(sentence);
 }
 
 function beginTracking(job, request) {
     const bulk = state.bulk;
     stopPolling();
-    if (!bulk.job || bulk.job.job !== job.job) bulk.notice = '';
+    if (!bulk.job || bulk.job.job !== job.job) bulk.notice = null;
     bulk.job = job;
     bulk.request = request;
     bulk.conflict = '';
@@ -351,7 +354,7 @@ export function dismissBulk() {
     bulk.job = null;
     bulk.request = null;
     bulk.conflict = '';
-    bulk.notice = '';
+    bulk.notice = null;
     bulk.trouble = '';
     bulk.gaveUp = false;
     repaint();
@@ -380,12 +383,29 @@ function wasDismissed(job) {
 // ---- Finding a job again ---------------------------------------------------------------------------------------------------
 
 /**
+ * A job found already stopped. The page did not see it end, so not what a job's end does in full (#606: that is for one that ended
+ * under this page, and every load would repeat it). What it left is settled once: the folder scans kept from before it ended are
+ * forgotten (those saved after it show what it wrote); and when it is the edit this page tried to start and lost the answer of, the
+ * status line says how it ended, and the counts and cards are read again.
+ */
+function foundStopped(job, lost) {
+    if (job.finished) forgetFolderCaches({ before: job.finished * 1000 });
+    if (!lost) return;
+    const bad = job.state !== 'done' || (job.error_count || 0) > 0;
+    setStatus(bad ? 'error' : 'ready', endedSentence(job, null), { transient: false });
+    if (!(job.changed || job.done)) return;
+    state.tally.key = '';
+    upper.navigatorCountsChanged({ now: true });
+    if (state.library) refreshHeldCards();
+}
+
+/**
  * Ask the library which bulk edit to show: the one running (started by another tab, or before this page was opened) or the latest that
  * stopped part-way. Done as the page starts and as a view opens; it does nothing when the page already shows one. `force` (Show it
  * after a refusal, Ask again after giving up) replaces what the strip holds. A read that fails says nothing: the strip is an offer, and a
  * second start is refused by the server with the sentence anyway.
  */
-export function attachBulk({ force = false, quiet = false } = {}) {
+export function attachBulk({ force = false, quiet = false, lost = false } = {}) {
     const bulk = state.bulk;
     if (!force && (bulk.job || bulk.starting)) return Promise.resolve(false);
     // The page asks as it starts and again as a view opens: one question when they come together, none when it was just asked.
@@ -410,6 +430,7 @@ export function attachBulk({ force = false, quiet = false } = {}) {
             // Shown, and nothing more: a job that stopped before this page looked is not one that ended under it (what a job's
             // end does -- forget the folders' scans, read the counts, say it in the status line -- is for the end of one that ran here).
             beginTracking({ ...found }, same ? bulk.request : null);
+            if (!isRunning(found)) foundStopped(found, lost);
             return true;
         }))
         .catch(err => {

@@ -175,3 +175,113 @@ describe("#609: the small things", () => {
     assert.equal(el(ctx, "bulk-strip-live").getAttribute("role"), "status");
   });
 });
+
+describe("the follow-up review (#613-#617)", () => {
+  async function widened(t) {
+    const ctx = await view(t, 68000);
+    ctx.module("selected.js").setIdRange(0, 49999, true);
+    ctx.bulk.start = { total: 50500 };
+    ctx.bulk.status = jobStatus({ total: 50500 });
+    await addTag(ctx);
+    return ctx;
+  }
+
+  test("#613: Start again repeats the notice that the job took more than was picked", async (t) => {
+    const ctx = await widened(t);
+    ctx.bulk.status = jobStatus({ total: 50500, done: 100, changed: 100, state: "abandoned", message: "TagPup was closed before this finished." });
+    await ctx.settle(80);
+    assert.ok(!el(ctx, "btn-bulk-again").classList.contains("hidden"));
+    ctx.bulk.status = jobStatus({ total: 50500, job: 8 });
+    ctx.bulk.start = { job: 8, total: 50500 };
+    click(ctx.window, el(ctx, "btn-bulk-again"));
+    await ctx.settle(80);
+    assert.equal(calls(ctx, "/bulk/start").length, 2);
+    assert.match(text(ctx, "bulk-strip-message"), /500 more/);
+  });
+
+  test("#614: a refusal that is not 'another is running' is not titled so and offers no Show it", async (t) => {
+    const ctx = await view(t, 400);
+    pick(ctx, 2);
+    ctx.server.first("/api/library/bulk/start", { error: "photo_index has not been brought up to date yet: open it in TagPup once and try again." }, { status: 409 });
+    await addTag(ctx);
+    assert.equal(text(ctx, "bulk-strip-title"), "The edit did not start");
+    assert.match(text(ctx, "bulk-strip-message"), /not been brought up to date/);
+    assert.ok(el(ctx, "btn-bulk-show").classList.contains("hidden"));
+    assert.ok(!el(ctx, "btn-bulk-dismiss").classList.contains("hidden"));
+  });
+
+  test("#614: the running-job refusal keeps its title and Show it", async (t) => {
+    const ctx = await view(t, 400);
+    pick(ctx, 2);
+    ctx.server.first("/api/library/bulk/start", { error: SENTENCE }, { status: 409 });
+    await addTag(ctx);
+    assert.equal(text(ctx, "bulk-strip-title"), "Another bulk edit is running");
+    assert.ok(!el(ctx, "btn-bulk-show").classList.contains("hidden"));
+  });
+
+  test("#615: after the job ends the notice is information: no Cancel clause, and a done job with 0 errors is no problem", async (t) => {
+    const ctx = await widened(t);
+    assert.match(text(ctx, "bulk-strip-message"), /Cancel stops it/);
+    assert.ok(el(ctx, "bulk-strip-message").classList.contains("bulk-strip-problem"), "while it runs it asks for a look");
+    ctx.bulk.status = jobStatus({ total: 50500, done: 50500, changed: 50500, state: "done", finished: 1760000100 });
+    await ctx.settle(80);
+    assert.match(text(ctx, "bulk-strip-message"), /500 more/);
+    assert.doesNotMatch(text(ctx, "bulk-strip-message"), /Cancel/);
+    assert.ok(!el(ctx, "bulk-strip-message").classList.contains("bulk-strip-problem"));
+  });
+
+  test("#616: a start whose answer was lost and whose job stopped: the status line says how it ended; only older folder scans are forgotten", async (t) => {
+    const ctx = await view(t, 400);
+    pick(ctx, 2);
+    ctx.window.localStorage.setItem("tagpup_cache_d:/old", JSON.stringify({ timestamp: 1760000000000 }));
+    ctx.window.localStorage.setItem("tagpup_cache_d:/new", JSON.stringify({ timestamp: 1760000200000 }));
+    ctx.server.first("/api/library/bulk/start", () => Promise.reject(new Error("Failed to fetch")));
+    ctx.bulk.current = jobStatus({ total: 100, done: 3, changed: 3, state: "cancelled", finished: 1760000100, message: "The bulk edit was cancelled." });
+    await addTag(ctx);
+    await ctx.settle(100);
+    assert.match(text(ctx, "status-text"), /The bulk edit was cancelled\./);
+    assert.equal(ctx.window.localStorage.getItem("tagpup_cache_d:/old"), null);
+    assert.notEqual(ctx.window.localStorage.getItem("tagpup_cache_d:/new"), null, "a scan kept after the job is current");
+    assert.match(text(ctx, "bulk-strip-message"), /cancelled/);
+  });
+
+  test("#616: a stopped job found on opening forgets only the scans older than its end, and says nothing in the status line", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", ids: range(50) });
+    ctx.window.localStorage.setItem("tagpup_cache_d:/old", JSON.stringify({ timestamp: 1760000000000 }));
+    ctx.window.localStorage.setItem("tagpup_cache_d:/new", JSON.stringify({ timestamp: 1760000200000 }));
+    const before = text(ctx, "status-text");
+    ctx.bulk.current = jobStatus({ total: 60, done: 25, changed: 25, state: "abandoned", finished: 1760000100, message: "closed." });
+    await ctx.module("bulk-job.js").attachBulk({ force: true });
+    assert.equal(ctx.window.localStorage.getItem("tagpup_cache_d:/old"), null);
+    assert.notEqual(ctx.window.localStorage.getItem("tagpup_cache_d:/new"), null);
+    assert.equal(text(ctx, "status-text"), before);
+  });
+
+  test("#616: the status line does not promise that a finished edit shows", async (t) => {
+    const ctx = await view(t, 400);
+    pick(ctx, 2);
+    ctx.server.first("/api/library/bulk/start", () => Promise.reject(new Error("Failed to fetch")));
+    await addTag(ctx);
+    assert.match(text(ctx, "status-text"), /shows here while it runs/);
+    assert.match(text(ctx, "status-text"), /look at the photos/);
+  });
+
+  test("#617: the live region is told of a 409 and of a widened job", async (t) => {
+    const ctx = await view(t, 400);
+    pick(ctx, 2);
+    ctx.server.first("/api/library/bulk/start", { error: SENTENCE }, { status: 409 });
+    await addTag(ctx);
+    assert.match(text(ctx, "bulk-strip-live"), /already running in photo_index/);
+    const big = await widenedLive(t);
+    assert.match(text(big, "bulk-strip-live"), /500 more/);
+  });
+});
+
+async function widenedLive(t) {
+  const ctx = await view(t, 68000);
+  ctx.module("selected.js").setIdRange(0, 49999, true);
+  ctx.bulk.start = { total: 50500 };
+  ctx.bulk.status = jobStatus({ total: 50500 });
+  await addTag(ctx);
+  return ctx;
+}

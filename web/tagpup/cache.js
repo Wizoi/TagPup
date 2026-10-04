@@ -29,17 +29,28 @@ export function saveToLocalStorageCache() {
 /**
  * Forget every folder's scan this browser kept: a bulk edit rewrote photo files across folders, and a scan kept from before names their
  * old stamps (a save from it would be refused as changed on disk) and their old tags. Other keys of local storage are left alone.
+ * With `before` (a time in ms) only the scans kept before then go: a scan saved after a job ended already shows what it wrote. A scan
+ * whose time cannot be read goes too. Returns how many were forgotten.
  */
-export function forgetFolderCaches() {
+export function forgetFolderCaches({ before = Infinity } = {}) {
     try {
         const stale = [];
         for (let at = 0; at < localStorage.length; at++) {
             const key = localStorage.key(at);
-            if (key && key.startsWith('tagpup_cache_')) stale.push(key);
+            if (!key || !key.startsWith('tagpup_cache_')) continue;
+            let kept = NaN;
+            try {
+                kept = Number(JSON.parse(localStorage.getItem(key)).timestamp);
+            } catch (e) {
+                kept = NaN;
+            }
+            if (!Number.isFinite(kept) || kept < before) stale.push(key);
         }
         for (const key of stale) localStorage.removeItem(key);
+        return stale.length;
     } catch (e) {
         console.warn('Could not forget the folders kept in this browser:', e);
+        return 0;
     }
 }
 

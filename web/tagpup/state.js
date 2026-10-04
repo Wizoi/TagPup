@@ -95,12 +95,12 @@ export const state = {
     // out, `conflict` the sentence of a refused second start, `cancelling` after Cancel was pressed, `failures` the answers to
     // "how is it going" that did not come (`trouble` says so, `gaveUp` after too many), `timer`/`controller`/`asked` the poll, and
     // `endedKey` the job end already acted on (the counts, the cards, the caches), once, `asking` while an edit's question or
-    // placement dialog is open (a second click on Add does not ask again), `notice` a sentence the strip keeps beside
+    // placement dialog is open (a second click on Add does not ask again), `notice` ({ took, picked }) the strip keeps beside
     // a running job (it took more photos than were picked).
     bulk: {
         job: null, request: null, starting: false, conflict: '', cancelling: false,
         failures: 0, trouble: '', gaveUp: false, timer: 0, controller: null, asked: 0, endedKey: '', announced: null,
-        attaching: null, attachedAt: 0, asking: false, notice: '',
+        attaching: null, attachedAt: 0, asking: false, notice: null,
     },
     // The photo write queue's entries, for its status (write-queue.js): each
     // { id, label, status: waiting | writing | done | failed, error, at, retry }.

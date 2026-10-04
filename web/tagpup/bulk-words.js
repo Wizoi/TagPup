@@ -105,6 +105,22 @@ export function endedSentence(job, desc) {
     return `${message} ${summarySentence(job, desc)}`;
 }
 
+/**
+ * Is a 409 sentence the server's "another bulk edit is running" (both of its sentences say "already running")? Any other refusal -- the
+ * library not brought up to date, an edit that could not be set up -- is not, and offers no way to a job that is not there. The server
+ * sends no code with the sentence, so the page tells the kinds apart by those words.
+ */
+export function isRunningRefusal(sentence) {
+    return /already running/i.test(String(sentence || ''));
+}
+
+/** The note that a job took more photos than were picked: the how-many always, the way out only while it can still be used. */
+export function widenedSentence({ took, picked }, running) {
+    const how = `TagPup took ${took.toLocaleString()} photos but ${picked.toLocaleString()} were selected: ${(took - picked).toLocaleString()} more `
+        + 'came into this view since it was read.';
+    return running ? `${how} Cancel stops it after the photos being written now; the photos already written keep the edit.` : how;
+}
+
 /** The name the strip gives a job: what it does, or -- for one found again after a reload -- its kind. */
 export function titleOf(job, desc) {
     if (desc) return `${desc.verb} ${desc.what} ${desc.prep} ${photosOf(job.total || 0)}`;
