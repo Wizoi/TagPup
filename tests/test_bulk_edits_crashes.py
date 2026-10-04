@@ -5,6 +5,7 @@ could not release it), and a settle that really cannot finish (`_finish` raising
 Scenarios are the reviewer's. Fictional names only.
 """
 import os
+import socket
 import sqlite3
 import sys
 import unittest
@@ -15,8 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_bulk_edits as T  # noqa: E402
 import test_bulk_edits_followup as F  # noqa: E402
 
+from tagpup.core import processes  # noqa: E402
 from tagpup.jobs import bulk_edits  # noqa: E402
 from tagpup.services import bulk_edit, file_changes  # noqa: E402
+from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
 
 
@@ -65,7 +68,8 @@ class HardCrash(F.Followup):
 
 
 class AChunkTheJournalHasNotFinished(HardCrash):
-    def test_a_change_left_by_a_dead_process_is_finished_by_the_resume_and_nothing_is_shifted_twice(self):
+    def test_guard_a_change_left_by_a_dead_process_is_finished_by_the_resume_and_nothing_is_shifted_twice(self):
+        # A guard, not a regression test: the old code passes it too (a dead owner was always taken over).
         handle = self.crash_after_file_written(30)
         self.assertGreater(self.unfinished_rows(), 0)
         self.resume_and_finish(handle)
@@ -158,6 +162,38 @@ class ARestoredJournal(HardCrash):
         newest = self.vl.rows("SELECT MAX(id) FROM changes")[0][0]
         self.assertEqual(newest, bulk_edit.read_state(self.library, handle)["journal_high"])
 
+    def test_a_resume_after_the_journal_lost_an_older_change_though_it_holds_newer_ones_is_refused(self):
+        handle = self.crash_after_file_written(30)
+        high = bulk_edit.read_state(self.library, handle)["journal_high"]
+        db.write_with_connection(self.library.path, lambda conn: [
+            conn.execute("DELETE FROM change_files WHERE change_id = ?", (high,)),
+            conn.execute("DELETE FROM changes WHERE id = ?", (high,)),
+            conn.execute("INSERT INTO changes (id, operation, status, schema_version, created, summary)"
+                         " VALUES (?, 'some other change', 'applied', 1, '2026-10-03 12:00:00', '{}')", (high + 50,))])
+        writes = self.files.writes
+        reply = self.post("resume", {"job": handle})
+        self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
+        self.assertEqual(writes, self.files.writes)
+
+    def test_a_resume_after_the_journal_pruned_the_chunk_in_flight_is_refused_saying_so_and_writes_nothing(self):
+        real, calls = bulk_edits.Job._take, []
+
+        def take(self_, out, size):
+            calls.append(1)
+            if len(calls) == 2:          # chunk 2's change is applied; the process dies before the job records it done
+                raise T.Crash()
+            return real(self_, out, size)
+        with mock.patch.object(bulk_edits.Job, "_take", take):
+            handle = self.run_until_hard_crash()
+        dry = journal_service.prune(self.library, 0)
+        self.assertEqual([int(handle)], [int(each) for each in dry.details["resumable_jobs"]], "the dry run names the job")
+        self.assertTrue(journal_service.prune(self.library, 0, apply=True).changed)
+        writes = self.files.writes
+        reply = self.post("resume", {"job": handle})
+        self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
+        self.assertIn("pruned", reply.get_json()["error"])
+        self.assertEqual(writes, self.files.writes)
+
     def test_a_chunk_that_died_before_its_plan_resumes_though_it_has_no_change(self):
         real, calls = bulk_edit._shift, []
 
@@ -172,6 +208,25 @@ class ARestoredJournal(HardCrash):
         self.assertEqual((25, 50), (state["done"], state["inflight"]))
         self.resume_and_finish(handle)
         self.assert_every_photo_shifted_once()
+
+
+class AnUndoIsNotAResumesToFinish(HardCrash):
+    def test_a_resume_leaves_an_undo_another_live_process_is_carrying_out_alone(self):
+        handle = self.crash_after_file_written(55)
+        first = self.vl.rows("SELECT MIN(id) FROM changes WHERE operation = ?", bulk_edit.operation_of("time_shift", handle))[0][0]
+        parent = os.getppid()
+        other = "%s:%d:%s" % (socket.gethostname(), parent, processes.started(parent))
+        self.assertTrue(file_journal.owner_alive(other))
+        db.write_with_connection(self.library.path, lambda conn: [
+            conn.execute("UPDATE changes SET status = 'planned', undone = ?, owner = ? WHERE id = ?",
+                         ("2026-10-03 12:00:00", other, first)),
+            conn.execute("UPDATE change_files SET state = 'writing' WHERE id IN"
+                         " (SELECT id FROM change_files WHERE change_id = ? LIMIT 3)", (first,))])
+        self.post("resume", {"job": handle})
+        self.assertEqual([("planned", other)], self.vl.rows("SELECT status, owner FROM changes WHERE id = ?", first))
+        self.assertEqual([("writing", 3)], self.vl.rows(
+            "SELECT state, COUNT(*) FROM change_files WHERE change_id = ? AND state = 'writing' GROUP BY state", first))
+        self.finish(handle)
 
 
 if __name__ == "__main__":

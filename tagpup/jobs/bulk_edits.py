@@ -601,6 +601,10 @@ JOURNAL_LOST = ("The library's journal no longer holds the last change of this b
                 "which photos of the last chunk were already shifted cannot be told, and a resume could shift them twice. "
                 "It was not resumed; nothing was changed.")
 
+#: ... when the journal's retention took the files of the change: the record of what the last chunk wrote is gone.
+JOURNAL_PRUNED = ("The library's journal pruned the record of this bulk edit's last chunk, so which photos of it were already "
+                  "shifted cannot be told, and a resume could shift them twice. It cannot be resumed safely; nothing was changed.")
+
 #: What a resume that finds the record moved on says.
 MOVED = "Another TagPup process moved this job on: reload and look at it again."
 
@@ -695,8 +699,10 @@ def _settle_flight(library, job, state):
     done, flight = int(state.get("done", 0)), int(state.get("inflight", 0))
     if flight <= done:
         return
-    if job.high is not None and not bulk_edit.journal_holds(library, job.operation, int(job.high)):
-        raise Refused(JOURNAL_LOST)
+    if job.high is not None:
+        lost = bulk_edit.journal_lost(library, job.operation, int(job.high))
+        if lost is not None:
+            raise Refused(JOURNAL_PRUNED if lost == bulk_edit.PRUNED else JOURNAL_LOST)
     file_changes.settle(library, job.exiftool_path, job.operation)
     asked = job.ids[done:flight]
     wanted = set(asked)

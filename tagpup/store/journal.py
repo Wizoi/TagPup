@@ -1306,6 +1306,23 @@ def prunable(db_path, days=RETENTION_DAYS, now=None):
         conn.close()
 
 
+def prunable_operations(db_path, days=RETENTION_DAYS, now=None):
+    """The set of operation names of the changes pruning after `days` would take. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not has_journal(conn):
+            return set()
+        ids = _prunable(conn, _cutoff(days, now))
+        names = set()
+        for start in range(0, len(ids), CHUNK):
+            chunk = ids[start:start + CHUNK]
+            names.update(name for (name,) in conn.execute(
+                "SELECT DISTINCT operation FROM changes WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk))
+        return names
+    finally:
+        conn.close()
+
+
 def prune(db_path, days=RETENTION_DAYS, now=None):
     """Take the values of every change older than `days` out of the journal: its summary
     stays, and it becomes `pruned`, no longer undoable. Returns (changes pruned, values

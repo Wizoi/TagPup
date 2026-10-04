@@ -245,13 +245,19 @@ def unsettled(library, operation, ids):
             if row.photo_id in wanted]
 
 
-def journal_holds(library, operation, change_id):
-    """Does the journal still hold the change `change_id`, which a record of the job names? False when the journal ends below it
-    (a snapshot restored, the change with it) or holds another operation's change under that id."""
+PRUNED, LOST = "pruned", "lost"
+
+
+def journal_lost(library, operation, change_id):
+    """None when the journal still holds the change `change_id`, which a record of the job names, as a change of `operation`
+    with its files; else why not: PRUNED (the journal's retention took its files), or LOST (the journal ends below it, or holds
+    no such change, or another operation's under that id: a snapshot restored)."""
     if file_journal.highest(library.path) < change_id:
-        return False
+        return LOST
     found = file_journal.change(library.path, change_id)
-    return found is None or found.operation == operation
+    if found is None or found.operation != operation:
+        return LOST
+    return PRUNED if found.status == "pruned" else None
 
 
 def decide(library, rows, exiftool_path):

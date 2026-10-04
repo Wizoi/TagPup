@@ -18,7 +18,7 @@ rest are put back. Its rehearsal reads every file and writes none. Undoing one n
 library's ExifTool, which the caller names.
 """
 from tagpup.core.result import NotFound, Result
-from tagpup.services import file_changes
+from tagpup.services import bulk_edit, file_changes
 from tagpup.services import settings as library_settings
 from tagpup.store import journal
 
@@ -111,9 +111,15 @@ def undo(library, change_id, apply=False, exiftool_path=None):
 def prune(library, days=RETENTION_DAYS, apply=False):
     """Take away the values of every change older than `days`, keeping its summary; it
     can no longer be undone. A dry run unless `apply`: `attempted` is the changes it
-    would prune, details["values"] the column values it would delete."""
+    would prune, details["values"] the column values it would delete, details["resumable_jobs"]
+    the ids of bulk time shifts that could still be resumed whose changes it takes: pruned, the
+    journal can no longer tell which photos of their last chunk were shifted, and they cannot
+    be resumed."""
     changes, values = journal.prunable(library.path, days)
     result = Result(attempted=changes, details={"dry_run": not apply, "days": days, "values": values})
+    taken = journal.prunable_operations(library.path, days) if changes else set()
+    result.details["resumable_jobs"] = [job for job in bulk_edit.resumable_heads(library)
+                                        if bulk_edit.operation_of(bulk_edit.TIME_SHIFT, job) in taken]
     if apply and changes:
         pruned, deleted = journal.prune(library.path, days)
         result.changed = pruned
