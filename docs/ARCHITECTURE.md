@@ -2217,8 +2217,11 @@ Server and store only; the page's search box and picker are 9e-2's, and this is 
   found when the words table matches it as a prefix phrase (`"term"*`: every term a prefix, decided, so "beach" finds "beaches"
   and a word being typed finds as it is typed) or, from three characters, the names table holds it (`"term"`: "0412" inside
   "20190412_1430.jpg"); the terms are ANDed with each other and with the sources, a set, never ranked. A term of no letter or digit
-  and under three characters says nothing and is dropped. A library without the tables (opened to look, not migrated) answers a
-  search of words `400` with a sentence (`NoWordIndex`).
+  and under three characters says nothing and is dropped. A library below migration 24 answers a search of words `503` with
+  `Retry-After: 5` and "The word index is being made now; try again in a few seconds." (`WordIndexComing`, #753): the server
+  brings every library it serves up to date as it starts and as a request first names it, so such a library's migration is under
+  way (the startup thread, about 4 s on photo_index; another program holding it) or due. One at 24 without the tables (dropped by
+  hand) is `400` (`NoWordIndex`).
 - **Kept by the store's writes, in their transactions**: `derived._put` refreshes the word rows of every photo it is asked about
   (the index's record, the bulk tag writes, sync, moves and renames, `ensure_row`, `follow_nodes`, the journal's `_derive`);
   `people.rebuild` of the photos whose people it wrote (a face named or unnamed, a tree edit that changes who is a person, a rename
@@ -2230,7 +2233,9 @@ Server and store only; the page's search box and picker are 9e-2's, and this is 
   node meanwhile.
 - **The doctor**: `search_index_out_of_date` (in `checks.RULES`): every photo with no row, every row of no photo, and of 500
   photos spread over the ids those whose texts, each column matched as one phrase, are not found in their row (a contentless table
-  cannot be read back, so a word left behind is not seen by the sample). `tools/doctor.py --rebuild-derived --apply` rebuilds it
+  cannot be read back, so a word left behind is not seen by the sample). The report says so beside the rules, with the remedy
+  (`search_index.LIMITS`, #752): an older checkout writing a library at 24 never refreshes the index, and a word it leaves behind
+  is found only by `--rebuild-derived --apply`. `tools/doctor.py --rebuild-derived --apply` rebuilds it
   with the derived tables. Migration 24 runs the same check before it commits. On real rows the phrase check needed one fix found
   by running it: 255 of photo_index's photos have captions with no letter or digit (a lone dash), which no phrase matches; with
   it, every one of its 68,324 photos passes (counted on an in-memory copy of its rows).
@@ -2241,6 +2246,10 @@ Server and store only; the page's search box and picker are 9e-2's, and this is 
   undone. All ten are in `schema.UNWATCHED` (a later migration's watch cannot make a trigger on a virtual table) and the two
   virtual ones in `journal.DERIVED`. Interrupted, the migration leaves the library at 23 with none of them, and runs again on the
   next open (a test).
+- **#751: a search's members are read once.** `all_of` resolved each person through a pass of `photo_people`'s names and each
+  keyword not spelled as a node through a read of the tree; one `_Reads` per statement now serves the `any_of` union, every
+  `all_of` member and `none_of` (a test counts the reads). photo_index, read-only, the id list: all_of 100 people 310 -> 75 ms,
+  3 people 56 -> 55 ms.
 - **Measured** on a sandbox copy of photo_index (68,324 photos, its own TAGPUP_HOME, roots placed in the sandbox, deleted
   afterwards), in-process through `tagpup.services.library_view` (the route's work less Flask and JSON), medians of five:
   **migration 24 through `schema.ensure` 4.3 s** (a copy just written, cold), of which the backfill is 2.0 s warm and its check
@@ -2268,7 +2277,9 @@ Server and store only; the page's search box and picker are 9e-2's, and this is 
   as the navigator does: a person `{"kind": "person", "value": <name>}`, a tag `{"kind": "keyword", "value": <tag path>}` (with
   everything under it; `keyword_only` for the node alone). The reply's `source` may be another kind (a search that says no more
   than a source); the page keeps the address it asked by. `400` sentences: a part not known, a list over 1,000, more than 20 terms
-  or 500 characters of words, a search in a search, words of a library not migrated.
+  or 500 characters of words, a search in a search. **`503` with `Retry-After`** (#753) while the word index is being made: the
+  page shows the sentence and asks again after `Retry-After` seconds, a few times (a migration that fails keeps answering it;
+  after about a minute the page leaves the sentence and stops asking).
 - **Known limits.** A term is matched within one column of one table: "rowan coast" is two terms, each found anywhere, but a
   quoted phrase typed as one term ("rowan_coast") must be in one column. Camera make
   and model and the author are not words yet (the owner's call). The words of a photo's people are the names as `photo_people`
