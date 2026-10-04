@@ -379,8 +379,9 @@ def name_unnamed(conn, names_by_id):
     """Give each face in {id: name} its name as a guess, as name_if_unnamed does -- only a face still
     unnamed, not excluded and not unmatched by hand -- in one statement per name and chunk, and rebuild
     their photos once: automatch's write (docs/findings.md, #659), which named a folder's faces one by
-    one and rebuilt a photo for each. Returns the ids named, in the order given. The caller commits,
-    inside the transaction that read the faces it chose."""
+    one and rebuilt a photo for each. Returns the ids its UPDATE changed (RETURNING), in the order given:
+    a face another process named meanwhile is not counted, inside a transaction or not (#665). The
+    caller commits, inside the transaction that read the faces it chose."""
     guard = " AND name IS NULL AND excluded = 0 AND " + NOT_DECIDED_NOBODY % ""
     by_name = collections.defaultdict(list)
     for face_id, person_name in names_by_id.items():
@@ -388,10 +389,8 @@ def name_unnamed(conn, names_by_id):
     named = set()
     for person_name, face_ids in by_name.items():
         for chunk in _chunks(face_ids):
-            still = [face_id for (face_id,) in conn.execute("SELECT id FROM faces WHERE " + _in(chunk) + guard, chunk)]
-            if still:
-                conn.execute("UPDATE faces SET name = ? WHERE " + _in(still) + guard, [person_name] + still)
-                named.update(still)
+            named.update(face_id for (face_id,) in conn.execute(
+                "UPDATE faces SET name = ? WHERE " + _in(chunk) + guard + " RETURNING id", [person_name] + chunk).fetchall())
     done = [face_id for face_id in names_by_id if face_id in named]
     _rebuilt(conn, _photos_of(conn, done), len(done))
     return done

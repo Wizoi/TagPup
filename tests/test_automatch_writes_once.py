@@ -62,6 +62,46 @@ class NamingUnnamedFacesTogether(FacesCase):
                          self.lib.rows("SELECT id, name FROM faces WHERE id IN (?, ?, ?, ?) ORDER BY id",
                                        (free, named, excluded, nobody)))
 
+    def test_without_an_outer_transaction_it_reports_only_what_it_wrote(self):
+        """docs/findings.md, #665: a face named by another process just before the write is not counted
+        as named by it. Without the caller's IMMEDIATE transaction, nothing holds the faces still between a
+        read and the write; only what the UPDATE itself changed is reported."""
+        photo = self.photo("c.jpg")
+        mine, theirs = self.face(photo), self.face(photo)
+        path = self.lib.library.path
+
+        class Interleaved:
+            """The caller's connection; just before the first write to faces' names, another process
+            names `theirs`."""
+
+            def __init__(self, conn):
+                self.conn, self.done = conn, False
+
+            def execute(self, sql, params=()):
+                if not self.done and sql.lstrip().upper().startswith("UPDATE FACES SET NAME"):
+                    self.done = True
+                    other = db.connect(path)
+                    try:
+                        other.execute("UPDATE faces SET name = 'Oda Castellane' WHERE id = ?", (theirs,))
+                        other.commit()
+                    finally:
+                        other.close()
+                return self.conn.execute(sql, params)
+
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+
+        conn = db.connect(path)
+        try:
+            conn.execute("SELECT 1").fetchall()
+            done = store_faces.name_unnamed(Interleaved(conn), {mine: ROWAN, theirs: ROWAN})
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual([mine], done)
+        self.assertEqual([(mine, ROWAN), (theirs, "Oda Castellane")],
+                         self.lib.rows("SELECT id, name FROM faces WHERE id IN (?, ?) ORDER BY id", (mine, theirs)))
+
     def test_a_write_rebuilds_its_photos_reading_the_tree_once(self):
         face = self.face(self.photo("b.jpg"))
         with mock.patch.object(person_ids.People, "read", wraps=person_ids.People.read) as reads:
