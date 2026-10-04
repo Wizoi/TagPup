@@ -22,7 +22,7 @@ from tagpup.core import dates, vocabulary
 from tagpup.core.result import NotFound
 from tagpup.ml import grouping
 from tagpup.services import roots as roots_service
-from tagpup.store import db, faces, generations, photos
+from tagpup.store import db, faces, generations, people, photos
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,53 @@ def named_faces(library):
                 vec = np.frombuffer(blob, dtype=np.float32)
             except Exception:
                 # One damaged row is not a reason to refuse every comparison.
+                continue
+            norm = np.linalg.norm(vec)
+            if norm == 0:
+                continue
+            ids.append(face_id)
+            names.append(person)
+            vecs.append(vec / norm)
+    finally:
+        conn.close()
+    return stamp, (ids, names, np.vstack(vecs) if vecs else None)
+
+
+#: faces.name_source of a name a person gave a face, and so the only kind that stands for them.
+DECIDED = "manual"
+
+
+def decided_stamp(library):
+    """What decided_faces is cached against: the faces fingerprint and the photos generation,
+    which moves when a photo's keywords do (photo_people)."""
+    conn = _reading(library)
+    try:
+        return _decided_stamp(conn)
+    finally:
+        conn.close()
+
+
+def _decided_stamp(conn):
+    return (faces.fingerprint(conn), generations.value(conn, "photos"))
+
+
+def decided_faces(library):
+    """(stamp, (ids, names, matrix)): as named_faces, but only the faces a person decided --
+    named by hand (name_source 'manual'), or on a photo whose keywords name the same person
+    (photo_people, source 'keyword', compared by vocabulary.key as people.rebuild does). A name
+    automatch or clustering gave, that no keyword on its photo bears out, is a guess and is
+    never what a later guess is compared with; automatch alone reads this matrix."""
+    conn = _reading(library)
+    try:
+        stamp = _decided_stamp(conn)
+        keywords = people.keyword_keys(conn)
+        ids, names, vecs = [], [], []
+        for face_id, person, blob, source, photo_id in faces.for_decided_matrix(conn):
+            if source != DECIDED and vocabulary.key(person) not in keywords.get(photo_id, ()):
+                continue
+            try:
+                vec = np.frombuffer(blob, dtype=np.float32)
+            except Exception:
                 continue
             norm = np.linalg.norm(vec)
             if norm == 0:

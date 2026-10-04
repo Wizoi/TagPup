@@ -218,9 +218,10 @@ def restore(library, face_ids):
 
 def automatch_photo(library, photo_path, named):
     """Name each unnamed face in a photo that closely resembles one named face.
-    Automatch on a photo. `named()` gives (ids, names, matrix) of every named face as
-    unit vectors -- the matrix TagTuner keeps -- and is asked only when there are faces
-    to match; a matrix of None names nobody.
+    Automatch on a photo. `named()` gives (ids, names, matrix) of the faces a person decided
+    as unit vectors (tagpup.services.identify.decided_faces) -- never one automatch or
+    clustering named that no keyword bears out, or a guess would be taken for a reference
+    -- and is asked only when there are faces to match; a matrix of None names nobody.
 
     `changed`: the faces named. details as _automatch's."""
     return _automatch(library, named, photo_path=photo_path)
