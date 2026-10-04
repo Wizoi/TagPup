@@ -19,8 +19,14 @@ moves it onto the new version only once the drain says it is done:
 - When nothing is in flight and nothing runs, it is drained, and the supervisor stops it.
   When the deadline passes first, it takes work again, and says what it waited for.
 
+Without the always-on process, a launcher of another version drains it the same way
+(tagpup.launcher), with the token this server wrote in its record (`launcher_token`), and
+only from this machine; drained, the launcher ends it and serves in its place.
+
 A server drained and never stopped -- its supervisor gone -- takes work again after
-LEFT_DRAINED. GET /api/server says which version answers, which the gear shows.
+LEFT_DRAINED. GET /api/server says which version answers, which the gear shows, and every
+response says it in X-TagPup-Version, by which a page left open learns that the server
+was replaced (web/common/api.js).
 """
 import hmac
 import logging
@@ -32,6 +38,7 @@ from flask import Blueprint, current_app, jsonify, request
 from tagpup.jobs import bulk_edits as bulk_edit_jobs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
+from tagpup import launcher
 from tagpup.services import libraries as library_actions
 from tagpup.supervisor import TOKEN_HEADER
 from tagpup.web import responses
@@ -106,17 +113,26 @@ def long_work():
     return found
 
 
+#: Where a launcher's drain may come from: this machine.
+LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+
+
 class Lifecycle:
     """One server process's: `version` (the installed version's name, or None from a
-    checkout), `token` (the supervisor's, or None), `background` (tagpup.runtime.
-    Background, stopped by a drain and started again by a resume), `work()` (long_work,
-    or a test's) and `clock`."""
+    checkout), `token` (the supervisor's, or None), `launcher_token` (the one in this
+    server's record, tagpup.launcher, or None), `background` (tagpup.runtime.Background,
+    stopped by a drain and started again by a resume), `work()` (long_work, or a test's)
+    and `clock`."""
 
-    def __init__(self, version=None, token=None, background=None, work=long_work, clock=time.monotonic):
+    def __init__(self, version=None, token=None, background=None, work=long_work, clock=time.monotonic,
+                 launcher_token=None):
         self.version = version
+        #: What X-TagPup-Version says: the version, or that it runs from a checkout.
+        self.version_label = version or launcher.FROM_A_CHECKOUT
         #: When this server started (seconds since the epoch): the Activity page's "running since".
         self.started = time.time()
         self._token = token or None
+        self._launcher_token = launcher_token or None
         self._background = background
         self._work = work
         self._clock = clock
@@ -150,6 +166,17 @@ class Lifecycle:
     def allows(self, token):
         """Is `token` the supervisor's?"""
         return self._token is not None and isinstance(token, str) and hmac.compare_digest(token, self._token)
+
+    def allows_launcher(self, token, remote):
+        """Is `token` the one in this server's record, sent from this machine (`remote`, the
+        request's address)? Another machine is refused whatever it sends."""
+        return (self._launcher_token is not None and remote in LOOPBACK and isinstance(token, str)
+                and hmac.compare_digest(token, self._launcher_token))
+
+    def authorizes(self, headers, remote):
+        """May a request with `headers` from `remote` drain or resume this server: the
+        supervisor's token, or a launcher's from this machine?"""
+        return self.allows(headers.get(TOKEN_HEADER)) or self.allows_launcher(headers.get(launcher.HEADER), remote)
 
     # ---- The gate every request passes ------------------------------------------------
 
@@ -262,6 +289,16 @@ class _Gate:
 
     def __call__(self, environ, start_response):
         path = environ.get("PATH_INFO") or "/"
+        label = (launcher.VERSION_HEADER, self.lifecycle.version_label)
+
+        def start_response_saying_the_version(status, headers, exc_info=None):
+            headers = [h for h in headers if h[0].lower() != label[0].lower()] + [label]
+            if exc_info is None:
+                return start_response(status, headers)
+            return start_response(status, headers, exc_info)
+        return self._call(environ, start_response_saying_the_version, path)
+
+    def _call(self, environ, start_response, path):
         if exempt(path):
             return self.app(environ, start_response)
         if not self.lifecycle._enter(only_watches(environ.get("REQUEST_METHOD", "GET"), path)):
@@ -328,10 +365,12 @@ def server_status():
 @routes.post(DRAIN)
 def drain():
     """Stop taking new work and let what is under way finish (Lifecycle.drain): the
-    supervisor's, before it moves the server onto a new version."""
+    supervisor's, before it moves the server onto a new version; or a launcher's on this
+    machine, before it serves another version in its place (tagpup.launcher)."""
     lifecycle = _lifecycle()
-    if not lifecycle.allows(request.headers.get(TOKEN_HEADER)):
-        return responses.error(403, "Only the process that started this server may drain it")
+    if not lifecycle.authorizes(request.headers, request.remote_addr):
+        return responses.error(403, "Only the process that started this server, or a launch on this machine, "
+                                    "may drain it")
     body = request.get_json(silent=True) or {}
     seconds = body.get("seconds", DRAIN_SECONDS)
     quiet = body.get("quiet", 0)
@@ -347,6 +386,6 @@ def drain():
 def resume():
     """Take work again after a drain (the supervisor's, when it could not move the server)."""
     lifecycle = _lifecycle()
-    if not lifecycle.allows(request.headers.get(TOKEN_HEADER)):
+    if not lifecycle.authorizes(request.headers, request.remote_addr):
         return responses.error(403, "Only the process that started this server may resume it")
     return jsonify({"success": True, "resumed": lifecycle.resume()})

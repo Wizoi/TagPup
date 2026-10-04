@@ -341,12 +341,30 @@ def bind(port, listen=LOCAL):
     raise OSError("could not find a port free on both 127.0.0.1 and ::1")
 
 
-def serve(apps, ready=None, threads=THREADS, listen=LOCAL):
+def bind_all(ports, listen=LOCAL):
+    """The listening sockets for every port of `ports`, in order: all of them, or none --
+    a port another holds closes the ones already bound, and raises. What a launcher binds
+    before it does anything else, so two launches at once do not both start a server
+    (tagpup.launcher)."""
+    sockets = []
+    try:
+        for port in ports:
+            sockets += bind(port, listen)
+    except BaseException:
+        for sock in sockets:
+            sock.close()
+        raise
+    return sockets
+
+
+def serve(apps, ready=None, threads=THREADS, listen=LOCAL, sockets=None):
     """Serve `apps` (port -> app) from this process until stopped, on this machine's
-    loopback addresses unless `listen` is LAN (bind). `ready()` is called once the ports
-    are bound and before the first request is answered: what opens the browser, since a
-    page opened before that has nothing to reach."""
-    sockets = [sock for port in apps for sock in bind(port, listen)]
+    loopback addresses unless `listen` is LAN (bind), or on `sockets` already bound
+    (bind_all). `ready()` is called once the ports are bound and before the first request
+    is answered: what opens the browser, since a page opened before that has nothing to
+    reach."""
+    if sockets is None:
+        sockets = bind_all(list(apps), listen)
     logger.info("Serving %s, %s", ", ".join("%s on port %d" % (app.config["APP_KIND"], port)
                                             for port, app in apps.items()),
                 "on this PC only" if listen == LOCAL else "on every interface")
