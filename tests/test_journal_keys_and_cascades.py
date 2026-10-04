@@ -113,7 +113,9 @@ class ANewLibrary(unittest.TestCase):
         self.assertEqual(set(), unknown, "deletes the journal would not see: say in journal.CASCADES what it does")
         for (parent, child), (column, how) in journal.CASCADES.items():
             self.assertIn(how, (journal.RECORDED, journal.REBUILT, journal.FORBIDDEN))
-            self.assertIn(column, self.primary[child] + [row[3] for row in self.foreign[child]],
+            # An FTS5 virtual table has no declared key: its rowid is the parent's id (tagpup.store.search_index).
+            virtual = self.sql[child].upper().startswith("CREATE VIRTUAL TABLE")
+            self.assertIn(column, self.primary[child] + [row[3] for row in self.foreign[child]] + (["rowid"] if virtual else []),
                           "%s.%s names no parent" % (child, column))
             if how == journal.REBUILT:
                 self.assertIn(child, journal.DERIVED, "only derived data is rebuilt: %s" % child)

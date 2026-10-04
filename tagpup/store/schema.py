@@ -760,6 +760,19 @@ def _person_ids(conn):
     person_ids.sync(conn)
 
 
+def _search_index(conn):
+    """The word index a search's words are matched in (tagpup.store.search_index; docs/ARCHITECTURE.md, phase 9e-1): two
+    contentless FTS5 tables -- `search_words` (the words of keywords, captions and people) and `search_names` (the file
+    name and its folders, by trigram) -- with the shadow tables FTS5 makes for each, and the trigger that takes a photo's
+    rows when the photo is deleted; filled from every photo's row and its listed people, in this transaction. Nothing
+    that was there changes: derived, never journaled, no backup. A crash leaves the library at 23 and the next open runs it
+    again (the CREATEs are in the transaction)."""
+    from tagpup.store import search_index   # the store imports this module
+    for statement in search_index.CREATE:
+        conn.execute(statement)
+    search_index.rebuild(conn)
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -767,8 +780,11 @@ RUNNER_TABLES = ("schema_version", "changes", "change_rows")
 
 #: Tables any migration may change and nothing records: the counters its triggers move
 #: (tagpup.store.generations) and each photo's people, derived and rebuilt
-#: (journal.DERIVED, which a test holds to this).
-UNWATCHED = ("generations", "photo_people", "photo_tags", "folders", "photo_folder", "photo_meta")
+#: (journal.DERIVED, which a test holds to this); and the word index's FTS5 tables and the shadow tables FTS5 keeps
+#: for them (tagpup.store.search_index), which SQLite writes and on a virtual one of which no trigger can be made.
+UNWATCHED = ("generations", "photo_people", "photo_tags", "folders", "photo_folder", "photo_meta",
+             "search_words", "search_names", "search_words_data", "search_words_idx", "search_words_docsize",
+             "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config")
 
 
 class CheckFailed(RuntimeError):
@@ -967,6 +983,16 @@ class PersonIdsAgree(Check):
         from tagpup.store import person_ids   # the store imports this module
         return ["%d row(s) of %s" % (found.rows, table) for table in person_ids.TABLES
                 for found in [person_ids.out_of_step(conn, table)] if found.rows]
+
+
+class SearchIndexAgrees(Check):
+    """The word index (tagpup.store.search_index) has a row for every photo and none other, and a sample of photos'
+    texts are found in their rows."""
+    name = "word index agrees with the photos"
+
+    def after(self, conn, migration, state):
+        from tagpup.store import search_index   # the store imports this module
+        return search_index.problems(conn)
 
 
 STANDARD = (ForeignKeys(), Integrity())
@@ -1299,6 +1325,12 @@ MIGRATIONS = (
               "so it touches none and blocks no undo",
               (),
               (RowsKept(),) + STANDARD),
+    Migration(24, "photos by their words", _search_index, ADDITIVE,
+              "adds the word index a search matches words in (search_words, search_names and their FTS5 shadow tables) "
+              "and the trigger that takes a deleted photo's rows of it, derived from the photos' rows; nothing that was "
+              "there changes",
+              ("search_words", "search_names"),
+              (RowsKept(), SearchIndexAgrees()) + STANDARD),
 )
 
 #: The columns a migration adds to a table the journal keys that the journal derives

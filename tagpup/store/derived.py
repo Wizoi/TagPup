@@ -28,12 +28,15 @@ made from the photos, never written by anything else, never journaled (journal.D
   does not say.
 
 Written by `rebuild_all` (migration 19, the doctor's repair) and by the writers of the photos'
-keywords, path and metadata in the SAME transaction as the write (`refresh_photos`, `record`), and
+keywords, path, metadata and captions in the SAME transaction as the write (`refresh_photos`, `record`), and
 by the tag tree's edits for the photos whose keywords a changed node names (`follow_tree`,
 `follow_nodes`). A delete of a photo, or of a node, takes its rows by a trigger whichever
 connection deletes it, as photo_people does; only the folders a delete emptied are left, and `prune`
 takes them. tests/test_derived_writers.py fails the build on a writer of a photo's tags, path or
 metadata that does not go through here.
+
+The word index a search's words are matched in (tagpup.store.search_index, migration 24) is kept from here too: every
+photo refreshed here has its rows of it made again, whatever of its rows changed (a caption is in no table of these four).
 
 The caller commits. Every function does nothing, and says 0, on a library that has not had
 migration 19 yet: the migrations before it write photos too.
@@ -43,7 +46,7 @@ import json
 import re
 
 from tagpup.core import paths, photo_meta, vocabulary
-from tagpup.store import db
+from tagpup.store import db, search_index
 from tagpup.store import roots as store_roots
 
 TABLES = ("photo_tags", "folders", "photo_folder", "photo_meta")
@@ -223,6 +226,9 @@ def _put(conn, states, batch, gone=()):
     pruned = prune(conn) if gone else prune(conn, left) if left else 0
     if pruned:
         batch.folders.clear()   # an id found before may be one pruned now
+    # The word index, for every photo asked about: its captions and people are in no table of these, so what changed
+    # here says nothing of whether its words did.
+    search_index.refresh(conn, list(states) + list(gone))
     return len(changed) + len(gone)
 
 
@@ -385,7 +391,10 @@ def rebuild_folders(conn):
     if not present(conn):
         return 0, 0
     placed = {photo_id: paths.row_parent(path) for photo_id, path in conn.execute("SELECT id, path FROM photos")}
-    return _write_folders(conn, placed, _wanted(set(folder for folder in placed.values() if folder is not None)))
+    written = _write_folders(conn, placed, _wanted(set(folder for folder in placed.values() if folder is not None)))
+    # Every path's spelling changed, so every photo's folders as the word index holds them (below the root, or the drive).
+    search_index.rebuild(conn)
+    return written
 
 
 def rebuild_all(conn):
@@ -412,8 +421,9 @@ def rebuild_all(conn):
     conn.executemany("INSERT INTO photo_meta (photo_id, rating, make, model, width, height, latitude, longitude)"
                      " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", meta_rows)
     folders, in_a_folder = _write_folders(conn, placed, _wanted(set(f for f in placed.values() if f is not None)))
+    words = search_index.rebuild(conn)
     return {"photos": len(placed), "tag_rows": len(tag_rows), "folders": folders, "in_a_folder": in_a_folder,
-            "meta_rows": len(meta_rows)}
+            "meta_rows": len(meta_rows), "word_rows": words}
 
 
 def listing(conn, photo_ids, node_ids=()):
@@ -522,11 +532,11 @@ def problems(conn):
                      "%d holding no photo)" % (len(photos), len(folders), missing, len(strays)))
     if meta:
         found.append("%d photo(s) have metadata rows that are not what their raw metadata gives" % len(meta))
-    return found
+    return found + search_index.problems(conn)
 
 
 def repair(db_path):
-    """Make the four tables what the photos say, in one write under the library's write lock, and
+    """Make the four tables, and the word index, what the photos say, in one write under the library's write lock, and
     verify it. Returns (what was wrong before, as problems() says it, what rebuild_all wrote,
     what is wrong after: [] when it worked). Derived rows only: no photo, tag or file is touched,
     so no backup is taken."""

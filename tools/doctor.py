@@ -37,7 +37,7 @@ sys.path.insert(0, ROOT)
 from tagpup import runtime  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.store import checks, db, derived, embeddings, person_ids, schema  # noqa: E402
+from tagpup.store import checks, db, derived, embeddings, person_ids, schema, search_index  # noqa: E402
 
 
 def report(db_path, show=0, out=print):
@@ -67,6 +67,7 @@ def report(db_path, show=0, out=print):
         unnamed = checks.tags_without_a_node(conn)
         empty = checks.empty_folders(conn)
         nameless = checks.names_without_a_person(conn)
+        words = search_index.present(conn)
     finally:
         conn.close()
 
@@ -81,6 +82,8 @@ def report(db_path, show=0, out=print):
             for example in check.examples[:show]:
                 out("    %s" % example)
     out("")
+    if words:
+        out(search_index.LIMITS + " (#752).")
     if unplaced:
         out("this machine does not say where the library's roots are, so its photos' paths cannot be read "
             "(what needs them is not reported): %s" % unplaced)

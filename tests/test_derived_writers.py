@@ -29,8 +29,9 @@ PHOTO_WRITE = re.compile(r"\b(?:UPDATE\s+photos\s+SET\s+(?P<set>(?:(?!\bWHERE\b)
                          r"|DELETE\s+FROM\s+photos\b|REPLACE\s+INTO\s+photos\b)", re.I)
 TREE_WRITE = re.compile(r"\b(?:UPDATE\s+tag_taxonomy\s+SET|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+tag_taxonomy\b"
                         r"|DELETE\s+FROM\s+tag_taxonomy\b)", re.I)
-#: The columns of `photos` the tables are derived from.
-DERIVED_FROM = ("tags", "path", "raw_metadata")
+#: The columns of `photos` the tables are derived from (captions: the word index, tagpup.store.search_index, kept from
+#: tagpup.store.derived).
+DERIVED_FROM = ("tags", "path", "raw_metadata", "captions")
 
 #: (module, function) that write the rows and say so, with the function that makes up for it.
 PHOTO_WRITERS_COVERED_ELSEWHERE = {
@@ -124,6 +125,7 @@ class DerivedTablesAreKeptByTheirWriters(unittest.TestCase):
             self.assertIn(known, found)
         self.assertIn("add_path", {name for _module, name, _node in self.tree})
         self.assertTrue(writes_photos("UPDATE photos SET tags = ?, raw_metadata = ? WHERE id = ?"))
+        self.assertTrue(writes_photos("UPDATE photos SET captions = ? WHERE id = ?"))
         self.assertTrue(writes_photos("UPDATE photos SET %s WHERE id = ?"))
         self.assertTrue(writes_photos("INSERT INTO photos (path) VALUES (?)"))
         self.assertTrue(writes_photos("DELETE FROM photos WHERE path = ?"))

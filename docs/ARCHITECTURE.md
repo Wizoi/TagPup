@@ -936,7 +936,8 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
 - **9d. Editing from a library view.** *(9d-1, the server's half -- bulk edits by photo id as a job, a selection's tally -- built 2026-10-03, see "Phase 9d-1" below; 9d-2, the page: the selection by id, the edits through the job, the strip and the tally, built 2026-10-03, see "Phase 9d-2" below.)* Bulk edits on a selection that spans folders,
   through the same journaled writes (History lists and undoes them); a file changed
   outside while an edit is planned is a conflict for sync to settle, never overwritten.
-- **9e. Search.** A search is a source: *all of* these tags or people, *any of* those,
+- **9e. Search.** *(9e-1, the server's half -- a search as a source, migration 24's word index -- built 2026-10-04, see "Phase
+  9e-1" below; 9e-2, the page, to come.)* A search is a source: *all of* these tags or people, *any of* those,
   *none of* these, and words matched against file name, tags, captions and people (as
   Photo Gallery's search box did), optionally within the folder, tag or date the
   navigator has selected. Built on `photo_tags` and `photo_people` as set operations in
@@ -2176,6 +2177,113 @@ folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Or
 - **Found on the way.** The page token was refused over 400 characters, and an order by name's token holds the file name in JSON, six
   characters for each one that is not ASCII: the page after a photo named with some 50 Cyrillic or Greek letters could not be asked for.
   `MAX_TOKEN` is 5,000. No name on the live libraries came near 400 (counted).
+
+### Phase 9e-1: search on the server *(built 2026-10-04; migration 24; branch `arch/phase-9e1-search`)*
+Server and store only; the page's search box and picker are 9e-2's, and this is the contract they use.
+
+- **A search is a source** (`library_view.source_of`, kind `search`): `{"kind": "search", "value": {"all_of": [source], "any_of":
+  [source], "none_of": [source], "words": "text"}}`, every part optional, another part refused (a misspelt `none_of` would
+  otherwise be a search for more). The lists hold sources of the kinds a union holds (`all`, `folder`, `keyword`, `keyword_only`,
+  `person`, `year`, `month`, `year_other`), at most 1,000 each. **One statement** over `photos p` (`store._search_scope`), the AND
+  -- a balanced tree, as the union's OR is -- of: the `any_of` union's clause (`_union_scope`, unchanged); each `all_of` member's
+  own clause (its Scope's where; a folder alone by `photo_folder`); `NOT IFNULL((<none_of union>), 0)`; and the words. So Select
+  all, ranges, the tally, every bulk edit and the strip take it unchanged, and Delete's token (#691) refuses a search whose photos
+  changed between the question and the start (a test). Keyset paging in every order is the source's: `Scope.ranged` is set, so in
+  an order by name or caption the name or caption index is walked when the search holds more than 1/16 of the library (counted,
+  #722) and left to SQLite to read and sort when it holds less.
+- **Decided: "within" is an `all_of` member.** The navigator's selection is a union; a union in `all_of` is ONE member (its photos
+  ANDed with the rest), while a union in `any_of` or `none_of` is its sources (an OR in an OR). "Three family members and not a
+  fourth within July of these years" is `all_of: [{any_of: [twelve Julys]}, A, B, C], none_of: [D]`.
+- **Decided: a person is by name**, as the person source, the navigator's People and the tally read one in identity stage 1 --
+  `photo_people.name` compared without case. By `tag_id` a name no person node is called, one on a branch (#660) or one two nodes
+  share has NULL and would be found by nothing (photo_index's `photo_people`: 4, 4 and 1 such names); stage 2 moves every read to
+  the id at once. A person on a branch tag is found as the navigator's row of that name finds them (a test). A keyword member is by
+  the tree's node, `keyword` with everything under it and `keyword_only` the node alone, as the sources are.
+- **Decided: a search that says no more than a source is that source**, as a union of one is: no part is `all`, `any_of` alone its
+  union, one `all_of` member alone that member; the reply's `source` says which. `none_of` keeps a photo with no date (NOT of a
+  month's comparison is NULL, which would have dropped it: the IFNULL; a test). A member naming nothing (a keyword with no node, a
+  person nobody is) makes `all_of` or `any_of` hold nothing and takes nothing from `none_of`; `none_of: [all]` holds nothing.
+- **Words: two contentless FTS5 tables, migration 24** (`tagpup.store.search_index`; docs/DATABASE.md 25 and 26):
+  `search_words(tags, captions, people)`, `unicode61 remove_diacritics 2`, prefixes 2 and 3 -- each keyword as the row holds it
+  (path and leaf: "People/Élodie Marchetti" gives people, elodie, marchetti; a keyword with no node is found by its words), the
+  captions and titles, and the names `photo_people` lists (faces too, by the leaf rule) --; and `search_names(name, folders)`,
+  `trigram remove_diacritics 1`, the file name and its folders: **every folder below the root of a root-relative row, the root's
+  name never a word; of a native row only its own folder** (*decided*: above it are the machine's layout -- drive, "Users", the
+  profile, "Pictures" -- whose words every photo would match: renton_parkrun's 1,150 rows are all native and five folders
+  deep, counted; photo_index's and kr-track's are all root-relative). `content=''`,
+  `contentless_delete=1`, rowid the photo's id: a row is replaced by INSERT OR REPLACE and taken by its id; a photo deleted on any
+  connection takes its rows by the trigger `search_goes_with_its_photo`. **Each typed term** (split at blanks, at most 20, at most
+  500 characters in all) is quoted, its quotes doubled -- AND, OR, NOT, NEAR, `*`, `^`, `"`, `:`, `(`, `)`, `-` are text -- and is
+  found when the words table matches it as a prefix phrase (`"term"*`: every term a prefix, decided, so "beach" finds "beaches"
+  and a word being typed finds as it is typed) or, from three characters, the names table holds it (`"term"`: "0412" inside
+  "20190412_1430.jpg"); the terms are ANDed with each other and with the sources, a set, never ranked. A term of no letter or digit
+  and under three characters says nothing and is dropped. A library below migration 24 answers a search of words `503` with
+  `Retry-After: 5` and "The word index is being made now; try again in a few seconds." (`WordIndexComing`, #753): the server
+  brings every library it serves up to date as it starts and as a request first names it, so such a library's migration is under
+  way (the startup thread, about 4 s on photo_index; another program holding it) or due. One at 24 without the tables (dropped by
+  hand) is `400` (`NoWordIndex`).
+- **Kept by the store's writes, in their transactions**: `derived._put` refreshes the word rows of every photo it is asked about
+  (the index's record, the bulk tag writes, sync, moves and renames, `ensure_row`, `follow_nodes`, the journal's `_derive`);
+  `people.rebuild` of the photos whose people it wrote (a face named or unnamed, a tree edit that changes who is a person, a rename
+  of a person); `derived.rebuild_all` and the adoption's `rebuild_folders` rebuild them whole. Captions joined the columns the
+  derived data comes from: `tests/test_derived_writers.py` now fails a writer of `photos.captions` that does not go through
+  `derived` (`set_captions`, which nothing calls, does now), and the journal's undo of a caption refreshes the photo
+  (`_touched`). A tree rename changes no word: the words are the keyword as the file holds it, which TagTuner rewrites one
+  transaction after the tree's -- until then the old words find the photo and the new do not (a test), as its keyword rows name no
+  node meanwhile.
+- **The doctor**: `search_index_out_of_date` (in `checks.RULES`): every photo with no row, every row of no photo, and of 500
+  photos spread over the ids those whose texts, each column matched as one phrase, are not found in their row (a contentless table
+  cannot be read back, so a word left behind is not seen by the sample). The report says so beside the rules, with the remedy
+  (`search_index.LIMITS`, #752): an older checkout writing a library at 24 never refreshes the index, and a word it leaves behind
+  is found only by `--rebuild-derived --apply`. `tools/doctor.py --rebuild-derived --apply` rebuilds it
+  with the derived tables. Migration 24 runs the same check before it commits. On real rows the phrase check needed one fix found
+  by running it: 255 of photo_index's photos have captions with no letter or digit (a lone dash), which no phrase matches; with
+  it, every one of its 68,324 photos passes (counted on an in-memory copy of its rows).
+- **#464, checked by hand.** Migration 24 declares `touches` = the two virtual tables; FTS5 also makes eight shadow tables
+  (`_data`, `_idx`, `_docsize`, `_config` of each), and the migration adds the trigger on `photos` (as migration 19's
+  `derived_go_with_their_photo`). A test holds that 24 adds exactly those ten tables and that trigger -- no column, no index --
+  that every row of every table that was there is unchanged, and that a change journaled at 23 is still undoable after it and is
+  undone. All ten are in `schema.UNWATCHED` (a later migration's watch cannot make a trigger on a virtual table) and the two
+  virtual ones in `journal.DERIVED`. Interrupted, the migration leaves the library at 23 with none of them, and runs again on the
+  next open (a test).
+- **#751: a search's members are read once.** `all_of` resolved each person through a pass of `photo_people`'s names and each
+  keyword not spelled as a node through a read of the tree; one `_Reads` per statement now serves the `any_of` union, every
+  `all_of` member and `none_of` (a test counts the reads). photo_index, read-only, the id list: all_of 100 people 310 -> 75 ms,
+  3 people 56 -> 55 ms.
+- **Measured** on a sandbox copy of photo_index (68,324 photos, its own TAGPUP_HOME, roots placed in the sandbox, deleted
+  afterwards), in-process through `tagpup.services.library_view` (the route's work less Flask and JSON), medians of five:
+  **migration 24 through `schema.ensure` 4.3 s** (a copy just written, cold), of which the backfill is 2.0 s warm and its check
+  (counts and 500 phrases) 1.1 s; it runs in the server's startup thread, as every migration since #661 does. The file grows
+  36.6 MB (the words' index 8.5 MB, the trigrams' 21.4 MB). The writes, with and without the word index (rolled back): a bulk
+  chunk of 25 refreshed 2 ms either way; 2,000 photos refreshed (a folder renamed) 54 ms without, 75 ms with; `people.rebuild` of
+  5,000 that changes nothing 89 against 100 ms; the 2,000-photo follow of `test_derived_batches` holds the lock 0.70 s without and
+  0.89 to 0.92 s with (its limit is 2.5 s). Searches, ids / first page of 200 with its count, ms, the six orders' range:
+  all_of 3 tags (6 photos) 12-20 / 16-27; any_of 2 people less a tag (22,373) 81-164 / 91-155; none_of 1 tag (65,099) 57-91 /
+  29-79; a common caption word alone (10,433) 49-74 / 52-64; a rarer word (396) 11-21 / 14-28; two words (9,120) 59-107 /
+  77-138; a common word within a year (57) 16-43 / 24-49. Select all of the 65,099-photo search: resolved (a bulk edit's list)
+  105 ms, tallied 416 ms; of the 10,433-photo word, resolved 50 ms. The structured searches' plans on photo_index itself
+  (read-only): a person's photos `SEARCH p USING INTEGER PRIMARY KEY` from the name index and a temp b-tree for the order; all_of
+  a tag and a year `SEARCH p USING COVERING INDEX idx_photos_year (year=?)`; none_of a tag the date index walked
+  (`idx_photos_taken (taken>?)`), by name `SCAN p USING INDEX idx_photos_name`, nothing sorted; words `SCAN search_words VIRTUAL
+  TABLE INDEX 0:M3` (FTS5's own index) as a list, then the photos by key, as `MULTI-INDEX OR` of the two tables for each term.
+- **The contract for 9e-2.** The request is the source above: a `GET /api/library/ids?kind=search&value=<the value as JSON
+  text>&order=` or, as the page sends every union, a `POST` of `{"kind": "search", "value": {...}, "order"}` (and the same for
+  `/view` with `after` and `limit`); a selection's source is `{"kind": "search", "value": {...}}` (an object or its JSON text), the
+  tally, the bulk start and delete-check take it unchanged. **The page's address** for a search is
+  `?view=search&value=<encodeURIComponent(JSON of the value)>&order=<order>`, as a union's is `?view=any_of&value=...`; the value's
+  parts in the order `all_of`, `any_of`, `none_of`, `words`, empty parts left out, so one search has one address (the page's own
+  `sameSource` compares them); within what the navigator has selected is `all_of: [state.nav.followed]` (a union, or the one source
+  it is). `MAX_ADDRESS` (100,000 characters) refuses a longer one with a sentence, as for a union. The picker sends names and tags
+  as the navigator does: a person `{"kind": "person", "value": <name>}`, a tag `{"kind": "keyword", "value": <tag path>}` (with
+  everything under it; `keyword_only` for the node alone). The reply's `source` may be another kind (a search that says no more
+  than a source); the page keeps the address it asked by. `400` sentences: a part not known, a list over 1,000, more than 20 terms
+  or 500 characters of words, a search in a search. **`503` with `Retry-After`** (#753) while the word index is being made: the
+  page shows the sentence and asks again after `Retry-After` seconds, a few times (a migration that fails keeps answering it;
+  after about a minute the page leaves the sentence and stops asking).
+- **Known limits.** A term is matched within one column of one table: "rowan coast" is two terms, each found anywhere, but a
+  quoted phrase typed as one term ("rowan_coast") must be in one column. Camera make
+  and model and the author are not words yet (the owner's call). The words of a photo's people are the names as `photo_people`
+  holds them, so a rename shows in a search as it shows in the navigator. CLIP (semantic) search is not 9e.
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag

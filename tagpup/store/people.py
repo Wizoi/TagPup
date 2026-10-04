@@ -20,7 +20,7 @@ import os
 
 from tagpup.core import vocabulary
 from tagpup.store import roots as store_roots
-from tagpup.store import db, derived, person_ids
+from tagpup.store import db, derived, person_ids, search_index
 
 #: A photo's people as a JSON list, in order, for a query whose photos are `p`: what
 #: `photos.people` held, so every reader gets the shape it always had.
@@ -91,6 +91,8 @@ def rebuild(conn, photo_ids=None, known=None, ids=None):
     # Only the rows written can be without their id: a tree edit gives every other its new one
     # (tree_edit), and reading the tree for each of 5,000 one-photo rebuilds would cost them.
     person_ids.follow_listed(conn, None if photo_ids is None else written, ids)
+    # The people are words a search finds (tagpup.store.search_index): of the photos whose people changed.
+    search_index.refresh(conn, written)
     return len(written)
 
 

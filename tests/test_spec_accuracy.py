@@ -169,6 +169,12 @@ class TestSpecDatabaseSchemaMatchesCode(unittest.TestCase):
                 tables = [name for (name,) in conn.execute(
                     "SELECT name FROM sqlite_master WHERE type = 'table'"
                     " AND name NOT LIKE 'sqlite_%'")]
+                # The shadow tables FTS5 keeps for a virtual table are its, not the library's: the virtual table's section
+                # names them (DATABASE.md, search_words).
+                virtual = [name for (name,) in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL TABLE%'")]
+                tables = [table for table in tables if not any(
+                    table == "%s_%s" % (each, shadow) for each in virtual for shadow in ("data", "idx", "docsize", "config", "content"))]
                 cls.columns = {table: {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)}
                                for table in tables}
             finally:

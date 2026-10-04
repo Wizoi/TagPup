@@ -5,7 +5,8 @@ A SOURCE says which photos: all of them; a folder -- by its path, never an id --
 subfolders; a keyword and everything under it, or its node alone (`keyword_only`); a person; a year; the
 photos of a year whose date names no month of it (`year_other`); a month; or ANY OF a list of those (a
 union: the rows a person selected in the navigator, phase 9 #672 -- one statement, a photo in two of
-them once). Every source is ordered by when the photo was taken and then by id, those with no date at
+them once); or a SEARCH (phase 9e): the photos in ALL OF a list of sources, ANY OF another and NONE OF a third, and
+-- once the library has its word index -- matching the words typed, again one statement. Every source is ordered by when the photo was taken and then by id, those with no date at
 the end (by id), unless another order is asked (ORDERS: Date Taken, file name or caption, either way), and
 paged by a KEYSET -- the (taken, id) of the last photo of the page before -- never by OFFSET, so a page costs
 what a page costs however far down it is, and a photo added, taken away or re-dated between two pages
@@ -27,7 +28,8 @@ import collections
 import time
 
 from tagpup.core import paths, vocabulary
-from tagpup.store import damaged_files, db, derived, person_ids
+from tagpup.core.result import Refused
+from tagpup.store import damaged_files, db, derived, person_ids, schema, search_index
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -39,9 +41,12 @@ KEYWORD_ONLY, YEAR_OTHER = "keyword_only", "year_other"
 #: A union: the photos of any of a list of the sources above (Source.value is a tuple of them, none of them a union).
 #: Phase 9e's search extends it: its `any_of` is this list (docs/ARCHITECTURE.md, phase 9 review, #672).
 ANY_OF = "any_of"
-KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER, ANY_OF)
+#: A search (phase 9e): Source.value is a Search. Its lists hold sources of the kinds a union may hold, and its `all_of` a
+#: union too (the navigator's selection, "within" which the search looks: docs/ARCHITECTURE.md, phase 9e-1).
+SEARCH = "search"
+KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER, ANY_OF, SEARCH)
 #: The kinds a union may hold.
-MEMBER_KINDS = KINDS[:-1]
+MEMBER_KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER)
 #: The kinds whose photos are a range of another index of photos (Scope.ranged): a union of only these is one too.
 RANGED = (YEAR, MONTH, YEAR_OTHER)
 
@@ -49,6 +54,31 @@ RANGED = (YEAR, MONTH, YEAR_OTHER)
 #: name, a year as an integer, a month as "YYYY-MM", a union's tuple of Sources; None for all -- and, for a folder,
 #: whether its subfolders are in.
 Source = collections.namedtuple("Source", "kind value recursive", defaults=(None, False))
+
+#: What a search asks (Source.value of a SEARCH): the photos in every source of `all_of` (each a member kind or a union),
+#: in at least one of `any_of` (none: no such condition), in none of `none_of`, and -- `words`, text, "" for none --
+#: matching every word typed. Tuples, so a Source holding one is hashable as a union's members are.
+Search = collections.namedtuple("Search", "all_of any_of none_of words", defaults=((), (), (), ""))
+
+
+class NoWordIndex(Refused):
+    """A search asked for words of a library at the version that makes the word index and without it (its tables dropped
+    by hand): refused with a sentence, wherever the search is read -- a page, the ids, a selection, a bulk edit."""
+
+    def __init__(self, sentence=None):
+        super().__init__(sentence or "This library has no word index, though it is at the version that makes one: search "
+                                     "by tags, people, folders and dates.")
+
+
+class WordIndexComing(NoWordIndex):
+    """A search asked for words of a library below migration 24 (#753). The server brings every library it serves up to
+    date as it starts and as a request first names it, so such a library is one whose migration is under way -- the
+    startup thread, or another program, holds it -- or due: the web layer answers 503 with Retry-After, and the page asks
+    again (docs/ARCHITECTURE.md, phase 9e-1, the contract for 9e-2)."""
+
+    def __init__(self):
+        super().__init__("The word index is being made now; try again in a few seconds. Searching by tags, people, "
+                         "folders and dates works meanwhile.")
 
 #: Where a page begins and after what: (phase, taken, id). Phase 0 holds the photos with a date, ordered by
 #: (taken, id); phase 1 those with none, ordered by id (taken is None). None begins at the start. In an order by name
@@ -151,11 +181,119 @@ def _any(clauses):
     return "(%s OR %s)" % (left[0], right[0]), tuple(left[1]) + tuple(right[1])
 
 
+def _every(clauses):
+    """(SQL, params) true when every one of `clauses` -- [(SQL, params)] -- is: AND'd as a balanced tree, as _any OR's them
+    (a search of 1,000 sources ANDs as many)."""
+    if len(clauses) == 1:
+        return clauses[0]
+    middle = len(clauses) // 2
+    left, right = _every(clauses[:middle]), _every(clauses[middle:])
+    return "(%s AND %s)" % (left[0], right[0]), tuple(left[1]) + tuple(right[1])
+
+
 def _marks(items):
     return ",".join("?" * len(items))
 
 
-def _union_scope(conn, members):
+def _words_clause(conn, words):
+    """(SQL over `p`, params) of the photos holding every term of `words` (tagpup.store.search_index.clause: a set, never
+    ranked), or None when no term says anything; NoWordIndex for a library without the index (before migration 24)."""
+    if not search_index.present(conn):
+        if schema.version(conn) < search_index.MIGRATION:
+            raise WordIndexComing()
+        raise NoWordIndex()
+    return search_index.clause(words)
+
+
+class _Reads:
+    """What resolving the members of one source reads once however many members name it (#751): the names photo_people
+    holds, by vocabulary.key (one pass of its name index), the tag tree's nodes (read only when a keyword is not spelled
+    exactly as a node is), and the folders' parent ids. One for each statement a source is compiled into, never kept."""
+
+    def __init__(self, conn):
+        self.conn = conn
+        self._spelled = self._nodes = self._children = None
+
+    def spellings(self, name):
+        if self._spelled is None:
+            self._spelled = collections.defaultdict(list)
+            for (held,) in self.conn.execute("SELECT DISTINCT name FROM photo_people"):
+                self._spelled[vocabulary.key(held)].append(held)
+        return list(self._spelled.get(vocabulary.key(name), ()))
+
+    def tag(self, tag):
+        if self.conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone():
+            return tag
+        if self._nodes is None:
+            nodes = self.conn.execute("SELECT id, tag FROM tag_taxonomy").fetchall()
+            self._nodes = (derived.Tree(nodes), dict(nodes))
+        tree, tag_of = self._nodes
+        found = tree.find(tag)
+        return tag_of.get(found, tag) if found is not None else tag
+
+    def children(self):
+        if self._children is None:
+            self._children = collections.defaultdict(list)
+            for folder_id, parent_id in self.conn.execute("SELECT id, parent_id FROM folders"):
+                self._children[parent_id].append(folder_id)
+        return self._children
+
+
+def _member_clause(conn, member, reads):
+    """(SQL over `p`, params, the member's Scope) of the photos of one source of a search, or None when it holds none: a
+    union's own clause, a folder alone by photo_folder, every other kind the where its own Scope reads it by."""
+    if member.kind == FOLDER and not member.recursive:
+        scope = _union_scope(conn, (member,), reads)
+    else:
+        scope = _scope(conn, member, reads)
+    if scope is None:
+        return None
+    if scope.from_ != "photos p":
+        raise ValueError("a search's member is read over photos p, not %r" % (scope.from_,))
+    return "(%s)" % scope.where, tuple(scope.params), scope
+
+
+def _search_scope(conn, search, reads):
+    """The Scope of a search: ONE where-clause over `photos p`, the AND of its parts -- the union of `any_of` (_union_scope's
+    clause), each member of `all_of` (its own clause: an AND of gathered INs would be "any"), NOT the union of `none_of`,
+    and the words -- so a photo is one row and the count counts it once. None when it can hold nothing: `any_of` or a
+    member of `all_of` holds nothing, or `none_of` holds every photo. No part at all is every photo.
+
+    NOT is of the clause's truth, NULL taken as false: a photo with no date is in none of the months of `none_of`, so it is
+    kept, where NOT of the bare comparison would be NULL and drop it.
+
+    `ranged` is always set: whether the name or caption index is walked for it is decided by counting it (_walks), since
+    an AND of a small list and the whole library is either a handful or most of it."""
+    parts, dated = [], False
+    if search.any_of:
+        scope = _union_scope(conn, search.any_of, reads)
+        if scope is None:
+            return None
+        parts.append(("(%s)" % scope.where, tuple(scope.params)))
+        dated = dated or scope.dated
+    for member in search.all_of:
+        if member.kind == ALL:
+            continue
+        found = _member_clause(conn, member, reads)
+        if found is None:
+            return None
+        parts.append(found[:2])
+        dated = dated or found[2].dated
+    if search.none_of:
+        if any(member.kind == ALL for member in search.none_of):
+            return None
+        scope = _union_scope(conn, search.none_of, reads)
+        if scope is not None:
+            parts.append(("NOT IFNULL((%s), 0)" % scope.where, tuple(scope.params)))
+    if search.words:
+        words = _words_clause(conn, search.words)
+        if words is not None:
+            parts.append(words)
+    where, params = _every(parts) if parts else ("1", ())
+    return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), dated, True)
+
+
+def _union_scope(conn, members, reads=None):
     """The Scope of the union of `members`: ONE where-clause over `photos p`, so a photo in two of them is one row and the
     count counts it once. The members are gathered by kind -- the folders' ids (a folder with its subfolders is its own and
     every folder under it, by the tree's parent ids), the tag tree's node ids, the people's spellings, the years -- each
@@ -166,9 +304,9 @@ def _union_scope(conn, members):
     range of photos.path: the two agree while the derived tables are in step with the photos (the doctor checks them; #698)."""
     if any(member.kind == ALL for member in members):
         return _scope(conn, Source(ALL))
+    reads = reads or _Reads(conn)
     folder_ids, tag_ids, names, years, clauses = set(), set(), set(), set(), []
     walked = set()   # the folders whose subfolders are in: apart from folder_ids, so a folder named alone first is still walked (#695)
-    folders = spelled = None
     for member in members:
         kind = member.kind
         if kind == FOLDER:
@@ -178,10 +316,7 @@ def _union_scope(conn, members):
                 continue
             folder_ids.add(row[0])
             if member.recursive:
-                if folders is None:
-                    folders = collections.defaultdict(list)
-                    for folder_id, parent_id in conn.execute("SELECT id, parent_id FROM folders"):
-                        folders[parent_id].append(folder_id)
+                folders = reads.children()
                 below = [row[0]]
                 while below:
                     folder_id = below.pop()
@@ -190,15 +325,11 @@ def _union_scope(conn, members):
                         folder_ids.add(folder_id)
                         below.extend(folders.get(folder_id, ()))
         elif kind in (KEYWORD, KEYWORD_ONLY):
-            tag = resolve_tag(conn, member.value)
+            tag = reads.tag(member.value)
             sql, params = derived.under(tag) if kind == KEYWORD else ("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag,))
             tag_ids.update(node_id for (node_id,) in conn.execute(sql, params))
         elif kind == PERSON:
-            if spelled is None:
-                spelled = collections.defaultdict(list)
-                for (held,) in conn.execute("SELECT DISTINCT name FROM photo_people"):
-                    spelled[vocabulary.key(held)].append(held)
-            names.update(spelled.get(vocabulary.key(member.value), ()))
+            names.update(reads.spellings(member.value))
         elif kind == YEAR:
             years.add(int(member.value))
         elif kind == MONTH:
@@ -224,19 +355,22 @@ def _union_scope(conn, members):
     return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), dated, ranged)
 
 
-def _scope(conn, source):
+def _scope(conn, source, reads=None):
     """The Scope of `source`; None for a source that holds none whatever is asked (a folder the library has no
     row of, a person nobody is called)."""
     kind = source.kind
     if kind == ALL:
         return Scope("photos p", "1", (), ("SELECT COUNT(*) FROM photos", ()))
+    reads = reads or _Reads(conn)
     if kind == ANY_OF:
-        return _union_scope(conn, source.value)
+        return _union_scope(conn, source.value, reads)
+    if kind == SEARCH:
+        return _search_scope(conn, source.value, reads)
     if kind == YEAR_OTHER:
         where, params = _year_other(int(source.value))
         return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), ranged=True)
     if kind == KEYWORD_ONLY:
-        tag = (resolve_tag(conn, source.value),)
+        tag = (reads.tag(source.value),)
         inner = "SELECT photo_id FROM photo_tags WHERE tag_id IN (SELECT id FROM tag_taxonomy WHERE tag = ?)"
         return Scope("photos p", "p.id IN (%s)" % inner, tag, ("SELECT COUNT(DISTINCT photo_id) FROM (%s)" % inner, tag))
     if kind == YEAR:
@@ -257,13 +391,13 @@ def _scope(conn, source):
         return Scope("photo_folder pf JOIN photos p ON p.id = pf.photo_id", "pf.folder_id = ?", (row[0],),
                      ("SELECT COUNT(*) FROM photo_folder WHERE folder_id = ?", (row[0],)))
     if kind == KEYWORD:
-        sql, params = derived.under(resolve_tag(conn, source.value))
+        sql, params = derived.under(reads.tag(source.value))
         # IN, not a join: a photo holding two tags under the keyword is one row, and the plan seeks
         # photo_tags's covering index once for each node and the photo by its primary key.
         return Scope("photos p", "p.id IN (SELECT photo_id FROM photo_tags WHERE tag_id IN (%s))" % sql, params,
                      ("SELECT COUNT(DISTINCT photo_id) FROM photo_tags WHERE tag_id IN (%s)" % sql, params))
     if kind == PERSON:
-        names = spellings(conn, source.value)
+        names = reads.spellings(source.value)
         if not names:
             return None
         marks = ",".join("?" * len(names))
@@ -277,18 +411,13 @@ def resolve_tag(conn, tag):
     it is without case and with its segments trimmed, as photo_tags ties a photo's keywords to nodes
     (derived.Tree: the lowest id when two differ only in case); `tag` as typed when there is none, which holds
     nothing."""
-    if conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone():
-        return tag
-    nodes = conn.execute("SELECT id, tag FROM tag_taxonomy").fetchall()
-    found = derived.Tree(nodes).find(tag)
-    return next((node_tag for node_id, node_tag in nodes if node_id == found), tag)
+    return _Reads(conn).tag(tag)
 
 
 def spellings(conn, name):
     """The names `photo_people` holds that are `name` -- the same person without regard to case -- as it holds
     them: usually one. One pass of the name index (400 names on photo_index: 4 ms)."""
-    wanted = vocabulary.key(name)
-    return [held for (held,) in conn.execute("SELECT DISTINCT name FROM photo_people") if vocabulary.key(held) == wanted]
+    return _Reads(conn).spellings(name)
 
 
 #: The largest id a photo can have, and one more: the start of a descending read of ids.
