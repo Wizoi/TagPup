@@ -286,18 +286,16 @@
                 <!-- Folder View Content -->
                 <div class="folder-view-content hidden" id="folder-view-content">
                     <div class="folder-view-main" id="folder-view-main">
-                        <!-- Which view of the library is open, how many photos it holds, and the way back
-                             (web/tagpup/library-view.js). Shown only while one is. -->
+                        <!-- Which view of the library is open and how many photos it holds, in one small line, and Refresh view
+                             (web/tagpup/library-view.js). When the library was last in step is said only when something is wrong
+                             (sync-state.js, #670). Shown only while a view is open. -->
                         <div id="library-strip" class="library-strip hidden" role="status">
                             <strong id="library-strip-source" class="library-strip-source"></strong>
                             <span id="library-strip-total" class="folder-stats-badge"></span>
                             <span id="library-strip-status" class="library-strip-status"></span>
                             <span id="library-strip-sync" class="library-strip-sync"></span>
                             <span class="library-strip-actions">
-                                <button id="btn-library-scope" class="btn btn-secondary btn-sm hidden" title="Show only the photos directly in this folder, or its subfolders' too">This folder only</button>
-                                <button id="btn-show-on-disk" class="btn btn-secondary btn-sm hidden" title="Open this folder on disk, as a folder view: the files themselves are read">Show on disk</button>
                                 <button id="btn-library-refresh" class="btn btn-secondary btn-sm" title="Ask the library for this view's photos again; the place in the view is kept">Refresh view</button>
-                                <a id="library-strip-back" class="library-strip-back" href="#">Back to folder view</a>
                             </span>
                         </div>
                         <!-- The disk holds photos of this folder the library does not (web/tagpup/library-moves.js). -->

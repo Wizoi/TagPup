@@ -137,8 +137,6 @@ export const sidebarPaneFolder = document.getElementById('sidebar-pane-folder');
 
 // Moving between a folder and its view of the library (library-moves.js), and when the library was last in step (sync-state.js)
 export const btnShowInLibrary = document.getElementById('btn-show-in-library');
-export const btnShowOnDisk = document.getElementById('btn-show-on-disk');
-export const btnLibraryScope = document.getElementById('btn-library-scope');
 export const libraryStripSync = document.getElementById('library-strip-sync');
 export const movesBanner = document.getElementById('moves-banner');
 export const movesBannerText = document.getElementById('moves-banner-text');
@@ -179,7 +177,6 @@ export const libraryStrip = document.getElementById('library-strip');
 export const libraryStripSource = document.getElementById('library-strip-source');
 export const libraryStripTotal = document.getElementById('library-strip-total');
 export const libraryStripStatus = document.getElementById('library-strip-status');
-export const libraryStripBack = document.getElementById('library-strip-back');
 export const btnLibraryRefresh = document.getElementById('btn-library-refresh');
 export const damagedNotice = document.getElementById('damaged-notice');
 export const photoDamagedNote = document.getElementById('photo-damaged-note');

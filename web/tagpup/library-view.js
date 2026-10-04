@@ -1,8 +1,9 @@
 // TagPup's page: opening a view of the library -- the whole library, a year, a month, a keyword and
 // everything under it, a person, or a folder and its subfolders -- in the grid that shows a folder
 // (docs/ARCHITECTURE.md, phase 9b-2). The photos and their cards are library-source.js's; this is the
-// page around them: the address that names the view, the strip that says which one is open, the folder
-// machinery put to rest while it is, and the way back.
+// page around them: the address that names the view, the strip that says which one is open, and the folder
+// machinery put to rest while it is. The way to a folder is the navigator's Organize, a folder of the
+// selection's "Folders to Organize" (library-moves.js), or Back; the strip's own "Back to folder view" went with #670.
 //
 // The address is the view: `?view=<kind>&value=<value>[&recursive=1]` (library-source.js,
 // viewSpecFromSearch), pushed when a view is opened, so Back and Forward move between views and
@@ -12,10 +13,10 @@ import { baseName } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    btnApplyRename, btnFolderAutoApply, btnLibraryRefresh, btnLibraryScope, btnRefreshList, btnShowOnDisk,
+    btnApplyRename, btnFolderAutoApply, btnLibraryRefresh, btnRefreshList,
     btnToggleRename, btnToggleTimeshift,
     folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, indexProgressContainer,
-    libraryStrip, libraryStripBack, libraryStripSource, libraryStripStatus, libraryStripTotal,
+    libraryStrip, libraryStripSource, libraryStripStatus, libraryStripTotal,
     photoList, photoSearch, renamePanel, suggestProgressContainer, timeshiftPanel
 } from './elements.js';
 import { setStatus } from './status.js';
@@ -44,7 +45,7 @@ function isOpen(spec) {
 
 /**
  * What belongs to the open folder is idle while a view of the library is open: nothing of the folder
- * is asked, polled or written. Opening the folder again (Back to folder view) reads it as it was
+ * is asked, polled or written. Opening the folder again (Back, or a folder to Organize) reads it as it was
  * opened the first time, from this browser's cache of the scan or the disk.
  */
 function quietTheFolder() {
@@ -127,17 +128,8 @@ export function libraryChanged() {
     }
     libraryStripStatus.textContent = status || '';
     libraryStripStatus.classList.toggle('library-strip-problem', lib.status === 'error' || Boolean(lib.notice));
+    libraryStripStatus.title = status || '';
     btnLibraryRefresh.disabled = lib.invalid || lib.loading;
-    // A folder's view can be this folder only or with its subfolders, and the folder can be shown on disk.
-    const ofFolder = lib.kind === 'folder' && !lib.invalid;
-    btnLibraryScope.classList.toggle('hidden', !ofFolder);
-    btnShowOnDisk.classList.toggle('hidden', !ofFolder);
-    if (ofFolder) {
-        btnLibraryScope.textContent = lib.recursive ? 'This folder only' : 'With subfolders';
-        btnLibraryScope.title = lib.recursive
-            ? 'Show only the photos directly in this folder'
-            : 'Show the photos in this folder and in the folders under it';
-    }
     folderViewTitle.textContent = lib.invalid ? 'Library view' : label;
     folderViewStats.textContent = `${lib.total.toLocaleString()} photos`;
     folderViewHeader.textContent = '';
@@ -197,11 +189,7 @@ function keepAddress() {
 function beginView(spec, history, scrollTop) {
     const previous = state.library;
     if (previous) destroyLibrary(previous);
-    else {
-        // The folder open now is the one Back to folder view returns to.
-        if (state.scannedFolder) state.libraryReturn = state.scannedFolder;
-        quietTheFolder();
-    }
+    else quietTheFolder();
     const lib = newLibrary(spec.error ? { kind: 'all' } : spec);
     if (spec.error) {
         lib.invalid = true;
@@ -277,8 +265,12 @@ export function leaveLibraryView() {
     closeLibraryView();
 }
 
-/** Back to folder view: the folder that was open when the view was, opened again (or `folder`: Show on disk). */
-export function backToFolder(folder = state.libraryReturn) {
+/**
+ * Close the view onto `folder`, opened in Organize, as a new place in the history (Back returns to the view): a folder of the
+ * selection's "Folders to Organize" (library-moves.js openInOrganize), whose scan has already answered. Asks first about edits
+ * in the open photo.
+ */
+export function closeViewOntoFolder(folder) {
     leavePhotoThen(() => {
         if (!state.library) return;
         const url = new URL(window.location.href);
@@ -286,7 +278,6 @@ export function backToFolder(folder = state.libraryReturn) {
         saveScroll();
         window.history.pushState({}, '', url);
         closeLibraryView({ folder });
-        if (!folder) setStatus('ready', 'No folder was open. Choose one in the sidebar.');
     });
 }
 
@@ -369,17 +360,12 @@ function showAddress(scrollTop) {
 export function openViewFromAddress() {
     const spec = viewSpecFromSearch(window.location.search);
     if (!spec) return false;
-    state.libraryReturn = new URLSearchParams(window.location.search).get('path') || '';
     openLibraryView(spec, { history: 'none' });
     return true;
 }
 
 export function wireLibraryView() {
     btnLibraryRefresh.addEventListener('click', refreshLibraryView);
-    libraryStripBack.addEventListener('click', (event) => {
-        event.preventDefault();
-        backToFolder();
-    });
     window.addEventListener('popstate', (event) => {
         // Back or Forward between a folder and a view, or between two views.
         if (hasUnsavedEdits() || openPhotoWrite()) {

@@ -1,9 +1,13 @@
 // TagPup's page: when the library was last in step with its folders, in the strip above a library view
-// (docs/ARCHITECTURE.md, phase 9c). A view of the library is as good as its rows are current, so the strip says
-// when sync (phase 8) last left the library in step -- "Library last in step with its folders: 5 min ago", or "never"
-// -- and that a sync is running now. It is read from GET /api/sync, the answer the Activity page's "Last in step" is
-// made of, once when a view opens and again with Refresh view: one cheap request, which can fail without the view
-// minding (the strip says it could not be read, and nothing else changes).
+// (docs/ARCHITECTURE.md, phase 9c). A view of the library is as good as its rows are current. It is read from GET
+// /api/sync, the answer the Activity page's "Last in step" is made of, once when a view opens and again with Refresh
+// view: one cheap request, which can fail without the view minding.
+//
+// Since the owner's review (#670) it is SAID ONLY WHEN SOMETHING IS WRONG, as a few words on the strip's one line: the
+// read failed; a sync is running now; the library was never in step; the newest sync left it out of step (new photos,
+// moved or unreadable ones, not yet settled); the last time it was in step is more than QUIET_FOR_HOURS ago (the daily
+// catch-up has not run); or the folder of the view holds photos on disk the library does not (library-banner.js's
+// offer). Otherwise nothing: an in-step library is the normal case. A card whose file changed says so on the card.
 import { api } from './common/api.js';
 import { state } from './state.js';
 import { libraryStripSync } from './elements.js';
@@ -35,22 +39,33 @@ export function sinceSync(text, now = Date.now()) {
     return days < 14 ? `${days} days ago` : `on ${String(text).slice(0, 10)}`;
 }
 
-/** The sentence the strip shows for what was read (state.syncInfo). */
-export function syncSentence(info, now = Date.now()) {
+/** Longer than this since the library was last in step is worth saying: the daily catch-up sync has not left it in step. */
+export const QUIET_FOR_HOURS = 48;
+
+/**
+ * What the strip says of the library's step with its folders (state.syncInfo), or '' when nothing is wrong. `notHeld`: the
+ * view's folder holds photos on disk the library does not (the banner says how many; this says when it was last in step).
+ */
+export function syncSentence(info, now = Date.now(), { notHeld = false } = {}) {
     if (info.status === 'error') return 'Could not read when the library was last in step with its folders.';
-    if (info.status === 'idle') return '';
-    if (info.status === 'loading' && !info.known) return 'Checking when the library was last in step...';
-    const when = info.lastInStep ? sinceSync(info.lastInStep, now) : 'never';
-    return `Library last in step with its folders: ${when}${info.syncing ? '. A sync is running now.' : ''}`;
+    if (info.status === 'idle' || !info.known) return '';
+    const last = info.lastInStep ? `Last in step with its folders: ${sinceSync(info.lastInStep, now)}.` : '';
+    if (info.syncing) return last ? `A sync is running now. ${last}` : 'A sync is running now.';
+    if (!info.lastInStep) return 'Never in step with its folders: no sync of the whole library has finished.';
+    if (info.lastRunInStep === false) return `The last sync found photos not in step with the library yet. ${last}`;
+    const date = syncTime(info.lastInStep);
+    if (date && now - date.getTime() > QUIET_FOR_HOURS * 3600 * 1000) return last;
+    return notHeld ? last : '';
 }
 
 export function renderSyncInfo() {
     const info = state.syncInfo;
-    const text = syncSentence(info);
+    const banner = state.moves.banner;
+    const text = syncSentence(info, Date.now(), { notHeld: Boolean(banner && banner.kind === 'offer') });
     libraryStripSync.textContent = text;
     libraryStripSync.title = info.lastInStep || '';
     libraryStripSync.classList.toggle('hidden', !text);
-    libraryStripSync.classList.toggle('library-strip-problem', info.status === 'error');
+    libraryStripSync.classList.toggle('library-strip-problem', Boolean(text));
 }
 
 /** Read it: once when a view opens, again with Refresh view. An answer that is not the newest asked for is dropped. */
@@ -70,9 +85,11 @@ export function loadSyncInfo() {
             if (!ok || !body || typeof body !== 'object') throw new Error((body && body.error) || 'The library could not be asked.');
             const lastInStep = body.last_in_step || null;
             const syncing = body.syncing === true;
+            const run = body.last_run && typeof body.last_run === 'object' ? body.last_run : null;
             // A sync came or went: the disk and the library may have moved apart, so what the disk was said to hold is asked again.
             if (info.known && (info.lastInStep !== lastInStep || info.syncing !== syncing)) forgetWhatTheDiskHeld();
             info.lastInStep = lastInStep;
+            info.lastRunInStep = run ? run.in_step !== false : null;
             info.syncing = syncing;
             info.known = true;
             info.status = 'ready';
@@ -95,6 +112,7 @@ export function clearSyncInfo() {
     info.status = 'idle';
     info.known = false;
     info.lastInStep = null;
+    info.lastRunInStep = null;
     info.syncing = false;
     renderSyncInfo();
 }

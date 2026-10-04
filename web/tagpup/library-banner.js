@@ -34,11 +34,13 @@ function paint(mode, text) {
     btnMovesDismiss.classList.toggle('hidden', mode !== 'offer');
     btnMovesCheck.classList.toggle('hidden', mode !== 'check');
     btnMovesCheck.disabled = false;
+    upper.renderSyncInfo();     // photos the library does not hold: when it was last in step is worth saying (#670)
 }
 
 export function hideBanner() {
     state.moves.banner = null;
     movesBanner.classList.add('hidden');
+    upper.renderSyncInfo();
 }
 
 /** A view opened, closed or refreshed: an answer still on its way is not wanted, and the banner goes. */

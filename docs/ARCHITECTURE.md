@@ -1408,7 +1408,8 @@ panel and selection. Nothing is migrated and nothing of a folder's machinery run
   Keywords, People and Dates call it, and `/api/library/navigator` is asked again after an edit (a count is read at each call). The
   strip is where its "header says which source" lives; the sidebar is empty in a view (the navigator takes its place). A card carries
   `damaged` and `damage` only: 9c's staleness marks (size and modified time, "missing") are new card fields, and a card whose photo is
-  gone shows a broken picture today (the thumbnail route answers a 404 sentence). `state.libraryReturn` is the folder Back returns to.
+  gone shows a broken picture today (the thumbnail route answers a 404 sentence). `state.libraryReturn` is the folder Back returns to
+  *(gone with #670, with the strip's Back to folder view)*.
   The folder cache and the folder's scroll are not restored by Back (a folder is read again from the cache of the scan, at the top).
 - **What 9d builds on.** `selected.js` is by path because every write route is; a card has its `id`, and `selectInLibrary` is the one
   place that turns a range of ids into paths -- with id-based writes it disappears and Select all of 68,000 is instant. The selection
@@ -1448,7 +1449,8 @@ The page, and two small routes and a card field under it. Nothing is migrated. T
   pages: nothing of one's navigator can reach the other's.
 - **The move between disk and library** (`library-moves.js`): **Show in library** (beside Select All, with a folder open on disk) opens the folder's library
   view with its subfolders; **Show on disk** (in the strip of a folder's view) scans the folder FIRST and closes the view only when the scan has answered, through the history entry Back to folder view uses -- a folder that is not on disk any more (400), or cannot be read, keeps the view and says so in its strip, so the page is never left with neither a view nor a folder (#569);
-  **This folder only / With subfolders** is another view of the same folder. The selection is cleared by every one (a view opening or closing clears it, 9b-1). The
+  **This folder only / With subfolders** is another view of the same folder *(Show on disk and This folder only went with #670; the scan-first move is
+  `openInOrganize`, a folder of the selection's Folders to Organize)*. The selection is cleared by every one (a view opening or closing clears it, 9b-1). The
   photo at the top of the grid is the one to land on: a folder view finds it by `pathKey` in `shownIndex`, a library view asks the library which id a path is
   (`GET /api/library/find?path=` -> `{id}`, `null` for a photo it does not hold: one seek of `idx_photos_path_nocase`, `COVERING INDEX (path=?)` on photo_index) and
   `scrollToIndex(..., 'start')`s there, below the sticky strip (`topInset`). Best effort: a photo in neither leaves the grid at the top.
@@ -1877,6 +1879,19 @@ folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Or
   `hideChrome` shows them again for a folder; 9d-2's Shift Date Taken of a view's selection (`shiftSelectionInView`, the direction field,
   the note) is gone from the page. **The server's bulk time shift is kept** (`op: time_shift`, resume and all, 9d-1): nothing on the
   library page starts one now, and a job of it found running or stopped part-way is still shown in the strip and resumed by it.
+- **#670, the strip.** One small line: the view, its count, the status sentence when there is one, and **Refresh view**. When the library
+  was last in step is said only when something is wrong (`sync-state.js syncSentence`): the read failed; a sync is running; never in step;
+  the newest sync (`last_run.in_step`, now read) left it out of step; last in step more than 48 hours ago (`QUIET_FOR_HOURS`: the daily
+  catch-up has not left it in step); or the view's folder holds photos on disk the library does not (the banner's offer: the strip then
+  says when it was last in step). *Decided, not copied:* a card marked changed on disk does not make the strip speak -- the card says so,
+  and the strip would have to follow every batch of cards (library-source.js has no hook for it). On the live libraries every one's newest
+  run was in step and the last whole sync this morning (counted read-only, 2026-10-04): the line is empty. **Back to folder view** is gone.
+  Why it did not work: it returned to `state.libraryReturn`, set only when a view opened while a folder was open in Organize (or from a
+  `?path` in the address); a view opened from the navigator, a bookmark or the gear with no folder open had nothing to return to, and
+  the link closed the view onto an empty page with "No folder was open". `libraryReturn` went with it; Back (the browser's) returns to
+  the folder a view was opened from, as it always did. **This folder only** and **Show on disk** went from the strip; `showOnDisk`
+  became `openInOrganize(folder)` -- scan first, close the view only when the scan answered (#569), a folder gone or a share away keeps
+  the view and says so in the strip -- used by #675's Folders to Organize. Show in File Explorer (the grid's context menu) stays.
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag

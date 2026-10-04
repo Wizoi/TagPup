@@ -643,14 +643,14 @@ describe("the way there and back", () => {
     assert.match(ctx.idsAsked.at(-1), /kind=folder&folder=D%3A%5CLibrary%5C2020&recursive=1$/);
   });
 
-  test("Back to folder view in the strip returns to the folder that was open, and the grid draws it", async (t) => {
+  test("Back returns to the folder that was open, and the grid draws it (the strip's own link went with #670)", async (t) => {
     const ctx = await load(t, { search: "", ids: [], total: 0 });
     await openFolder(ctx, FOLDER);
     pageExports(ctx.window, "web/tagpup/library-view.js").openLibraryView({ kind: "all" });
     await ctx.settle();
     assert.equal(ctx.state.library.kind, "all");
-    click(ctx.window, ctx.document.getElementById("library-strip-back"));
-    await ctx.settle(200);
+    ctx.window.history.back();
+    await ctx.settle(300);
     assert.equal(ctx.state.library, null);
     assert.equal(ctx.state.scannedFolder, FOLDER);
     assert.equal(ctx.cards().length, 2);

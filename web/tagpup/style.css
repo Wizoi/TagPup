@@ -798,12 +798,13 @@ body {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 12px;
-    padding: 8px 14px;
-    margin-bottom: 12px;
+    gap: 10px;
+    padding: 3px 10px;
+    margin-bottom: 8px;
+    font-size: 13px;
     background: var(--bg-secondary);
     border: 1px solid var(--accent);
-    border-radius: 10px;
+    border-radius: 8px;
     font-size: 13px;
 }
 
@@ -828,10 +829,6 @@ body {
     display: flex;
     align-items: center;
     gap: 14px;
-}
-
-.library-strip-back {
-    color: var(--accent);
 }
 
 /* The place of a card not fetched yet: a card's shape, quiet, with nothing to click. */
@@ -2281,8 +2278,8 @@ select {
 }
 
 /* A view of a folder: when the library last was in step with its folders, and the disk holding more than the library. */
+/* Said only when something is wrong (#670), on the strip's one line. */
 .library-strip-sync {
-    flex-basis: 100%;
     font-size: 12px;
     color: var(--text-muted);
 }
