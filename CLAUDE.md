@@ -41,8 +41,10 @@ it saved. `tools/affected_tests.py` is for the loop while editing, not for the c
 **The owner runs the apps from an installed copy** (`%LOCALAPPDATA%\TagPup\*.cmd`,
 made by `scripts/install_app.py`), with `TAGPUP_HOME` set to the repository. Saving a
 file here changes nothing they are running, and a merge reaches them only when the
-app is installed again. Ask before installing; offer to after a merge they want to
-use. An app started from the repository itself still restarts whenever a `.py` is
+app is installed again: each launcher installs a newer clean commit, then replaces a
+server of another version still running once it has finished its work
+(`tagpup.launcher`; a server started before that existed has to be closed once by
+hand). Ask before installing; offer to after a merge they want to use. An app started from the repository itself still restarts whenever a `.py` is
 saved, wiping its in-memory state and orphaning any indexer, so check for one before
 editing. Run long indexes through the CLI (`TagPup CLI.cmd`).
 
