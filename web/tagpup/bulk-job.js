@@ -36,6 +36,9 @@ const MOST_BACKOFF = 6;
 /** A request for how it is going that has not been answered in this long is given up as a miss (the server may be away or stuck). */
 export const POLL_TIMEOUT_MS = 15000;
 
+/** How much earlier than the moment a start was sent a job may have begun and still be that start's (the server's clock, rounded). */
+const LOST_SLACK_MS = 5000;
+
 /** A view that opens within this long of the page asking which bulk edit runs does not ask again. */
 const ATTACH_AGAIN_MS = 5000;
 
@@ -190,6 +193,11 @@ function jobEnded(job) {
     setStatus(bad ? 'error' : 'ready', endedSentence(job, desc), { transient: false });
     if (!(job.changed || job.done)) return;
     forgetFolderCaches();
+    refreshAfterWrites();
+}
+
+/** What the page shows of photos a job wrote: the counts, the cards, the open photo (unless it has edits of its own), the selection's tally. */
+function refreshAfterWrites() {
     state.tally.key = '';          // what the photos carry has changed: the selection is counted again
     upper.navigatorCountsChanged({ now: true });
     if (!state.library) return;
@@ -217,12 +225,13 @@ export function startBulk({ op, selection, params, desc, picked }) {
     bulk.starting = true;
     bulk.conflict = '';
     repaint();
+    const sentAt = Date.now();
     return api.fetch('/api/library/bulk/start', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ op, selection, params }) })
         .then(res => res.json().catch(() => ({})).then(body => ({ res, body })))
         .then(({ res, body }) => {
             bulk.starting = false;
             if (res.status === 409) {
-                bulk.conflict = (body && body.error) || 'A bulk edit is running already.';
+                bulk.conflict = (body && body.error) || 'TagPup refused the edit (409).';
                 // An earlier job that stopped is still in the strip: it gives way, or the refusal would be drawn nowhere.
                 if (!isRunning(bulk.job)) bulk.job = null;
                 repaint();
@@ -249,7 +258,7 @@ export function startBulk({ op, selection, params, desc, picked }) {
             // A job that is over by then is not shown (the library offers only one that runs or stopped part-way), so no promise.
             const why = `${err.message}. If the edit did start, it shows here while it runs; if it is not there, look at the photos before making it again.`;
             startFailed(`Could not start the bulk edit: ${why}`);
-            window.setTimeout(() => attachBulk({ force: true, quiet: true, lost: true }), 2000);
+            window.setTimeout(() => attachBulk({ force: true, quiet: true, lostSentAt: sentAt }), 2000);
             return { ok: false, why };
         });
 }
@@ -389,14 +398,12 @@ function wasDismissed(job) {
  * status line says how it ended, and the counts and cards are read again.
  */
 function foundStopped(job, lost) {
-    if (job.finished) forgetFolderCaches({ before: job.finished * 1000 });
+    // An abandoned job has no end time (finished is null): when it stopped is not known, so every scan kept is older than it may be.
+    forgetFolderCaches({ before: job.finished ? job.finished * 1000 : Infinity });
     if (!lost) return;
     const bad = job.state !== 'done' || (job.error_count || 0) > 0;
     setStatus(bad ? 'error' : 'ready', endedSentence(job, null), { transient: false });
-    if (!(job.changed || job.done)) return;
-    state.tally.key = '';
-    upper.navigatorCountsChanged({ now: true });
-    if (state.library) refreshHeldCards();
+    if (job.changed || job.done) refreshAfterWrites();
 }
 
 /**
@@ -405,7 +412,8 @@ function foundStopped(job, lost) {
  * after a refusal, Ask again after giving up) replaces what the strip holds. A read that fails says nothing: the strip is an offer, and a
  * second start is refused by the server with the sentence anyway.
  */
-export function attachBulk({ force = false, quiet = false, lost = false } = {}) {
+export function attachBulk({ force = false, quiet = false, lostSentAt = 0 } = {}) {
+    const lost = lostSentAt > 0;
     const bulk = state.bulk;
     if (!force && (bulk.job || bulk.starting)) return Promise.resolve(false);
     // The page asks as it starts and again as a view opens: one question when they come together, none when it was just asked.
@@ -426,6 +434,9 @@ export function attachBulk({ force = false, quiet = false, lost = false } = {}) 
                 return false;
             }
             if (!force && !isRunning(found) && wasDismissed(found.job)) return false;
+            // Asking after a start whose answer was lost: only a job begun since the start was sent can be the one lost. An older one
+            // (the library's latest that stopped part-way) says nothing of this edit, so the 'Could not start' sentence stays.
+            if (lost && !(Number(found.started) * 1000 >= lostSentAt - LOST_SLACK_MS)) return false;
             const same = bulk.request && bulk.job && bulk.job.job === found.job;
             // Shown, and nothing more: a job that stopped before this page looked is not one that ended under it (what a job's
             // end does -- forget the folders' scans, read the counts, say it in the status line -- is for the end of one that ran here).

@@ -342,7 +342,7 @@ describe("finding it again", () => {
     const ctx = await started(t, { begin: false, total: 100 });
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
     ctx.server.first("/api/library/bulk/start", () => Promise.reject(new Error("Failed to fetch")));
-    ctx.bulk.current = jobStatus({ total: 100, done: 3 });
+    ctx.bulk.current = jobStatus({ total: 100, done: 3, started: Math.floor(Date.now() / 1000) });
     el(ctx, "bulk-add-tags-input").value = "Trips/Lighthouse";
     click(ctx.window, el(ctx, "btn-bulk-add-tags"));
     await ctx.settle(60);

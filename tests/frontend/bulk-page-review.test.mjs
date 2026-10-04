@@ -72,15 +72,15 @@ describe("#605: a refusal is always said", () => {
 describe("#606: a stopped job found on opening changes nothing", () => {
   test("the caches, the navigator and the status line are left alone; a job that ends under the page still acts", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all", ids: range(50) });
-    ctx.window.localStorage.setItem("tagpup_cache_d:/library/2020", "{}");
+    ctx.window.localStorage.setItem("tagpup_cache_d:/library/2020", JSON.stringify({ timestamp: 1760000200000 }));
     const navigator = ctx.navigatorAsked.length;
     const before = text(ctx, "status-text");
-    ctx.bulk.current = jobStatus({ total: 60, done: 25, changed: 25, state: "abandoned", message: "TagPup was closed before this finished: 25 of 60 photos were done." });
+    ctx.bulk.current = jobStatus({ total: 60, done: 25, changed: 25, state: "abandoned", finished: 1760000100, message: "TagPup was closed before this finished: 25 of 60 photos were done." });
     await ctx.module("bulk-job.js").attachBulk({ force: true });
     await ctx.settle(60);
     assert.ok(!el(ctx, "bulk-strip").classList.contains("hidden"), "shown");
     assert.match(text(ctx, "bulk-strip-message"), /closed before this finished: 25 of 60/);
-    assert.equal(ctx.window.localStorage.getItem("tagpup_cache_d:/library/2020"), "{}", "no folder scan was forgotten");
+    assert.equal(ctx.window.localStorage.getItem("tagpup_cache_d:/library/2020"), JSON.stringify({ timestamp: 1760000200000 }), "no folder scan was forgotten");
     assert.equal(ctx.navigatorAsked.length, navigator, "the navigator's counts were not read again");
     assert.equal(text(ctx, "status-text"), before, "no error in the status line");
   });
@@ -236,7 +236,7 @@ describe("the follow-up review (#613-#617)", () => {
     ctx.window.localStorage.setItem("tagpup_cache_d:/old", JSON.stringify({ timestamp: 1760000000000 }));
     ctx.window.localStorage.setItem("tagpup_cache_d:/new", JSON.stringify({ timestamp: 1760000200000 }));
     ctx.server.first("/api/library/bulk/start", () => Promise.reject(new Error("Failed to fetch")));
-    ctx.bulk.current = jobStatus({ total: 100, done: 3, changed: 3, state: "cancelled", finished: 1760000100, message: "The bulk edit was cancelled." });
+    ctx.bulk.current = jobStatus({ total: 100, done: 3, changed: 3, state: "cancelled", started: Math.floor(Date.now() / 1000), finished: 1760000100, message: "The bulk edit was cancelled." });
     await addTag(ctx);
     await ctx.settle(100);
     assert.match(text(ctx, "status-text"), /The bulk edit was cancelled\./);
