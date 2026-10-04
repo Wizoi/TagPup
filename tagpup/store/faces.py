@@ -3,7 +3,9 @@
 Every write here that changes who a face is -- named, unnamed, excluded, detected,
 deleted -- rebuilds the people of the photos it touched (tagpup.store.people.rebuild),
 in the same transaction: clustering, re-detection and dedupe changed faces and left
-each photo's people as they were (docs/findings.md, #63).
+each photo's people as they were (docs/findings.md, #63). It gives their faces the id of
+the person their name now is, too (tagpup.store.person_ids.follow_faces), by the same
+call (`_rebuilt`).
 
 The names a photo's faces were given, turning their boxes when a photo is turned, a
 face's crop, a write to the table that the Identify Faces grids can account for, and
@@ -20,7 +22,7 @@ import os
 import types
 
 from tagpup.core import paths
-from tagpup.store import db, generations, people
+from tagpup.store import db, generations, people, person_ids
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -235,8 +237,10 @@ def _photos_of(conn, face_ids):
 
 
 def _rebuilt(conn, photo_ids, changed):
-    """`changed`, after rebuilding the people of `photo_ids` if anything changed."""
+    """`changed`, after rebuilding the people of `photo_ids` and giving their faces the ids their
+    names give (person_ids.follow_faces), if anything changed."""
     if changed and photo_ids:
+        person_ids.follow_faces(conn, photo_ids)
         people.rebuild(conn, photo_ids)
     return changed
 

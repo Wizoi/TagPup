@@ -20,7 +20,7 @@ import os
 
 from tagpup.core import vocabulary
 from tagpup.store import roots as store_roots
-from tagpup.store import db, derived
+from tagpup.store import db, derived, person_ids
 
 #: A photo's people as a JSON list, in order, for a query whose photos are `p`: what
 #: `photos.people` held, so every reader gets the shape it always had.
@@ -78,15 +78,19 @@ def _differences(conn, photo_ids, known):
 
 def rebuild(conn, photo_ids=None, known=None):
     """Write the people of each photo in `photo_ids` -- every photo, without -- by the one
-    rule. `known` is the tree's PeopleVocabulary, read from `conn` when not given.
-    Returns how many photos' people changed. The caller commits."""
-    changed = 0
+    rule, and give each row written the id of the person its name is (person_ids.follow_listed;
+    every row, when every photo is rebuilt). `known` is the tree's PeopleVocabulary, read from
+    `conn` when not given. Returns how many photos' people changed. The caller commits."""
+    written = []
     for photo_id, people in list(_differences(conn, photo_ids, known)):
         conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))
         conn.executemany("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, ?)",
                          [(photo_id, n, name, source) for n, (name, source) in enumerate(people)])
-        changed += 1
-    return changed
+        written.append(photo_id)
+    # Only the rows written can be without their id: a tree edit gives every other its new one
+    # (tree_edit), and reading the tree for each of 5,000 one-photo rebuilds would cost them.
+    person_ids.follow_listed(conn, None if photo_ids is None else written)
+    return len(written)
 
 
 def stale(conn):
@@ -186,14 +190,18 @@ def follow_nodes(conn, nodes):
 @contextlib.contextmanager
 def tree_edit(conn):
     """An edit of the tag tree on `conn`, after which the photos whose people it changed
-    are rebuilt (follow_tree), and those whose keywords name a node it made, moved or took away
-    have their keyword rows made again (derived.follow_tree). The caller commits."""
+    are rebuilt (follow_tree), those whose keywords name a node it made, moved or took away
+    have their keyword rows made again (derived.follow_tree), and every face and listed person
+    whose name now means another node, or none, is given its id (person_ids.follow_tree). The
+    caller commits."""
     from tagpup.store import taxonomy   # taxonomy imports this module
     before = taxonomy.read_people_vocabulary(conn)
     nodes = derived.tree_before(conn)
+    ids = person_ids.read(conn)
     yield
     follow_tree(conn, before)
     derived.follow_tree(conn, nodes)
+    person_ids.follow_tree(conn, ids)
 
 
 def names(db_path, keywords_too=False, include_hidden=False):
@@ -247,6 +255,7 @@ def rename(conn, old, new):
                  if vocabulary.key(name) == wanted]
     faces = sum(conn.execute("UPDATE faces SET name = ? WHERE name = ?", (new, spelling)).rowcount
                 for spelling in spellings)
+    person_ids.follow_names(conn, [new])
 
     # The photos listing `old`, from a face or a keyword, in any spelling.
     affected = [photo_id for photo_id, listed in conn.execute(

@@ -721,6 +721,23 @@ def _taken_indexes(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_year ON photos(year, taken, id)")
 
 
+def _person_ids(conn):
+    """Each face and each photo's listed person name the node of the tag tree that is that person:
+    `faces.tag_id` and `photo_people.tag_id`, beside `name` (docs/ARCHITECTURE.md, "Identity by id",
+    stage 1; tagpup.store.person_ids). Filled by the one rule, one lookup per distinct name, in this
+    transaction; a name no person node is called, or that two are, is left NULL and the doctor names
+    it. Every read still reads the name: nothing that was there changes, and no backup is needed.
+
+    `idx_faces_person` (name, tag_id) is made first, so the backfill and the doctor read the pairs
+    of name and id from the index, never the faces' rows with their vectors. It also serves every
+    lookup idx_faces_name serves, which stage 2 drops."""
+    conn.execute("ALTER TABLE faces ADD COLUMN tag_id INTEGER")
+    conn.execute("ALTER TABLE photo_people ADD COLUMN tag_id INTEGER")
+    conn.execute("CREATE INDEX idx_faces_person ON faces(name, tag_id)")
+    from tagpup.store import person_ids   # the store imports this module
+    person_ids.sync(conn)
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -918,6 +935,16 @@ class DerivedAgree(Check):
     def after(self, conn, migration, state):
         from tagpup.store import derived   # the store imports this module
         return derived.problems(conn)
+
+
+class PersonIdsAgree(Check):
+    """Every face and listed person holds the id its name gives (tagpup.store.person_ids)."""
+    name = "people's ids agree with their names"
+
+    def after(self, conn, migration, state):
+        from tagpup.store import person_ids   # the store imports this module
+        return ["%d row(s) of %s" % (found.rows, table) for table in person_ids.TABLES
+                for found in [person_ids.out_of_step(conn, table)] if found.rows]
 
 
 STANDARD = (ForeignKeys(), Integrity())
@@ -1235,7 +1262,19 @@ MIGRATIONS = (
               "so it touches none and blocks no undo",
               (),
               (RowsKept(),) + STANDARD),
+    Migration(21, "people by their node's id", _person_ids, ADDITIVE,
+              "adds faces.tag_id and photo_people.tag_id, filled from each row's name and the tag tree, and "
+              "idx_faces_person; every read still reads the name",
+              ("faces", "photo_people"),
+              (RowsKept(), PersonIdsAgree()) + STANDARD),
 )
+
+#: The columns a migration adds to a table the journal keys that the journal derives
+#: (journal.DERIVED_COLUMNS) -- {version: {table: columns}}. Such a migration changes nothing an
+#: older change's rows mean: an undo writes the columns it recorded and the derived ones are made
+#: again from them (journal._derive), so it blocks no undo of a change made before it
+#: (journal.schema_gap_blocker). tests/test_person_ids.py holds each to the columns it really adds.
+ADDS_DERIVED_COLUMNS = {21: {"faces": ("tag_id",)}}
 
 LATEST = MIGRATIONS[-1].version
 

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.store import db, people, schema  # noqa: E402
+from tagpup.store import db, people, person_ids, schema  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
 #: The tables a change can touch, derived ones included, with the order to list them in.
@@ -101,9 +101,11 @@ class JournalLibrary(unittest.TestCase):
             conn.execute("INSERT INTO suggestions (photo_id, tags, people, title, raw, before_consensus, model, created)"
                          " VALUES (?, ?, '[]', 'Sailing at the start', '{}', 0, ?, '2026-09-24 10:00:00')",
                          (ids["prize"], json.dumps([{"tag": "Activity/Sailing", "score": 0.61}]), MODEL))
-            # As the indexer leaves a photo: dated, and its people by the rule.
+            # As the indexer leaves a photo: dated, and its people by the rule; and the faces as
+            # naming them left them, holding their person's id (tagpup.store.person_ids).
             store_photos.date_photos(conn)
             people.rebuild(conn)
+            person_ids.sync(conn)
             conn.commit()
             return ids
         finally:
