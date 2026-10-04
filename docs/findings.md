@@ -753,3 +753,10 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 | 734 | 2026-10-04 | tagpup_web.py logged only to its file, so lines meant for the launcher's window were never seen there. | fixed: d95f27b |
 | 735 | 2026-10-04 | #727: test_supervisor_hand_over's cleanup ended only what its records named at that moment; a process left by one the test started survived, and a test process that crashed ran no cleanup at all. | fixed: 77436f3 (own_home.end_processes, the reaper sweeps too) |
 | 736 | 2026-10-04 | tests/test_logs.py and test_server_startup stop their server with Popen.terminate() on the venv launcher, which may not reach the real interpreter it started. | open |
+| 737 | 2026-10-04 | 9e-1: a search's words in folders: of a native row only its own folder is a word (above it are the machine's drive, Users, profile, Pictures, which every photo would match); of a root-relative row every folder below the root. | decided |
+| 738 | 2026-10-04 | 9e-1: journal _touched did not refresh a photo whose captions an undo wrote (nothing derived came from captions until the word index). | fixed: arch/phase-9e1-search |
+| 739 | 2026-10-04 | store.photos.set_captions has no caller anywhere; it now goes through derived since captions are a watched column. | open: candidate for removal |
+| 740 | 2026-10-04 | 9e-1: the doctor's phrase check first called 255 photo_index photos stale (captions with no letter or digit match no phrase); fixed before merge: 0 stale on all 68,324 rows. | fixed: arch/phase-9e1-search |
+| 741 | 2026-10-04 | 9e-1: the word index adds about 0.2 s to the write lock of a 2,000-photo follow (0.70 to 0.90 s measured; limit 2.5 s): one refresh per photo through derived.record. | accepted |
+| 742 | 2026-10-04 | 9e-1 (retro #607): a search selection is sent as a source, not as ids; Delete is protected by the #691 token, other bulk edits by the widening notice. | decided |
+| 743 | 2026-10-04 | tests/test_bulk_delete.py prints ResourceWarning: subprocess ... is still running: something left running by the test. | open |
