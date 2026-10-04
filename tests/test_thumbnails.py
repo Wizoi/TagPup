@@ -552,9 +552,13 @@ class Warming(Cache):
         self.assertEqual((2, 1, 1), (counts["made"], counts["damaged"], counts["missing"]))
 
     def test_a_cache_that_cannot_be_written_is_said(self):
+        """How many were decoded before the first failed write stopped the rest is the threads'
+        timing: all three when the workers start together, fewer on a loaded machine. It
+        asserted three, and failed 3 runs in 8 under load."""
         with mock.patch.object(thumbs, "write", side_effect=OSError(28, "No space left on device")):
             counts = thumbnails.warm(self.library, apply=True)
-        self.assertEqual((0, 3), (counts["made"], counts["unwritable"]))
+        self.assertEqual((0, True), (counts["made"], counts["stopped_unwritable"]))
+        self.assertIn(counts["unwritable"], (1, 2, 3))
 
     def test_apply_also_takes_the_thumbnails_of_photos_the_library_no_longer_holds(self):
         thumbs.write(self.library.thumbs, 4242, "00000000", 1.0, 1, b"orphan")
