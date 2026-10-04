@@ -9,7 +9,7 @@ import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
     btnSizeLarge, btnSizeMedium, btnSizeSmall, folderViewMain, gridContextMenu, inputPhotoTitle,
-    libraryStrip, photoSearch, statusDot, statusText, thumbnailsGrid
+    folderViewTop, photoSearch, statusDot, statusText, thumbnailsGrid
 } from './elements.js';
 import { saveToLocalStorageCache } from './cache.js';
 import {
@@ -29,6 +29,9 @@ import {
     addToSelection, clearIdSelection, invertIdSelection, isIdSelected, isPhotoSelected, isSelected, removeFromSelection,
     renameInSelection, selectAllInView, selectionCount, setIdRange, setIdSelected, setSelection
 } from './selected.js';
+
+/** The gutter between a library view's floating header and a card scrolled to below it: the grid's own gap (style.css). */
+export const HEADER_GUTTER = 16;
 
 export function setThumbnailSize(size) {
     btnSizeSmall.classList.remove('active');
@@ -231,8 +234,8 @@ export function wireThumbnailGrid() {
         isBusy: cardIsBeingEdited,
         afterBuild: () => upper.updateCameraHighlights(),
         afterDraw: settleRoving,
-        // The strip above the grid in a library view is sticky: a card scrolled to is put below it.
-        topInset: () => (libraryStrip.classList.contains('hidden') ? 0 : libraryStrip.offsetHeight + 12),
+        // A library view's header floats over the grid (#713): a card scrolled to is put below it and the gutter under it.
+        topInset: () => (folderViewTop.classList.contains('in-library-view') ? folderViewTop.offsetHeight + HEADER_GUTTER : 0),
         empty: noPhotosFound,
     });
     wireGridKeys({

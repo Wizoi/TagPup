@@ -5,8 +5,10 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, photoRecord } from "./harness.mjs";
-import { loadViewPage, pageErrors } from "./view-page.mjs";
+import fs from "node:fs";
+import path from "node:path";
+import { REPO_ROOT, closeAllApps, click, openFolder, photoRecord } from "./harness.mjs";
+import { GRID_TOP, STRIDE, loadViewPage, pageErrors } from "./view-page.mjs";
 
 afterEach(() => {
   closeAllApps();
@@ -59,5 +61,61 @@ describe("#712: a folder of Folders to Organize switches the sidebar to Organize
     assert.equal(ctx.state.nav.shown, "library");
     assert.equal(ctx.paneTab("library").getAttribute("aria-selected"), "true");
     pageErrors();
+  });
+});
+
+describe("#713: one floating header for a library view", () => {
+  const css = fs.readFileSync(path.join(REPO_ROOT, "web", "tagpup", "style.css"), "utf8");
+  const rule = (selector) => {
+    const at = css.indexOf(`${selector} {`);
+    assert.ok(at >= 0, `style.css has ${selector}`);
+    return css.slice(at, css.indexOf("}", at));
+  };
+  const top = (ctx) => el(ctx, "folder-view-top");
+
+  test("the header holds the title, the total, Refresh view as an icon, and the view's actions; the card's own title is hidden", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=person&value=Wren%20Halloway", ids: range(40) });
+    assert.ok(top(ctx).classList.contains("in-library-view"));
+    assert.match(rule(".folder-view-top.in-library-view"), /position: sticky;/);
+    assert.match(rule(".folder-view-top.in-library-view .folder-view-heading"), /display: none;/, "no second \"Photos of\" that scrolls away");
+    assert.equal(el(ctx, "library-strip-source").textContent, "Photos of Wren Halloway");
+    assert.ok(top(ctx).querySelector(".folder-view-heading").contains(el(ctx, "folder-view-title")), "the hidden one is the card's");
+    for (const id of ["library-strip", "btn-library-refresh", "btn-select-all-thumbnails", "btn-select-none-thumbnails",
+      "btn-delete-selection", "selected-thumbnails-count", "btn-size-small"]) {
+      assert.ok(top(ctx).contains(el(ctx, id)), `${id} is in the one header`);
+    }
+    const refresh = el(ctx, "btn-library-refresh");
+    assert.equal(refresh.getAttribute("aria-label"), "Refresh view");
+    assert.match(refresh.title, /^Refresh view: /);
+    assert.equal(refresh.querySelector("[aria-hidden='true']").textContent.length, 1, "an icon, hidden from a screen reader");
+    click(ctx.window, refresh);
+    await ctx.settle();
+    assert.equal(ctx.idsAsked.length, 2, "it asks the library again");
+  });
+
+  test("Organize's header is as it was: nothing floats, its card keeps its title", async (t) => {
+    const ctx = await loadViewPage(t, { search: "" });
+    await openFolder(ctx, "D:\\Library\\2020\\Event 01");
+    await ctx.settle(60);
+    assert.ok(!top(ctx).classList.contains("in-library-view"));
+    assert.ok(el(ctx, "library-strip").classList.contains("hidden"));
+    assert.equal(el(ctx, "folder-view-title").closest(".folder-view-heading") !== null, true);
+    ctx.module("library-view.js").openLibraryView({ kind: "all" });
+    await ctx.settle();
+    assert.ok(top(ctx).classList.contains("in-library-view"));
+    ctx.module("library-view.js").closeLibraryView({ folder: "D:\\Library\\2020\\Event 01" });
+    await ctx.settle(100);
+    assert.ok(!top(ctx).classList.contains("in-library-view"), "a view closed onto a folder floats nothing");
+  });
+
+  test("a card scrolled to by the keys is below the header and its gutter, however tall the header is", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", ids: range(400) });
+    Object.defineProperty(top(ctx), "offsetHeight", { get: () => 92, configurable: true });
+    ctx.state.grid.scrollToIndex(40, "start");
+    assert.equal(ctx.here.scrollTop, GRID_TOP + 10 * STRIDE - (92 + 16));
+    // Up from below: the card's row lands below the header, not under it.
+    await ctx.scrollTo(GRID_TOP + 30 * STRIDE);
+    ctx.state.grid.scrollToIndex(80, "nearest");
+    assert.equal(ctx.here.scrollTop, GRID_TOP + 20 * STRIDE - (92 + 16));
   });
 });

@@ -16,7 +16,7 @@ import { state } from './state.js';
 import {
     btnApplyRename, btnDeleteSelection, btnFolderAutoApply, btnLibraryRefresh, btnRefreshList,
     btnToggleRename, btnToggleTimeshift,
-    folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, indexProgressContainer,
+    folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, folderViewTop, indexProgressContainer,
     libraryStrip, libraryStripSource, libraryStripStatus, libraryStripTotal,
     photoList, photoSearch, renamePanel, suggestProgressContainer, timeshiftPanel
 } from './elements.js';
@@ -73,7 +73,9 @@ function quietTheFolder() {
 
 /**
  * The page as a library view has it: no list, no filter, and none of Organize's buttons. Smart Rename and Camera Time Shift
- * are work on one folder (#669: the owner, 2026-10-04): a library view is for seeing the library, and offers neither.
+ * are work on one folder (#669: the owner, 2026-10-04): a library view is for seeing the library, and offers neither. The top
+ * of the grid is one floating header (#713): the strip -- the view, its total, Refresh view -- and the header card's actions
+ * beside it, the card's own title and count, which said the same, hidden (style.css, `.in-library-view`).
  */
 function showChrome() {
     photoList.querySelectorAll('.photo-item-file').forEach(el => el.remove());
@@ -84,6 +86,7 @@ function showChrome() {
     btnDeleteSelection.classList.remove('hidden');     // Delete of the selection, a view's (#674)
     btnRefreshList.title = 'Ask the library for this view again';
     libraryStrip.classList.remove('hidden');
+    folderViewTop.classList.add('in-library-view');
     folderViewHeader.classList.remove('hidden');
 }
 
@@ -99,6 +102,7 @@ function hideChrome() {
     timeshiftPanel.classList.add('hidden');
     btnRefreshList.title = 'Refresh files list';
     libraryStrip.classList.add('hidden');
+    folderViewTop.classList.remove('in-library-view');
     forgetBanner();
     clearSyncInfo();
     folderViewTitle.textContent = 'Folder View';

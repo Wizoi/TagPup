@@ -18,7 +18,7 @@ afterEach(() => {
 const FOLDER = "D:\\Library\\2020\\Event 01";
 const photo = (n) => photoRecord({ filename: `IMG_${String(n).padStart(4, "0")}.jpg`, path: `${FOLDER}\\IMG_${String(n).padStart(4, "0")}.jpg`, raw_metadata: { "EXIF:DateTimeOriginal": `2020:01:01 10:${String(n % 60).padStart(2, "0")}:00` } });
 const scan = (count) => () => Array.from({ length: count }, (_, i) => photo(i + 1));
-const INSET = 12;   // the strip is sticky above the grid: a card scrolled to is put below it (jsdom: no height, the 12 px margin)
+const INSET = 16;   // the view's header floats above the grid (#713): a card scrolled to is put below it (jsdom: no height, the 16 px gutter)
 
 /** The folder open on disk, as the folder box opens it. */
 async function folderPage(t, options = {}) {
@@ -359,13 +359,15 @@ describe("when the library was last in step: said only when something is wrong (
   const sync = (ctx) => ctx.document.getElementById("library-strip-sync");
   const inStep = { whole: false, in_step: true };
 
-  test("in step 5 minutes ago: nothing is said, and the strip is one line of the view, its count and Refresh view", async (t) => {
+  test("in step 5 minutes ago: nothing is said, and the strip says the view and its count, beside Refresh view", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all", sync: { library: "photo_index", last_run: inStep, last_in_step: ago(5 / 60), syncing: false } });
     assert.equal(sync(ctx).textContent, "");
     assert.ok(sync(ctx).classList.contains("hidden"));
     assert.equal(ctx.syncAsked.length, 1, "asked once when the view opens");
     assert.match(ctx.syncAsked[0], /^\/photo_index\/api\/sync$/);
-    assert.equal(ctx.stripText(), "The whole library 8 photos Refresh view");
+    assert.equal(ctx.document.querySelector("#library-strip .library-strip-says").textContent.replace(/\s+/g, " ").trim(),
+      "The whole library 8 photos");
+    assert.equal(ctx.document.getElementById("btn-library-refresh").getAttribute("aria-label"), "Refresh view");
   });
 
   test("never in step, and a sync under way, are said", async (t) => {

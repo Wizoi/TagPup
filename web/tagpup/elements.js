@@ -176,7 +176,8 @@ export const btnAddFolder = document.getElementById('btn-add-folder');
 export const btnJustLook = document.getElementById('btn-just-look');
 export const justLookingNote = document.getElementById('just-looking-note');
 export const damagedBadge = document.getElementById('damaged-badge');
-// The strip above the grid that says which view of the library is open (library-view.js)
+// The top of the grid, one floating header in a library view (#713), and its strip that says which view is open (library-view.js)
+export const folderViewTop = document.getElementById('folder-view-top');
 export const libraryStrip = document.getElementById('library-strip');
 export const libraryStripSource = document.getElementById('library-strip-source');
 export const libraryStripTotal = document.getElementById('library-strip-total');

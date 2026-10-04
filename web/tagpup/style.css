@@ -790,30 +790,83 @@ body {
     overflow: hidden;
 }
 
-/* A view of the library: the strip that says which, above the grid. */
-.library-strip {
+/* A view of the library: ONE floating header above the grid (#713) -- the strip that says which view and holds Refresh
+   view and Sort by, and beside it the header card's actions, the card's own title and count hidden (they said the same).
+   It sticks at the very top of the scroller (top: minus the scroller's 20 px padding), so no card shows above it; a card
+   scrolled to by the keys is put below it (grid.js topInset). Everything in it wraps: never a page that scrolls sideways.
+   In Organize the wrapper is a plain block and the card is as it always was. */
+.folder-view-top.in-library-view {
     position: sticky;
-    top: 0;
+    top: -20px;
     z-index: 5;
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 10px;
-    padding: 3px 10px;
-    margin-bottom: 8px;
-    font-size: 13px;
+    gap: 6px 16px;
+    min-width: 0;
+    padding: 6px 12px;
     background: var(--bg-secondary);
     border: 1px solid var(--accent);
     border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.folder-view-top.in-library-view .folder-view-header-card {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 0;
+}
+
+.folder-view-top.in-library-view .folder-view-heading {
+    display: none;
+}
+
+.folder-view-top.in-library-view .folder-view-actions,
+.folder-view-top.in-library-view .selection-actions {
+    flex-wrap: wrap;
+    row-gap: 6px;
+}
+
+.library-strip {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    flex: 1 1 320px;
+    min-width: 0;
     font-size: 13px;
 }
 
+.library-strip-says {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 .library-strip-source {
+    margin: 0;
+    font-family: var(--font-heading);
+    font-size: 16px;
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 50%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* A button that is an icon: its name is its aria-label, its tooltip says what it does. */
+.btn-icon {
+    min-width: 28px;
+    justify-content: center;
+    font-size: 15px;
+    line-height: 1;
 }
 
 .library-strip-status {
@@ -828,7 +881,7 @@ body {
     margin-left: auto;
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 8px;
 }
 
 /* The place of a card not fetched yet: a card's shape, quiet, with nothing to click. */
