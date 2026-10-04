@@ -84,8 +84,10 @@ function renderPhotoDetails(details) {
     const items = photoList.getElementsByClassName('photo-item');
     const activeEl = Array.from(items).find(item => item.photo && samePath(item.photo.path, details.path));
     if (activeEl && activeEl.photo) {
-        // Count unmatched and matched faces in details.faces
-        const unmatchedCount = (details.faces || []).filter(f => !f.name).length;
+        // Count unmatched and matched faces in details.faces. An excluded face is neither,
+        // as in the list's counts: counting it here put it back in the badge, and
+        // Re-examine then added it to the matched one (docs/findings.md, #655).
+        const unmatchedCount = (details.faces || []).filter(f => !f.name && !f.excluded).length;
         const matchedCount = (details.faces || []).filter(f => f.name).length;
         activeEl.photo.unmatched_count = unmatchedCount;
         activeEl.photo.matched_count = matchedCount;

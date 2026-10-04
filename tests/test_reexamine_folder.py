@@ -107,6 +107,16 @@ class ReexamineThroughTheRoute(ExclusionTestBase):
         self.assertIsNone(self.row(self.wren_one)["name"])
 
 
+    def test_the_photo_details_say_which_faces_are_excluded(self):
+        """docs/findings.md, #655: the page counted a photo's unmatched faces from these,
+        and could not tell an excluded face from one waiting for a name."""
+        status, body = self.post("/api/faces/exclude", {"face_ids": [self.stranger]})
+        self.assertEqual(status, 200, body)
+        from urllib.parse import quote
+        details = self.get("/api/photo-details?path=" + quote(self.third))
+        self.assertEqual({f["id"]: f["excluded"] for f in details["faces"]},
+                         {self.wren_one: False, self.stranger: True})
+
     def test_unmatch_all_marks_only_the_faces_it_unnames(self):
         """docs/findings.md, #656: Unmatch All marked every face in the photo "nobody",
         the nameless ones too, and Re-examine never named those again."""

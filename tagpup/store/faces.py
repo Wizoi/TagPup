@@ -546,9 +546,9 @@ def embedding_row(conn, face_id):
 
 
 def in_photo_with_names(conn, photo_path):
-    """(id, box JSON, name, embedding) of each face in one photo."""
+    """(id, box JSON, name, embedding, excluded) of each face in one photo."""
     where, params = _on_photo(conn, photo_path)
-    return conn.execute("SELECT id, box, name, embedding FROM faces WHERE " + where, params).fetchall()
+    return conn.execute("SELECT id, box, name, embedding, excluded FROM faces WHERE " + where, params).fetchall()
 
 
 def photos_with_unnamed(conn, every=False):

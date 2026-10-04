@@ -98,6 +98,31 @@ describe("Re-examine this folder", () => {
     assert.match(button.textContent, /Re-examine/);
   });
 
+  test("an excluded face opened in the strip is neither unmatched nor, after Re-examine, matched", async (t) => {
+    // docs/findings.md, #655: the strip counted it as unmatched, and Re-examine's
+    // arithmetic then moved it into the matched badge.
+    const ctx = await open(t);
+    // The photo as the server has it: one of its two waiting faces named once the apply is in.
+    const applied = () => posts(ctx.server).some((c) => c.body && c.body.dry_run === false);
+    ctx.server.first("/api/photo-details", () => ({
+      path: "D:\\Meet\\120.jpg", filename: "120.jpg", people: [], tags: [], caption: null, year: "2026",
+      faces: [
+        { id: 1, box: [0, 0, 10, 10], name: applied() ? "Rowan Thackeray" : null, max_similarity: 0.9,
+          excluded: false },
+        { id: 2, box: [0, 0, 10, 10], name: null, max_similarity: 0.9, excluded: false },
+        { id: 3, box: [0, 0, 10, 10], name: null, max_similarity: 0.1, excluded: true },
+      ],
+    }));
+    const li = [...ctx.document.querySelectorAll(".folder-photo-item")].find((x) => x.photo.path === "D:\\Meet\\120.jpg");
+    li.click();
+    await flush(ctx.window, 6);
+    assert.equal(li.photo.badgeEl.textContent, "2 unmatched", "the excluded face was counted as unmatched");
+    buttonOf(ctx.document, MEET).button.click();
+    await flush(ctx.window, 8);
+    assert.equal(li.photo.badgeEl.textContent, "1 unmatched");
+    assert.equal(li.photo.badgeMatchedEl.textContent, "1 matched", "the excluded face was counted as matched");
+  });
+
   test("answering no names nobody", async (t) => {
     const ctx = await open(t);
     ctx.answer = false;
