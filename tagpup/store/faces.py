@@ -360,9 +360,11 @@ def name(conn, face_ids, person_name):
 
 def name_if_unnamed(conn, face_id, person_name):
     """Give an unnamed, unexcluded face a name as a guess -- who decided is left alone,
-    so re-clustering may revise it. Returns rows named. The caller commits."""
-    changed = conn.execute("UPDATE faces SET name = ? WHERE id = ? AND name IS NULL AND excluded = 0",
-                           (person_name, face_id)).rowcount
+    so re-clustering may revise it. Not a face somebody unmatched by hand: "this is
+    nobody" is a decision, which a guess does not overrule (docs/findings.md, #643).
+    Returns rows named. The caller commits."""
+    changed = conn.execute("UPDATE faces SET name = ? WHERE id = ? AND name IS NULL AND excluded = 0"
+                           " AND " + NOT_DECIDED_NOBODY % "", (person_name, face_id)).rowcount
     return _rebuilt(conn, _photos_of(conn, [face_id]), changed)
 
 
@@ -429,9 +431,16 @@ def _photos_under(conn, folder):
     return store_roots.sql_under(conn, "p.path", folder)
 
 
+#: A nameless face nobody has called nobody: unmatching a face records name_source
+#: 'manual' (unname), and automatch must not name it again. %s: the table's alias and a
+#: dot, or nothing.
+NOT_DECIDED_NOBODY = "COALESCE(%sname_source, '') <> 'manual'"
+
+
 def unnamed(conn, photo_path=None, folder=None):
     """(id, embedding bytes, photo_path) of the unnamed, unexcluded faces in one photo, or
-    under a folder at any depth."""
+    under a folder at any depth, that automatch may name: not those unmatched by hand
+    (docs/findings.md, #643)."""
     if photo_path is not None:
         where, params = _on_photo(conn, photo_path, "f.photo_id")
         source = " FROM faces f" + PHOTO
@@ -440,7 +449,7 @@ def unnamed(conn, photo_path=None, folder=None):
         source = UNDER_FROM_PHOTOS
     return store_roots.natives(conn, conn.execute(
         "SELECT f.id, f.embedding, p.path" + source + " WHERE " + where
-        + " AND f.name IS NULL AND f.excluded = 0", params).fetchall(), 2)
+        + " AND f.name IS NULL AND f.excluded = 0 AND " + NOT_DECIDED_NOBODY % "f.", params).fetchall(), 2)
 
 
 def unnamed_counts(conn, folder):

@@ -206,5 +206,40 @@ class AnExcludedFaceIsNotWaitingForAName(FacesCase):
             conn.close()
 
 
+class AFaceUnmatchedByHandStaysNobody(FacesCase):
+    """docs/findings.md, #643: automatch took a face the owner had unmatched -- "this is
+    nobody", recorded as name_source 'manual' -- for one waiting, and named it."""
+
+    def setUp(self):
+        super().setUp()
+        self.rowan = vector(1)
+        self.face(self.photo("known.jpg"), name=ROWAN, embedding=self.rowan)
+        self.photo_path = self.photo("a.jpg")
+        self.unmatched = self.face(self.photo_path, embedding=self.rowan)
+        faces.name_face(self.lib.library, self.unmatched, ROWAN)
+        faces.unname_faces(self.lib.library, [self.unmatched])   # Unmatch Face: the real path
+
+    def named(self):
+        return [1], [ROWAN], np.stack([self.rowan])
+
+    def test_re_examining_the_folder_neither_counts_nor_names_it(self):
+        plan = faces.automatch_folder(self.lib.library, self.folder, self.named, rehearse=True)
+        self.assertEqual(plan.details["faces"], 0)
+        self.assertEqual(faces.automatch_folder(self.lib.library, self.folder, self.named).changed, 0)
+        self.assertEqual(self.face_row(self.unmatched), (None, "manual", 0))
+
+    def test_automatch_on_its_photo_leaves_it(self):
+        self.assertEqual(faces.automatch_photo(self.lib.library, self.photo_path, self.named).changed, 0)
+        self.assertIsNone(self.face_row(self.unmatched)[0])
+
+    def test_a_guess_written_directly_leaves_it(self):
+        conn = db.connect(self.lib.library.path)
+        try:
+            self.assertEqual(store_faces.name_if_unnamed(conn, self.unmatched, ROWAN), 0)
+            conn.commit()
+        finally:
+            conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
