@@ -29,7 +29,7 @@ import time
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import Refused
-from tagpup.store import damaged_files, db, derived, person_ids
+from tagpup.store import damaged_files, db, derived, person_ids, search_index
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -62,12 +62,13 @@ Search = collections.namedtuple("Search", "all_of any_of none_of words", default
 
 
 class NoWordIndex(Refused):
-    """A search asked for words of a library that has no word index (the migration that makes it has not run, or is not
-    built yet): refused with a sentence, wherever the search is read -- a page, the ids, a selection, a bulk edit."""
+    """A search asked for words of a library that has no word index (migration 24 has not run on it: a library opened to
+    look, or one another program holds): refused with a sentence, wherever the search is read -- a page, the ids, a
+    selection, a bulk edit."""
 
     def __init__(self):
-        super().__init__("This library cannot search by words yet: it has no word index. Search by tags, people, folders "
-                         "and dates, or leave the words out.")
+        super().__init__("This library cannot search by words yet: it has no word index. Open it in TagPup once, which "
+                         "makes it, or search by tags, people, folders and dates.")
 
 #: Where a page begins and after what: (phase, taken, id). Phase 0 holds the photos with a date, ordered by
 #: (taken, id); phase 1 those with none, ordered by id (taken is None). None begins at the start. In an order by name
@@ -184,15 +185,12 @@ def _marks(items):
     return ",".join("?" * len(items))
 
 
-def has_word_index(conn):
-    """Has the library on `conn` the word index a search's words are matched in? Not yet: it is built after phase 9e-1
-    (docs/ARCHITECTURE.md, phase 9e), and until then a search of words is NoWordIndex."""
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photo_words'").fetchone() is not None
-
-
 def _words_clause(conn, words):
-    """(SQL over `p`, params) of the photos matching every word of `words`. The word index drops in here."""
-    raise NoWordIndex()
+    """(SQL over `p`, params) of the photos holding every term of `words` (tagpup.store.search_index.clause: a set, never
+    ranked), or None when no term says anything; NoWordIndex for a library without the index (before migration 24)."""
+    if not search_index.present(conn):
+        raise NoWordIndex()
+    return search_index.clause(words)
 
 
 def _member_clause(conn, member):
@@ -242,7 +240,9 @@ def _search_scope(conn, search):
         if scope is not None:
             parts.append(("NOT IFNULL((%s), 0)" % scope.where, tuple(scope.params)))
     if search.words:
-        parts.append(_words_clause(conn, search.words))
+        words = _words_clause(conn, search.words)
+        if words is not None:
+            parts.append(words)
     where, params = _every(parts) if parts else ("1", ())
     return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), dated, True)
 

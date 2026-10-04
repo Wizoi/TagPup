@@ -1,7 +1,8 @@
 """A search as a source of the library views (tagpup.services.library_view over tagpup.store.library_view; docs/ARCHITECTURE.md,
 phase 9e-1): the photos in ALL OF a list of sources, ANY OF another and NONE OF a third -- tags, people, folders, dates, and a
 union (the navigator's selection, "within" which the search looks) as one member of `all_of` -- in one statement, paged by the
-keyset in every order, and taken by a selection, the tally and a bulk edit as any source is. Words wait for the word index.
+keyset in every order, and taken by a selection, the tally and a bulk edit as any source is. Its words are
+tests/test_search_words.py's.
 
 What each search should hold is worked out here from the members' own sources (library_view.ids of each), as sets, never from
 the code under test. Photos are rows as the indexer records them (tests/view_library.py), tags nodes made by taxonomy.add_path,
@@ -212,12 +213,18 @@ class TheShapeOfASearch(Library):
         with self.assertRaises(Refused):
             library_view.ids(self.vl.library, "any_of", json.dumps([member("search", {})]))
 
-    def test_words_wait_for_the_word_index(self):
+    def test_words_of_a_library_without_the_word_index_are_refused_with_a_sentence(self):
+        # A library not brought up to migration 24 (opened to look, or held by another program).
+        for table in ("search_words", "search_names"):
+            self.vl.conn.execute("DROP TABLE %s" % table)
+        self.vl.conn.commit()
         with self.assertRaises(Refused) as caught:
             self.found(search(words="harbour"))
         self.assertIn("word index", str(caught.exception))
         with self.assertRaises(store.NoWordIndex):
             self.found(search(all_of=[member("person", WREN)], words="harbour"))
+        self.assertEqual(self.of("person", WREN), set(self.found(search(all_of=[member("person", WREN)], words=" - "))["ids"]),
+                         "words that say nothing ask nothing of the index")
 
 
 class TheOrders(Library):
@@ -315,9 +322,10 @@ class TheRoutes(unittest.TestCase):
         refused = client.post("/library/api/library/ids", json={"kind": "search", "value": {"within": []}})
         self.assertEqual(400, refused.status_code)
         self.assertIn("no part within", refused.get_json()["error"])
-        words = client.post("/library/api/library/ids", json={"kind": "search", "value": {"words": "coast"}})
-        self.assertEqual(400, words.status_code)
-        self.assertIn("word index", words.get_json()["error"])
+        words = client.post("/library/api/library/ids", json={"kind": "search", "value": {"words": "coast", "none_of": [
+            member("month", "2021-07")]}})
+        self.assertEqual(200, words.status_code, words.get_data(as_text=True))
+        self.assertEqual([b], words.get_json()["ids"])
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ import collections
 import os
 
 from tagpup.core import paths
-from tagpup.store import derived, generations, people, person_ids, schema
+from tagpup.store import derived, generations, people, person_ids, schema, search_index
 from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
@@ -141,6 +141,14 @@ def photo_meta_out_of_date(conn):
     if not derived.present(conn):
         return _check("photos whose metadata rows are out of date", [])
     return _check("photos whose metadata rows are out of date", derived.stale_meta(conn))
+
+
+def search_index_out_of_date(conn):
+    """Photos whose rows of the word index (tagpup.store.search_index) are not what their rows give: a photo with no row,
+    a row of no photo, and of a sample of SAMPLE photos those whose texts are not found in their rows. A writer that
+    changed a photo's keywords, captions, people or path and did not refresh, or an older version of the app that does
+    not know the index. `tools/doctor.py --rebuild-derived --apply` makes it so. Waits for migration 24."""
+    return _check("photos whose word index rows are out of date", search_index.stale(conn))
 
 
 def tags_without_a_node(conn):
@@ -359,7 +367,8 @@ RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excl
          people_out_of_date, orphan_nodes, crops_without_a_face, vectors_without_a_photo,
          people_without_a_photo, suggestions_without_a_photo, one_file_two_rows,
          rooted_rows_convert, native_rows_under_a_root, photo_tags_out_of_date, photo_folders_out_of_date,
-         folders_out_of_date, photo_meta_out_of_date, face_person_ids_out_of_step, listed_person_ids_out_of_step)
+         folders_out_of_date, photo_meta_out_of_date, search_index_out_of_date, face_person_ids_out_of_step,
+         listed_person_ids_out_of_step)
 
 
 def run(conn):

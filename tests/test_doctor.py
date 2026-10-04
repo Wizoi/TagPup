@@ -80,7 +80,10 @@ class TheRules(Library):
             self.face(photo, name="Wren Halloway")
             self.conn.execute(broken, (photo,))
             self.conn.commit()
-        self.assertEqual({"photos whose people are out of date": 3}, self.broken())
+        # The people are words of the word index, kept by people.rebuild: two of the three hand-made lists hold a name the
+        # index does not (the third holds the same names in another order).
+        self.assertEqual({"photos whose people are out of date": 3, "photos whose word index rows are out of date": 2},
+                         self.broken())
 
     def test_a_face_named_and_excluded(self):
         self.face(self.photo("a.jpg"), name="Wren Halloway", excluded=1)

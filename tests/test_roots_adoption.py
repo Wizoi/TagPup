@@ -40,8 +40,14 @@ WINDOWS = os.name == "nt"
 # The folder tree is derived from the paths and made again, in the same transaction, by the adoption and
 # by its undo: its ids are not kept (a folder is named by its path), so it is compared by path
 # (tests/test_derived_follow_writes.py), not row by row.
+#: The word index (tagpup.store.search_index) is rebuilt with the folders: its FTS5 tables hold no text to compare
+#: (contentless) and their shadow tables' blocks are SQLite's layout, which a rebuild lays out anew. Whether it says what
+#: the rows say is search_index.stale's question: a row for every photo after an adoption (WhatItDoes), and words found
+#: below the root and not by its name (tests/test_search_words.py).
+WORD_INDEX = ("search_words", "search_names", "search_words_data", "search_words_idx", "search_words_docsize",
+              "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config")
 NOT_COMPARED = ("generations", "changes", "change_rows", "roots", "schema_version", "photo_people",
-                "folders", "photo_folder")
+                "folders", "photo_folder") + WORD_INDEX
 
 
 def tagpup_cli_console():
@@ -255,8 +261,11 @@ class WhatItDoes(AdoptionCase):
         self.assertTrue(result.ok, result.message())
         after = self.side.dump()
         self.assertEqual(counts["roots"] + 1, len(after["roots"]))
-        self.assertEqual({table: n for table, n in counts.items() if table not in ("roots", "changes")},
-                         {table: len(rows) for table, rows in after.items() if table not in ("roots", "changes")})
+        # The word index's blocks are laid out anew by its rebuild; its rows, one a photo, are counted by docsize.
+        uncounted = ("roots", "changes", "search_words_data", "search_words_idx", "search_names_data", "search_names_idx")
+        self.assertEqual({table: n for table, n in counts.items() if table not in uncounted},
+                         {table: len(rows) for table, rows in after.items() if table not in uncounted})
+        self.assertEqual([], self.side.rows("SELECT 1 FROM photos WHERE id NOT IN (SELECT id FROM search_names_docsize)"))
         self.assertEqual(counts["changes"] + 1, len(after["changes"]))
         self.assertEqual(sum(c["convert"] for c in result.details["adopted"]["tables"].values()), result.changed)
         listed = [entry for entry in self.history() if entry["operation"].startswith("roots adopt")]

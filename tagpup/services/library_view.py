@@ -46,6 +46,7 @@ from tagpup.store import db
 from tagpup.store import library_view as store
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
+from tagpup.store import search_index
 
 KINDS = store.KINDS
 SECTIONS = ("folders", "keywords", "people", "dates")
@@ -230,7 +231,7 @@ def _search_of(value, canonical):
         raise Refused("A search's words are text.")
     if len(words) > MAX_WORDS:
         raise Refused("A search's words are at most %d characters." % MAX_WORDS)
-    words = " ".join(words.split())
+    words = " ".join(search_index.terms(words))   # the terms that say something: Refused for too many
     lists = {}
     for part in ("all_of", "any_of", "none_of"):
         named = value.get(part)

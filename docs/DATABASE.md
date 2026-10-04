@@ -343,6 +343,23 @@ What a photo's metadata says of the photo itself (`tagpup/store/derived.py`, `ta
 | `latitude` | REAL | | Signed decimal degrees, north positive. |
 | `longitude` | REAL | | Signed decimal degrees, east positive. |
 
+### 25. `search_words` Table
+The words a search's words are matched in (`tagpup/store/search_index.py`, migration 24; docs/ARCHITECTURE.md, phase 9e-1): an FTS5 virtual table, `tokenize = 'unicode61 remove_diacritics 2'`, prefixes of 2 and 3 characters indexed, CONTENTLESS (`content = ''`, `contentless_delete = 1`: the text is not stored, a row is replaced by INSERT OR REPLACE and taken by its rowid). One row for every photo, its **rowid the photo's id**. Derived, never journaled, kept by the store's writes in their transactions (tagpup.store.derived for the photo's keywords, path, metadata and captions; people.rebuild for its people) and taken with its photo by the trigger `search_goes_with_its_photo`. FTS5 keeps it in four shadow tables, `search_words_data`, `search_words_idx`, `search_words_docsize` and `search_words_config`, which nothing but SQLite reads or writes. Read only through `MATCH`.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `tags` | TEXT | FTS5 | Each keyword of `photos.tags` as the row holds it, one a line: its path's words and its leaf's. |
+| `captions` | TEXT | FTS5 | Each caption and title of `photos.captions`, one a line. |
+| `people` | TEXT | FTS5 | The names `photo_people` lists for the photo (keywords and faces, by the leaf rule), one a line. |
+
+### 26. `search_names` Table
+The file name and the folders of each photo, for a search's words found inside a name (`tagpup/store/search_index.py`, migration 24): an FTS5 virtual table, `tokenize = 'trigram remove_diacritics 1'` (any three characters: "0412" in "20190412_1430.jpg"), CONTENTLESS as `search_words` is, its rowid the photo's id, kept and taken with it. Shadow tables `search_names_data`, `search_names_idx`, `search_names_docsize`, `search_names_config`.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `name` | TEXT | FTS5 | The file name (`IMG_0412.jpg`). |
+| `folders` | TEXT | FTS5 | Of a root-relative row every folder below the root (`@pictures/2024/Coast` holds `2024/Coast`: the root's name is never a word); of a native row the one folder it is directly in. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram

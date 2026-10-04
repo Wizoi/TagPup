@@ -63,7 +63,9 @@ class TheRules(ALibraryAtRest):
     def test_a_writer_that_changed_a_photos_keywords_and_did_not_refresh(self):
         self.conn.execute("UPDATE photos SET tags = '[\"Trips/Lake\"]' WHERE id = ?", (self.ids["a.jpg"],))
         self.conn.commit()
-        self.assertEqual({"photos whose keyword rows are out of date": 1}, self.counts())
+        # The word index is kept from the same writes (tagpup.store.search_index): the keyword's words are out of date too.
+        self.assertEqual({"photos whose keyword rows are out of date": 1, "photos whose word index rows are out of date": 1},
+                         self.counts())
         found = self.rule("photo_tags_out_of_date")
         self.assertEqual([self.ids["a.jpg"]], found.examples, "an id, never a tag")
 

@@ -90,7 +90,7 @@ KEYS = {
 NAMED = ("settings",)
 
 #: Derived tables: never journaled, rebuilt from what a change touched (`_derive`).
-DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta")
+DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta", "search_words", "search_names")
 
 #: Derived columns of journaled tables, rebuilt from the row's other columns after each
 #: write (a photo's dates, from its metadata and path: store.photos.date_photos; a face's
@@ -726,7 +726,7 @@ def _touched(conn, changes):
             photo_ids.add(change.key[0])
             if change.action != "update" or columns & {"path", "raw_metadata"}:
                 dated.add(change.key[0])
-            if change.action != "update" or columns & {"tags", "path", "raw_metadata"}:
+            if change.action != "update" or columns & {"tags", "path", "raw_metadata", "captions"}:
                 listed.add(change.key[0])
         elif change.table == "faces":
             found = {d["photo_id"] for d in values if "photo_id" in d}
