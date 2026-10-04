@@ -5,7 +5,8 @@ A SOURCE says which photos: all of them; a folder -- by its path, never an id --
 subfolders; a keyword and everything under it, or its node alone (`keyword_only`); a person; a year; the
 photos of a year whose date names no month of it (`year_other`); a month; or ANY OF a list of those (a
 union: the rows a person selected in the navigator, phase 9 #672 -- one statement, a photo in two of
-them once). Every source is ordered by when the photo was taken and then by id, those with no date at
+them once); or a SEARCH (phase 9e): the photos in ALL OF a list of sources, ANY OF another and NONE OF a third, and
+-- once the library has its word index -- matching the words typed, again one statement. Every source is ordered by when the photo was taken and then by id, those with no date at
 the end (by id), unless another order is asked (ORDERS: Date Taken, file name or caption, either way), and
 paged by a KEYSET -- the (taken, id) of the last photo of the page before -- never by OFFSET, so a page costs
 what a page costs however far down it is, and a photo added, taken away or re-dated between two pages
@@ -27,6 +28,7 @@ import collections
 import time
 
 from tagpup.core import paths, vocabulary
+from tagpup.core.result import Refused
 from tagpup.store import damaged_files, db, derived, person_ids
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
@@ -39,9 +41,12 @@ KEYWORD_ONLY, YEAR_OTHER = "keyword_only", "year_other"
 #: A union: the photos of any of a list of the sources above (Source.value is a tuple of them, none of them a union).
 #: Phase 9e's search extends it: its `any_of` is this list (docs/ARCHITECTURE.md, phase 9 review, #672).
 ANY_OF = "any_of"
-KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER, ANY_OF)
+#: A search (phase 9e): Source.value is a Search. Its lists hold sources of the kinds a union may hold, and its `all_of` a
+#: union too (the navigator's selection, "within" which the search looks: docs/ARCHITECTURE.md, phase 9e-1).
+SEARCH = "search"
+KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER, ANY_OF, SEARCH)
 #: The kinds a union may hold.
-MEMBER_KINDS = KINDS[:-1]
+MEMBER_KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER)
 #: The kinds whose photos are a range of another index of photos (Scope.ranged): a union of only these is one too.
 RANGED = (YEAR, MONTH, YEAR_OTHER)
 
@@ -49,6 +54,20 @@ RANGED = (YEAR, MONTH, YEAR_OTHER)
 #: name, a year as an integer, a month as "YYYY-MM", a union's tuple of Sources; None for all -- and, for a folder,
 #: whether its subfolders are in.
 Source = collections.namedtuple("Source", "kind value recursive", defaults=(None, False))
+
+#: What a search asks (Source.value of a SEARCH): the photos in every source of `all_of` (each a member kind or a union),
+#: in at least one of `any_of` (none: no such condition), in none of `none_of`, and -- `words`, text, "" for none --
+#: matching every word typed. Tuples, so a Source holding one is hashable as a union's members are.
+Search = collections.namedtuple("Search", "all_of any_of none_of words", defaults=((), (), (), ""))
+
+
+class NoWordIndex(Refused):
+    """A search asked for words of a library that has no word index (the migration that makes it has not run, or is not
+    built yet): refused with a sentence, wherever the search is read -- a page, the ids, a selection, a bulk edit."""
+
+    def __init__(self):
+        super().__init__("This library cannot search by words yet: it has no word index. Search by tags, people, folders "
+                         "and dates, or leave the words out.")
 
 #: Where a page begins and after what: (phase, taken, id). Phase 0 holds the photos with a date, ordered by
 #: (taken, id); phase 1 those with none, ordered by id (taken is None). None begins at the start. In an order by name
@@ -151,8 +170,81 @@ def _any(clauses):
     return "(%s OR %s)" % (left[0], right[0]), tuple(left[1]) + tuple(right[1])
 
 
+def _every(clauses):
+    """(SQL, params) true when every one of `clauses` -- [(SQL, params)] -- is: AND'd as a balanced tree, as _any OR's them
+    (a search of 1,000 sources ANDs as many)."""
+    if len(clauses) == 1:
+        return clauses[0]
+    middle = len(clauses) // 2
+    left, right = _every(clauses[:middle]), _every(clauses[middle:])
+    return "(%s AND %s)" % (left[0], right[0]), tuple(left[1]) + tuple(right[1])
+
+
 def _marks(items):
     return ",".join("?" * len(items))
+
+
+def has_word_index(conn):
+    """Has the library on `conn` the word index a search's words are matched in? Not yet: it is built after phase 9e-1
+    (docs/ARCHITECTURE.md, phase 9e), and until then a search of words is NoWordIndex."""
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photo_words'").fetchone() is not None
+
+
+def _words_clause(conn, words):
+    """(SQL over `p`, params) of the photos matching every word of `words`. The word index drops in here."""
+    raise NoWordIndex()
+
+
+def _member_clause(conn, member):
+    """(SQL over `p`, params, the member's Scope) of the photos of one source of a search, or None when it holds none: a
+    union's own clause, a folder alone by photo_folder, every other kind the where its own Scope reads it by."""
+    if member.kind == FOLDER and not member.recursive:
+        scope = _union_scope(conn, (member,))
+    else:
+        scope = _scope(conn, member)
+    if scope is None:
+        return None
+    if scope.from_ != "photos p":
+        raise ValueError("a search's member is read over photos p, not %r" % (scope.from_,))
+    return "(%s)" % scope.where, tuple(scope.params), scope
+
+
+def _search_scope(conn, search):
+    """The Scope of a search: ONE where-clause over `photos p`, the AND of its parts -- the union of `any_of` (_union_scope's
+    clause), each member of `all_of` (its own clause: an AND of gathered INs would be "any"), NOT the union of `none_of`,
+    and the words -- so a photo is one row and the count counts it once. None when it can hold nothing: `any_of` or a
+    member of `all_of` holds nothing, or `none_of` holds every photo. No part at all is every photo.
+
+    NOT is of the clause's truth, NULL taken as false: a photo with no date is in none of the months of `none_of`, so it is
+    kept, where NOT of the bare comparison would be NULL and drop it.
+
+    `ranged` is always set: whether the name or caption index is walked for it is decided by counting it (_walks), since
+    an AND of a small list and the whole library is either a handful or most of it."""
+    parts, dated = [], False
+    if search.any_of:
+        scope = _union_scope(conn, search.any_of)
+        if scope is None:
+            return None
+        parts.append(("(%s)" % scope.where, tuple(scope.params)))
+        dated = dated or scope.dated
+    for member in search.all_of:
+        if member.kind == ALL:
+            continue
+        found = _member_clause(conn, member)
+        if found is None:
+            return None
+        parts.append(found[:2])
+        dated = dated or found[2].dated
+    if search.none_of:
+        if any(member.kind == ALL for member in search.none_of):
+            return None
+        scope = _union_scope(conn, search.none_of)
+        if scope is not None:
+            parts.append(("NOT IFNULL((%s), 0)" % scope.where, tuple(scope.params)))
+    if search.words:
+        parts.append(_words_clause(conn, search.words))
+    where, params = _every(parts) if parts else ("1", ())
+    return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), dated, True)
 
 
 def _union_scope(conn, members):
@@ -232,6 +324,8 @@ def _scope(conn, source):
         return Scope("photos p", "1", (), ("SELECT COUNT(*) FROM photos", ()))
     if kind == ANY_OF:
         return _union_scope(conn, source.value)
+    if kind == SEARCH:
+        return _search_scope(conn, source.value)
     if kind == YEAR_OTHER:
         where, params = _year_other(int(source.value))
         return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), ranged=True)

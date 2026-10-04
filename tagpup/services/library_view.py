@@ -4,8 +4,9 @@
 A SOURCE says which photos: `all`; a `folder` (by its path, never an id) and, when asked, its subfolders; a
 `keyword` -- the tag as the tree spells it -- and everything under it, or `keyword_only`, its node alone; a `person`
 (the leaf name, as photo_people holds it: identity by id comes later); a `year`; `year_other`, the photos of a year
-whose date names no month of it; a `month` ("2024-06"); or `any_of`, a list of those (at most MAX_MEMBERS): the
-union of the rows selected in the navigator (phase 9, #672). `view` answers an ORDERED page of photo ids with the
+whose date names no month of it; a `month` ("2024-06"); `any_of`, a list of those (at most MAX_MEMBERS): the
+union of the rows selected in the navigator (phase 9, #672); or a `search` (phase 9e): {"all_of", "any_of", "none_of",
+"words"} (search_of). `view` answers an ORDERED page of photo ids with the
 TOTAL and the cards of the page; `cards` turns any list of ids into cards.
 
 * **Order**: by Date Taken (`photos.taken`, ExifTool's text, which sorts as time does) and then id; photos with
@@ -146,6 +147,10 @@ def _source_of(kind, value, recursive, canonical, member):
         if member:
             raise Refused("A union cannot hold a union.")
         return _union_of(value, canonical)
+    if kind == store.SEARCH:
+        if member:
+            raise Refused("A search cannot hold a search.")
+        return _search_of(value, canonical)
     if not isinstance(value, (str, int)) or isinstance(value, bool) or not str(value).strip():
         raise Refused("A %s source needs a value." % kind)
     value = str(value)
@@ -189,10 +194,93 @@ def _union_of(value, canonical):
     return store.Source(store.ANY_OF, tuple(members))
 
 
+#: The parts a search's value may hold; anything else is refused (a misspelt "none_of" would otherwise be a search for more).
+SEARCH_PARTS = ("all_of", "any_of", "none_of", "words")
+
+#: The longest text of words a search reads.
+MAX_WORDS = 500
+
+
+def _search_of(value, canonical):
+    """A search's Source, from its value -- {"all_of": [source], "any_of": [source], "none_of": [source], "words": text},
+    each part optional; as JSON text in a request's query, an object in a body -- or Refused with why it means nothing.
+
+    Each list holds sources of the kinds a union holds, at most MAX_MEMBERS. A union (`any_of`) in `any_of` or `none_of` is
+    its sources (OR of an OR); in `all_of` it is one member, its photos ANDed with the rest: the navigator's selection,
+    "within" which the search looks. A source named twice in a list is once. Words are text, at most MAX_WORDS
+    characters, their blanks made single.
+
+    A search that says nothing more than a source is that source, as a union of one is: no part at all is the whole
+    library; `any_of` alone its union; one member of `all_of` alone that member."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            raise Refused("A search's value is {\"all_of\": [...], \"any_of\": [...], \"none_of\": [...], "
+                          "\"words\": \"...\"}.") from None
+    if not isinstance(value, dict):
+        raise Refused("A search's value is {\"all_of\": [...], \"any_of\": [...], \"none_of\": [...], \"words\": \"...\"}.")
+    unknown = sorted(str(key) for key in value if key not in SEARCH_PARTS)
+    if unknown:
+        raise Refused("A search has no part %s: its parts are %s." % (", ".join(unknown), ", ".join(SEARCH_PARTS)))
+    words = value.get("words")
+    if words is None:
+        words = ""
+    if not isinstance(words, str):
+        raise Refused("A search's words are text.")
+    if len(words) > MAX_WORDS:
+        raise Refused("A search's words are at most %d characters." % MAX_WORDS)
+    words = " ".join(words.split())
+    lists = {}
+    for part in ("all_of", "any_of", "none_of"):
+        named = value.get(part)
+        if named is None:
+            named = []
+        if not isinstance(named, list):
+            raise Refused("A search's %s is a list of sources." % part)
+        if len(named) > MAX_MEMBERS:
+            raise Refused("A search's %s names %d sources; at most %d can be asked at once." % (part, len(named), MAX_MEMBERS))
+        found = []
+        for each in named:
+            if not isinstance(each, dict):
+                raise Refused("Each source of a search is {\"kind\": ..., \"value\": ..., \"recursive\": ...}.")
+            kind = each.get("kind")
+            if kind == store.SEARCH:
+                raise Refused("A search cannot hold a search.")
+            if kind == store.ANY_OF:
+                union = _union_of(each.get("value"), canonical)
+                if part != "all_of":
+                    found += list(union.value) if union.kind == store.ANY_OF else [union]
+                    continue
+                found.append(union)
+                continue
+            found.append(_source_of(kind, each.get("value"), each.get("recursive"), canonical, member=True))
+        found = list(dict.fromkeys(found))
+        if len(found) > MAX_MEMBERS:
+            raise Refused("A search's %s holds %d sources; at most %d can be asked at once." % (part, len(found), MAX_MEMBERS))
+        lists[part] = tuple(found)
+    all_of, any_of, none_of = lists["all_of"], lists["any_of"], lists["none_of"]
+    if not words and not none_of:
+        if not all_of:
+            if not any_of:
+                return store.Source(store.ALL)
+            return any_of[0] if len(any_of) == 1 else store.Source(store.ANY_OF, any_of)
+        if not any_of and len(all_of) == 1:
+            return all_of[0]
+    return store.Source(store.SEARCH, store.Search(all_of, any_of, none_of, words))
+
+
 def described(source):
-    """A Source as a reply names it: {"kind", "value", "recursive"}, a union's value the list of its sources so named."""
+    """A Source as a reply names it: {"kind", "value", "recursive"}, a union's value the list of its sources so named, a
+    search's {"all_of", "any_of", "none_of", "words"} with its lists so named."""
     if source.kind == store.ANY_OF:
         return {"kind": source.kind, "value": [described(member) for member in source.value], "recursive": False}
+    if source.kind == store.SEARCH:
+        search = source.value
+        return {"kind": source.kind, "value": {"all_of": [described(member) for member in search.all_of],
+                                               "any_of": [described(member) for member in search.any_of],
+                                               "none_of": [described(member) for member in search.none_of],
+                                               "words": search.words}, "recursive": False}
     return {"kind": source.kind, "value": source.value, "recursive": source.recursive}
 
 
