@@ -63,6 +63,17 @@ class HardCrash(F.Followup):
             return real(*args, **kwargs)
         return mock.patch.object(file_changes, "_finish", finish)
 
+    def crash_with_chunk_two_applied(self):
+        real, calls = bulk_edits.Job._take, []
+
+        def take(self_, out, size):
+            calls.append(1)
+            if len(calls) == 2:          # chunk 2's change is applied; the process dies before the job records it done
+                raise T.Crash()
+            return real(self_, out, size)
+        with mock.patch.object(bulk_edits.Job, "_take", take):
+            return self.run_until_hard_crash()
+
     def unfinished_rows(self):
         return self.vl.rows("SELECT COUNT(*) FROM change_files WHERE state IN ('planned', 'writing')")[0][0]
 
@@ -157,14 +168,14 @@ class ARestoredJournal(HardCrash):
         self.assertEqual(before, bulk_edit.read_state(self.library, handle))
         self.assertEqual(0, len(self.vl.rows("SELECT 1 FROM job_runs WHERE outcome = 'running'")))
 
-    def test_the_state_carries_the_journals_highest_change_of_the_job(self):
+    def test_the_state_carries_the_change_of_the_chunk_in_flight(self):
         handle = self.crash_after_file_written(30)
         newest = self.vl.rows("SELECT MAX(id) FROM changes")[0][0]
-        self.assertEqual(newest, bulk_edit.read_state(self.library, handle)["journal_high"])
+        self.assertEqual(newest, bulk_edit.read_state(self.library, handle)["journal_chunk"])
 
     def test_a_resume_after_the_journal_lost_an_older_change_though_it_holds_newer_ones_is_refused(self):
         handle = self.crash_after_file_written(30)
-        high = bulk_edit.read_state(self.library, handle)["journal_high"]
+        high = bulk_edit.read_state(self.library, handle)["journal_chunk"]
         db.write_with_connection(self.library.path, lambda conn: [
             conn.execute("DELETE FROM change_files WHERE change_id = ?", (high,)),
             conn.execute("DELETE FROM changes WHERE id = ?", (high,)),
@@ -175,23 +186,51 @@ class ARestoredJournal(HardCrash):
         self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
         self.assertEqual(writes, self.files.writes)
 
-    def test_a_resume_after_the_journal_pruned_the_chunk_in_flight_is_refused_saying_so_and_writes_nothing(self):
-        real, calls = bulk_edits.Job._take, []
-
-        def take(self_, out, size):
-            calls.append(1)
-            if len(calls) == 2:          # chunk 2's change is applied; the process dies before the job records it done
-                raise T.Crash()
-            return real(self_, out, size)
-        with mock.patch.object(bulk_edits.Job, "_take", take):
-            handle = self.run_until_hard_crash()
+    def test_no_prune_takes_the_changes_of_a_job_that_can_be_resumed_and_says_so(self):
+        handle = self.crash_with_chunk_two_applied()
+        others = self.vl.rows("SELECT COUNT(*) FROM changes WHERE operation NOT LIKE 'bulk time shift%'")[0][0]
         dry = journal_service.prune(self.library, 0)
-        self.assertEqual([int(handle)], [int(each) for each in dry.details["resumable_jobs"]], "the dry run names the job")
-        self.assertTrue(journal_service.prune(self.library, 0, apply=True).changed)
+        self.assertEqual(others, dry.attempted)
+        self.assertEqual({bulk_edit.operation_of("time_shift", handle)}, journal_service.kept_operations(self.library))
+        self.assertEqual(2, dry.details["kept"])
+        self.assertEqual([int(handle)], [int(each) for each in dry.details["kept_jobs"]])
+        self.assertIn("kept for a resumable bulk job: 2", dry.details["note"])
+        applied = journal_service.prune(self.library, 0, apply=True)
+        self.assertEqual(others, applied.changed)
+        self.assertEqual(0, self.vl.rows(
+            "SELECT COUNT(*) FROM changes WHERE status = 'pruned' AND operation LIKE 'bulk time shift%'")[0][0])
+        self.resume_and_finish(handle)
+        self.assert_every_photo_shifted_once()
+        self.assertEqual(3, journal_service.prune(self.library, 0, apply=True).changed, "once the job is done its changes go too")
+
+    def test_guard_a_change_pruned_some_other_way_is_refused_saying_so_and_writes_nothing(self):
+        # A defence: no prune reaches it any more (the test above); here the rows are edited as a journal changed otherwise would be.
+        handle = self.crash_with_chunk_two_applied()
+        chunk = bulk_edit.read_state(self.library, handle)["journal_chunk"]
+        db.write_with_connection(self.library.path, lambda conn: [
+            conn.execute("DELETE FROM change_files WHERE change_id = ?", (chunk,)),
+            conn.execute("UPDATE changes SET status = 'pruned' WHERE id = ?", (chunk,))])
         writes = self.files.writes
         reply = self.post("resume", {"job": handle})
         self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
         self.assertIn("pruned", reply.get_json()["error"])
+        self.assertEqual(writes, self.files.writes)
+
+    def test_a_snapshot_restored_below_the_record_with_other_operations_reusing_the_ids_is_refused(self):
+        handle = self.crash_after_file_written(55)
+        chunk = bulk_edit.read_state(self.library, handle)["journal_chunk"]
+        db.write_with_connection(self.library.path, lambda conn: [
+            conn.execute("DELETE FROM change_files WHERE change_id >= ?", (chunk,)),
+            conn.execute("DELETE FROM changes WHERE id >= ?", (chunk,))])
+        for taken in range(chunk, chunk + 3):    # work done since the restore reuses the ids, under other names
+            db.write_with_connection(self.library.path, lambda conn, taken=taken: conn.execute(
+                "INSERT INTO changes (id, operation, status, schema_version, created, summary)"
+                " VALUES (?, 'refresh_rows', 'applied', 1, '2026-10-03 12:00:00', '{}')", (taken,)))
+        self.assertGreaterEqual(file_journal.highest(self.library.path), chunk)
+        writes = self.files.writes
+        reply = self.post("resume", {"job": handle})
+        self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
+        self.assertIn("no longer holds", reply.get_json()["error"])
         self.assertEqual(writes, self.files.writes)
 
     def test_a_chunk_that_died_before_its_plan_resumes_though_it_has_no_change(self):
@@ -211,6 +250,24 @@ class ARestoredJournal(HardCrash):
 
 
 class AnUndoIsNotAResumesToFinish(HardCrash):
+    def test_a_chunk_being_undone_by_another_live_process_is_unsettled_and_the_resume_is_refused(self):
+        handle = self.crash_with_chunk_two_applied()
+        second = self.vl.rows("SELECT id FROM changes WHERE operation = ? ORDER BY id", bulk_edit.operation_of("time_shift", handle))[1][0]
+        parent = os.getppid()
+        other = "%s:%d:%s" % (socket.gethostname(), parent, processes.started(parent))
+        undone = [row[0] for row in self.vl.rows("SELECT id FROM change_files WHERE change_id = ? ORDER BY id LIMIT 10", second)]
+        db.write_with_connection(self.library.path, lambda conn: [
+            conn.execute("UPDATE changes SET status = 'planned', undone = ?, owner = ? WHERE id = ?",
+                         ("2026-10-03 12:00:00", other, second)),
+            conn.execute("UPDATE change_files SET state = 'undone' WHERE id IN (%s)" % ",".join("?" * len(undone)), undone)])
+        self.assertEqual([("done", 15), ("undone", 10)], self.vl.rows(
+            "SELECT state, COUNT(*) FROM change_files WHERE change_id = ? GROUP BY state ORDER BY state", second))
+        writes = self.files.writes
+        reply = self.post("resume", {"job": handle})
+        self.assertEqual(409, reply.status_code, reply.get_data(as_text=True))
+        self.assertIn("Could not settle", reply.get_json()["error"])
+        self.assertEqual(writes, self.files.writes)
+
     def test_a_resume_leaves_an_undo_another_live_process_is_carrying_out_alone(self):
         handle = self.crash_after_file_written(55)
         first = self.vl.rows("SELECT MIN(id) FROM changes WHERE operation = ?", bulk_edit.operation_of("time_shift", handle))[0][0]

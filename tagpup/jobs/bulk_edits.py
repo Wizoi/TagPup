@@ -31,8 +31,14 @@ what was written: each photo of it that a change named after the job left done i
 row, so its folder is the library's and its write is journaled, and the journal can always tell. A chunk the journal has not
 finished (a change left planned or writing, owned by a process that is gone or by this one after an error) is finished by the
 resume's settle; if it cannot be, the resume is refused (COULD_NOT_SETTLE) and nothing is written, because planning a photo again
-from a file that may already be shifted shifts it twice. The state records the change the job last planned (`journal_high`),
+from a file that may already be shifted shifts it twice. The state records the change of the chunk in flight (`journal_chunk`),
 before that change writes a file, and a resume refuses when the journal no longer holds it (a snapshot restored over it).
+
+The journal's prune never takes the changes of a time shift that has a record to resume from (services.journal.kept_operations
+decides, store.journal._prunable applies it to every prune), so the account a resume reads cannot be pruned away; the
+refusals on a pruned or missing change are a defence for a journal changed some other way. A change planned and committed
+whose record of it was not written (a death between the two) is not named, and a snapshot restore that removes exactly that
+change goes unseen: accepted.
 
 **What is accepted.** The state file is flushed (fsync) and replaced atomically, but its folder is not flushed, and the journal
 runs with WAL synchronous=NORMAL: after a POWER LOSS (not a crash of the process, which loses neither) a photo written on another
@@ -129,9 +135,10 @@ class Job:
         #: How many of `changed` a resume counted from the journal for the chunk that was in flight: not yet in the state's own
         #: count while that chunk is unfinished, or a second resume of it would count them again.
         self.credit = 0
-        #: The journal change this job last planned (None before the first): kept in the record so that a resume can tell a
-        #: journal that lost it (a snapshot restored) from one that never had a chunk in flight.
-        self.high = None
+        #: The journal change of the chunk in flight, once the chunk is planned (None before, and cleared at the write before each
+        #: chunk): kept in the record so that a resume can tell a journal that lost it (a snapshot restored) from one that never had
+        #: a chunk in flight.
+        self.chunk = None
         #: The record's sequence number: one more on every write of the state file (a resume that finds another has been beaten
         #: to it by another process).
         self.seq = 0
@@ -147,7 +154,7 @@ class Job:
         self.done = self.began = int(state.get("done", 0))
         self.inflight = int(state.get("inflight", 0))
         self.seq = int(state.get("seq", 0))
-        self.high = state.get("journal_high")
+        self.chunk = state.get("journal_chunk")
         for name in ("changed", "unchanged", "skipped_missing", "skipped_damaged", "error_count"):
             setattr(self, name, int(state.get(name, 0)))
         self.errors = list(state.get("errors") or [])
@@ -158,7 +165,7 @@ class Job:
         until the write has worked)."""
         with self.lock:
             return {"job": self.handle, "op": self.edit.op, "edit": self.edit.to_json(), "state": self.state, "seq": self.seq + 1,
-                    "journal_high": self.high, "message": self.message, "total": self.total, "done": self.done,
+                    "journal_chunk": self.chunk, "message": self.message, "total": self.total, "done": self.done,
                     "inflight": self.inflight if inflight is None else inflight, "changed": self.changed - self.credit,
                     "unchanged": self.unchanged, "skipped_missing": self.skipped_missing,
                     "skipped_damaged": self.skipped_damaged, "error_count": self.error_count, "errors": list(self.errors),
@@ -229,10 +236,10 @@ class Job:
         """A chunk's change is planned and no file of it written yet: the record names it, durably, or the chunk is not written
         (the exception releases the change, planned, and a resume settles it). A record that names the change is what lets a
         resume tell that the journal lost it."""
-        before = self.high
-        self.high = change_id
+        before = self.chunk
+        self.chunk = change_id
         if not self._persist(mandatory=True):
-            self.high = before
+            self.chunk = before
             raise OSError("the job's record could not be written")
 
     def _flush(self, force=False):
@@ -308,10 +315,10 @@ class Job:
                 # Which chunk is in flight, kept BEFORE it is written, and DURABLY: a resume tells what the chunk wrote only by
                 # this record and the journal, and a record older than the files would let it plan a shifted photo again. If it
                 # cannot be written the chunk is not.
-                before = self.inflight
-                self.inflight = position + len(chunk)
+                before, change = self.inflight, self.chunk
+                self.inflight, self.chunk = position + len(chunk), None
                 if not self._persist(mandatory=True):
-                    self.inflight = before
+                    self.inflight, self.chunk = before, change
                     return self._end(FAILED, NOT_RECORDED % (_number(self.done), _number(self.total)))
             try:
                 out = bulk_edit.run_chunk(self.library, self.edit, wanted, self.exiftool_path, self.operation,
@@ -699,8 +706,8 @@ def _settle_flight(library, job, state):
     done, flight = int(state.get("done", 0)), int(state.get("inflight", 0))
     if flight <= done:
         return
-    if job.high is not None:
-        lost = bulk_edit.journal_lost(library, job.operation, int(job.high))
+    if job.chunk is not None:
+        lost = bulk_edit.journal_lost(library, job.operation, int(job.chunk))
         if lost is not None:
             raise Refused(JOURNAL_PRUNED if lost == bulk_edit.PRUNED else JOURNAL_LOST)
     file_changes.settle(library, job.exiftool_path, job.operation)

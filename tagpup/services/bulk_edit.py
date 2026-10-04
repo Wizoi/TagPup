@@ -238,11 +238,18 @@ def conflicts(library, operation):
 
 
 def unsettled(library, operation, ids):
-    """The files of `ids` that the changes named `operation` still hold `planned` or `writing`: written or not, nobody has
-    recorded which. A time shift resumed while any is left would plan the photo again from a file that may already be shifted."""
+    """The files of `ids` that the changes named `operation` leave unfinished: `planned` or `writing` (written or not, nobody has
+    recorded which), and, in a change being UNDONE by a process that is alive (settle leaves that to it), any not yet `undone`:
+    its `done` files are about to be unshifted, and the 10 it has undone and the 15 it has not are each the wrong answer for a
+    resume that plans from what the files hold. A time shift resumed while any is left plans a photo from a file it cannot trust."""
     wanted = set(ids)
-    return [row for state in ("planned", "writing") for row in file_journal.files_of_operation(library.path, operation, state)
-            if row.photo_id in wanted]
+    found = [row for state in ("planned", "writing") for row in file_journal.files_of_operation(library.path, operation, state)
+             if row.photo_id in wanted]
+    for change in file_journal.unfinished(library.path):
+        if change.operation == operation and change.undoing:
+            found.extend(row for row in file_journal.files_of(library.path, change.id)
+                         if row.photo_id in wanted and row.state in ("done", "planned", "writing") and row not in found)
+    return found
 
 
 PRUNED, LOST = "pruned", "lost"
