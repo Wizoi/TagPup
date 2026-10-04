@@ -21,7 +21,7 @@ is taken.
 
 The names faces and photos' people hold that no person node is called, or that two are, are reported
 by count, and by name with --show: they have no id, and the tree is the owner's to settle. So are the
-names whose node has nodes under it, with the nodes' ids: a group the rule takes for a person.
+names on a branch -- a tag with tags under it, which is not a person -- with the branches' ids.
 
 Exits 1 when a rule is broken, else 0. Missing files do not count against it: a folder
 on an unplugged drive looks the same as a deleted one, and removing either is the
@@ -111,13 +111,13 @@ def report(db_path, show=0, out=print):
                 "person id, and none is guessed)" % (label, len(found), sum(found.values())))
             for name, count in sorted(found.items(), key=lambda pair: (-pair[1], pair[0]))[:show]:
                 out("    %6d  %s" % (count, name))
-    if nameless.parents:
-        out("names whose person node has nodes under it: %d, on %d row(s) of faces and photos' people (reported, "
-            "not broken: they hold the node's id; whether a group is a person is the owner's to say): node %s"
-            % (len(nameless.parents), sum(rows for _node, rows in nameless.parents.values()),
-               ", node ".join(str(node) for node in sorted({node for node, _rows in nameless.parents.values()}))))
-        for name, (node, count) in sorted(nameless.parents.items(), key=lambda pair: (-pair[1][1], pair[0]))[:show]:
-            out("    %6d  %s (node %d)" % (count, name, node))
+    if nameless.branch:
+        out("names on a branch: %d, on %d row(s) of faces and photos' people (reported, not broken: a tag with tags "
+            "under it is not a person, so they have no person id): node %s"
+            % (len(nameless.branch), sum(rows for _nodes, rows in nameless.branch.values()),
+               ", node ".join(str(node) for node in sorted({n for nodes, _rows in nameless.branch.values() for n in nodes}))))
+        for name, (nodes, count) in sorted(nameless.branch.items(), key=lambda pair: (-pair[1][1], pair[0]))[:show]:
+            out("    %6d  %s (node %s)" % (count, name, ", ".join(str(node) for node in nodes)))
     if unrooted:
         out("photos under no root of the library: %d, in %d place(s) (they keep their native paths)"
             % (sum(group["count"] for group in unrooted), len(unrooted)))

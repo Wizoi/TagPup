@@ -3,10 +3,12 @@
 (docs/ARCHITECTURE.md, "Identity by id", stage 1).
 
 A person is a node of the tree with `has_face` set that is not a root (a root holding faces is a
-category, as vocabulary.PeopleVocabulary reads it). A name is that node when exactly one such node
+category, as vocabulary.PeopleVocabulary reads it) and has no node under it: a branch tag cannot be a
+person *(owner, 2026-10-04; docs/findings.md, #660)*. A name is that node when exactly one such node
 is called it, compared as names are compared everywhere (`vocabulary.key`: trimmed, without case).
-A name no node is called, or that two are (the ambiguous person path, docs/findings.md, #27), has
-no id: NULL, never a guess. `unresolved` says which, and the doctor reports them.
+A name no person node is called -- none at all, or only a branch -- or that two are (the ambiguous
+person path, #27), has no id: NULL, never a guess. The name itself is left as it is. `unresolved`
+says which, and the doctor reports them.
 
 Stage 1 is additive: `faces.tag_id` and `photo_people.tag_id` sit beside `name`, every read still
 reads the name, and the id is DERIVED from the name and the tree -- what `People.id_of` gives the
@@ -59,17 +61,23 @@ def present(conn):
 
 class People:
     """The tree's people as names are matched to them: {name's key: the node's id}, or AMBIGUOUS
-    when two nodes are called it. Read once for one write, inside its transaction; never kept."""
+    when two nodes are called it; and the branches -- has_face nodes with nodes under them, which
+    are not people -- by name, {key: [ids]}. Read once for one write, inside its transaction; never
+    kept."""
 
     AMBIGUOUS = object()
 
-    def __init__(self, nodes):
-        self.by_key = {}
+    def __init__(self, nodes, parents=()):
+        self.by_key, self.branches = {}, {}
+        parents = set(parents)
         for node_id, tag, name in sorted(nodes):
             if not tag or vocabulary.SEPARATOR not in tag:
                 continue   # a root: a category of people, not a person
             leaf = vocabulary.key(name)
             if not leaf:
+                continue
+            if node_id in parents:
+                self.branches.setdefault(leaf, []).append(node_id)   # a branch tag is not a person
                 continue
             self.by_key[leaf] = People.AMBIGUOUS if leaf in self.by_key else node_id
 
@@ -77,7 +85,9 @@ class People:
     def read(cls, conn):
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tag_taxonomy'").fetchone():
             return cls([])
-        return cls(conn.execute("SELECT id, tag, name FROM tag_taxonomy WHERE has_face = 1").fetchall())
+        parents = [parent for (parent,) in conn.execute(
+            "SELECT DISTINCT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL")]
+        return cls(conn.execute("SELECT id, tag, name FROM tag_taxonomy WHERE has_face = 1").fetchall(), parents)
 
     def id_of(self, name):
         """The id of the one person node called `name`; None for no name, no node or two."""
@@ -87,9 +97,13 @@ class People:
         return None if found is None or found is People.AMBIGUOUS else found
 
     def why_not(self, name):
-        """"none" when no person node is called `name`, "several" when more than one is, else None."""
-        found = self.by_key.get(vocabulary.key(name))
-        return "none" if found is None else "several" if found is People.AMBIGUOUS else None
+        """"branch" when no person node is called `name` but a branch is, "none" when neither is,
+        "several" when more than one person node is, else None."""
+        key = vocabulary.key(name)
+        found = self.by_key.get(key)
+        if found is None:
+            return "branch" if key in self.branches else "none"
+        return "several" if found is People.AMBIGUOUS else None
 
     def __eq__(self, other):
         return isinstance(other, People) and self.by_key == other.by_key
@@ -241,22 +255,20 @@ def out_of_step(conn, table, examples=5):
     return Disagreement(rows, sorted(set(found))[:examples])
 
 
-Unresolved = collections.namedtuple("Unresolved", "none several parents")
+Unresolved = collections.namedtuple("Unresolved", "none several branch")
 
 
 def unresolved(conn):
-    """The names faces and photos' people hold that no person node is called (`none`) or that more
-    than one is (`several`): {name: rows of both tables}; and those whose one node has nodes under it
-    (`parents`: {name: (the node's id, rows)}) -- a group such as Family/Coast, a person by the rule
-    as people_paths reads the tree, but perhaps a category (docs/findings.md, #660). Reported, not
-    broken: the tree is the owner's to settle, and which of the three is a person is the owner's
-    before stage 2 makes the id a key. Reads only."""
+    """The names faces and photos' people hold that have no id: those no person node is called
+    (`none`) or more than one is (`several`), {name: rows of both tables}; and those called only by a
+    branch -- a has_face node with nodes under it, such as Family/Coast, which is not a person
+    *(owner, 2026-10-04; docs/findings.md, #660)* -- (`branch`: {name: ([the branches' ids], rows)}).
+    Reported, not broken: no id is guessed, the names are left as they are, and the tree is the
+    owner's to settle. Reads only."""
     if not present(conn):
         return Unresolved({}, {}, {})
     known = read(conn)
-    above = {parent for (parent,) in conn.execute(
-        "SELECT DISTINCT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL")}
-    none, several, parents = collections.Counter(), collections.Counter(), {}
+    none, several, branch = collections.Counter(), collections.Counter(), {}
     for table in TABLES:
         for name, _held, count in _pairs(conn, table):
             why = known.why_not(name)
@@ -264,10 +276,10 @@ def unresolved(conn):
                 none[name] += count
             elif why == "several":
                 several[name] += count
-            elif known.id_of(name) in above:
-                node, rows = parents.get(name, (known.id_of(name), 0))
-                parents[name] = (node, rows + count)
-    return Unresolved(dict(none), dict(several), parents)
+            elif why == "branch":
+                nodes, rows = branch.get(name, (sorted(known.branches[vocabulary.key(name)]), 0))
+                branch[name] = (nodes, rows + count)
+    return Unresolved(dict(none), dict(several), branch)
 
 
 def repair(db_path):

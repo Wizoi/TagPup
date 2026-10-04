@@ -184,6 +184,23 @@ class WritesKeepTheId(Library):
         write(self.path, lambda conn: taxonomy.remove_node(conn, "People/" + ODA))
         self.assertEqual(oda, self.face_id(self.faces[0]))
 
+    def test_a_person_given_a_tag_under_them_is_a_branch_and_loses_the_id(self):
+        """The leaf rule (#660): a person is a node with nothing under it. A node made under a person
+        makes them a branch -- no id, by the tree's edit -- and taking it away gives the id back."""
+        self.name([self.faces[0]], ODA)
+        oda = node_id(self.path, "Family/Coast/" + ODA)
+        write(self.path, lambda conn: taxonomy.add_node(conn, "Family/Coast/%s/Swim Team" % ODA))
+        self.assertIsNone(self.face_id(self.faces[0]))
+        self.assertEqual({None}, ids_of(self.path, "photo_people")[ODA])
+        write(self.path, lambda conn: taxonomy.remove_node(conn, "Family/Coast/%s/Swim Team" % ODA))
+        self.assertEqual(oda, self.face_id(self.faces[0]))
+        self.assertEqual([0, 0], in_step(self.path))
+
+    def test_a_leaf_and_a_branch_of_one_name_is_the_leaf(self):
+        write(self.path, lambda conn: taxonomy.add_node(conn, "Friends/%s/Sailing" % ODA))
+        self.name([self.faces[0]], ODA)
+        self.assertEqual(node_id(self.path, "Family/Coast/" + ODA), self.face_id(self.faces[0]))
+
     def test_a_branch_no_longer_holding_faces_names_nobody(self):
         self.name([self.faces[0]], ODA)
         write(self.path, lambda conn: taxonomy.set_branch_flags(conn, "Family", has_face=0))
@@ -475,19 +492,22 @@ class TheDoctor(Library):
         self.assertEqual([0, 0], in_step(self.path))
 
 
-    def test_a_name_whose_node_has_children_is_reported_with_the_node(self):
-        """docs/findings.md, #660: a has_face node that is not a root but has nodes under it -- a group
-        such as Family/Coast -- is a person by the rule, as people_paths reads the tree today. The id is
-        given; the doctor lists it, so stage 2 does not make a category a person's key unasked."""
+    def test_a_name_on_a_branch_has_no_id_and_is_reported_with_the_node(self):
+        """docs/findings.md, #660, the owner's rule (2026-10-04): a branch tag cannot be a person. A name
+        whose only node has nodes under it -- a group such as Family/Coast -- has no id; the name itself is
+        left as it is (stage 1 renames and unnames nothing), and the doctor lists it with the node's id,
+        the name only with --show."""
         self.name([self.faces[0]], "Coast")
         coast = node_id(self.path, "Family/Coast")
-        self.assertEqual(coast, self.face_id(self.faces[0]))
+        self.assertIsNone(self.face_id(self.faces[0]))
+        self.assertEqual("Coast", look(self.path, "SELECT name FROM faces WHERE id = ?", (self.faces[0],))[0][0])
+        self.assertEqual([0, 0], in_step(self.path))
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:
             found = person_ids.unresolved(conn)
         finally:
             conn.close()
-        self.assertEqual({"Coast": (coast, 2)}, found.parents, "a face and the photo's list")
+        self.assertEqual({"Coast": ([coast], 2)}, found.branch, "a face and the photo's list")
         import io
         from contextlib import redirect_stdout
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
@@ -497,7 +517,7 @@ class TheDoctor(Library):
             with redirect_stdout(said):
                 doctor.report(self.path, show=show)
             text = said.getvalue()
-            self.assertIn("names whose person node has nodes under it: 1, on 2 row(s)", text)
+            self.assertIn("names on a branch: 1, on 2 row(s)", text)
             self.assertIn("node %d" % coast, text)
             self.assertEqual(named, "Coast" in text.replace("Family/Coast", ""), "names only with --show")
 

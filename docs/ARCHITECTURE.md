@@ -1901,18 +1901,22 @@ node an integer id and a parent id, and a person is a node with `has_face` set. 
 `tagpup.store.person_ids`, owns the conversion and every write of the column, as `paths.to_row` /
 `from_row` own a path's (`tests/test_person_ids_single_owner.py`):
 - **The rule.** A person is a node with `has_face` set that is not a root (a root holding faces is a
-  category, as `PeopleVocabulary` reads it). A name is that node when exactly one such node is called
-  it, compared as names are compared everywhere (`vocabulary.key`: trimmed, without case). A name no
-  person node is called, or two are (#27), gets NULL: never a guess. The doctor lists those names by
+  category, as `PeopleVocabulary` reads it) **and has no node under it: a branch tag cannot be a person**
+  *(owner, 2026-10-04; #660)*. A name is that node when exactly one such node is called it, compared as
+  names are compared everywhere (`vocabulary.key`: trimmed, without case). A name no person node is
+  called -- none at all, or only a branch -- or that two are (#27), gets NULL: never a guess, and the
+  name itself is left as it is (stage 1 renames and unnames nothing). The doctor lists those names by
   count, and by name only with `--show` ("names with no person node", "names with several person
-  nodes"); they are reported, not broken, and settling them is the owner's (file the person, or merge
-  the two nodes). Counted read-only on 2026-10-04: photo_index's faces hold 284 distinct names
-  (35,803 named of 226,246 faces), 279 of them one node, 4 none (40 faces), 1 several (1 face); its
-  `photo_people` 413 names (80,060 rows), 408 one, 4 none (40 rows), 1 several (12 rows). kr-track:
-  faces 73 names, 61 one, 12 none (198 faces), none several; `photo_people` 75, 62 one, 13 none (200
-  rows). The three rules weighed -- exact name, `vocabulary.key`, and `find_person_path`'s (a leaf
-  under a face root) -- give the same counts on every library; nothing on any of them differs only in
-  case or spacing, and every node's `name` is the leaf of its `tag`.
+  nodes", "names on a branch" with the branches' ids); they are reported, not broken, and settling them
+  is the owner's. A person given a tag under them becomes a branch and loses the id, by the tree's
+  edit; a leaf and a branch of one name is the leaf. Counted read-only on 2026-10-04, by the leaf rule:
+  photo_index's faces hold 284 distinct names (35,803 named of 226,246 faces), 277 of them one person,
+  4 none (40 faces), 2 on a branch (7 faces), 1 several (1 face); its `photo_people` 413 names (80,060
+  rows), 404 one, 4 none (40 rows), 4 on a branch (65 rows), 1 several (12 rows); it has 9 has_face
+  branches. kr-track: faces 73 names, 61 one, 12 none (198 faces); `photo_people` 75, 62 one, 13 none
+  (200 rows); no branch. Before the leaf rule, the three rules weighed -- exact name, `vocabulary.key`,
+  and `find_person_path`'s (a leaf under a face root) -- gave the same counts on every library; nothing
+  on any of them differs only in case or spacing, and every node's `name` is the leaf of its `tag`.
 - **The id is derived in stage 1**: what the name gives now, under the tree as it stands. So it is
   kept wherever either changes, **in the same transaction**, with the tree read inside it and never
   cached across transactions (a rename committed by another process between two writes is what the
@@ -1967,12 +1971,15 @@ view of the tree:
    stage 2's migration the doctor's two lists must be empty, by the owner's hand (photo_index: 4 and 1
    names; kr-track: 12 and 0), or the migration must say what it does with them -- making a node under
    the library's people parent (as the indexer's `add_people` does) is a default the owner has not
-   chosen, so it is asked. **Beside them, the owner decides the names whose node has nodes under it**
-   (#660): the rule takes any has_face node that is not a root for a person, as `people_paths` does
-   today, so a group such as `Family/Coast` named on a face holds the group's id. The review counted 9
-   such nodes on photo_index, 4 of them named on 7 faces and 65 listed people; the doctor lists them
-   ("names whose person node has nodes under it", the nodes' ids, the names with `--show`). Whether a
-   person is only a leaf is the owner's call, asked before stage 2 makes the id a key.
+   chosen, so it is asked. **The names on a branch** (#660) are decided: a branch tag cannot be a person
+   *(owner, 2026-10-04)*, so stage 1 gives them no id, and stage 2 **unnames those faces** (photo_index: 7
+   faces, under 2 names; their 65 listed people follow from the rebuild) -- "make it unmatched" -- as a
+   journaled step of its migration, said and counted before it runs.
+1a. **The owner's two rules for the tree, to be built with stage 2** *(owner, 2026-10-04; not built
+   now)*: (a) a tag assigned to photos cannot be given child tags (TagTuner refuses to add a node under a
+   node photos or faces carry); (b) a tag with child tags cannot be assigned to a photo as a person (naming
+   a face, or a person keyword, refuses a branch). Together they keep every person a leaf, so the leaf rule
+   never moves an id by a tree edit; until then the doctor's "names on a branch" is how one is seen.
 2. **Every name a write is handed resolves to an id at the boundary**, by the same rule: a page or the
    API still sends a name or a path; `person_ids` turns it into the node (a path picks one of two nodes of
    one name, as `resolveTagOrPerson` already sends), and naming a face with a name no node has makes the
