@@ -117,6 +117,10 @@ CASCADES = {
     ("photos", "photo_tags"): ("photo_id", REBUILT),
     ("photos", "photo_folder"): ("photo_id", REBUILT),
     ("photos", "photo_meta"): ("photo_id", REBUILT),
+    # The word index (tagpup.store.search_index): FTS5 tables whose rowid is the photo's id, taken by the trigger
+    # search_goes_with_its_photo and made again by _derive's refresh of the photo.
+    ("photos", "search_words"): ("rowid", REBUILT),
+    ("photos", "search_names"): ("rowid", REBUILT),
     ("tag_taxonomy", "photo_tags"): ("tag_id", REBUILT),
     ("tag_taxonomy", "tag_taxonomy"): ("parent_id", FORBIDDEN),
 }
