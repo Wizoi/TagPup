@@ -414,8 +414,11 @@ def cards(library, photo_ids, check_disk=False):
 
 def navigator(library, section):
     """The counts of one section of the navigator: `folders` {"folders": [{path, name, parent, direct,
-    recursive}]}, `keywords` {"keywords": [{tag, name, parent, count}]}, `people` {"people": [{name, count}]}, `dates`
-    {"years": [{year, count, months: [{month, count}], other}], "undated"}. Each is one read of the library."""
+    recursive}]}, `keywords` {"keywords": [{tag, name, parent, count}]}, `people` {"people": [{name, count, group}],
+    "groups": [{tag, name, parent, count}], "unfiled"} -- each person under the tag of the branch they are filed in (None:
+    not filed), the branches above people with the photos naming anyone under them, and the photos naming someone not
+    filed (store.people_groups) --, `dates` {"years": [{year, count, months: [{month, count}], other}], "undated"}. Each
+    is one read of the library."""
     if section not in SECTIONS:
         raise Refused("section must be one of %s." % ", ".join(SECTIONS))
     conn = _open(library)
@@ -425,7 +428,14 @@ def navigator(library, section):
         if section == "keywords":
             return {"keywords": _keywords(store.keyword_counts(conn))}
         if section == "people":
-            return {"people": [{"name": name, "count": count} for name, count in store.people_counts(conn)]}
+            counted = store.people_counts(conn)
+            group_of, groups, unfiled = store.people_groups(conn, counted)
+            tag_of = {group["id"]: group["tag"] for group in groups}
+            return {"people": [{"name": name, "count": count, "group": group_of.get(name)} for name, count in counted],
+                    "groups": [{"tag": group["tag"], "name": group["name"], "parent": tag_of.get(group["parent_id"]),
+                                "count": group["count"]}
+                               for group in sorted(groups, key=lambda group: vocabulary.tag_sort_key(group["tag"]))],
+                    "unfiled": unfiled}
         return store.date_counts(conn)
     finally:
         conn.close()

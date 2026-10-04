@@ -27,7 +27,7 @@ import collections
 import time
 
 from tagpup.core import paths, vocabulary
-from tagpup.store import damaged_files, db, derived
+from tagpup.store import damaged_files, db, derived, person_ids
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -578,6 +578,53 @@ def people_counts(conn):
         found.append((name, conn.execute("SELECT COUNT(DISTINCT photo_id) FROM photo_people WHERE name IN (%s)"
                                          % ",".join("?" * len(names)), names).fetchone()[0]))
     return sorted(found, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0])))
+
+
+def people_groups(conn, counted):
+    """The branches of the tag tree the people of `counted` -- people_counts's [(name, photos)] -- are filed under, as the
+    navigator's People shows them (phase 9, #673): ({name: the tag of the node above the person, or None}, [{"id", "tag",
+    "name", "parent_id", "count"}] of every branch above a person, `count` the photos naming anyone under it, each photo
+    once), and how many photos name someone who is not filed (None above).
+
+    A person is the tree's node by the one rule (tagpup.store.person_ids: a leaf `has_face` node, not a root, the only one
+    called that name; a branch is never a person). A name with no such node -- none, only a branch, or two -- is not filed.
+    The photos are one pass of photo_people grouped by photo in SQLite (Python sees the distinct sets of names, not 68,000
+    photos) and rolled up the tree's parent ids, as the keywords' counts are."""
+    known = person_ids.read(conn)
+    nodes = {node_id: (tag, parent_id, name) for node_id, tag, parent_id, name in
+             conn.execute("SELECT id, tag, parent_id, name FROM tag_taxonomy")}
+    group_of, by_key = {}, {}
+    for name, _photos in counted:
+        node = known.id_of(name)
+        parent = nodes[node][1] if node in nodes else None
+        group_of[name] = nodes[parent][0] if parent in nodes else None
+        by_key[vocabulary.key(name)] = parent if parent in nodes else None
+    upward = {}   # each group and every node above it: a damaged tree that loops ends the walk, never the call
+    for parent in set(by_key.values()) - {None}:
+        walked, seen, here = [], set(), parent
+        while here is not None and here in nodes and here not in seen:
+            seen.add(here)
+            walked.append(here)
+            here = nodes[here][1]
+        upward[parent] = walked
+    counts, unfiled = collections.Counter(), 0
+    separator = chr(31)   # a name never holds a control character (vocabulary.textProblem refuses them)
+    for names, photos in conn.execute(
+            "SELECT names, COUNT(*) FROM (SELECT group_concat(name, char(31)) AS names FROM photo_people GROUP BY photo_id)"
+            " GROUP BY names"):
+        reached, loose = set(), False
+        for name in names.split(separator):
+            parent = by_key.get(vocabulary.key(name))
+            if parent is None:
+                loose = True
+            else:
+                reached.update(upward[parent])
+        for node_id in reached:
+            counts[node_id] += photos
+        unfiled += photos if loose else 0
+    groups = [{"id": node_id, "tag": nodes[node_id][0], "name": nodes[node_id][2], "parent_id": nodes[node_id][1],
+               "count": counts[node_id]} for node_id in sorted(set().union(*upward.values()) if upward else ())]
+    return group_of, groups, unfiled
 
 
 def date_counts(conn):
