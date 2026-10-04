@@ -39,6 +39,43 @@ export function describeTags({ op, add = [], remove = [] }) {
     return { op, verb: 'Remove', past: 'Removed', what: names, prep: 'from', reverse: `add the ${noun} again to reverse it` };
 }
 
+/** "Delete 3,412 photos", "Added Trips/Coast to 1 photo": the words of `desc` for `count` photos, `form` 'verb' or 'past'. */
+function phrase(desc, form, count) {
+    return [desc[form], desc.what, desc.prep, photosOf(count)].filter(Boolean).join(' ') + (desc.after || '');
+}
+
+/**
+ * What a Delete of the selection is, in words (#674): `where` is the server's answer of where the files would go
+ * (/api/library/selection/delete-check: `permanent`, the photos with no Recycle Bin), `count` the photos selected.
+ */
+export function describeDelete(where, count) {
+    const forGood = Math.min((where && where.permanent) || 0, count);
+    const after = !forGood ? ' to the Recycle Bin' : forGood >= count ? ' permanently' : ', those with no Recycle Bin permanently';
+    return { op: 'delete', verb: 'Delete', past: 'Deleted', what: '', prep: '', after, permanent: forGood };
+}
+
+/** The question before a Delete: how many, where the files go -- the Recycle Bin, or for good and why -- and that the rows go too. */
+export function deleteQuestion(where, count) {
+    const forGood = Math.min((where && where.permanent) || 0, count);
+    const head = `Delete ${photosOf(count)}?`;
+    const rows = count === 1 ? ' Its row leaves the library, with its faces.' : ' Their rows leave the library, with their faces.';
+    const job = ' It runs as a job you can watch and cancel; it cannot be undone in TagPup.';
+    if (!forGood) {
+        const bin = count === 1 ? 'The file goes to the Recycle Bin, where it can be restored.' : 'The files go to the Recycle Bin, where they can be restored.';
+        return `${head} ${bin}${rows}${job}`;
+    }
+    const why = ((where && where.reasons) || []).map(each => `${Number(each.photos).toLocaleString()} ${each.reason}`).join(', ');
+    if (forGood >= count) {
+        const they = count === 1 ? 'It is' : 'They are';
+        return `${head} ${they} deleted PERMANENTLY, not moved to the Recycle Bin: there is none where ${count === 1 ? 'it is' : 'they are'} `
+            + `(${why}), so ${count === 1 ? 'the file' : 'the files'} cannot be restored.${rows}${job}`;
+    }
+    const rest = count - forGood;
+    return `${head} ${forGood.toLocaleString()} of them ${forGood === 1 ? 'is' : 'are'} deleted PERMANENTLY, not moved to the Recycle `
+        + `Bin: there is none where ${forGood === 1 ? 'it is' : 'they are'} (${why}). The other ${rest.toLocaleString()} `
+        + `${rest === 1 ? 'goes' : 'go'} to the Recycle Bin.${rows}${job}`;
+}
+
 /** The question before a bulk edit: it names the write and the count, what it touches, how long, and how to undo it. */
 export function confirmSentence(desc, count) {
     const head = `${desc.verb} ${desc.what} ${desc.prep} ${photosOf(count)}?`;
@@ -53,7 +90,7 @@ export function secondQuestion(count) {
 
 /** The line of counts under the bar: what the job has done to the photos so far. */
 export function countsLine(job) {
-    return `changed ${(job.changed || 0).toLocaleString()} · unchanged ${(job.unchanged || 0).toLocaleString()} · `
+    return `${job.op === 'delete' ? 'deleted' : 'changed'} ${(job.changed || 0).toLocaleString()} · unchanged ${(job.unchanged || 0).toLocaleString()} · `
         + `missing ${(job.skipped_missing || 0).toLocaleString()} · damaged ${(job.skipped_damaged || 0).toLocaleString()} · `
         + `errors ${(job.error_count || 0).toLocaleString()}`;
 }
@@ -70,8 +107,8 @@ export function etaText(job) {
 export function summarySentence(job, desc) {
     const done = (job.changed || 0);
     const parts = [];
-    if (desc) parts.push(`${desc.past} ${desc.what} ${desc.prep} ${photosOf(done)}`);
-    else parts.push(`Bulk edit: ${photosOf(done)} changed`);
+    if (desc) parts.push(phrase(desc, 'past', done));
+    else parts.push(job.op === 'delete' ? `Deleted ${photosOf(done)}` : `Bulk edit: ${photosOf(done)} changed`);
     const missing = job.skipped_missing || 0;
     if (missing) parts.push(`${missing.toLocaleString()} missing on disk ${missing === 1 ? 'was' : 'were'} skipped`);
     const damaged = job.skipped_damaged || 0;
@@ -112,7 +149,8 @@ export function widenedSentence({ took, picked }, running) {
 
 /** The name the strip gives a job: what it does, or -- for one found again after a reload -- its kind. */
 export function titleOf(job, desc) {
-    if (desc) return `${desc.verb} ${desc.what} ${desc.prep} ${photosOf(job.total || 0)}`;
+    if (desc) return phrase(desc, 'verb', job.total || 0);
+    if (job.op === 'delete') return `Delete ${photosOf(job.total || 0)}`;
     const kind = { tags: 'tags', people: 'people', time_shift: 'Date Taken' }[job.op];
     return `Bulk edit of ${kind || 'photos'} (${photosOf(job.total || 0)})`;
 }

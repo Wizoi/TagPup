@@ -1,4 +1,4 @@
-// TagPup's page: the edits of a library view's selection -- Add tag, Add person, the pills' Remove and Apply -- each
+// TagPup's page: the edits of a library view's selection -- Add tag, Add person, the pills' Remove and Apply, Delete -- each
 // asked of the owner by name and count, and started as a bulk JOB (bulk-job.js) with the selection BY ID (selected.js). The folder
 // view's bulk writes are selection.js's and are not touched: a path, 5,000 of them, one request.
 //
@@ -6,6 +6,7 @@
 // question or a placement dialog is open. A limit of the request (more than 20,000 ids, more than 200,000 photos) is said in a sentence
 // before anything is asked of the server. Smart Rename and Shift Date Taken are Organize's, not a view's (#669): the server's bulk time
 // shift (op `time_shift`) is still there, and a job of it found running or stopped is shown and resumed by the strip (bulk-job.js).
+import { api } from './common/api.js';
 import { tagProblem } from './common/vocabulary.js';
 import { state } from './state.js';
 import { bulkAddPeopleInput, bulkAddTagsInput } from './elements.js';
@@ -14,7 +15,7 @@ import { resolveTagOrPerson, updatePeopleDatalist, updateTagsDatalist } from './
 import { selectionCount, selectionRequest } from './selected.js';
 import { BUSY_SENTENCE, bulkBusy, startBulk } from './bulk-job.js';
 import {
-    ASK_TWICE_ABOVE, confirmSentence, describeTags, secondQuestion
+    ASK_TWICE_ABOVE, confirmSentence, deleteQuestion, describeDelete, describeTags, photosOf, secondQuestion
 } from './bulk-words.js';
 
 /** The selection, as a request, and how many photos it is; or null, the owner told why not (nothing is asked of the server). */
@@ -96,6 +97,46 @@ export async function editByPill({ kind, name, remove }) {
         if (!confirmed(desc, picked.count)) return false;
         const started = await startBulk({ op, selection: picked.selection,
             params: remove ? { add: [], remove: [name] } : { add: [name], remove: [] }, desc, picked: picked.count });
+        return started.ok;
+    } finally {
+        state.bulk.asking = false;
+    }
+}
+
+/**
+ * Delete the selection of a library view (#674): the photos' files go to the Recycle Bin -- or for good, on a share or a drive with
+ * none -- and their rows leave the library, each as the folder view's Delete does it (the server's photos.delete), as a bulk JOB:
+ * progress, Cancel, one at a time (bulkBusy, lockBulkControls). The selection is read first (a limit is said, nothing asked); then
+ * the server is asked where the files would go (POST /api/library/selection/delete-check, one answer a folder); then the question
+ * names the count and whether any are deleted for good, and over ASK_TWICE_ABOVE it is asked again. What is sent is what was asked:
+ * the selection as read, and `permanent` only when the question said so -- a photo found with no Recycle Bin that the question did
+ * not name is left by the server. Rapid clicks ask once (`state.bulk.asking`). Resolves true when a job began.
+ */
+export async function deleteSelection() {
+    if (!state.library || state.bulk.asking) return false;
+    const picked = readSelection();
+    if (!picked) return false;
+    state.bulk.asking = true;
+    try {
+        setStatus('busy', `Looking where the files of ${photosOf(picked.count)} are...`);
+        let where;
+        try {
+            const res = await api.fetch('/api/library/selection/delete-check', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selection: picked.selection }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error((body && body.error) || `TagPup answered ${res.status}`);
+            where = body;
+        } catch (err) {
+            setStatus('error', `Could not tell where the files are, so nothing was deleted: ${err.message}`, { transient: false });
+            return false;
+        }
+        setStatus('ready', 'Ready');
+        if (!confirm(deleteQuestion(where, picked.count))) return false;
+        if (picked.count > ASK_TWICE_ABOVE && !confirm(secondQuestion(picked.count))) return false;
+        const desc = describeDelete(where, picked.count);
+        const started = await startBulk({ op: 'delete', selection: picked.selection, params: { permanent: desc.permanent > 0 },
+            desc, picked: picked.count });
         return started.ok;
     } finally {
         state.bulk.asking = false;

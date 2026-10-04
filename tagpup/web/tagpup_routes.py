@@ -741,6 +741,25 @@ def library_selection_tally():
         return responses.error(500, str(e))
 
 
+@routes.post("/api/library/selection/delete-check")
+def library_selection_delete_check():
+    """Where a Delete of a selection would send its files (#674, tagpup.services.selection.where_deleted): how many photos,
+    and how many of them are in folders with no Recycle Bin and would be deleted for good -- what the question before a Delete
+    says. Nothing is deleted."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    body = request.get_json(silent=True)
+    try:
+        return jsonify(selection_service.where_deleted(library, selection_service.read(
+            library, body.get("selection") if isinstance(body, dict) else None)))
+    except (Refused, NotFound, paths.RootsError) as why:
+        return _view_error(why)
+    except Exception as e:
+        logger.error("Error checking where a delete would go: %s", e, exc_info=True)
+        return responses.error(500, str(e))
+
+
 def _job_id(text):
     """The id of a bulk job a request names (digits only, as a photo id is), else None."""
     text = text or ""
@@ -757,7 +776,8 @@ def _bulk_reply(why):
 @routes.post("/api/library/bulk/start")
 def library_bulk_start():
     """Begin a bulk edit of a selection of photos by id, as a job with progress and a cancel (phase 9d-1,
-    tagpup.jobs.bulk_edits): `{"op": "tags"|"people"|"time_shift", "selection": SELECTION, "params": {...}}` answers `{"job"}`.
+    tagpup.jobs.bulk_edits): `{"op": "tags"|"people"|"time_shift"|"delete", "selection": SELECTION, "params": {...}}` answers
+    `{"job"}`.
     The edit is read and checked first (a tag the rules refuse, a person filed in two places, a shift of 0), then the selection
     is resolved on the server; nothing is written by the request itself."""
     if (refusal := _this_pc_only()) is not None:

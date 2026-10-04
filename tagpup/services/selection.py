@@ -17,6 +17,7 @@ import collections
 
 from tagpup.core import vocabulary
 from tagpup.core.result import Refused
+from tagpup.files import recycle_bin
 from tagpup.services import library_view
 from tagpup.store import library_view as store
 from tagpup.store import selection_folders as store_folders
@@ -124,6 +125,29 @@ def _kept(counted):
     else:
         left = 0
     return sorted(counted, key=lambda each: vocabulary.tag_sort_key(each[0])), left
+
+
+def where_deleted(library, selection):
+    """Where a Delete of `selection` would send its files, for the question asked before it (#674): {"total" (photos), "folders",
+    "permanent" (photos in folders with no Recycle Bin: a network share, a mapped or SUBST drive, a removable one -- deleted for
+    good), "reasons": [{"reason", "photos"}]}, the reasons as recycle_bin says them ("on a network share"). Asked once a folder,
+    never once a photo (a Select all of photo_index is 2,672 folders, about 2 s); a UNC path and a mapped drive are told by
+    their spelling and the drive's type, without reading the share. Refused, as `resolve` refuses it, over MAX_SELECTED."""
+    conn = library_view.opened(library)
+    try:
+        counted = store_folders.counts(conn, selection.ids, selection.source, selection.excluded)
+        total = sum(counted.values())
+        _refuse_if_large(total)
+        named = store_folders.described(conn, counted)
+    finally:
+        conn.close()
+    reasons = collections.Counter()
+    for folder_id, (path, _name) in named.items():
+        reason = recycle_bin.no_bin_reason(path)
+        if reason:
+            reasons[reason] += counted[folder_id]
+    return {"total": total, "folders": len(counted), "permanent": sum(reasons.values()),
+            "reasons": [{"reason": reason, "photos": photos} for reason, photos in reasons.most_common()]}
 
 
 def _refuse_if_large(count):

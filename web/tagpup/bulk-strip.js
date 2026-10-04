@@ -117,7 +117,9 @@ export function renderBulkStrip() {
     if (!running) {
         message = endedSentence(job, desc);
         problem = job.state !== 'done' || (job.error_count || 0) > 0;
-        if (!bulk.request && job.op !== 'time_shift' && job.state !== 'done') {
+        if (!bulk.request && job.op === 'delete' && job.state !== 'done') {
+            message += ' Select the photos that are left and delete them again to finish it.';
+        } else if (!bulk.request && job.op !== 'time_shift' && job.state !== 'done') {
             message += ' Select the photos and make the edit again to finish it: adding or removing what a photo holds already changes nothing.';
         }
     } else if (bulk.cancelling || job.cancelling) {

@@ -41,6 +41,7 @@ export const folderViewTitle = document.getElementById('folder-view-title');
 export const folderViewStats = document.getElementById('folder-view-stats');
 export const btnSelectAllThumbnails = document.getElementById('btn-select-all-thumbnails');
 export const btnSelectNoneThumbnails = document.getElementById('btn-select-none-thumbnails');
+export const btnDeleteSelection = document.getElementById('btn-delete-selection');
 export const selectedThumbnailsCount = document.getElementById('selected-thumbnails-count');
 export const btnFolderAutoApply = document.getElementById('btn-folder-auto-apply');
 export const facesStrip = document.getElementById('faces-strip');

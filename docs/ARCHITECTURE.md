@@ -1905,6 +1905,26 @@ folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Or
   above), "(N photos)"; a click is `openInOrganize` through `upper` (rapid clicks: one scan, `state.moves.leaving`). More than 10 is a
   sentence with the count. The Date Taken group is hidden in a view's panel (it showed "--": a view's selection holds no records) and
   shown in Organize's, which keeps its range; *decided*, as the finding names the library page's panel.
+- **#674, Delete of a view's selection** -- a **bulk job op** (`op: delete` of 9d-1's `tagpup.jobs.bulk_edits`), not batches of the
+  one-photo route: it is how a selection across folders and of thousands is named (by id, the source less the excluded), and the job
+  gives progress, Cancel, one bulk edit at a time in a library and in another process (`job_runs`), the strip, and the Activity
+  page's record, for nothing new. Not resumable (a delete done twice changes nothing: Start again re-sends it). The chunk
+  (`bulk_edit._delete`) deletes each photo through **the one owner of a delete**, `tagpup.services.photos.delete` (the file to the
+  Recycle Bin or, where there is none, for good; then `forget_photo` -- row, faces -- and the thumbnail), under the lock of changes
+  of photo files for the chunk, so no single save of one of them interleaves. **History/journal: as the folder view's delete, none**
+  -- a delete of a held photo has never been a journal change, so History neither lists nor undoes it; the Activity page lists the
+  job with its counts. **Permanence is asked, never assumed**: the page first asks `POST /api/library/selection/delete-check`
+  (`selection.where_deleted`: the folders of the selection, `recycle_bin.no_bin_reason` once a folder -- 2,672 folders of
+  photo_index in 2.1 s on this machine, counted read-only, every one with a Bin), the question says how many go for good and why,
+  and the job's `params.permanent` is what the question said: a photo found with no Bin that the question did not name is left, an
+  error saying so. A file already gone is `skipped_missing` and keeps its row (sync reports it). A share that does not answer is an
+  error a photo (`_reachable`, as the other ops). The cap is the other bulk edits' (200,000, refused before any request). When the
+  job ends the page reads the view's order again (`library-view.js photosDeleted`, through `upper`), which drops the deleted photos
+  from the view, its total and the selection, and closes the open photo onto the grid if it was deleted; the navigator's counts and
+  the folder scans are let go as for any job. **What is accepted:** each photo of the job is the one-photo delete's cost --
+  `libraries.split`, `refuse_writes`, `forget_photo` with `derived.prune` and the thumbnail, each its own read or write of the
+  library -- rather than a per-chunk version of them, so as not to make a second owner of a delete; not measured on the live
+  library (it would delete). Deleting the open photo while a job runs is not stopped: its save fails as its file is gone.
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag

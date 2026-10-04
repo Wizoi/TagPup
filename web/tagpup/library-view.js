@@ -13,7 +13,7 @@ import { baseName } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    btnApplyRename, btnFolderAutoApply, btnLibraryRefresh, btnRefreshList,
+    btnApplyRename, btnDeleteSelection, btnFolderAutoApply, btnLibraryRefresh, btnRefreshList,
     btnToggleRename, btnToggleTimeshift,
     folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, indexProgressContainer,
     libraryStrip, libraryStripSource, libraryStripStatus, libraryStripTotal,
@@ -81,6 +81,7 @@ function showChrome() {
     photoSearch.title = SEARCH_OFF;
     btnToggleRename.classList.add('hidden');
     btnToggleTimeshift.classList.add('hidden');
+    btnDeleteSelection.classList.remove('hidden');     // Delete of the selection, a view's (#674)
     btnRefreshList.title = 'Ask the library for this view again';
     libraryStrip.classList.remove('hidden');
     folderViewHeader.classList.remove('hidden');
@@ -91,6 +92,7 @@ function hideChrome() {
     photoSearch.title = '';
     btnToggleRename.classList.remove('hidden');
     btnToggleTimeshift.classList.remove('hidden');
+    btnDeleteSelection.classList.add('hidden');
     // A folder's own scan enables it again; with no folder open there is nothing to shift.
     btnToggleTimeshift.disabled = true;
     btnToggleTimeshift.classList.remove('active');
@@ -305,6 +307,25 @@ export function refreshLibraryView() {
         upper.navigatorCountsChanged({ now: true });   // the counts are read at each call: ask again
         upper.libraryViewPainted(lib, { refreshed: true });   // what the disk held is asked again, by the rule for its size
         return true;
+    });
+}
+
+/**
+ * A Delete of the selection has ended (bulk-job.js, #674): the view's order is read again, so the deleted photos leave it, its
+ * total and the selection; and the photo open in the details panel, if it was one of them, is closed onto the grid -- its file
+ * is gone. Resolves whether the order was read again.
+ */
+export function photosDeleted() {
+    const lib = state.library;
+    if (!lib) return Promise.resolve(false);
+    return refreshLibraryView().then(refreshed => {
+        if (lib !== state.library) return false;
+        if (state.activePhotoPath && lib.activeId !== null && !lib.ids.includes(lib.activeId)) {
+            lib.activeId = null;
+            state.folderPhotos = [];
+            openFolderView();
+        }
+        return refreshed;
     });
 }
 

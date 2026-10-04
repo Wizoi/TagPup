@@ -14,7 +14,7 @@ import { samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    btnBulkAddPeople, btnBulkAddTags, folderSelectionSidebar
+    btnBulkAddPeople, btnBulkAddTags, btnDeleteSelection, folderSelectionSidebar
 } from './elements.js';
 import { setStatus } from './status.js';
 import { libraryName } from './looking.js';
@@ -63,7 +63,7 @@ function repaint() {
  */
 export function lockBulkControls() {
     const lock = Boolean(state.library) && bulkBusy();
-    for (const button of [btnBulkAddPeople, btnBulkAddTags]) {
+    for (const button of [btnBulkAddPeople, btnBulkAddTags, btnDeleteSelection]) {
         if (!button) continue;
         if (lock) {
             if (button.dataset.bulkTitle === undefined) button.dataset.bulkTitle = button.title || '';
@@ -193,14 +193,22 @@ function jobEnded(job) {
     setStatus(bad ? 'error' : 'ready', endedSentence(job, desc), { transient: false });
     if (!(job.changed || job.done)) return;
     forgetFolderCaches();
-    refreshAfterWrites();
+    refreshAfterWrites(job);
 }
 
-/** What the page shows of photos a job wrote: the counts, the cards, the open photo (unless it has edits of its own), the selection's tally. */
-function refreshAfterWrites() {
+/**
+ * What the page shows of photos a job wrote: the counts, the cards, the open photo (unless it has edits of its own), the selection's
+ * tally. A Delete's photos are gone: the view's order is read again instead (library-view.js photosDeleted), which drops them from the
+ * view and the selection, and closes the open photo if it was one of them.
+ */
+function refreshAfterWrites(job) {
     state.tally.key = '';          // what the photos carry has changed: the selection is counted again
     upper.navigatorCountsChanged({ now: true });
     if (!state.library) return;
+    if (job && job.op === 'delete') {
+        upper.photosDeleted();
+        return;
+    }
     refreshHeldCards();
     const open = state.activePhotoPath ? state.folderPhotos.find(photo => samePath(photo.path, state.activePhotoPath)) : null;
     if (open && open.id !== undefined && !hasUnsavedEdits()) upper.reloadChangedPhoto(open);
@@ -403,7 +411,7 @@ function foundStopped(job, lost) {
     if (!lost) return;
     const bad = job.state !== 'done' || (job.error_count || 0) > 0;
     setStatus(bad ? 'error' : 'ready', endedSentence(job, null), { transient: false });
-    if (job.changed || job.done) refreshAfterWrites();
+    if (job.changed || job.done) refreshAfterWrites(job);
 }
 
 /**

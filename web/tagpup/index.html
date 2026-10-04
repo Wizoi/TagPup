@@ -318,6 +318,8 @@
                                 <div class="selection-actions">
                                     <button id="btn-select-all-thumbnails" class="btn btn-secondary btn-sm">Select All</button>
                                     <button id="btn-select-none-thumbnails" class="btn btn-secondary btn-sm">Select None</button>
+                                    <!-- In a library view only: delete the selected photos, files and rows, as a job (web/tagpup/bulk-edit.js, #674). -->
+                                    <button id="btn-delete-selection" type="button" class="btn btn-danger btn-sm hidden" title="Delete the selected photos: their files go to the Recycle Bin (for good where there is none, and you are asked first) and their rows leave the library">🗑️ Delete</button>
                                     <span id="selected-thumbnails-count" class="selected-count-label">Selected: 0</span>
                                 </div>
                                 <div class="thumbnail-size-toggle">

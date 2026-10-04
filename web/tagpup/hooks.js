@@ -18,6 +18,7 @@ export const upper = {
     navigatorCountsChanged: null,
     navigatorFollows: null,
     openInOrganize: null,
+    photosDeleted: null,
     photosWritten: null,
     populateCameraModelsDropdown: null,
     recordUndo: null,
