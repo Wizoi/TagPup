@@ -15,6 +15,7 @@ phase 3 (docs/ARCHITECTURE.md).
 A face names its photo by id; a photo's path crosses this module native, converted by the
 library's roots on the way in and out (tagpup.store.roots).
 """
+import collections
 import contextlib
 import json
 import logging
@@ -237,11 +238,13 @@ def _photos_of(conn, face_ids):
 
 
 def _rebuilt(conn, photo_ids, changed):
-    """`changed`, after rebuilding the people of `photo_ids` and giving their faces the ids their
-    names give (person_ids.follow_faces), if anything changed."""
+    """`changed`, after rebuilding the people of `photo_ids` and giving their faces and listed people
+    the ids their names give (person_ids), if anything changed. The tree's people are read once for
+    both (docs/findings.md, #659)."""
     if changed and photo_ids:
-        person_ids.follow_faces(conn, photo_ids)
-        people.rebuild(conn, photo_ids)
+        known = person_ids.read(conn)
+        person_ids.follow_faces(conn, photo_ids, known)
+        people.rebuild(conn, photo_ids, ids=known)
     return changed
 
 
@@ -370,6 +373,28 @@ def name_if_unnamed(conn, face_id, person_name):
     changed = conn.execute("UPDATE faces SET name = ? WHERE id = ? AND name IS NULL AND excluded = 0"
                            " AND " + NOT_DECIDED_NOBODY % "", (person_name, face_id)).rowcount
     return _rebuilt(conn, _photos_of(conn, [face_id]), changed)
+
+
+def name_unnamed(conn, names_by_id):
+    """Give each face in {id: name} its name as a guess, as name_if_unnamed does -- only a face still
+    unnamed, not excluded and not unmatched by hand -- in one statement per name and chunk, and rebuild
+    their photos once: automatch's write (docs/findings.md, #659), which named a folder's faces one by
+    one and rebuilt a photo for each. Returns the ids named, in the order given. The caller commits,
+    inside the transaction that read the faces it chose."""
+    guard = " AND name IS NULL AND excluded = 0 AND " + NOT_DECIDED_NOBODY % ""
+    by_name = collections.defaultdict(list)
+    for face_id, person_name in names_by_id.items():
+        by_name[person_name].append(face_id)
+    named = set()
+    for person_name, face_ids in by_name.items():
+        for chunk in _chunks(face_ids):
+            still = [face_id for (face_id,) in conn.execute("SELECT id FROM faces WHERE " + _in(chunk) + guard, chunk)]
+            if still:
+                conn.execute("UPDATE faces SET name = ? WHERE " + _in(still) + guard, [person_name] + still)
+                named.update(still)
+    done = [face_id for face_id in names_by_id if face_id in named]
+    _rebuilt(conn, _photos_of(conn, done), len(done))
+    return done
 
 
 def unname(conn, face_ids, source="manual"):

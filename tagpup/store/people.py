@@ -76,11 +76,12 @@ def _differences(conn, photo_ids, known):
                 yield photo_id, people
 
 
-def rebuild(conn, photo_ids=None, known=None):
+def rebuild(conn, photo_ids=None, known=None, ids=None):
     """Write the people of each photo in `photo_ids` -- every photo, without -- by the one
     rule, and give each row written the id of the person its name is (person_ids.follow_listed;
-    every row, when every photo is rebuilt). `known` is the tree's PeopleVocabulary, read from
-    `conn` when not given. Returns how many photos' people changed. The caller commits."""
+    every row, when every photo is rebuilt). `known` is the tree's PeopleVocabulary, and `ids`
+    its person_ids.People, each read from `conn` when not given. Returns how many photos' people
+    changed. The caller commits."""
     written = []
     for photo_id, people in list(_differences(conn, photo_ids, known)):
         conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))
@@ -89,7 +90,7 @@ def rebuild(conn, photo_ids=None, known=None):
         written.append(photo_id)
     # Only the rows written can be without their id: a tree edit gives every other its new one
     # (tree_edit), and reading the tree for each of 5,000 one-photo rebuilds would cost them.
-    person_ids.follow_listed(conn, None if photo_ids is None else written)
+    person_ids.follow_listed(conn, None if photo_ids is None else written, ids)
     return len(written)
 
 
