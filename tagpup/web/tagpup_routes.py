@@ -40,7 +40,7 @@ from tagpup.services import selection as selection_service
 from tagpup.services import tagging as tagging_actions
 from tagpup.services import tags as tags_service
 from tagpup.services import thumbnails
-from tagpup.web import activity_routes, desktop, responses, state
+from tagpup.web import desktop, responses, security, state
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +264,7 @@ def folder_damaged():
     folder = _wanted_path()
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
-    if request.remote_addr not in activity_routes.LOOPBACK:
+    if not security.from_this_pc(request.remote_addr):
         return jsonify({"folder": paths.stored(folder), "photos": []})
     return jsonify({"folder": paths.stored(folder), "photos": damaged_photos.listed(library, paths.stored(folder))})
 
@@ -589,7 +589,7 @@ def photo_file():
 def _this_pc_only():
     """The 403 reply for a request from any other address than this PC's, else None: the library's views carry
     photo paths and names, and the pictures themselves are of people."""
-    if request.remote_addr not in activity_routes.LOOPBACK:
+    if not security.from_this_pc(request.remote_addr):
         return responses.error(403, "The library's views answer this PC only")
     return None
 

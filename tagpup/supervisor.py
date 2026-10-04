@@ -189,18 +189,10 @@ def remove(path):
         return False
 
 
-def _alive(record):
-    """Is the process a record names -- by its id and when it started -- still running?"""
-    if not record or not record.get("pid"):
-        return False
-    started = processes.started(record["pid"])
-    return started is not None and started == record.get("started")
-
-
 def running():
     """The running supervisor's record (data/supervisor.json), or None when none runs."""
     record = read_json(data_file(STATE_FILE))
-    return record if _alive(record) and record.get("state") not in ("stopped", "gave up") else None
+    return record if processes.recorded_alive(record) and record.get("state") not in ("stopped", "gave up") else None
 
 
 def last_state():
@@ -211,7 +203,7 @@ def last_state():
 def server():
     """Where the supervised server answers: {"pid", "started", "ports", "version"}, or None."""
     record = read_json(data_file(SERVER_FILE))
-    return record if _alive(record) else None
+    return record if processes.recorded_alive(record) else None
 
 
 def versions_in_use(home):
@@ -221,7 +213,7 @@ def versions_in_use(home):
     data = os.path.join(home, tagpup_config.DATA)
     for name, keys in ((STATE_FILE, ("version", "server_version")), (SERVER_FILE, ("version",))):
         record = read_json(os.path.join(data, name))
-        if _alive(record):
+        if processes.recorded_alive(record):
             found.update(record[key] for key in keys if record.get(key))
     return found
 
@@ -757,7 +749,7 @@ class Supervisor:
         ready = None
         while time.monotonic() < deadline and started.poll() is None:
             record = read_json(data_file(HANDOVER_FILE))
-            if record and record.get("version") == version and _alive(record):
+            if record and record.get("version") == version and processes.recorded_alive(record):
                 ready = record
                 break
             time.sleep(0.1)
@@ -822,7 +814,7 @@ class Supervisor:
                 return False, "its server did not answer in %ds" % self.hand_over_wait
             time.sleep(0.2)
         time.sleep(self.settle)
-        if not (_alive(where) and self._answers_as(where, version)):
+        if not (processes.recorded_alive(where) and self._answers_as(where, version)):
             return False, "its server stopped answering within %ds" % self.settle
         return True, None
 
@@ -889,16 +881,16 @@ class Supervisor:
         logger.warning("A server (pid %s) a supervisor before this one left running holds the ports; ending it%s.",
                        where.get("pid"), " once it drains" if token else "")
         give_up = self._clock() + self.stop_drain_limit
-        while token and self._clock() < give_up and _alive(where):
+        while token and self._clock() < give_up and processes.recorded_alive(where):
             answer = self._drain_at(where, token)
             if answer.get("drained"):
                 break
             time.sleep(min(self.retry_move, max(0.0, give_up - self._clock())))
         # Only the process it was: a pid is soon another's once its process has ended.
-        if _alive(where):
+        if processes.recorded_alive(where):
             processes.kill_tree(where["pid"])
         deadline = time.monotonic() + 30
-        while _alive(where) and time.monotonic() < deadline:
+        while processes.recorded_alive(where) and time.monotonic() < deadline:
             time.sleep(0.1)
         remove(data_file(SERVER_FILE))
         self._inherited_token = None

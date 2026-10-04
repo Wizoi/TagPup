@@ -93,6 +93,7 @@ class AsTheLauncher(unittest.TestCase):
                 mock.patch.object(tagpup_web, "answering", side_effect=lambda port: answers.pop(0)), \
                 mock.patch.object(tagpup_web, "open_page") as opened, \
                 mock.patch.object(tagpup_web.time, "sleep"), \
+                mock.patch.object(tagpup_web.web, "bind_all", return_value=[]), \
                 mock.patch.object(tagpup_web.web, "serve") as serve:
             code = tagpup_web.main(["--open", "tuner", "--installed", self.installed] + ARGS)
         return code, start, opened, serve

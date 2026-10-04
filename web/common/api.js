@@ -24,10 +24,25 @@
  * answers a request 503 with X-TagPup-Updating, having done nothing with it, and then
  * answers nothing while it restarts. A request so turned away is sent again after the
  * Retry-After it was given, and again while nothing answers, for up to UPDATE_WAIT_MS:
- * the page waits out the update rather than showing it as an error. An /api/ image has
+ * the page waits out the update rather than showing it as an error. A request that finds
+ * nothing answering (a TypeError, as a browser says it) with no update said is sent once
+ * more after FIRST_FAILURE_RETRY_MS, if it only reads (GET, HEAD):
+ * a launch replacing the server (tagpup/launcher.py) ends the old one and listens on its
+ * ports within a second, and a page that sent nothing while the old one drained meets
+ * that gap with its first request. A write is not sent again: a connection reset after
+ * it was sent may have lost the answer of a write that was done, and doing it twice --
+ * a bulk start, a tag write, a rename -- is worse than its error, which the page shows
+ * as before (the banner then says the server was updated). An /api/ image has
  * no such retry: one that fails makes the page ask how the server is, and once it has
  * seen the server away and answering again, it asks for the image again
  * (imagesAfterAnUpdate).
+ *
+ * Every response names the version answering (X-TagPup-Version). A page left open while
+ * its server was replaced by another version -- a launch of a newer one, the always-on
+ * process moving -- would run its old code against the new server: the first response
+ * naming a version other than the one before is announced as a `tagpup:updated` event,
+ * which web/common/roots-banner.js shows as a banner asking to reload. Not reloaded for
+ * the owner: a caption half typed would go with it.
  */
 
 /** How long a request waits out a server moving onto a new version. */
@@ -35,6 +50,9 @@ const UPDATE_WAIT_MS = 120000;
 
 /** How long to wait before sending again when nothing answered. */
 const RESTART_RETRY_MS = 1000;
+
+/** How long to wait before the one more try of a request nothing answered, no update said. */
+const FIRST_FAILURE_RETRY_MS = 1500;
 
 /** First URL parts that are no library's name: the routes (tagpup.core.library.ROUTES). */
 const NOT_A_LIBRARY = ['activity', 'api', 'common', 'gui', 'gui_tagpup'];
@@ -108,17 +126,45 @@ function announceRootsMoved(res) {
     document.dispatchEvent(new CustomEvent('tagpup:roots-moved', { detail: { root } }));
 }
 
+/** The version the page's first response named, and whether another has been announced. */
+let versionSeen = null;
+let updateAnnounced = false;
+
+/**
+ * A response naming a version other than the one the page's first response named: the server
+ * was replaced while the page was open. Announced once as a `tagpup:updated` event.
+ */
+function announceVersion(res) {
+    if (updateAnnounced || !res || !res.headers || typeof res.headers.get !== 'function') return;
+    const version = res.headers.get('X-TagPup-Version');
+    if (!version) return;
+    if (versionSeen === null) {
+        versionSeen = version;
+        return;
+    }
+    if (version === versionSeen || typeof document === 'undefined') return;
+    updateAnnounced = true;
+    document.dispatchEvent(new CustomEvent('tagpup:updated', { detail: { from: versionSeen, to: version } }));
+}
+
 function pause(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Does a request with these fetch `options` only read: GET or HEAD? */
+function onlyReads(options) {
+    const method = String((options && options.method) || 'GET').toUpperCase();
+    return method === 'GET' || method === 'HEAD';
 }
 
 /**
  * fetch(url, options), sent again while the server is moving onto a new version: after
  * a refusal saying so, and -- once one has said so -- while nothing answers.
  */
-function fetchThroughAnUpdate(url, options, started = Date.now(), updating = false) {
-    const again = (ms) => pause(ms).then(() => fetchThroughAnUpdate(url, options, started, true));
+function fetchThroughAnUpdate(url, options, started = Date.now(), updating = false, retried = false) {
+    const again = (ms) => pause(ms).then(() => fetchThroughAnUpdate(url, options, started, true, retried));
     return fetch(url, options).then(res => {
+        announceVersion(res);
         announceRootsProblem(res);
         announceRootsMoved(res);
         if (refusedForAnUpdate(res) && Date.now() - started < UPDATE_WAIT_MS) {
@@ -128,6 +174,9 @@ function fetchThroughAnUpdate(url, options, started = Date.now(), updating = fal
         return res;
     }, err => {
         if (updating && Date.now() - started < UPDATE_WAIT_MS) return again(RESTART_RETRY_MS);
+        if (!updating && !retried && err && err.name === 'TypeError' && onlyReads(options)) {
+            return pause(FIRST_FAILURE_RETRY_MS).then(() => fetchThroughAnUpdate(url, options, started, false, true));
+        }
         throw err;
     });
 }

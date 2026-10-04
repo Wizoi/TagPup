@@ -415,7 +415,7 @@ describe("when the library was last in step: said only when something is wrong (
     const down = await loadViewPage(t, { search: "?view=all" });
     down.server.first("/api/sync", () => Promise.reject(new TypeError("Failed to fetch")));
     down.document.getElementById("btn-library-refresh").click();
-    await down.settle(100);
+    await down.settle(1800);   // nothing answering is asked once more after 1.5 s (web/common/api.js, #746)
     assert.match(sync(down).textContent, /Could not read/);
     pageErrors();
   });

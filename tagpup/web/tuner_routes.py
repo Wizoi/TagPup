@@ -36,7 +36,7 @@ from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.services import roots_location, roots_verify
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, responses, roots_gate, roots_ingress, state, tagpup_routes
+from tagpup.web import desktop, responses, roots_gate, roots_ingress, security, state, tagpup_routes
 from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
@@ -728,9 +728,6 @@ def browse_folder():
 # a row (tagpup.services.roots_location; docs/ARCHITECTURE.md, "Roots and machines"). They answer this
 # PC only, as the Activity page does.
 
-#: The addresses of this PC.
-LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
-
 #: The background task the folder watcher is (tagpup.runtime.BACKGROUND).
 WATCHER = "folder watcher"
 
@@ -740,7 +737,7 @@ POLL_MS = 1000
 
 @routes.before_request
 def _roots_from_this_pc():
-    if request.path.startswith("/api/roots") and request.remote_addr not in LOOPBACK:
+    if request.path.startswith("/api/roots") and not security.from_this_pc(request.remote_addr):
         abort(403, description="Roots are shown and changed from this PC only")
 
 

@@ -19,8 +19,14 @@ moves it onto the new version only once the drain says it is done:
 - When nothing is in flight and nothing runs, it is drained, and the supervisor stops it.
   When the deadline passes first, it takes work again, and says what it waited for.
 
+Without the always-on process, a launcher of another version drains it the same way
+(tagpup.launcher), with the token this server wrote in its record (`launcher_token`), and
+only from this machine; drained, the launcher ends it and serves in its place.
+
 A server drained and never stopped -- its supervisor gone -- takes work again after
-LEFT_DRAINED. GET /api/server says which version answers, which the gear shows.
+LEFT_DRAINED. GET /api/server says which version answers, which the gear shows, and every
+response says it in X-TagPup-Version, by which a page left open learns that the server
+was replaced (web/common/api.js).
 """
 import hmac
 import logging
@@ -32,9 +38,10 @@ from flask import Blueprint, current_app, jsonify, request
 from tagpup.jobs import bulk_edits as bulk_edit_jobs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
+from tagpup import launcher
 from tagpup.services import libraries as library_actions
 from tagpup.supervisor import TOKEN_HEADER
-from tagpup.web import responses
+from tagpup.web import responses, security
 
 logger = logging.getLogger(__name__)
 
@@ -108,15 +115,20 @@ def long_work():
 
 class Lifecycle:
     """One server process's: `version` (the installed version's name, or None from a
-    checkout), `token` (the supervisor's, or None), `background` (tagpup.runtime.
-    Background, stopped by a drain and started again by a resume), `work()` (long_work,
-    or a test's) and `clock`."""
+    checkout), `token` (the supervisor's, or None), `launcher_token` (the one in this
+    server's record, tagpup.launcher, or None), `background` (tagpup.runtime.Background,
+    stopped by a drain and started again by a resume), `work()` (long_work, or a test's)
+    and `clock`."""
 
-    def __init__(self, version=None, token=None, background=None, work=long_work, clock=time.monotonic):
+    def __init__(self, version=None, token=None, background=None, work=long_work, clock=time.monotonic,
+                 launcher_token=None):
         self.version = version
+        #: What X-TagPup-Version says: the version, or that it runs from a checkout.
+        self.version_label = version or launcher.FROM_A_CHECKOUT
         #: When this server started (seconds since the epoch): the Activity page's "running since".
         self.started = time.time()
         self._token = token or None
+        self._launcher_token = launcher_token or None
         self._background = background
         self._work = work
         self._clock = clock
@@ -129,6 +141,9 @@ class Lifecycle:
         self._last_request = None
         #: A drain is under way: a second joins it.
         self._draining = False
+        #: How long a drained server not stopped waits before it takes work again: the
+        #: drain's `lease`, or LEFT_DRAINED.
+        self._lease = LEFT_DRAINED
 
     # ---- What it says ---------------------------------------------------------------
 
@@ -151,6 +166,17 @@ class Lifecycle:
         """Is `token` the supervisor's?"""
         return self._token is not None and isinstance(token, str) and hmac.compare_digest(token, self._token)
 
+    def allows_launcher(self, token, remote):
+        """Is `token` the one in this server's record, sent from this machine (`remote`, the
+        request's address)? Another machine is refused whatever it sends."""
+        return (self._launcher_token is not None and security.from_this_pc(remote) and isinstance(token, str)
+                and hmac.compare_digest(token, self._launcher_token))
+
+    def authorizes(self, headers, remote):
+        """May a request with `headers` from `remote` drain or resume this server: the
+        supervisor's token, or a launcher's from this machine?"""
+        return self.allows(headers.get(TOKEN_HEADER)) or self.allows_launcher(headers.get(launcher.HEADER), remote)
+
     # ---- The gate every request passes ------------------------------------------------
 
     def wrap(self, app):
@@ -162,7 +188,7 @@ class Lifecycle:
         """Count a request in; False when it is to be refused. One that only `watching`
         (only_watches) is not a request somebody made: the quiet moment is not reset."""
         with self._changed:
-            left = self._closed and self._drained_at is not None and self._clock() - self._drained_at > LEFT_DRAINED
+            left = self._closed and self._drained_at is not None and self._clock() - self._drained_at > self._lease
             if not left:
                 if self._closed:
                     return False
@@ -170,7 +196,7 @@ class Lifecycle:
                 if not watching:
                     self._last_request = self._clock()
                 return True
-        logger.warning("Drained %ds ago and not stopped: taking work again.", LEFT_DRAINED)
+        logger.warning("Drained %ds ago and not stopped: taking work again.", self._lease)
         self.resume()
         return self._enter(watching)
 
@@ -181,12 +207,14 @@ class Lifecycle:
 
     # ---- Draining ---------------------------------------------------------------------
 
-    def drain(self, seconds=DRAIN_SECONDS, quiet=0):
+    def drain(self, seconds=DRAIN_SECONDS, quiet=0, lease=None):
         """Stop taking new work and wait up to `seconds` for what is under way to finish.
         {"drained": True}, or {"drained": False, "waiting_for": [...]}: refused at once,
         nothing turned away, while work runs beside the requests or a request came in
         the last `quiet` seconds (someone is using the app); or the deadline passed, and
-        the server takes work again."""
+        the server takes work again. Drained and not stopped within `lease` seconds
+        (LEFT_DRAINED by default), it takes work again: a launcher's window closed
+        between its drain and the end it would have made (tagpup.launcher)."""
         deadline = self._clock() + seconds
         with self._changed:
             if self._draining:
@@ -206,6 +234,7 @@ class Lifecycle:
                     return {"drained": False, "waiting_for": busy}
                 self._closed = True
                 self._drained_at = None
+                self._lease = LEFT_DRAINED if lease is None else lease
             in_flight = self._in_flight
             self._draining = True
         try:
@@ -262,6 +291,16 @@ class _Gate:
 
     def __call__(self, environ, start_response):
         path = environ.get("PATH_INFO") or "/"
+        label = (launcher.VERSION_HEADER, self.lifecycle.version_label)
+
+        def start_response_saying_the_version(status, headers, exc_info=None):
+            headers = [h for h in headers if h[0].lower() != label[0].lower()] + [label]
+            if exc_info is None:
+                return start_response(status, headers)
+            return start_response(status, headers, exc_info)
+        return self._call(environ, start_response_saying_the_version, path)
+
+    def _call(self, environ, start_response, path):
         if exempt(path):
             return self.app(environ, start_response)
         if not self.lifecycle._enter(only_watches(environ.get("REQUEST_METHOD", "GET"), path)):
@@ -328,25 +367,31 @@ def server_status():
 @routes.post(DRAIN)
 def drain():
     """Stop taking new work and let what is under way finish (Lifecycle.drain): the
-    supervisor's, before it moves the server onto a new version."""
+    supervisor's, before it moves the server onto a new version; or a launcher's on this
+    machine, before it serves another version in its place (tagpup.launcher)."""
     lifecycle = _lifecycle()
-    if not lifecycle.allows(request.headers.get(TOKEN_HEADER)):
-        return responses.error(403, "Only the process that started this server may drain it")
+    if not lifecycle.authorizes(request.headers, request.remote_addr):
+        return responses.error(403, "Only the process that started this server, or a launch on this machine, "
+                                    "may drain it")
     body = request.get_json(silent=True) or {}
     seconds = body.get("seconds", DRAIN_SECONDS)
     quiet = body.get("quiet", 0)
+    lease = body.get("lease")
+    if lease is not None and (isinstance(lease, bool) or not isinstance(lease, (int, float))
+                              or not 0 < lease <= LEFT_DRAINED):
+        return responses.error(400, "lease must be a number of seconds, more than 0 and at most %d" % LEFT_DRAINED)
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds <= MAX_DRAIN_SECONDS:
         return responses.error(400, "seconds must be a number of seconds, more than 0 and at most %d"
                                % MAX_DRAIN_SECONDS)
     if isinstance(quiet, bool) or not isinstance(quiet, (int, float)) or quiet < 0:
         return responses.error(400, "quiet must be a number of seconds, 0 or more")
-    return jsonify(dict(lifecycle.drain(seconds, quiet), success=True))
+    return jsonify(dict(lifecycle.drain(seconds, quiet, lease), success=True))
 
 
 @routes.post(RESUME)
 def resume():
     """Take work again after a drain (the supervisor's, when it could not move the server)."""
     lifecycle = _lifecycle()
-    if not lifecycle.allows(request.headers.get(TOKEN_HEADER)):
+    if not lifecycle.authorizes(request.headers, request.remote_addr):
         return responses.error(403, "Only the process that started this server may resume it")
     return jsonify({"success": True, "resumed": lifecycle.resume()})

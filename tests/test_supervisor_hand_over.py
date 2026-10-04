@@ -33,15 +33,12 @@ OLD, NEW = "20260926-100000-aaaaaaa", "20260926-110000-bbbbbbb"
 class HandingOver(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self, prefix="hand_over_")
+        # Before anything is started, and every process the test's ones started too, asked
+        # again until none is left: a run that failed part-way left four running (#727).
+        self.addCleanup(own_home.end_processes, self.home.root)
         self.installed = os.path.join(self.home.root, "installed")
         install_app.install(self.installed, self.home.root, sys.executable, name=OLD, apply=True, say=lambda line: None)
         self.port = free_port()
-        self.addCleanup(self.end_all)
-
-    def end_all(self):
-        for record in (supervisor.running(), supervisor.server()):
-            if record:
-                processes.kill_tree(record["pid"])
 
     def start(self):
         # A server a test starts runs no recurring job and loads no model weights.

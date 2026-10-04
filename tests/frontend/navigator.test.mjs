@@ -344,6 +344,7 @@ describe("loading, failing and nothing", () => {
     });
     ctx.server.first("/api/library/navigator?section=people", () => Promise.reject(new TypeError("Failed to fetch")));
     await ctx.openTab("people");
+    await ctx.settle(1800);   // nothing answering is asked once more after 1.5 s (web/common/api.js, #746)
     assert.match(ctx.status("people"), /Could not read the people/);
     assert.match(pageErrors().join(), /Failed to fetch/, "a failure of the network is logged, as the page's others are");
     ctx.server.routes.shift();
