@@ -33,7 +33,8 @@ this codebase, add it there with a comment saying why rather than working around
 No `pip.exe`, no `Activate.ps1`, no pytest — invoke the interpreter by path. Use the
 glob for the frontend suite; `node --test tests/frontend/` fails on `harness.mjs`.
 
-**The whole Python suite is `tools/run_tests.py`: about 45 seconds.** Run all of it
+**The whole Python suite is `tools/run_tests.py`: 3,641 tests, about 4 minutes (200-600 s
+under load, counted 2026-10-04).** Run all of it
 before a commit that touches Python; choosing which files to run cost more turns than
 it saved. `tools/affected_tests.py` is for the loop while editing, not for the commit.
 
@@ -183,6 +184,15 @@ reported 60 done, and wrote nothing; the paths did not match and nothing said so
   holds the standing rules, so the brief says only the task and which files are its.
 - After any change more than one agent made, run `tagpup-reviewer` over it before
   committing. It found the defects that lived between two agents' briefs.
+- A review loop on one symptom ends at the second round, with the ownership question: the
+  9d-1 resume ran six rounds, each finding a deeper way to shift a photo twice, and the
+  fix that ended it (the journal's prune never takes a resumable job's changes) was the
+  owner-of-the-rule fix nobody asked for until round six. Put "which single place should
+  own this?" in the second round's brief. Rounds after that are for findings that can
+  change a file or lose data; wording and polish are batched, not re-reviewed.
+- Commit before launching background agents and keep their work in worktrees. Two
+  restarts on 2026-10-03/04 killed five agents; the uncommitted work survived only
+  because it sat in a worktree.
 - Decide by the rules here and in docs/ARCHITECTURE.md; ask the owner only what they
   alone can answer. The cheapest correct change first: no extra backup, no workaround
   around the model where the model can be fixed.
