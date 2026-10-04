@@ -29,18 +29,20 @@ import { attachBulk, lockBulkControls } from './bulk-job.js';
 import { forgetBanner } from './library-banner.js';
 import { clearSyncInfo, loadSyncInfo } from './sync-state.js';
 import {
-    destroyLibrary, forgetCards, loadLibraryIds, newLibrary, viewLabel, viewSearch, viewSpecFromSearch
+    destroyLibrary, forgetCards, loadLibraryIds, newLibrary, sameView, viewLabel, viewSearch, viewSpecFromSearch
 } from './library-source.js';
 
 const SEARCH_OFF = 'Search arrives with the library views’ later stages.';
 const FOLDER_ONLY = 'Not in a library view: this works on a folder, and arrives for photos across folders with editing from a library view.';
 
-/** Is this the view that is open? */
+/** Is this the view that is open (the same source in the same order)? */
 function isOpen(spec) {
     const lib = state.library;
-    return Boolean(lib) && !lib.invalid && lib.kind === spec.kind && (lib.value ?? null) === (spec.value ?? null)
-        && lib.recursive === Boolean(spec.recursive);
+    return Boolean(lib) && !lib.invalid && sameView(lib, spec);
 }
+
+/** The address's parameters a view names. */
+const VIEW_PARAMS = ['view', 'value', 'recursive', 'order'];
 
 // ---- The folder, put to rest -----------------------------------------------------------------
 
@@ -178,7 +180,7 @@ function writeAddress(spec, mode) {
 
 function clearAddress() {
     const url = new URL(window.location.href);
-    for (const name of ['view', 'value', 'recursive']) url.searchParams.delete(name);
+    for (const name of VIEW_PARAMS) url.searchParams.delete(name);
     window.history.replaceState(window.history.state, '', url);
 }
 
@@ -191,6 +193,8 @@ function clearAddress() {
  * and Forward). Asks first about edits in the open photo. Replaces the view that is open.
  */
 export function openLibraryView(spec, { history = 'push', scrollTop = 0 } = {}) {
+    // A view opened without an order is read in the one chosen in the navigator (#671).
+    if (!spec.error && !spec.order) spec = { ...spec, order: state.nav.order };
     if (!spec.error && isOpen(spec)) return;
     leavePhotoThen(() => beginView(spec, history, scrollTop), { onStay: keepAddress });
 }
@@ -289,7 +293,7 @@ export function backToFolder(folder = state.libraryReturn) {
     leavePhotoThen(() => {
         if (!state.library) return;
         const url = new URL(window.location.href);
-        for (const name of ['view', 'value', 'recursive']) url.searchParams.delete(name);
+        for (const name of VIEW_PARAMS) url.searchParams.delete(name);
         saveScroll();
         window.history.pushState({}, '', url);
         closeLibraryView({ folder });
