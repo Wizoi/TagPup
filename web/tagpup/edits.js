@@ -3,7 +3,7 @@
 import { api } from './common/api.js';
 import { dialogOpen } from './common/dialog.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { baseName, pathKey } from './common/paths.js';
+import { baseName, pathKey, samePath } from './common/paths.js';
 import { leafOf, photoAlreadyHas, tagProblem, textProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -36,7 +36,7 @@ import {
 /** Does the panel show anything the photo does not hold yet? */
 export function hasUnsavedEdits() {
     if (!state.activePhotoPath) return false;
-    const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
+    const photo = state.folderPhotos.find(p => samePath(p.path, state.activePhotoPath));
     if (!photo) return false;
     if (inputAddTag.value.trim() || inputAddPerson.value.trim()) return true;
     return inputPhotoTitle.value.trim() !== String(photo.title || '').trim();
@@ -51,7 +51,7 @@ export function updateSaveButton() {
 export function discardDetailEdits() {
     inputAddTag.value = '';
     inputAddPerson.value = '';
-    const photo = state.activePhotoPath && state.folderPhotos.find(p => p.path === state.activePhotoPath);
+    const photo = state.activePhotoPath && state.folderPhotos.find(p => samePath(p.path, state.activePhotoPath));
     inputPhotoTitle.value = photo ? (photo.title || '') : '';
     updateSaveButton();
 }
@@ -67,7 +67,7 @@ export function wireUnsavedEdits() {
         input.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
             if (input === inputPhotoTitle) {
-                const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
+                const photo = state.folderPhotos.find(p => samePath(p.path, state.activePhotoPath));
                 input.value = photo ? (photo.title || '') : '';
             } else {
                 input.value = '';
@@ -438,7 +438,7 @@ export async function confirmLeavingPhoto() {
     if (!hasUnsavedEdits()) return true;
     if (state.leavePrompt) return false;   // already asking; this route waits its turn
 
-    const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
+    const photo = state.folderPhotos.find(p => samePath(p.path, state.activePhotoPath));
     const name = (photo && photo.filename) || baseName(state.activePhotoPath);
     state.leavePrompt = askToSaveEdits(name);
     let choice;

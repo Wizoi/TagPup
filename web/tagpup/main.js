@@ -27,6 +27,7 @@ import { checkFolderMembership, wireMembership } from './membership.js';
 import { navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
 import { addedFromView, wireBanner } from './library-banner.js';
 import { attachBulk, wireBulk } from './bulk-job.js';
+import { photosWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, wireMoves } from './library-moves.js';
 import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
@@ -58,7 +59,7 @@ Object.assign(upper, {
     addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, populateCameraModelsDropdown, recordUndo,
     renderFileList, renderSuggestionsPanel, renderTags, renderThumbnails, selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows,
-    reloadChangedPhoto,
+    photosWritten, reloadChangedPhoto,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
 });

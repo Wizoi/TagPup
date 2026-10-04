@@ -83,9 +83,10 @@
             <div class="bulk-strip-foot">
                 <a href="/activity/" target="_blank" rel="noopener">Shown on the Activity page too</a>
             </div>
-            <!-- Said to a screen reader at coarse steps (the start, each tenth, the end), never each second. -->
-            <div id="bulk-strip-live" class="visually-hidden" role="status" aria-live="polite"></div>
         </section>
+        <!-- Said to a screen reader at coarse steps (the start, each tenth, the end), never each second. Outside the strip, which is
+             hidden until the first thing is said: a live region that appears with its first words is often not read. -->
+        <div id="bulk-strip-live" class="visually-hidden" role="status" aria-live="polite"></div>
 
         <!-- Main Content Area -->
         <main class="app-content">

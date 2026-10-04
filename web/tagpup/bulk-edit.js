@@ -71,7 +71,7 @@ export async function addTypedToSelection(isPeople) {
         }
         if (!resolved.length) return false;
         started = await startBulk({ op, selection: picked.selection, params: { add: resolved, remove: [] },
-            desc: describeTags({ op, add: resolved }) });
+            desc: describeTags({ op, add: resolved }), picked: picked.count });
     } finally {
         state.bulk.asking = false;
     }
@@ -95,7 +95,7 @@ export async function editByPill({ kind, name, remove }) {
     try {
         if (!confirmed(desc, picked.count)) return false;
         const started = await startBulk({ op, selection: picked.selection,
-            params: remove ? { add: [], remove: [name] } : { add: [name], remove: [] }, desc });
+            params: remove ? { add: [], remove: [name] } : { add: [name], remove: [] }, desc, picked: picked.count });
         return started.ok;
     } finally {
         state.bulk.asking = false;
@@ -130,11 +130,18 @@ export async function shiftSelectionInView() {
     if (!state.library) return false;
     const minutes = shiftTyped();
     if (minutes === null) return false;
+    // While another edit's question or placement dialog is open, this one asks nothing (as Add and the pills).
+    if (state.bulk.asking) return false;
     const picked = readSelection();
     if (!picked) return false;
     const desc = describeShift(minutes);
-    if (!confirmed(desc, picked.count)) return false;
-    const started = await startBulk({ op: 'time_shift', selection: picked.selection, params: { minutes }, desc });
-    if (started.ok) timeshiftMinutesInput.value = 0;
-    return started.ok;
+    state.bulk.asking = true;
+    try {
+        if (!confirmed(desc, picked.count)) return false;
+        const started = await startBulk({ op: 'time_shift', selection: picked.selection, params: { minutes }, desc, picked: picked.count });
+        if (started.ok) timeshiftMinutesInput.value = 0;
+        return started.ok;
+    } finally {
+        state.bulk.asking = false;
+    }
 }

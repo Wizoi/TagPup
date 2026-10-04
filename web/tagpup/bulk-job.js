@@ -10,6 +10,7 @@
 // and Resume or Start again); Cancel twice (one request); Cancel after it ended (the status says so); a tab that is hidden (asked
 // every 5 s); a page reloaded mid-job (the strip comes back); a start whose answer was lost (asked for what runs).
 import { api } from './common/api.js';
+import { samePath } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -193,7 +194,7 @@ function jobEnded(job) {
     upper.navigatorCountsChanged({ now: true });
     if (!state.library) return;
     refreshHeldCards();
-    const open = state.activePhotoPath ? state.folderPhotos.find(photo => photo.path === state.activePhotoPath) : null;
+    const open = state.activePhotoPath ? state.folderPhotos.find(photo => samePath(photo.path, state.activePhotoPath)) : null;
     if (open && open.id !== undefined && !hasUnsavedEdits()) upper.reloadChangedPhoto(open);
     upper.updateSelectedThumbnailsCount();
 }
@@ -210,7 +211,7 @@ function startFailed(sentence) {
  * words (bulk-words.js). Resolves { ok: true } when a job began and the strip is showing it; { ok: false, why } when not -- a job is
  * running already (the server's 409 sentence is in the strip, with Show it), or the server refused it with a sentence.
  */
-export function startBulk({ op, selection, params, desc }) {
+export function startBulk({ op, selection, params, desc, picked }) {
     const bulk = state.bulk;
     if (bulkBusy()) return Promise.resolve({ ok: false, why: BUSY_SENTENCE });
     bulk.starting = true;
@@ -222,7 +223,10 @@ export function startBulk({ op, selection, params, desc }) {
             bulk.starting = false;
             if (res.status === 409) {
                 bulk.conflict = (body && body.error) || 'A bulk edit is running already.';
+                // An earlier job that stopped is still in the strip: it gives way, or the refusal would be drawn nowhere.
+                if (!isRunning(bulk.job)) bulk.job = null;
                 repaint();
+                startFailed(bulk.conflict);
                 return { ok: false, why: bulk.conflict };
             }
             if (!res.ok || !body.success) {
@@ -234,6 +238,7 @@ export function startBulk({ op, selection, params, desc }) {
             beginTracking({ job: body.job, op, state: 'running', total: body.total, done: 0, changed: 0, unchanged: 0,
                 skipped_missing: 0, skipped_damaged: 0, error_count: 0, errors: [], eta_seconds: null },
                 { op, selection, params, desc });
+            widenedNotice(body.total, picked, selection);
             return { ok: true, missing: body.missing || 0, total: body.total };
         })
         .catch(err => {
@@ -247,9 +252,25 @@ export function startBulk({ op, selection, params, desc }) {
         });
 }
 
+/**
+ * A selection sent as a source and the photos left out is resolved by the server NOW: photos that came into the view since the page read
+ * its ids (a sync, another tab, a time shift) are in the job although nobody picked them. The server has no way to be told how many to
+ * expect, and the job has begun when the page learns it, so the page says it plainly -- the strip is already offering Cancel, which stops
+ * it after the photos being written now. Fewer than picked is no widening (photos that are gone are counted as missing).
+ */
+function widenedNotice(took, picked, selection) {
+    const bulk = state.bulk;
+    if (!selection || !selection.source || !Number.isFinite(picked) || !Number.isFinite(took) || took <= picked) return;
+    bulk.notice = `TagPup took ${took.toLocaleString()} photos but ${picked.toLocaleString()} were selected: ${(took - picked).toLocaleString()} more `
+        + 'came into this view since it was read. Cancel stops it after the photos being written now; the photos already written keep the edit.';
+    repaint();
+    startFailed(bulk.notice);
+}
+
 function beginTracking(job, request) {
     const bulk = state.bulk;
     stopPolling();
+    if (!bulk.job || bulk.job.job !== job.job) bulk.notice = '';
     bulk.job = job;
     bulk.request = request;
     bulk.conflict = '';
@@ -330,6 +351,7 @@ export function dismissBulk() {
     bulk.job = null;
     bulk.request = null;
     bulk.conflict = '';
+    bulk.notice = '';
     bulk.trouble = '';
     bulk.gaveUp = false;
     repaint();
@@ -379,13 +401,15 @@ export function attachBulk({ force = false, quiet = false } = {}) {
                 if (force && bulk.conflict) {
                     bulk.conflict = '';
                     repaint();
+                    setStatus('ready', 'No bulk edit is running now. Make your edit again to start it.', { transient: false });
                 }
                 return false;
             }
             if (!force && !isRunning(found) && wasDismissed(found.job)) return false;
             const same = bulk.request && bulk.job && bulk.job.job === found.job;
+            // Shown, and nothing more: a job that stopped before this page looked is not one that ended under it (what a job's
+            // end does -- forget the folders' scans, read the counts, say it in the status line -- is for the end of one that ran here).
             beginTracking({ ...found }, same ? bulk.request : null);
-            if (!isRunning(found)) jobEnded(bulk.job);
             return true;
         }))
         .catch(err => {

@@ -8,7 +8,7 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import { selectionPeopleList, selectionTagsList } from './elements.js';
-import { tallyRequest } from './selected.js';
+import { selectionCount, tallyRequest } from './selected.js';
 import { editByPill } from './bulk-edit.js';
 import { lockBulkControls } from './bulk-job.js';
 
@@ -78,9 +78,15 @@ function dropPending() {
     tally.asked += 1;
 }
 
-/** Forget what was counted, so that the next call counts again (the photos' tags changed). */
-export function forgetTally() {
+/**
+ * A write to a photo finished (the details panel's save, a pill's edit, the queue's done path): what a selected photo carries may have
+ * changed without the selection changing, so a view's selection is counted again (250 ms later, once for a run of writes).
+ */
+export function photosWritten() {
+    const lib = state.library;
+    if (!lib || selectionCount() === 0) return;
     state.tally.key = '';
+    selectionTallied();
 }
 
 /** Nothing is selected, or the view closed: nothing is counted, and what was out is let go. */
@@ -94,7 +100,7 @@ export function clearTally() {
 
 /**
  * The selection of the open library view may have changed: count it again, 250 ms after the last change. The same selection (the page's
- * `version` of it) that was counted is not counted again, unless `forgetTally` ran.
+ * `version` of it) that was counted is not counted again, unless `photosWritten` ran.
  */
 export function selectionTallied() {
     const tally = state.tally;

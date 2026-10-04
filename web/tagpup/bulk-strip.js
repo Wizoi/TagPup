@@ -120,6 +120,10 @@ export function renderBulkStrip() {
         message = message ? `${message} ${bulk.trouble}` : bulk.trouble;
         problem = true;
     }
+    if (bulk.notice) {
+        message = message ? `${message} ${bulk.notice}` : bulk.notice;
+        problem = true;
+    }
     bulkStripMessage.textContent = message;
     bulkStripMessage.classList.toggle('bulk-strip-problem', problem);
     drawErrors(job);
