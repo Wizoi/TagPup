@@ -92,11 +92,12 @@
         <main class="app-content">
             <!-- Sidebar: Folder Control & File list -->
             <aside class="sidebar">
-                <!-- The switch between the library's navigator and the open folder's list (web/tagpup/navigator.js).
+                <!-- The switch between the library's navigator and Organize, the open folder's list (web/tagpup/navigator.js; the
+                     button is "Organize" since #668: "Folder" was taken for the library's Folders tab).
                      The same pattern as the navigator's own tabs: arrow keys move between them. -->
                 <div id="sidebar-switch" class="sidebar-switch" role="tablist" aria-label="Show in the sidebar" data-own-keys>
                     <button type="button" id="sidebar-tab-library" class="sidebar-switch-tab" role="tab" aria-selected="false" aria-controls="sidebar-pane-library" tabindex="-1" title="Browse the whole library by folder, keyword, person or date">Library</button>
-                    <button type="button" id="sidebar-tab-folder" class="sidebar-switch-tab active" role="tab" aria-selected="true" aria-controls="sidebar-pane-folder" tabindex="0" title="The folder that is open, and its photos">Folder</button>
+                    <button type="button" id="sidebar-tab-folder" class="sidebar-switch-tab active" role="tab" aria-selected="true" aria-controls="sidebar-pane-folder" tabindex="0" title="Organize one folder on disk: its photos, Smart Rename, Camera Time Shift and the folder's own tools">Organize</button>
                 </div>
                 <!-- The library's navigator: Folders, Keywords, People and Dates, each built by navigator.js on first use. -->
                 <div id="sidebar-pane-library" class="sidebar-pane hidden" role="tabpanel" aria-labelledby="sidebar-tab-library"></div>
