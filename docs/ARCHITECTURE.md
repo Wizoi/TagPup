@@ -2406,10 +2406,12 @@ Analysis, in the order it would be decided:
   program (MP and MWG) is read; regions edited in another program after TagPup wrote them; a
   folder in two libraries; a photo whose file is replaced by an older copy.
 
-### Backlog: camera make and model in search *(owner, 2026-10-04; after phase 9)*
-The owner wants to find photos by camera make and model (already columns of `photo_meta`, phase 9a-1): as a
-search member (all of / any of / none of a camera) and as words, so a time shift can be aimed at one camera's
-photos (a camera whose clock was wrong). Author is not used and stays out. Not part of 9e.
+### Backlog: which photo fields are searchable *(owner, 2026-10-04; after phase 9)*
+A later review of which metadata fields search offers, as members (all of / any of / none of) and as words. Named
+so far: **camera make and model** (already columns of `photo_meta`, phase 9a-1), so a time shift can be aimed at
+one camera's photos (a camera whose clock was wrong); **lens** (not in `photo_meta` yet: a column made from the
+file's metadata as the others are, read from `raw_metadata` by the derived-table rebuild, no file re-read if the
+indexer already keeps the lens tag -- check first). Author is not used and stays out. Not part of 9e.
 
 ### Phase 10: Family albums from many sources (idea, after phase 9)
 The owner's idea *(2026-09-25)*: once the local folders, the views and their management
