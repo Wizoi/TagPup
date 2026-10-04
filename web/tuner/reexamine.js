@@ -106,7 +106,9 @@ export function differences(plan, done) {
         const rest = changed.length - shown.length;
         said.push('Changed: ' + shown.join(', ') + (rest > 0 ? `, and ${rest} more` : '') + '.');
     }
-    const renamed = done.renamed || 0;
+    // Only the faces left for a rename since the dry run: those it already left out were
+    // never in the question (docs/findings.md, #657).
+    const renamed = Math.max(0, (done.renamed || 0) - (plan.renamed || 0));
     if (renamed) {
         said.push(`${plural(renamed, 'face was', 'faces were')} left because their person was renamed meanwhile.`);
     }

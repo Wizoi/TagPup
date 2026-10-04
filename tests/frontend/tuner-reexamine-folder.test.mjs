@@ -173,6 +173,18 @@ describe("Re-examine this folder", () => {
     assert.match(ctx.alerts[0], /since it asked/, "two faces fewer, one of them renamed: the other is said");
   });
 
+  test("faces the dry run already left for a rename are not the reason for a difference", async (t) => {
+    // docs/findings.md, #657: the total was taken for what changed since the question.
+    const ctx = await open(t, { plan: { ...PLAN, renamed: 1 },
+                                done: { ...DONE, matched_count: 2, faces: 2, renamed: 1,
+                                        people: { "Rowan Thackeray": 2 } } });
+    buttonOf(ctx.document, MEET).button.click();
+    await flush(ctx.window, 6);
+    assert.equal(ctx.alerts.length, 1);
+    assert.doesNotMatch(ctx.alerts[0], /renamed meanwhile/);
+    assert.match(ctx.alerts[0], /since it asked/);
+  });
+
   test("a second press while the first is answered sends nothing", async (t) => {
     let release;
     const hold = new Promise((r) => { release = r; });
