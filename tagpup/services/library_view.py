@@ -65,8 +65,9 @@ MAX_LIMIT = 500
 MAX_IDS = 200_000
 MAX_CARDS = 200
 
-#: The longest page token read: a token is a few dozen characters; a very large one is refused before it is decoded.
-MAX_TOKEN = 400
+#: The longest page token read: a token is a few dozen characters, a few hundred in an order by name or caption (a key of
+#: 260 characters, each up to twelve in JSON when it is not ASCII); a very large one is refused before it is decoded.
+MAX_TOKEN = 5000
 
 #: The most sources a union holds: the navigator's rows a person selected, compressed (a folder with every folder under it
 #: is one). A union of more is refused with a sentence; its address would be longer than the server reads.
