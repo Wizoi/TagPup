@@ -23,11 +23,11 @@ import { createVGrid } from './vgrid.js';
 import { cardLabel, settleRoving, wireGridKeys } from './grid-keys.js';
 import { markStale } from './stale.js';
 import {
-    applyEditedRecords, ASK_SELECT_ABOVE, cancelLibrarySelection, cardDamage, idsBetween, libraryCardKey,
-    libraryCount, libraryIdOfPath, libraryIndexOfKey, libraryRecordAt, selectInLibrary
+    applyEditedRecords, cardDamage, libraryCardKey, libraryCount, libraryIdOfPath, libraryIndexOfKey, libraryRecordAt
 } from './library-source.js';
 import {
-    addToSelection, isSelected, removeFromSelection, renameInSelection, setSelection
+    addToSelection, clearIdSelection, invertIdSelection, isIdSelected, isPhotoSelected, isSelected, removeFromSelection,
+    renameInSelection, selectAllInView, selectionCount, setIdRange, setIdSelected, setSelection
 } from './selected.js';
 
 export function setThumbnailSize(size) {
@@ -70,7 +70,7 @@ export function hideGridContextMenu() {
 
 export function showGridContextMenu(x, y, pathUnderCursor) {
     if (!gridContextMenu) return;
-    const count = state.selectedThumbnails.length;
+    const count = selectionCount();
     const total = state.library ? state.library.ids.length : state.folderPhotos.length;
 
     gridContextMenu.querySelectorAll('[data-requires-selection]').forEach(el => {
@@ -101,7 +101,7 @@ export function syncSelectionMarks() {
     if (!state.grid) return;
     state.grid.eachCard((card, photo) => {
         if (card.classList.contains('placeholder')) return;
-        const on = isSelected(photo.path);
+        const on = isPhotoSelected(photo);
         card.classList.toggle('selected', on);
         const box = card.querySelector('.thumbnail-checkbox');
         if (box) box.checked = on;
@@ -120,7 +120,15 @@ function labelCard(card, selected) {
 
 export function invertThumbnailSelection() {
     if (state.library) {
-        selectEverything('invert');
+        const done = invertIdSelection();
+        if (!done.ok) {
+            state.library.notice = done.sentence;
+            upper.libraryChanged();
+            return;
+        }
+        state.library.notice = '';
+        syncSelectionMarks();
+        upper.updateSelectedThumbnailsCount();
         return;
     }
     // The photos the filter shows are inverted; those it hides keep whatever they had.
@@ -250,30 +258,38 @@ function openAtIndex(index) {
 function toggleAtIndex(index, shift) {
     const lib = state.library;
     if (lib) {
+        // By id: the card need not be here.
         const id = lib.ids[index];
         if (id === undefined) return;
-        const card = lib.cards.get(id);
-        // No card yet: its path is fetched with it, and it is added (a card's selection is by path, 9b-2).
-        if (!card) {
-            selectInLibrary('add', [id]);
-            return;
-        }
-        handleCardSelectionClick(card.path, shift ? true : !isSelected(card.path), null, shift);
+        selectLibraryPhoto(id, shift ? true : !isIdSelected(id), shift);
         return;
     }
     const photo = state.shownPhotos[index];
     if (photo) handleCardSelectionClick(photo.path, shift ? true : !isSelected(photo.path), null, shift);
 }
 
-/** Shift+arrow: every photo from where the run began to this index is selected, whether or not its card is there. */
-function extendRange(from, to) {
+/**
+ * Shift+arrow: every photo from where the run began to this index is selected, whether or not its card is there. In a
+ * library view, stepping back toward where the run began takes the photos it leaves off again (`was` is where the keys were).
+ */
+function extendRange(from, to, was) {
     const low = Math.min(from, to);
     const high = Math.max(from, to);
     const lib = state.library;
     if (lib) {
-        const ids = lib.ids.slice(low, high + 1);
-        selectInLibrary('add', ids);
+        if (lib.ids.length === 0) return;
+        const before = was === undefined || was < 0 ? to : was;
+        if (before !== to) {
+            // The photos of the old run that the new one no longer reaches.
+            const oldLow = Math.min(from, before);
+            const oldHigh = Math.max(from, before);
+            if (oldLow < low) setIdRange(oldLow, low - 1, false);
+            if (oldHigh > high) setIdRange(high + 1, oldHigh, false);
+        }
+        setIdRange(low, high, true);
         lib.lastId = lib.ids[to] === undefined ? lib.lastId : lib.ids[to];
+        syncSelectionMarks();
+        upper.updateSelectedThumbnailsCount();
         return;
     }
     const paths = state.shownPhotos.slice(low, high + 1).map(photo => photo.path);
@@ -366,14 +382,14 @@ function buildThumbnailCard(photo) {
     card.className = 'thumbnail-card';
     card.setAttribute('role', 'option');
     card.tabIndex = -1;          // the grid is one tab stop; grid-keys.js gives it to one card
-    const selected = isSelected(photo.path);
+    // A card of a library view is its photo's `thumb` (the cache's thumbnail by id) and cannot be
+    // edited in place: its title is not in the card, and a save from it would write a title over tags it lacks.
+    const inLibrary = Boolean(photo.thumb);
+    const selected = inLibrary ? isIdSelected(photo.id) : isSelected(photo.path);
     if (selected) {
         card.classList.add('selected');
     }
     card.setAttribute('data-path', photo.path);
-    // A card of a library view is its photo's `thumb` (the cache's thumbnail by id) and cannot be
-    // edited in place: its title is not in the card, and a save from it would write a title over tags it lacks.
-    const inLibrary = Boolean(photo.thumb);
     if (inLibrary) card.setAttribute('data-id', String(photo.id));
 
     const chkContainer = document.createElement('div');
@@ -386,7 +402,8 @@ function buildThumbnailCard(photo) {
     chk.checked = selected;
     chk.addEventListener('click', (e) => {
         e.stopPropagation();
-        handleCardSelectionClick(photo.path, chk.checked, card, e.shiftKey);
+        if (inLibrary) selectLibraryPhoto(photo.id, chk.checked, e.shiftKey);
+        else handleCardSelectionClick(photo.path, chk.checked, card, e.shiftKey);
     });
     chkContainer.appendChild(chk);
     card.appendChild(chkContainer);
@@ -566,9 +583,10 @@ function buildThumbnailCard(photo) {
     // Click toggles card selection
     card.addEventListener('click', (e) => {
         if (e.target.tagName === 'INPUT') return;
-        const nextChecked = !isSelected(photo.path);
+        const nextChecked = !(inLibrary ? isIdSelected(photo.id) : isSelected(photo.path));
         chk.checked = nextChecked;
-        handleCardSelectionClick(photo.path, nextChecked, card, e.shiftKey);
+        if (inLibrary) selectLibraryPhoto(photo.id, nextChecked, e.shiftKey);
+        else handleCardSelectionClick(photo.path, nextChecked, card, e.shiftKey);
     });
 
     return card;
@@ -579,29 +597,25 @@ function buildThumbnailCard(photo) {
 // Shift-click is read from the grid's order (state.shownPhotos), the cards on screen follow.
 
 /**
- * A click in a library view. A range is by the view's order, over cards that may not be held: the
- * ones missing are fetched (for their paths) and the selection changes when they are here.
+ * A click, Space or a Shift range in a library view: by photo id and by the view's order, so a range across cards that are
+ * not here is a loop over ids, with no request. `on` is what the photo (or the range, with Shift) becomes.
  */
-function handleLibraryClick(path, isChecked, cardElement, isShiftKey) {
+function selectLibraryPhoto(id, on, shift) {
     const lib = state.library;
-    const id = libraryIdOfPath(path);
-    if (isShiftKey && lib.lastId !== null && id !== null) {
-        const range = idsBetween(lib.lastId, id);
-        if (range) {
-            selectInLibrary(isChecked ? 'add' : 'remove', range);
-            lib.lastId = id;
-            state.lastSelectedPath = path;
-            return;
-        }
-    }
-    toggleThumbnailSelection(path, isChecked, cardElement);
-    state.lastSelectedPath = path;
+    const here = lib.ids.indexOf(id);
+    const start = shift && lib.lastId !== null ? lib.ids.indexOf(lib.lastId) : -1;
+    if (shift && start !== -1 && here !== -1) setIdRange(start, here, on);
+    else setIdSelected(id, on);
     lib.lastId = id;
+    syncSelectionMarks();
+    upper.updateSelectedThumbnailsCount();
 }
 
 export function handleCardSelectionClick(path, isChecked, cardElement, isShiftKey) {
     if (state.library) {
-        handleLibraryClick(path, isChecked, cardElement, isShiftKey);
+        // The context menu's "Extend selection to here" names a card by its path.
+        const id = libraryIdOfPath(path);
+        if (id !== null) selectLibraryPhoto(id, isChecked, isShiftKey);
         return;
     }
     if (isShiftKey && state.lastSelectedPath) {
@@ -636,19 +650,13 @@ export function toggleThumbnailSelection(path, isChecked, cardElement) {
     upper.updateSelectedThumbnailsCount();
 }
 
-/** Select all, or invert, over a whole library view: asked about first when it is large. */
-function selectEverything(mode) {
-    const lib = state.library;
-    if (!lib || lib.ids.length === 0) return;
-    const count = lib.ids.length.toLocaleString();
-    const question = mode === 'invert' ? `Invert the selection over ${count} photos?` : `Select all ${count} photos?`;
-    if (lib.ids.length > ASK_SELECT_ABOVE && !window.confirm(question)) return;
-    selectInLibrary(mode, lib.ids);
-}
-
 export function selectAllThumbnails() {
     if (state.library) {
-        selectEverything('replace');
+        // The view's source, nothing excluded: no request, no ids, however many photos it holds.
+        selectAllInView();
+        state.library.notice = '';
+        syncSelectionMarks();
+        upper.updateSelectedThumbnailsCount();
         return;
     }
     // What the filter shows: the count and a bulk write then match what is on the screen.
@@ -658,7 +666,7 @@ export function selectAllThumbnails() {
 }
 
 export function selectNoneThumbnails() {
-    if (state.library) cancelLibrarySelection();
+    if (state.library) clearIdSelection();
     setSelection([]);
     syncSelectionMarks();
     upper.updateSelectedThumbnailsCount();

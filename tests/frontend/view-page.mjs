@@ -17,6 +17,26 @@ export function pageErrors() {
   return found;
 }
 
+/** What GET /api/library/bulk/status says of a job: every field the page reads, as tagpup.jobs.bulk_edits.Job.status makes it. */
+export const jobStatus = (extra = {}) => ({
+  job: 7, op: "tags", state: "running", total: 100, done: 0, changed: 0, unchanged: 0, skipped_missing: 0, skipped_damaged: 0,
+  errors: [], error_count: 0, started: 1760000000, finished: null, eta_seconds: null, message: null, cancelling: false,
+  resumable: false, what: "bulk tags: add 1 tag(s), 0 of 100 photos", ...extra,
+});
+
+/**
+ * Make the page's slow clocks fast: a timer of a second or more runs after a hundredth of that (a poll of the bulk job every second
+ * is every 10 ms). The delays the page asked for are kept in `ctx.delays`, as it asked for them.
+ */
+export function speedUp(ctx) {
+  const real = ctx.window.setTimeout.bind(ctx.window);
+  ctx.delays = [];
+  ctx.window.setTimeout = (fn, ms, ...rest) => {
+    if (ms >= 1000) ctx.delays.push(ms);
+    return real(fn, ms >= 1000 ? ms / 100 : ms, ...rest);
+  };
+}
+
 export const GRID_TOP = 100;
 export const STRIDE = 216;
 export const COLUMNS = 4;
@@ -120,6 +140,12 @@ export async function loadViewPage(t, {
 } = {}) {
   const server = new FakeServer();
   const ctx = { server, held: [], navigatorAsked: [], idsAsked: [], cardsAsked: [], photosAsked: [], membershipAsked: [], syncAsked: [], hold: {} };
+  // What the library says of bulk edits (phase 9d): `current` for GET .../current, `status` for .../status and .../cancel, `start`
+  // and `resume` what those routes add to their answers, `tally` for the selection's tally. A test changes them as the server would.
+  ctx.bulk = {
+    current: null, status: jobStatus(), start: {}, resume: {},
+    tally: { total: 0, tags: [], more_tags: 0, people: [], more_people: 0 },
+  };
   const answer = (key, make) => (url) => {
     const reply = make(url);
     if (!ctx.hold[key]) return reply;
@@ -147,6 +173,12 @@ export async function loadViewPage(t, {
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/photo/delete", { success: true })
     .on("/api/photos/bulk-tags", { success: true })
+    .on("/api/library/bulk/current", () => ({ success: true, job: typeof ctx.bulk.current === "function" ? ctx.bulk.current() : ctx.bulk.current }))
+    .on("/api/library/bulk/status", () => ({ success: true, ...ctx.bulk.status }))
+    .on("/api/library/bulk/start", (url) => ({ success: true, job: 7, op: "tags", total: 0, requested: 0, missing: 0, excluded: 0, ...ctx.bulk.start }))
+    .on("/api/library/bulk/cancel", () => ({ success: true, ...ctx.bulk.status }))
+    .on("/api/library/bulk/resume", () => ({ success: true, job: 7, total: 0, done: 0, ...ctx.bulk.resume }))
+    .on("/api/library/selection/tally", () => (typeof ctx.bulk.tally === "function" ? ctx.bulk.tally() : ctx.bulk.tally))
     .on("/api/folder/scan", () => (scan ? scan() : [photoRecord({ filename: "a.jpg" }), photoRecord({ filename: "b.jpg" })]))
     .on("/api/folder/membership", answer("membership", (url) => {
       ctx.membershipAsked.push(url);
@@ -200,6 +232,12 @@ export async function loadViewPage(t, {
   const module = (file) => pageExports(ctx.window, `web/tagpup/${file}`);
   Object.assign(ctx, {
     here, scroller, module,
+    // What is selected in the view: the ids, in the view's order, whichever way the page holds them (selected.js).
+    selectedIds: () => {
+      const { sel, ids } = ctx.state.library;
+      return sel.mode === "ids" ? ids.filter((id) => sel.ids.has(id)) : ids.filter((id) => !sel.excluded.has(id));
+    },
+
     cards: () => [...ctx.document.querySelectorAll("#thumbnails-grid .thumbnail-card")],
     real: () => ctx.cards().filter((c) => !c.classList.contains("placeholder")),
     cardById: (id) => ctx.document.querySelector(`#thumbnails-grid [data-id="${id}"]`),
@@ -235,6 +273,11 @@ export async function loadViewPage(t, {
     showLibraryPane: async () => {
       ctx.paneTab("library").click();
       await ctx.settle(20);
+    },
+    // Wait (in 40 ms steps, at most `ms`) for something that arrives after a timer or a request, not for a fixed time.
+    until: async (check, ms = 4000) => {
+      for (let waited = 0; waited < ms && !check(); waited += 40) await ctx.settle(40);
+      return check();
     },
     key: (el, key, init = {}) => {
       const event = new ctx.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });

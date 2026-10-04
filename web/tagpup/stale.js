@@ -13,7 +13,6 @@ import { buildElement } from './common/dom.js';
 import { state } from './state.js';
 import { mainImage, photoMissingNote } from './elements.js';
 import { libraryName } from './looking.js';
-import { noteMissing } from './library-source.js';
 
 /** The badge's words for a card's `stale`, or ''. */
 export function staleText(stale) {
@@ -69,6 +68,5 @@ export function applyPhotoStale(photo) {
     if (now === card.stale) return;
     if (now === undefined) delete card.stale;
     else card.stale = now;
-    noteMissing(card);
     if (state.grid) state.grid.patch([`#${photo.id}`]);
 }

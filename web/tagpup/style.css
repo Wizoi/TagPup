@@ -2360,6 +2360,99 @@ select {
     font-size: 13px;
 }
 
+/* A bulk edit of the library's photos: a strip under the header, whatever is open below it. */
+.bulk-strip {
+    margin: 0 24px;
+    padding: 8px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.bulk-strip-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.bulk-strip-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40%;
+}
+
+.bulk-strip-bar {
+    flex: 1 1 160px;
+    min-width: 120px;
+    max-width: 420px;
+    height: 10px;
+}
+
+.bulk-strip-eta,
+.bulk-strip-counts,
+.bulk-strip-foot {
+    color: var(--text-muted);
+}
+
+.bulk-strip-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bulk-strip-message.bulk-strip-problem {
+    color: #f59e0b;
+}
+
+.bulk-strip-errors summary {
+    cursor: pointer;
+    color: #f87171;
+}
+
+.bulk-strip-error-list {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    max-height: 160px;
+    overflow: auto;
+    font-size: 12px;
+}
+
+.bulk-strip-error-list li {
+    overflow-wrap: anywhere;
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.timeshift-view-note {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* While a bulk edit runs, the controls that would start another say so and do nothing. */
+.selection-summary-chip-remove[aria-disabled="true"],
+.selection-summary-chip-apply[aria-disabled="true"] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .selection-missing-note {
     margin: 0 20px 8px;
     font-size: 12px;

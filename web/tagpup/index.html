@@ -58,6 +58,36 @@
             </div>
         </header>
 
+        <!-- A bulk edit of the library's photos, running or just ended (web/tagpup/bulk-job.js, bulk-strip.js): what it does, how
+             far it has got, what it changed, Cancel. It belongs to the library, not to the view or the folder that is open. -->
+        <section id="bulk-strip" class="bulk-strip hidden" aria-label="Bulk edit">
+            <div class="bulk-strip-row">
+                <strong id="bulk-strip-title" class="bulk-strip-title"></strong>
+                <progress id="bulk-strip-bar" class="bulk-strip-bar" max="100" value="0" aria-label="How far the bulk edit has got"></progress>
+                <span id="bulk-strip-progress" class="bulk-strip-progress"></span>
+                <span id="bulk-strip-eta" class="bulk-strip-eta"></span>
+                <span class="bulk-strip-actions">
+                    <button id="btn-bulk-cancel" type="button" class="btn btn-secondary btn-sm">Cancel</button>
+                    <button id="btn-bulk-resume" type="button" class="btn btn-primary btn-sm hidden">Resume</button>
+                    <button id="btn-bulk-again" type="button" class="btn btn-primary btn-sm hidden">Start again</button>
+                    <button id="btn-bulk-show" type="button" class="btn btn-primary btn-sm hidden">Show it</button>
+                    <button id="btn-bulk-dismiss" type="button" class="btn btn-secondary btn-sm hidden">Dismiss</button>
+                </span>
+            </div>
+            <div id="bulk-strip-counts" class="bulk-strip-counts"></div>
+            <div id="bulk-strip-message" class="bulk-strip-message"></div>
+            <details id="bulk-strip-errors" class="bulk-strip-errors hidden">
+                <summary id="bulk-strip-errors-summary"></summary>
+                <ul id="bulk-strip-error-list" class="bulk-strip-error-list"></ul>
+            </details>
+            <div class="bulk-strip-foot">
+                <a href="/activity/" target="_blank" rel="noopener">Shown on the Activity page too</a>
+            </div>
+        </section>
+        <!-- Said to a screen reader at coarse steps (the start, each tenth, the end), never each second. Outside the strip, which is
+             hidden until the first thing is said: a live region that appears with its first words is often not read. -->
+        <div id="bulk-strip-live" class="visually-hidden" role="status" aria-live="polite"></div>
+
         <!-- Main Content Area -->
         <main class="app-content">
             <!-- Sidebar: Folder Control & File list -->
@@ -332,7 +362,7 @@
                                 <span class="timeshift-description">Shift Date Taken forward or backward to correct clock drift between multiple cameras.</span>
                             </div>
                             <div class="timeshift-controls-row">
-                                <div class="timeshift-field">
+                                <div class="timeshift-field" id="timeshift-camera-field">
                                     <label for="timeshift-camera-select">Camera Model:</label>
                                     <select id="timeshift-camera-select">
                                         <!-- Dynamically populated -->
@@ -342,8 +372,17 @@
                                     <label for="timeshift-minutes-input">Shift (Minutes):</label>
                                     <input type="number" id="timeshift-minutes-input" value="0" step="1" style="width: 80px;">
                                 </div>
+                                <!-- In a library view only: the shift is the minutes and a direction, not a sign (web/tagpup/bulk-edit.js). -->
+                                <div class="timeshift-field hidden" id="timeshift-direction-field">
+                                    <label for="timeshift-direction">Direction:</label>
+                                    <select id="timeshift-direction">
+                                        <option value="later">Later</option>
+                                        <option value="earlier">Earlier</option>
+                                    </select>
+                                </div>
                                 <button id="btn-apply-timeshift" class="btn btn-secondary btn-sm">Apply Time Shift</button>
                             </div>
+                            <p id="timeshift-view-note" class="timeshift-view-note hidden">Shifts the selected photos of the library view, across folders, as a job you can watch and cancel. A photo that holds both Date Taken fields (the capture date and the creation date) has both moved; a photo with no Date Taken is left as it is.</p>
                         </div>
                         
                         <!-- Thumbnails Grid -->
@@ -398,7 +437,7 @@
                                 </div>
                             </div>
 
-                            <div id="selection-missing-note" class="selection-missing-note hidden" role="status"></div>
+                            <div id="selection-note" class="selection-missing-note hidden" role="status"></div>
 
                             <div class="bulk-editor-divider"></div>
 

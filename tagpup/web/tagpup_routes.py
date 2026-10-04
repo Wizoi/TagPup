@@ -805,6 +805,23 @@ def library_bulk_status():
         return responses.error(500, str(e))
 
 
+@routes.get("/api/library/bulk/current")
+def library_bulk_current():
+    """The bulk edit a page opening the library should show again (phase 9d-2, tagpup.jobs.bulk_edits.current): the one
+    running, else the latest that stopped part-way; `{"job": status or null}`. A page that was closed, reloaded or left for
+    another library asks it as it opens, and picks the strip up where it was."""
+    if (refusal := _this_pc_only()) is not None:
+        return refusal
+    library = state.require()
+    try:
+        return jsonify({"success": True, "job": bulk_jobs.current(library)})
+    except (Refused, NotFound, Conflict, paths.RootsError) as why:
+        return _bulk_reply(why)
+    except Exception as e:
+        logger.error("Error reading the current bulk edit: %s", e, exc_info=True)
+        return responses.error(500, str(e))
+
+
 @routes.post("/api/library/bulk/cancel")
 def library_bulk_cancel():
     """Ask a bulk edit to stop after the chunk it is writing (tagpup.jobs.bulk_edits.cancel): its status, `cancelling` true

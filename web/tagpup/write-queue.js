@@ -55,7 +55,10 @@ export function markEntry(entry, status) {
     const queue = state.writeQueue;
     if (status === 'done' || status === 'failed') queue.batchSettled += 1;
     // A write that finished may have changed what the library's navigator counts (keywords, people): read again, after a moment.
-    if (status === 'done') upper.navigatorCountsChanged();
+    if (status === 'done') {
+        upper.navigatorCountsChanged();
+        upper.photosWritten();
+    }
     const done = queue.entries.filter(e => e.status === 'done');
     if (done.length > KEEP_DONE) {
         const dropped = new Set(done.slice(0, done.length - KEEP_DONE));
