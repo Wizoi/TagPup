@@ -212,6 +212,7 @@ describe("#674: Delete of a view's selection", () => {
     await remove(ctx);
     assert.match(ctx.questions[0], /^Delete 3 photos\? 1 of them is where there is no Recycle Bin \(1 on a network share\): it is copied to this PC \(4 MB\), the copy goes to this PC's Recycle Bin, and then the original is deleted\. Restored from the Recycle Bin, a copy goes to C:\\Users\\wren\\Downloads\\TagPup deleted from shares, not back to where it was\. The other 2 go to the Recycle Bin\./);
     assert.doesNotMatch(ctx.questions[0], /PERMANENTLY|permanently/);
+    assert.match(ctx.questions[0], /It takes at least about 1 minute \(copies from a share/, "a floor, not a promise, for copies from a share (#705)");
     assert.deepEqual(plain(calls(ctx, "/bulk/start")[0].body.params), { token: "t-three" });
     const all = await view(t, 40, { where: { ...BIN, total: 1, through_this_pc: 1, reasons: [{ reason: "on a removable drive", photos: 1 }], copy_bytes: 1000 } });
     pick(all, 4);
@@ -400,5 +401,33 @@ describe("#691-#693: a Delete deletes exactly what its question named", () => {
     click(ctx.window, el(ctx, "btn-bulk-again"));
     await ctx.settle(80);
     assert.equal(calls(ctx, "/bulk/start").length, 1);
+  });
+});
+
+describe("#704, #705: the question's paths and pace for photos that go through this PC", () => {
+  const range = (n, from = 1) => Array.from({ length: n }, (_, i) => from + i);
+  async function ask(t, where, n = 3) {
+    const ctx = await loadViewPage(t, { search: "?view=all", ids: range(40) });
+    speedUp(ctx);
+    ctx.server.on("/api/library/selection/delete-check", () => where);
+    ctx.questions = [];
+    ctx.window.confirm = (text) => { ctx.questions.push(text); return false; };
+    for (const id of range(n, 2)) click(ctx.window, ctx.cardById(id).querySelector(".thumbnail-checkbox"));
+    click(ctx.window, el(ctx, "btn-delete-selection"));
+    await ctx.settle(80);
+    return ctx.questions[0];
+  }
+  const WHERE = { token: "t", folders: 1, reasons: [{ reason: "on a network share", photos: 3 }], restores_to: "D:\\Downloads\\TagPup deleted from shares", no_room: null, too_long: 0 };
+
+  test("photos with paths too long to copy are counted in the question as left", async (t) => {
+    const asked = await ask(t, { ...WHERE, total: 3, through_this_pc: 3, copy_bytes: 3000, too_long: 2 });
+    assert.match(asked, /2 of them have a path too long to copy there \(260 characters or more\) and are left where they are, each an error\./);
+  });
+
+  test("the pace of copies through this PC is its own, and a floor: 'at least'", async (t) => {
+    const local = await ask(t, { ...WHERE, total: 3000, through_this_pc: 0, reasons: [], copy_bytes: 0 });
+    assert.match(local, /It takes about 3 minutes and runs/);
+    const share = await ask(t, { ...WHERE, total: 3000, through_this_pc: 3000, reasons: [{ reason: "on a network share", photos: 3000 }], copy_bytes: 3000 * 3.4 * 1024 * 1024 });
+    assert.match(share, /It takes at least about 4 minutes \(copies from a share take as long as the share does\)/, "3,000 at 15 a second, and 10 GB at 200 MB a second");
   });
 });

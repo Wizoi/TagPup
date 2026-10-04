@@ -1957,6 +1957,24 @@ folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Or
   says the sentence and asks nothing. Nothing is deleted for good any more: only if this PC's own Recycle Bin refuses is the photo
   an error, its original kept. `/api/folder/membership`'s `permanent_delete` keeps its name and now means "this place has no
   Recycle Bin: a delete goes through this PC".
+- **#703-#706, a copy is made only where it is kept** (`recycle_bin.can_copy_here`, before every copy and, for the bulk Delete, before
+  each chunk's copies, `bulk_edit._cannot_keep`; delete-check asks it with the Bin's size fresh). **#703:** Windows makes room in a
+  full Recycle Bin by deleting its OLDEST items for good, so "nothing for good" holds only while the Bin of the Downloads volume can
+  keep what it holds plus the copies: its capacity is the volume's `HKCU\...\Explorer\BitBucket\Volume\{guid}` MaxCapacity (no
+  key: 5 % of the volume, a guess on the safe side), `NukeOnDelete=1` refuses everything (nothing would be kept), a photo larger
+  than the capacity is refused, and `used + copies > capacity * 0.95` refuses with the sizes. `SHQueryRecycleBinW` is slow -- **11.8 s**
+  for this PC's Bin (3,353 items), read once 2026-10-04 -- so its answer is kept per volume and counted on with what this process
+  sends (`note_binned`), and asked again after 10 minutes (`BIN_FRESH`); a copy sent by another program meanwhile is not seen until
+  then (accepted: the 5 % margin). **This PC's Bin was full when read** (49,707 of 49,710 MB): every delete from a share will be
+  refused, with the sentence, until the owner empties it. Out of scope, said: the same capacity check for a photo deleted from a LOCAL
+  folder with its own Bin -- that is Windows' ordinary behaviour for any file the owner deletes, and the Bin is not TagPup's copy; it
+  could share `room_for_copies` if wanted. **#704:** a copy's path (or its `.partial`) of 260 characters or more is refused up front,
+  the sentence naming the length and the folder (`too_long`); delete-check counts them and the question says they are left. **#705:**
+  the question's time for photos through this PC adds the copies at **200 MB a second** (`COPY_BYTES_PER_SECOND`: copy, two hashes,
+  rename, measured on this PC's disk, 100 throwaway files of 3.4 MB: 204 and 210 MB a second) and says "at least", since a share
+  reads slower and was not measurable here. **#706:** `.partial` copies a crash left for the same name are taken away on the way in
+  (they no longer push the name to "(2)"); a Downloads folder under a OneDrive folder (`OneDrive`, `OneDriveConsumer`,
+  `OneDriveCommercial`) is refused. Tests set `TAGPUP_RECYCLE_BIN` (own_home: a large empty Bin) so none reads the owner's.
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag

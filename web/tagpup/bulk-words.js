@@ -10,6 +10,14 @@ export const ASSUMED_PER_SECOND = 15;
  */
 export const DELETE_PER_SECOND = 15;
 
+/**
+ * Bytes a second of what a photo deleted THROUGH THIS PC adds (#694, #705): the copy, a hash of the copy and of the original, the
+ * rename. Measured 2026-10-04 on this PC's own disk, 100 throwaway files of 3.4 MB (photo_index's average): 204 and 210 MB a second.
+ * From a share it is slower -- the original is read over the network twice and deleted there -- which was not measurable here, so
+ * the question says "at least".
+ */
+export const COPY_BYTES_PER_SECOND = 200 * 1024 * 1024;
+
 /** A bulk edit over more photos than this is asked about twice. */
 export const ASK_TWICE_ABOVE = 5000;
 
@@ -72,10 +80,12 @@ function megabytes(bytes) {
  * copy restored goes to the folder under Downloads, not back to the share -- how long, and that the rows go too.
  */
 export function deleteQuestion(where, count) {
-    const through = Math.min((where && where.through_this_pc) || 0, count);
     const head = `Delete ${photosOf(count)}?`;
     const rows = count === 1 ? ' Its row leaves the library, with its faces.' : ' Their rows leave the library, with their faces.';
-    const job = ` It takes ${howLong(count / DELETE_PER_SECOND)} and runs as a job you can watch and cancel; while it runs, `
+    const through = Math.min((where && where.through_this_pc) || 0, count);
+    const seconds = count / DELETE_PER_SECOND + (through ? ((where && where.copy_bytes) || 0) / COPY_BYTES_PER_SECOND : 0);
+    const takes = through ? `at least ${howLong(Math.max(seconds, 60))} (copies from a share take as long as the share does)` : howLong(seconds);
+    const job = ` It takes ${takes} and runs as a job you can watch and cancel; while it runs, `
         + 'saving a photo elsewhere waits for the photos being deleted at that moment. It cannot be undone in TagPup.';
     if (!through) {
         const bin = count === 1 ? 'The file goes to the Recycle Bin, where it can be restored.' : 'The files go to the Recycle Bin, where they can be restored.';
@@ -83,9 +93,12 @@ export function deleteQuestion(where, count) {
     }
     const why = ((where && where.reasons) || []).map(each => `${Number(each.photos).toLocaleString()} ${each.reason}`).join(', ');
     const one = through === 1;
+    const long = Math.min(where.too_long || 0, through);
+    const left = long ? ` ${long.toLocaleString()} of them ${long === 1 ? 'has' : 'have'} a path too long to copy there (260 characters `
+        + `or more) and ${long === 1 ? 'is' : 'are'} left where ${long === 1 ? 'it is' : 'they are'}, each an error.` : '';
     const copied = `${one ? 'it is' : 'they are'} copied to this PC (${megabytes(where.copy_bytes)}), ${one ? 'the copy goes' : 'the copies go'} `
         + `to this PC's Recycle Bin, and then ${one ? 'the original is' : 'the originals are'} deleted. Restored from the Recycle Bin, `
-        + `a copy goes to ${where.restores_to || 'your Downloads folder'}, not back to where it was.`;
+        + `a copy goes to ${where.restores_to || 'your Downloads folder'}, not back to where it was.${left}`;
     if (through >= count) {
         return `${head} ${one ? 'It is' : 'They are'} where there is no Recycle Bin (${why}): ${copied}${rows}${job}`;
     }

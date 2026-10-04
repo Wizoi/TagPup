@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 from tagpup.core import dates, paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused, Result
-from tagpup.files import exiftool_session, job_files
+from tagpup.files import exiftool_session, job_files, recycle_bin
 from tagpup.services import damaged_photos, file_changes, file_only, libraries, library_view, tagging
 from tagpup.services import photos as photo_actions
 from tagpup.store import file_journal, taxonomy
@@ -348,6 +348,26 @@ def run_chunk(library, edit, ids, exiftool_path, operation, on_planned=None):
     return out
 
 
+def _cannot_keep(present):
+    """{photo id: why} of the photos of a chunk that go through this PC, when this PC cannot keep their copies; {} when it can."""
+    bins, through, largest = {}, [], 0
+    for photo_id, path in present:
+        folder = paths.key(os.path.dirname(path))
+        if folder not in bins:
+            bins[folder] = recycle_bin.no_bin_reason(path)
+        if bins[folder]:
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                continue
+            through.append((photo_id, size))
+            largest = max(largest, size)
+    if not through:
+        return {}
+    why = recycle_bin.can_copy_here(sum(size for _id, size in through), largest)
+    return {photo_id: why for photo_id, _size in through} if why else {}
+
+
 #: What a delete's start says when the selection no longer resolves to the photos its question named (#691).
 CHANGED = ("The selection changed since you were asked (photos came into it or left it): nothing was deleted. Ask again: "
            "click Delete once more.")
@@ -366,12 +386,17 @@ def _delete(library, edit, present, out):
     Recycle Bin -- through this PC's where its place has none, #694 -- then its row, faces and thumbnail), under the one lock of
     changes of photo files, so that no write of one of them runs while it goes. A file gone already is counted missing and its
     row kept (sync reports it); one refused, or not moved (any step of going through this PC that failed), is an error, the
-    original and its row kept."""
+    original and its row kept. Before the chunk copies anything through this PC, it asks whether this PC can keep the chunk's
+    copies (recycle_bin.can_copy_here: the Bin fills during a long job, #703); if not, those photos are errors with the
+    sentence and nothing of them is touched; the others go on."""
     with file_changes.exclusively():
-        for photo_id, path in present:
+        there = [(photo_id, path) for photo_id, path in present if os.path.isfile(path)]
+        out.skipped_missing += len(present) - len(there)
+        refused = _cannot_keep(there)
+        for photo_id, path in there:
             name = os.path.basename(path)[:MOST_TEXT]
-            if not os.path.isfile(path):
-                out.skipped_missing += 1
+            if photo_id in refused:
+                out.errors.append((photo_id, name, refused[photo_id][:MOST_TEXT]))
                 continue
             result = photo_actions.delete(library, path)
             if result.ok and result.changed:

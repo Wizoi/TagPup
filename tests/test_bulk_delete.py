@@ -256,7 +256,7 @@ class Asking(Delete):
         self.assertEqual(64, len(token))
         lakes_bytes = sum(os.path.getsize(self.vl.path_of(photo_id)) for photo_id in self.lakes)
         self.assertEqual({"total": 8, "folders": 2, "through_this_pc": 5, "reasons": [{"reason": "on a network share", "photos": 5}],
-                          "copy_bytes": lakes_bytes, "restores_to": recycle_bin.mirror_root(), "no_room": None}, found)
+                          "copy_bytes": lakes_bytes, "restores_to": recycle_bin.mirror_root(), "too_long": 0, "no_room": None}, found)
         self.assertEqual(token, self.check({"ids": list(reversed(self.coast[:3] + self.lakes))})["token"],
                          "the token is of the photos, not of the order they were named in")
         found = self.check({"source": {"kind": "all"}, "excluded": self.lakes})

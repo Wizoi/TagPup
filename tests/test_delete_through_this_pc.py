@@ -1,10 +1,13 @@
 """A photo deleted from a place with no Recycle Bin goes through this PC (#694, the owner's decision): copied under
 <Downloads>\\TagPup deleted from shares\\<server>\\<share>\\<path>, the copy checked (size and hash), the COPY sent to this PC's
 Recycle Bin, and only then the original deleted. Any step that fails leaves the original. (tagpup.files.recycle_bin.delete_file,
-the one owner, used by Organize's delete and the bulk Delete.)
+the one owner, used by Organize's delete and the bulk Delete.) And it is refused, nothing copied, where the copy could not be
+kept: this PC's Recycle Bin too small or set to delete at once (#703), a path too long for the Bin (#704), a Downloads folder
+synced to the cloud (#706).
 
 The share is a folder of this test's home that the test says has no Recycle Bin (no real share is needed); the Downloads folder
-is the test home's (own_home sets TAGPUP_DOWNLOADS); the Recycle Bin is the test's: nothing reaches the owner's.
+is the test home's (own_home sets TAGPUP_DOWNLOADS), and so is the Recycle Bin's size and settings (TAGPUP_RECYCLE_BIN, which
+own_home sets to a large empty Bin); the Recycle Bin is the test's: nothing reaches, or reads, the owner's.
 """
 import os
 import shutil
@@ -206,6 +209,154 @@ class ThroughTheOwners(unittest.TestCase):
         with mock.patch.object(shutil, "disk_usage", return_value=usage):
             asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": {"ids": self.on_share}}).get_json()
         self.assertIn("not room", asked["no_room"])
+        self.assertEqual([], self.binned)
+
+
+
+MB = 1 << 20
+
+
+class TheBinMustKeepIt(Share):
+    """#703: Windows makes room in a full Recycle Bin by purging its OLDEST items for good, so a copy is made only when the Bin of
+    the Downloads volume will keep it, and every copy before it."""
+
+    def bin(self, capacity_mb, used_mb, nuke=0):
+        recycle_bin.forget_bin()
+        patcher = mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "%d,%d,%d" % (capacity_mb, used_mb, nuke)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(recycle_bin.forget_bin)
+
+    def test_the_test_home_reads_no_real_bin(self):
+        self.assertTrue(os.environ.get("TAGPUP_RECYCLE_BIN"))
+        with mock.patch.object(recycle_bin, "_query_bin", side_effect=AssertionError("the owner's Bin was asked")):
+            recycle_bin.delete_file(self.photo)
+
+    def test_a_bin_that_would_overflow_refuses_naming_the_sizes_and_copies_nothing(self):
+        self.bin(capacity_mb=1000, used_mb=990)
+        with self.assertRaises(OSError) as raised:
+            recycle_bin.delete_file(self.photo)
+        said = str(raised.exception)
+        self.assertIn("Recycle Bin", said)
+        self.assertIn("1,000 MB", said)
+        self.assertIn("990 MB", said)
+        self.assertIn("oldest", said)
+        self.assertTrue(os.path.exists(self.photo))
+        self.assertEqual([], self.binned)
+        self.assertFalse(os.path.exists(os.path.dirname(self.mirror())), "nothing was copied")
+
+    def test_the_margin_is_kept_and_a_bin_with_room_takes_it(self):
+        self.bin(capacity_mb=1000, used_mb=900)
+        self.assertIsNotNone(recycle_bin.room_for_copies(60 * MB, MB), "1,000 MB less a 5 % margin is 950: 960 does not fit")
+        self.assertIsNone(recycle_bin.room_for_copies(40 * MB, MB))
+        recycle_bin.delete_file(self.photo)
+        self.assertEqual(1, len(self.binned))
+
+    def test_what_this_job_put_in_the_bin_counts_without_asking_windows_again(self):
+        self.bin(capacity_mb=1000, used_mb=0)
+        with mock.patch.object(recycle_bin, "_bin_size", wraps=recycle_bin._bin_size) as asked:
+            recycle_bin.room_for_copies(MB, MB, fresh=True)
+            recycle_bin.note_binned(recycle_bin.mirror_root(), 900 * MB)
+            self.assertIsNotNone(recycle_bin.room_for_copies(60 * MB, MB), "the 900 MB it sent are counted")
+            self.assertEqual(1, asked.call_count, "the Bin is asked once, not once a photo")
+
+    def test_a_bin_set_to_delete_at_once_is_no_bin(self):
+        self.bin(capacity_mb=1000, used_mb=0, nuke=1)
+        with self.assertRaises(OSError) as raised:
+            recycle_bin.delete_file(self.photo)
+        self.assertIn("deletes files at once", str(raised.exception))
+        self.assertTrue(os.path.exists(self.photo))
+        self.assertEqual([], self.binned)
+
+    def test_a_photo_larger_than_the_whole_bin_is_refused(self):
+        self.bin(capacity_mb=1, used_mb=0)
+        big = os.path.join(self.share, "2019 Regatta", "big.jpg")
+        make_jpeg(big)
+        with open(big, "ab") as handle:
+            handle.write(b"\0" * (2 * MB))
+        with self.assertRaises(OSError) as raised:
+            recycle_bin.delete_file(big)
+        self.assertIn("larger than", str(raised.exception))
+        self.assertTrue(os.path.exists(big))
+
+    def test_the_bins_settings_are_read_for_the_downloads_volume(self):
+        recycle_bin.forget_bin()
+        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": ""}), \
+                mock.patch.object(recycle_bin, "_volume_guid", return_value="{11111111-2222-3333-4444-555555555555}"), \
+                mock.patch.object(recycle_bin, "_registry_value", side_effect=lambda key, name: {"MaxCapacity": 2000, "NukeOnDelete": 0}[name]) as read, \
+                mock.patch.object(recycle_bin, "_query_bin", return_value=500 * MB):
+            self.assertEqual((2000 * MB, False), recycle_bin._bin_settings("C:\\"))
+            self.assertIn("{11111111-2222-3333-4444-555555555555}", read.call_args_list[0][0][0])
+            self.assertEqual(500 * MB, recycle_bin._bin_size("C:\\"))
+        recycle_bin.forget_bin()
+
+
+class TooLong(Share):
+    """#704: the Recycle Bin (SHFileOperation) takes no path of 260 characters or more."""
+
+    def test_a_mirror_path_of_260_or_more_is_refused_up_front_naming_the_length_and_the_folder(self):
+        deep = os.path.join(self.share, *(["a" * 40] * 6), "IMG_0002.jpg")
+        make_jpeg(deep)
+        self.assertGreaterEqual(len(recycle_bin.mirror_of(deep)) + len(".partial"), 260)
+        with self.assertRaises(OSError) as raised:
+            recycle_bin.delete_file(deep)
+        said = str(raised.exception)
+        self.assertIn("characters", said)
+        self.assertIn(str(len(recycle_bin.mirror_of(deep))), said)
+        self.assertIn(recycle_bin.mirror_root(), said)
+        self.assertNotIn("Recycle Bin would not", said, "not blamed on the Bin")
+        self.assertTrue(os.path.exists(deep))
+        self.assertEqual([], self.binned)
+
+
+class Leftovers(Share):
+    """#706."""
+
+    def test_a_partial_copy_a_crash_left_is_taken_away_and_the_name_is_not_bumped(self):
+        os.makedirs(os.path.dirname(self.mirror()))
+        for left in (self.mirror() + ".partial", self.mirror().replace(".jpg", " (2).jpg") + ".partial"):
+            with open(left, "wb") as handle:
+                handle.write(b"half a photo")
+        recycle_bin.delete_file(self.photo)
+        self.assertEqual(paths.key(self.mirror()), paths.key(self.binned[0][0]), "its own name, not (2) or (3)")
+        self.assertEqual([], [name for name in os.listdir(os.path.dirname(self.mirror())) if name.endswith(".partial")])
+
+    def test_a_downloads_folder_synced_to_the_cloud_is_refused(self):
+        with mock.patch.dict(os.environ, {"OneDrive": self.home.root, "OneDriveConsumer": "", "OneDriveCommercial": ""}):
+            with self.assertRaises(OSError) as raised:
+                recycle_bin.delete_file(self.photo)
+            self.assertIn("OneDrive", str(raised.exception))
+        self.assertTrue(os.path.exists(self.photo))
+        self.assertEqual([], self.binned)
+        with mock.patch.dict(os.environ, {"OneDrive": os.path.join(self.home.root, "Elsewhere")}):
+            recycle_bin.delete_file(self.photo)
+        self.assertEqual(1, len(self.binned))
+
+
+class AskedFirst(ThroughTheOwners):
+    def test_delete_check_asks_the_bin_counts_the_paths_too_long_and_refuses_what_would_overflow(self):
+        recycle_bin.forget_bin()
+        self.addCleanup(recycle_bin.forget_bin)
+        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "1,1,0"}):
+            asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": {"ids": self.on_share}}).get_json()
+        self.assertIn("Recycle Bin", asked["no_room"])
+        self.assertEqual(0, asked["too_long"])
+        deep = self.vl.photo(os.path.join("Share", *(["b" * 40] * 6)), "deep.jpg", real=True, size=(16, 16))
+        asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": {"ids": self.on_share + [deep]}}).get_json()
+        self.assertEqual((4, 1, None), (asked["through_this_pc"], asked["too_long"], asked["no_room"]))
+
+    def test_a_chunk_is_checked_again_before_copying_the_bin_fills_during_a_long_job(self):
+        asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": {"ids": self.on_share}}).get_json()
+        recycle_bin.forget_bin()
+        self.addCleanup(recycle_bin.forget_bin)
+        with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "1,1,0"}):
+            reply = self.client.post("/library/api/library/bulk/start", json={"op": "delete", "selection": {"ids": self.on_share},
+                                                                             "params": {"token": asked["token"]}}).get_json()
+            bulk_edits._held(self.library)[reply["job"]].thread.join(60)
+        done = self.client.get("/library/api/library/bulk/status", query_string={"job": reply["job"]}).get_json()
+        self.assertEqual((0, 3), (done["changed"], done["error_count"]))
+        self.assertIn("Recycle Bin", done["errors"][0]["why"])
+        self.assertEqual(self.on_share, self.held(self.on_share))
         self.assertEqual([], self.binned)
 
 

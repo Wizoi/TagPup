@@ -15,8 +15,9 @@ connection; a root this machine does not place raises paths.RootsError (the web 
 """
 import collections
 import hashlib
+import os
 
-from tagpup.core import vocabulary
+from tagpup.core import paths, vocabulary
 from tagpup.core.result import Refused
 from tagpup.files import recycle_bin
 from tagpup.services import library_view
@@ -140,8 +141,10 @@ def where_deleted(library, selection):
     them, #691), "folders", "through_this_pc" (photos in folders with no Recycle Bin -- a network share, a mapped or SUBST drive,
     a removable one -- which are copied to this PC and the copies recycled there, #694), "reasons": [{"reason", "photos"}],
     "copy_bytes" (what those copies take, by the index's sizes), "restores_to" (the folder the copies are put in, and so where
-    Windows restores them: <Downloads>\\TagPup deleted from shares), "no_room" (None, or the sentence when this PC has not room
-    for the copies and 1 GB to spare: nothing is to be asked then)}; the reasons as recycle_bin says them ("on a network share").
+    Windows restores them: <Downloads>\\TagPup deleted from shares), "too_long" (how many of them would have a copy's path of
+    260 characters or more, and are left, #704), "no_room" (None, or the sentence when they cannot be copied and kept here:
+    Downloads synced to OneDrive, no room on its drive with 1 GB to spare, or this PC's Recycle Bin unable to keep them -- asked of
+    Windows now, #703, #706: nothing is to be asked then)}; the reasons as recycle_bin says them ("on a network share").
     Asked once a folder, never once a photo (a Select all of photo_index is 2,672 folders, about 2 s); a UNC path and a mapped
     drive are told by their spelling and the drive's type, without reading the share. Refused, as `resolve` refuses it, over
     MAX_SELECTED."""
@@ -154,17 +157,36 @@ def where_deleted(library, selection):
     finally:
         conn.close()
     reasons = collections.Counter()
-    copy_bytes = 0
+    copy_bytes = largest = 0
+    binless = set()
     for folder_id, (path, _name) in named.items():
         reason = recycle_bin.no_bin_reason(path)
         if reason:
             reasons[reason] += counted[folder_id]
-            copy_bytes += sizes.get(folder_id) or 0
+            total, biggest = sizes.get(folder_id) or (0, 0)
+            copy_bytes += total
+            largest = max(largest, biggest)
+            binless.add(folder_id)
     through = sum(reasons.values())
+    too_long = _too_long(library, resolved.ids, binless, named) if through else 0
     return {"total": len(resolved.ids), "token": token_of(resolved.ids), "folders": len(counted), "through_this_pc": through,
             "reasons": [{"reason": reason, "photos": photos} for reason, photos in reasons.most_common()],
-            "copy_bytes": copy_bytes, "restores_to": recycle_bin.mirror_root(),
-            "no_room": recycle_bin.room_for(copy_bytes) if through else None}
+            "copy_bytes": copy_bytes, "restores_to": recycle_bin.mirror_root(), "too_long": too_long,
+            "no_room": recycle_bin.can_copy_here(copy_bytes, largest, fresh=True) if through else None}
+
+
+def _too_long(library, photo_ids, binless, named):
+    """How many photos of `photo_ids` in the folders `binless` would have a copy's path too long for the Recycle Bin (#704): their
+    paths read (ids and paths only), only when some go through this PC."""
+    folders = {paths.key(named[folder_id][0]) for folder_id in binless}
+    conn = library_view.opened(library)
+    try:
+        found = store.paths_of(conn, photo_ids)
+    finally:
+        conn.close()
+    root = recycle_bin.mirror_root()
+    return sum(1 for path in found.values()
+               if paths.key(os.path.dirname(path)) in folders and recycle_bin.too_long(recycle_bin.mirror_of(path, root)))
 
 
 def _refuse_if_large(count):
