@@ -346,6 +346,11 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
         return chosen, gone
 
     def match(conn):
+        # The write lock first, then the reads it decides by: a rename committed by the
+        # other app or the CLI between the guard and the first UPDATE was written under
+        # the old spelling, the connection being in no transaction until it wrote
+        # (docs/findings.md, #645).
+        db.begin(conn, immediate=True)
         chosen, gone = decide(conn)
         # A bulk guess, not a per-face human decision, so it is left as an automatic
         # assignment that re-clustering may revise. Only the faces still unnamed and in

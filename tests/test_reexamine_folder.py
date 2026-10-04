@@ -15,8 +15,10 @@ dry run that writes nothing, and the apply decides again. What these pin:
     than failing the whole folder.
 """
 import os
+import sqlite3
 import sys
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -131,6 +133,32 @@ class ReexamineInTheService(FacesCase):
         self.assertIsNone(self.face_row(self.lookalike)[0],
                           "a face was named after somebody who no longer exists")
         self.assertNotIn(ROWAN, self.people(self.unnamed_photo))
+
+    def test_a_rename_committed_elsewhere_while_it_decides_cannot_land_before_its_write(self):
+        """docs/findings.md, #645: the guard and the writes are one transaction. A rename
+        from another process, tried while automatch decides, either waits for it or --
+        had it landed -- would leave the old name unwritten."""
+        real = store_faces.names_in_photo
+        attempts = []
+
+        def names_in_photo(conn, path):
+            found = real(conn, path)
+            other = db.connect(self.lib.library.path, timeout=0.1)
+            other.execute("PRAGMA busy_timeout=100")   # connect sets the app's 30 s
+            try:
+                store_people.rename(other, ROWAN, "Rowan Thackeray-Vale")
+                other.commit()
+                attempts.append("committed")
+            except sqlite3.OperationalError:
+                attempts.append("held back")
+            finally:
+                other.close()
+            return found
+
+        with mock.patch.object(store_faces, "names_in_photo", side_effect=names_in_photo):
+            faces.automatch_folder(self.lib.library, self.folder, self.matrix)
+        self.assertEqual(attempts, ["held back"], "the rename landed between the guard and the write")
+        self.assertEqual(self.face_row(self.lookalike)[0], ROWAN)
 
     def test_a_rehearsal_writes_nothing(self):
         result = faces.automatch_folder(self.lib.library, self.folder, self.matrix, rehearse=True)
