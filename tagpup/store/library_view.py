@@ -6,8 +6,8 @@ subfolders; a keyword and everything under it, or its node alone (`keyword_only`
 photos of a year whose date names no month of it (`year_other`); a month; or ANY OF a list of those (a
 union: the rows a person selected in the navigator, phase 9 #672 -- one statement, a photo in two of
 them once). Every source is ordered by when the photo was taken and then by id, those with no date at
-the end (by id), unless another order is asked (ORDERS: Date Taken or file name, either way), and paged
-by a KEYSET -- the (taken, id) of the last photo of the page before -- never by OFFSET, so a page costs
+the end (by id), unless another order is asked (ORDERS: Date Taken, file name or caption, either way), and
+paged by a KEYSET -- the (taken, id) of the last photo of the page before -- never by OFFSET, so a page costs
 what a page costs however far down it is, and a photo added, taken away or re-dated between two pages
 neither repeats nor skips another.
 
@@ -42,6 +42,8 @@ ANY_OF = "any_of"
 KINDS = (ALL, FOLDER, KEYWORD, PERSON, YEAR, MONTH, KEYWORD_ONLY, YEAR_OTHER, ANY_OF)
 #: The kinds a union may hold.
 MEMBER_KINDS = KINDS[:-1]
+#: The kinds whose photos are a range of another index of photos (Scope.ranged): a union of only these is one too.
+RANGED = (YEAR, MONTH, YEAR_OTHER)
 
 #: A source: its kind, its value -- a folder's path (native), a keyword's tag as the tree spells it, a person's
 #: name, a year as an integer, a month as "YYYY-MM", a union's tuple of Sources; None for all -- and, for a folder,
@@ -50,17 +52,27 @@ Source = collections.namedtuple("Source", "kind value recursive", defaults=(None
 
 #: Where a page begins and after what: (phase, taken, id). Phase 0 holds the photos with a date, ordered by
 #: (taken, id); phase 1 those with none, ordered by id (taken is None). None begins at the start. In an order by name
-#: `taken` holds the file name of the last photo and the phase is 0: every photo has a name.
+#: `taken` holds the file name of the last photo and the phase is 0: every photo has a name. In an order by caption
+#: phase 0 holds the captioned photos, `taken` the caption's key (caption_sql), and phase 1 those with none.
 Cursor = collections.namedtuple("Cursor", "phase taken id")
 
-#: The orders a source is read in (phase 9, #671): by Date Taken -- the photos with none AFTER the dated ones in both
-#: directions, by id in the order's direction -- or by file name, without case (NOCASE, as the index holds it), either way;
-#: ties broken by id, in the order's direction.
-TAKEN, TAKEN_DESC, NAME, NAME_DESC = "taken", "taken-desc", "name", "name-desc"
-ORDERS = (TAKEN, TAKEN_DESC, NAME, NAME_DESC)
+#: The orders a source is read in (phase 9, #671, #714): by Date Taken -- the photos with none AFTER the dated ones in both
+#: directions, by id in the order's direction --, by file name, or by caption -- the photos with none after the captioned
+#: ones in both directions, as the undated are --, the names and captions without case (NOCASE, as the indexes hold
+#: them), either way; ties broken by id, in the order's direction.
+TAKEN, TAKEN_DESC, NAME, NAME_DESC, CAPTION, CAPTION_DESC = (
+    "taken", "taken-desc", "name", "name-desc", "caption", "caption-desc")
+ORDERS = (TAKEN, TAKEN_DESC, NAME, NAME_DESC, CAPTION, CAPTION_DESC)
+#: The orders read last first.
+DESCENDING = (TAKEN_DESC, NAME_DESC, CAPTION_DESC)
 
 #: The index migration 22 makes: the photos by file name, without case, then id.
 NAME_INDEX = "idx_photos_name"
+#: The index migration 23 makes: the photos by caption (caption_sql), without case, then id.
+CAPTION_INDEX = "idx_photos_caption"
+#: The characters of a caption an order by caption compares: two captions alike in their first CAPTION_KEY are in the
+#: order of their ids. It bounds what a page token holds (the longest caption of photo_index is 616 characters).
+CAPTION_KEY = 200
 
 
 def name_sql(column="path"):
@@ -69,6 +81,17 @@ def name_sql(column="path"):
     query names it with the same text, its column qualified as it likes, for SQLite to use the index."""
     return ("substr(%s, length(rtrim(%s, replace(replace(%s, '/', ''), char(92), ''))) + 1)"
             % (column, column, column))
+
+
+def caption_sql(column="captions"):
+    """The caption an order by caption reads of the captions JSON in `column`, in SQL: the first of the list (the one the
+    page shows, vocabulary.extract_captions), its first CAPTION_KEY characters, NULL for a photo with none (an empty
+    list, an empty text). Text that is not JSON is NULL too, never an error -- an index of an expression that raised would
+    refuse the write of that row. Built-in, deterministic functions only, so that it can be indexed (CAPTION_INDEX), as
+    name_sql is: nothing writes the index but SQLite and no writer of a caption has to know of it."""
+    return ("NULLIF(substr(CASE WHEN json_valid(%s) THEN json_extract(%s, '$[0]') END, 1, %d), '')"
+            % (column, column, CAPTION_KEY))
+
 
 #: Ids read in one statement.
 CHUNK = 500
@@ -98,9 +121,11 @@ def month_range(month):
 
 
 #: The photos a source holds, for the statements that read them: `from_` and `where` (the photos table is `p`),
-#: the `params` of the where, the (SQL, parameters) that count them, and whether every one has a date
-#: (a month does: the undated photos are not looked for).
-Scope = collections.namedtuple("Scope", "from_ where params count dated", defaults=(False,))
+#: the `params` of the where, the (SQL, parameters) that count them, whether every one has a date
+#: (a month does: the undated photos are not looked for), and whether the where is a RANGE of another index of photos
+#: (a month, a year, a year's Other, a folder with its subfolders, a union of months and years): such a source is read
+#: by that range and sorted, never by walking the name or caption index past every photo of the library (#722).
+Scope = collections.namedtuple("Scope", "from_ where params count dated ranged", defaults=(False, False))
 
 
 def _months_of(year):
@@ -195,7 +220,8 @@ def _union_scope(conn, members):
         return None
     where, params = _any(clauses)
     dated = all(member.kind == MONTH for member in members)
-    return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), dated)
+    ranged = all(member.kind in RANGED for member in members)
+    return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), dated, ranged)
 
 
 def _scope(conn, source):
@@ -208,22 +234,22 @@ def _scope(conn, source):
         return _union_scope(conn, source.value)
     if kind == YEAR_OTHER:
         where, params = _year_other(int(source.value))
-        return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params))
+        return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), ranged=True)
     if kind == KEYWORD_ONLY:
         tag = (resolve_tag(conn, source.value),)
         inner = "SELECT photo_id FROM photo_tags WHERE tag_id IN (SELECT id FROM tag_taxonomy WHERE tag = ?)"
         return Scope("photos p", "p.id IN (%s)" % inner, tag, ("SELECT COUNT(DISTINCT photo_id) FROM (%s)" % inner, tag))
     if kind == YEAR:
         year = (int(source.value),)
-        return Scope("photos p", "p.year = ?", year, ("SELECT COUNT(*) FROM photos WHERE year = ?", year))
+        return Scope("photos p", "p.year = ?", year, ("SELECT COUNT(*) FROM photos WHERE year = ?", year), ranged=True)
     if kind == MONTH:
         bounds = month_range(source.value)
         return Scope("photos p", "p.taken >= ? AND p.taken < ?", bounds,
-                     ("SELECT COUNT(*) FROM photos WHERE taken >= ? AND taken < ?", bounds), dated=True)
+                     ("SELECT COUNT(*) FROM photos WHERE taken >= ? AND taken < ?", bounds), dated=True, ranged=True)
     if kind == FOLDER:
         if source.recursive:
             where, params = store_roots.sql_under(conn, "p.path", source.value)
-            return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params))
+            return Scope("photos p", where, params, ("SELECT COUNT(*) FROM photos p WHERE " + where, params), ranged=True)
         where, params = store_roots.sql_equals(conn, "path", source.value)
         row = conn.execute("SELECT id FROM folders WHERE " + where, params).fetchone()
         if row is None:
@@ -269,47 +295,101 @@ def spellings(conn, name):
 _PAST_LAST_ID = 2 ** 62
 
 
-def has_name_index(conn):
-    """Has the library on `conn` the index of file names (migration 22)? Without it an order by name is a sort of the
-    source, as it was before; remembered on the connection once true."""
-    if getattr(conn, "name_index_ready", False):
+#: The orders read by the index of an expression: {order: (the expression of `p`, the index, whether a photo may have
+#: none)}. A photo with none comes after those that have one, by id in the order's direction, as an undated photo does.
+_KEYED = {}
+#: Those that have a key, in SQL of the key: a range of the index (a key is text and never empty: caption_sql), where `IS NOT
+#: NULL` read every photo's row to compute it again -- 227 ms for the whole of photo_index, against 20.
+_HAS_KEY = " AND %s COLLATE NOCASE >= ''"
+for _orders, _key, _index, _nullable in (((NAME, NAME_DESC), name_sql("p.path"), NAME_INDEX, False),
+                                         ((CAPTION, CAPTION_DESC), caption_sql("p.captions"), CAPTION_INDEX, True)):
+    for _order in _orders:
+        _KEYED[_order] = (_key, _index, _nullable)
+
+
+def has_index(conn, index):
+    """Has the library on `conn` the index `index` (NAME_INDEX, migration 22; CAPTION_INDEX, migration 23)? Without it an
+    order by that key is a sort of the source, the same order; remembered on the connection once true."""
+    held = getattr(conn, "view_indexes", None)
+    if held is not None and index in held:
         return True
-    found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (NAME_INDEX,)).fetchone() is not None
+    found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (index,)).fetchone() is not None
     if found:
         try:
-            conn.name_index_ready = True
+            conn.view_indexes = (held or frozenset()) | {index}
         except AttributeError:
             pass   # a connection that is not db.connect's cannot remember
     return found
 
 
-def _by_name(conn, scope):
-    """(FROM, WHERE, params) that read the photos of `scope` in the order of the name index: the index walked in order
-    and each entry tested for the source -- 5 to 25 ms whatever the source's size on photo_index, where sorting 15,000
-    photos by a name computed for each was 130 ms. A source joined to another table is asked as a subquery."""
+#: Read every source by the name or caption index, as before #722: what a measurement compares against.
+FORCE_ALWAYS = False
+
+#: A range of another index holding at most 1/RANGE_SHARE of the library is read by that range and sorted; a larger one is
+#: read by walking the name or caption index (#722). Measured on a sandbox copy of photo_index (68,324 photos; a page of 200,
+#: the first and the eleventh, and the whole id list; caption and name, either way), by the range against by the walk: a
+#: month of 1,201 photos 2-11 ms a page and 7-9 its ids, against 1-117 and 44-156; a year's Other of 50, 4-10 ms against
+#: 45-149 every time; a folder with its subfolders of 3,573, 8-40 ms a page and 16-22 its ids, against 2-34 and 47-157. A
+#: range of much of the library is walked: the top folder by its path range was 114-949 ms a page, walked 0.2-1.8 (7-9 with
+#: the count that decides it), and a year of 5,579 (8 %) 8-97 ms against 0.2-33. 1/16 is 4,270 photos of photo_index.
+RANGE_SHARE = 16
+
+
+def _walks(conn, scope, index):
+    """Is `scope` read in the order of `index` by walking the index (`INDEXED BY`)? The whole library and a source given by a
+    list of ids -- a keyword, a person, a folder alone, a union holding one of those -- are: left to itself SQLite reads the
+    list and sorts it. A range of another index (Scope.ranged: a month, a year, a year's Other, a folder with its
+    subfolders, a union of months and years) is left to SQLite, which reads the range and sorts it, unless it holds more
+    than 1/RANGE_SHARE of the library: forced, a small range walked every photo of the library for each page (#722)."""
+    if not has_index(conn, index):
+        return False
+    if FORCE_ALWAYS or not scope.ranged:
+        return True
+    held = conn.execute(*scope.count).fetchone()[0]
+    return held * RANGE_SHARE > conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+
+
+def _by_index(conn, scope, index):
+    """(FROM, WHERE, params) that read the photos of `scope` in the order of `index`: walking the index where `_walks` says
+    so, else as SQLite chooses. A source joined to another table is asked as a subquery."""
     where = scope.where if scope.from_ == "photos p" else "p.id IN (SELECT p.id FROM %s WHERE %s)" % (scope.from_, scope.where)
-    from_ = "photos p INDEXED BY %s" % NAME_INDEX if has_name_index(conn) else "photos p"
+    from_ = "photos p INDEXED BY %s" % index if _walks(conn, scope, index) else "photos p"
     return from_, "(%s)" % where, scope.params
 
 
-def _name_page(conn, scope, cursor, limit, desc):
-    from_, where, params = _by_name(conn, scope)
-    name = name_sql("p.path")
-    way, beyond = (" DESC", "<") if desc else ("", ">")
-    sql = "SELECT %s, p.id FROM %s WHERE %s" % (name, from_, where)
-    values = list(params)
-    if cursor is not None:
-        # The bound on the name alone is what the index seeks; the pair with the id is the keyset.
-        sql += " AND %s COLLATE NOCASE %s= ? AND (%s COLLATE NOCASE, p.id) %s (?, ?)" % (name, beyond, name, beyond)
-        values += [cursor.taken, cursor.taken, cursor.id]
-    sql += " ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?" % (name, way, way)
-    rows = [(photo_id, key) for key, photo_id in conn.execute(sql, values + [limit + 1])]
+def _keyed_page(conn, scope, cursor, limit, order):
+    """A page in an order of _KEYED: those with a key by (key without case, id), then -- for a key a photo may lack --
+    those with none by id, each phase one statement, as _page reads the dated and the undated."""
+    key, index, nullable = _KEYED[order]
+    from_, where, params = _by_index(conn, scope, index)
+    way, beyond = (" DESC", "<") if order in DESCENDING else ("", ">")
+    want = limit + 1
+    rows = []
+    if cursor is None or cursor.phase == 0:
+        sql = "SELECT %s, p.id FROM %s WHERE %s" % (key, from_, where)
+        values = list(params)
+        if nullable and cursor is None:
+            # After a cursor its bound is the range, and NULL is neither above nor below it: one lower bound for the index to
+            # seek, not two of which it might take the first.
+            sql += _HAS_KEY % key
+        if cursor is not None:
+            # The bound on the key alone is what the index seeks; the pair with the id is the keyset.
+            sql += " AND %s COLLATE NOCASE %s= ? AND (%s COLLATE NOCASE, p.id) %s (?, ?)" % (key, beyond, key, beyond)
+            values += [cursor.taken, cursor.taken, cursor.id]
+        sql += " ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?" % (key, way, way)
+        rows = [(photo_id, value) for value, photo_id in conn.execute(sql, values + [want])]
+    if nullable and len(rows) < want:
+        start = _PAST_LAST_ID if order in DESCENDING else 0
+        after = cursor.id if cursor is not None and cursor.phase == 1 else start
+        rows += [(photo_id, None) for (photo_id,) in conn.execute(
+            "SELECT p.id FROM %s WHERE %s AND %s IS NULL AND p.id %s ? ORDER BY p.id%s LIMIT ?" % (from_, where, key, beyond, way),
+            list(params) + [after, want - len(rows)])]
     return rows[:limit], len(rows) > limit
 
 
 def _page(conn, scope, cursor, limit, order=TAKEN):
-    if order in (NAME, NAME_DESC):
-        return _name_page(conn, scope, cursor, limit, order == NAME_DESC)
+    if order in _KEYED:
+        return _keyed_page(conn, scope, cursor, limit, order)
     desc = order == TAKEN_DESC
     way, beyond = (" DESC", "<") if desc else ("", ">")
     want = limit + 1   # one more than the page says whether another page follows
@@ -336,16 +416,22 @@ def _page(conn, scope, cursor, limit, order=TAKEN):
 def all_ids(conn, source, cap, order=TAKEN):
     """([photo id] of the whole source in the order `page` gives, how many photos the source holds): at most `cap`
     ids, the total counted when the source holds more. Two statements at most, one per phase, each an index-ordered
-    read of ids alone -- the keyset page's order without the keyset. By name, one: the name index walked in order."""
+    read of ids alone -- the keyset page's order without the keyset. By name, one: the name index walked in order. By
+    caption, the caption index walked in order, the captioned and then those with none."""
     scope = _scope(conn, source)
     if scope is None:
         return [], 0
-    if order in (NAME, NAME_DESC):
-        from_, where, params = _by_name(conn, scope)
-        way = " DESC" if order == NAME_DESC else ""
+    if order in _KEYED:
+        key, index, nullable = _KEYED[order]
+        from_, where, params = _by_index(conn, scope, index)
+        way = " DESC" if order in DESCENDING else ""
         ids = [photo_id for (photo_id,) in conn.execute(
-            "SELECT p.id FROM %s WHERE %s ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?"
-            % (from_, where, name_sql("p.path"), way, way), list(params) + [cap + 1])]
+            "SELECT p.id FROM %s WHERE %s%s ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?"
+            % (from_, where, _HAS_KEY % key if nullable else "", key, way, way), list(params) + [cap + 1])]
+        if nullable and len(ids) <= cap:
+            ids += [photo_id for (photo_id,) in conn.execute(
+                "SELECT p.id FROM %s WHERE %s AND %s IS NULL ORDER BY p.id%s LIMIT ?" % (from_, where, key, way),
+                list(params) + [cap + 1 - len(ids)])]
     else:
         way = " DESC" if order == TAKEN_DESC else ""
         ids = [photo_id for (photo_id,) in conn.execute(
@@ -417,8 +503,8 @@ def total(conn, source):
 def page(conn, source, cursor=None, limit=100, order=TAKEN):
     """([(photo id, taken)] of the page after `cursor`, whether there are more after it): `limit` photos of
     `source` in order, those with a date first by (taken, id), then those with none by id (in `order`; by name the
-    second of each pair is the file name). One statement for each phase it reaches; `next_cursor` of the last photo
-    continues."""
+    second of each pair is the file name, by caption the caption's key or None). One statement for each phase it
+    reaches; `next_cursor` of the last photo continues."""
     scope = _scope(conn, source)
     return ([], False) if scope is None else _page(conn, scope, cursor, limit, order)
 
@@ -433,7 +519,7 @@ def view(conn, source, cursor=None, limit=100, order=TAKEN):
 
 
 def next_cursor(row):
-    """The cursor that continues after `row`, (photo id, taken -- or name, by name)."""
+    """The cursor that continues after `row`, (photo id, taken -- or name, by name; caption, by caption)."""
     photo_id, taken = row
     return Cursor(0 if taken is not None else 1, taken, photo_id)
 

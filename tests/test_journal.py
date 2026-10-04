@@ -502,7 +502,8 @@ class TheSchemaMovedOn(unittest.TestCase):
             recorded.close()
         schema._current.clear()
         self.assertEqual(["the library's roots", "the tables the library views stand on", "photos by when they were taken",
-                          "people by their node's id", "photos by file name"], schema.ensure(path), "migrations 18 to 22 run on opening")
+                          "people by their node's id", "photos by file name", "photos by caption"], schema.ensure(path),
+                         "migrations 18 to 23 run on opening")
         undone = journal.undo(path, applied.change_id)
         self.assertEqual(1, undone.rows)
         conn = db.connect(db.readonly_uri(path), uri=True)

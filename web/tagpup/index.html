@@ -286,51 +286,78 @@
                 <!-- Folder View Content -->
                 <div class="folder-view-content hidden" id="folder-view-content">
                     <div class="folder-view-main" id="folder-view-main">
-                        <!-- Which view of the library is open and how many photos it holds, in one small line, and Refresh view
-                             (web/tagpup/library-view.js). When the library was last in step is said only when something is wrong
-                             (sync-state.js, #670). Shown only while a view is open. -->
-                        <div id="library-strip" class="library-strip hidden" role="status">
-                            <strong id="library-strip-source" class="library-strip-source"></strong>
-                            <span id="library-strip-total" class="folder-stats-badge"></span>
-                            <span id="library-strip-status" class="library-strip-status"></span>
-                            <span id="library-strip-sync" class="library-strip-sync"></span>
-                            <span class="library-strip-actions">
-                                <button id="btn-library-refresh" class="btn btn-secondary btn-sm" title="Ask the library for this view's photos again; the place in the view is kept">Refresh view</button>
-                            </span>
+                        <!-- The top of the grid. In a library view it is ONE floating header (#713; web/tagpup/library-view.js
+                             showChrome): which view is open and how many photos it holds, Refresh view, and the view's actions --
+                             the selection's and the thumbnails' size -- always at hand while the grid scrolls. When the library was
+                             last in step is said only when something is wrong (sync-state.js, #670). In Organize it is the folder's
+                             header card alone, as it always was: the strip is hidden and nothing floats. -->
+                        <div id="folder-view-top" class="folder-view-top">
+                            <div id="library-strip" class="library-strip hidden">
+                                <div class="library-strip-says" role="status">
+                                    <span class="library-strip-name">
+                                        <h2 id="library-strip-source" class="library-strip-source"></h2>
+                                        <span id="library-strip-total" class="folder-stats-badge"></span>
+                                    </span>
+                                    <span id="library-strip-status" class="library-strip-status"></span>
+                                    <span id="library-strip-sync" class="library-strip-sync"></span>
+                                </div>
+                                <span class="library-strip-actions">
+                                    <button id="btn-library-refresh" type="button" class="btn btn-secondary btn-sm btn-icon" aria-label="Refresh view" title="Refresh view: ask the library for this view's photos again; the place in the view is kept"><span aria-hidden="true">&#x21BB;</span></button>
+                                    <!-- Sort by: the field and the direction, each a group of radio items (web/tagpup/sort-menu.js, #714). -->
+                                    <span class="sort-by">
+                                        <button id="btn-sort-by" type="button" class="btn btn-secondary btn-sm" aria-haspopup="menu" aria-expanded="false" aria-controls="sort-menu" data-own-keys>Sort by: <span id="sort-by-current" class="sort-by-current"></span> <span aria-hidden="true">&#x25BE;</span></button>
+                                        <div id="sort-menu" class="sort-menu hidden" role="menu" aria-label="Sort by" data-own-keys>
+                                            <div role="group" aria-labelledby="sort-menu-field">
+                                                <div id="sort-menu-field" class="sort-menu-heading" role="presentation">Sort by</div>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-field="taken">Date Taken</button>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-field="caption">Caption</button>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-field="name">File name</button>
+                                            </div>
+                                            <div role="separator" class="sort-menu-separator"></div>
+                                            <div role="group" aria-labelledby="sort-menu-direction">
+                                                <div id="sort-menu-direction" class="sort-menu-heading" role="presentation">Order</div>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-direction="asc">Ascending</button>
+                                                <button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" data-direction="desc">Descending</button>
+                                            </div>
+                                        </div>
+                                    </span>
+                                </span>
+                            </div>
+                            <div class="folder-view-header-card">
+                                <div class="folder-view-heading">
+                                    <div class="folder-title-stats">
+                                        <h2 id="folder-view-title">Folder View</h2>
+                                        <span id="folder-view-stats" class="folder-stats-badge">0 photos</span>
+                                    </div>
+                                    <p class="folder-subtitle">Select images to batch edit tags, time shift, or cleanly rename.</p>
+                                </div>
+                                <div class="folder-view-actions">
+                                    <button id="btn-show-in-library" class="btn btn-secondary btn-sm hidden" title="Open this folder's photos as the library holds them: by Date Taken, from the index, with the folder's subfolders">Show in library</button>
+                                    <div class="selection-actions">
+                                        <button id="btn-select-all-thumbnails" class="btn btn-secondary btn-sm">Select All</button>
+                                        <button id="btn-select-none-thumbnails" class="btn btn-secondary btn-sm">Select None</button>
+                                        <!-- In a library view only: delete the selected photos, files and rows, as a job (web/tagpup/bulk-edit.js, #674). -->
+                                        <button id="btn-delete-selection" type="button" class="btn btn-danger btn-sm hidden" title="Delete the selected photos: their files go to the Recycle Bin (for good where there is none, and you are asked first) and their rows leave the library">🗑️ Delete</button>
+                                        <span id="selected-thumbnails-count" class="selected-count-label">Selected: 0</span>
+                                    </div>
+                                    <div class="thumbnail-size-toggle">
+                                        <button id="btn-size-small" class="btn-size-toggle" title="Small Thumbnails">Small</button>
+                                        <button id="btn-size-medium" class="btn-size-toggle active" title="Medium Thumbnails">Medium</button>
+                                        <button id="btn-size-large" class="btn-size-toggle" title="Large Thumbnails">Large</button>
+                                    </div>
+                                    <!-- Organize only (a folder on disk): a library view has neither (#669; web/tagpup/library-view.js). -->
+                                    <button id="btn-toggle-timeshift" class="btn btn-secondary btn-sm" title="Camera Time Shift" disabled>⏰</button>
+                                    <button id="btn-toggle-rename" class="btn btn-secondary btn-sm" title="Smart Rename Files" disabled>🏷️ Smart Rename</button>
+                                </div>
+                            </div>
                         </div>
+
                         <!-- The disk holds photos of this folder the library does not (web/tagpup/library-moves.js). -->
                         <div id="moves-banner" class="moves-banner hidden" role="status">
                             <span id="moves-banner-text"></span>
                             <button id="btn-moves-add" class="btn btn-primary btn-sm">Add them</button>
                             <button id="btn-moves-dismiss" class="btn btn-secondary btn-sm">Dismiss</button>
                             <button id="btn-moves-check" type="button" class="moves-check hidden">Check this folder on disk for new photos</button>
-                        </div>
-                        <div class="folder-view-header-card">
-                            <div>
-                                <div class="folder-title-stats">
-                                    <h2 id="folder-view-title">Folder View</h2>
-                                    <span id="folder-view-stats" class="folder-stats-badge">0 photos</span>
-                                </div>
-                                <p class="folder-subtitle">Select images to batch edit tags, time shift, or cleanly rename.</p>
-                            </div>
-                            <div class="folder-view-actions">
-                                <button id="btn-show-in-library" class="btn btn-secondary btn-sm hidden" title="Open this folder's photos as the library holds them: by Date Taken, from the index, with the folder's subfolders">Show in library</button>
-                                <div class="selection-actions">
-                                    <button id="btn-select-all-thumbnails" class="btn btn-secondary btn-sm">Select All</button>
-                                    <button id="btn-select-none-thumbnails" class="btn btn-secondary btn-sm">Select None</button>
-                                    <!-- In a library view only: delete the selected photos, files and rows, as a job (web/tagpup/bulk-edit.js, #674). -->
-                                    <button id="btn-delete-selection" type="button" class="btn btn-danger btn-sm hidden" title="Delete the selected photos: their files go to the Recycle Bin (for good where there is none, and you are asked first) and their rows leave the library">🗑️ Delete</button>
-                                    <span id="selected-thumbnails-count" class="selected-count-label">Selected: 0</span>
-                                </div>
-                                <div class="thumbnail-size-toggle">
-                                    <button id="btn-size-small" class="btn-size-toggle" title="Small Thumbnails">Small</button>
-                                    <button id="btn-size-medium" class="btn-size-toggle active" title="Medium Thumbnails">Medium</button>
-                                    <button id="btn-size-large" class="btn-size-toggle" title="Large Thumbnails">Large</button>
-                                </div>
-                                <!-- Organize only (a folder on disk): a library view has neither (#669; web/tagpup/library-view.js). -->
-                                <button id="btn-toggle-timeshift" class="btn btn-secondary btn-sm" title="Camera Time Shift" disabled>⏰</button>
-                                <button id="btn-toggle-rename" class="btn btn-secondary btn-sm" title="Smart Rename Files" disabled>🏷️ Smart Rename</button>
-                            </div>
                         </div>
 
                         <!-- The folder's photos found damaged (web/tagpup/damaged.js). -->

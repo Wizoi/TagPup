@@ -732,6 +732,17 @@ def _name_index(conn):
                  % (library_view.NAME_INDEX, library_view.name_sql("path")))
 
 
+def _caption_index(conn):
+    """The index a library view orders by caption with (tagpup.store.library_view; docs/ARCHITECTURE.md, phase 9, #714):
+    `idx_photos_caption` on the first caption of each photo (`library_view.caption_sql`: the first CAPTION_KEY characters,
+    NULL for none and for text that is not JSON), without case, then id -- an expression of built-in functions, as
+    migration 22's, so nothing writes it but SQLite and no writer of a caption has to know of it. Index only: no row of
+    any table changes, nothing is recorded in the journal, and no backup is needed."""
+    from tagpup.store import library_view   # the store imports this module
+    conn.execute("CREATE INDEX IF NOT EXISTS %s ON photos(%s COLLATE NOCASE, id)"
+                 % (library_view.CAPTION_INDEX, library_view.caption_sql("captions")))
+
+
 def _person_ids(conn):
     """Each face and each photo's listed person name the node of the tag tree that is that person:
     `faces.tag_id` and `photo_people.tag_id`, beside `name` (docs/ARCHITECTURE.md, "Identity by id",
@@ -1280,6 +1291,11 @@ MIGRATIONS = (
               (RowsKept(), PersonIdsAgree()) + STANDARD),
     Migration(22, "photos by file name", _name_index, ADDITIVE,
               "adds idx_photos_name, the index a library view orders by file name with; no row of any table changes, "
+              "so it touches none and blocks no undo",
+              (),
+              (RowsKept(),) + STANDARD),
+    Migration(23, "photos by caption", _caption_index, ADDITIVE,
+              "adds idx_photos_caption, the index a library view orders by caption with; no row of any table changes, "
               "so it touches none and blocks no undo",
               (),
               (RowsKept(),) + STANDARD),

@@ -207,6 +207,22 @@ class TheOrders(Library):
         self.assertEqual(dated["next"], library_view.encode(library_view.decode(dated["next"])), "the old token is the same")
 
 
+class TheNameOrdersToken(unittest.TestCase):
+    def test_a_long_file_name_that_is_not_ascii_pages_on(self):
+        # Found building #714: the page token was refused over 400 characters, and a name's key in JSON is up to twelve
+        # characters for each one that is not ASCII -- a page after a photo named in Cyrillic or Greek, 50 letters or so.
+        vl = ViewLibrary(self)
+        named = [vl.photo("Trips", chr(0x416) * 120 + "%d.jpg" % n) for n in range(3)]
+        token, paged = None, []
+        while True:
+            page = library_view.view(vl.library, "all", None, False, token, 1, "name")
+            paged += page["ids"]
+            token = page["next"]
+            if token is None:
+                break
+        self.assertEqual(named, paged)
+
+
 class ThePlans(Library):
     def plans(self, kind, value, order=None):
         conn = db.connect(db.readonly_uri(self.vl.path), uri=True)

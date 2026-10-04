@@ -234,7 +234,7 @@ describe("several rows at once", () => {
     assert.equal(ctx.selectedRows("keywords")[0].querySelector(".nav-label").textContent, "Group 03");
     await ctx.openTab("dates");
     assert.equal(ctx.selectedRows("dates")[0].querySelector(".nav-label").textContent, "June");
-    assert.equal(ctx.document.getElementById("nav-sort").value, "name-desc");
+    assert.equal(ctx.document.getElementById("btn-sort-by").getAttribute("aria-label"), "Sort by: File name, descending");
     for (const bad of ["not json", "[]", JSON.stringify([{ kind: "any_of", value: "[]" }]), JSON.stringify([{ kind: "month", value: "June" }])]) {
       const broken = await loadViewPage(t, { search: `?view=any_of&value=${encodeURIComponent(bad)}` });
       assert.equal(broken.state.library.invalid, true, bad);
@@ -308,26 +308,15 @@ describe("the People under their branches", () => {
 });
 
 describe("the sort", () => {
-  test("one control for every tab: the view is read again in the order chosen, the address keeps it, and Back restores it", async (t) => {
-    const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}` });
-    const select = ctx.document.getElementById("nav-sort");
-    assert.deepEqual([...select.options].map((o) => o.textContent),
-      ["Date taken, oldest first", "Date taken, newest first", "Name, A to Z", "Name, Z to A"]);
-    assert.equal(select.value, "taken");
-    select.value = "name";
-    select.dispatchEvent(new ctx.window.Event("change"));
-    await ctx.settle();
-    assert.deepEqual(asked(ctx), { kind: "year", value: String(YEAR - 1), order: "name", recursive: null });
-    assert.match(ctx.window.location.search, /order=name/);
-    // Another row, in another tab, is read in the same order.
+  test("the order a view was read in is the one the next row is opened in, from any tab; Back restores the one before", async (t) => {
+    const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}&order=name` });
+    assert.equal(ctx.state.nav.order, "name");
     await ctx.openTab("people");
     click(ctx.window, ctx.rows("people")[0]);
     await ctx.settle();
     assert.equal(asked(ctx).order, "name");
-    // Back to the year by date.
     await ctx.popTo(`?view=year&value=${YEAR - 1}`);
     assert.equal(asked(ctx).order, null);
-    assert.equal(select.value, "taken");
     assert.equal(ctx.state.nav.order, "taken");
   });
 
@@ -338,14 +327,10 @@ describe("the sort", () => {
     assert.match(ctx.document.getElementById("thumbnails-grid").textContent, /an order \(.sideways.\) that TagPup does not know/);
   });
 
-  test("the sort keys do not step the open photo", async (t) => {
+  test("the sidebar has no sort of its own any more: it is the view's header's Sort by (#714)", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all" });
-    const select = ctx.document.getElementById("nav-sort");
-    select.focus();
-    const before = ctx.photosAsked.length;
-    ctx.key(select, "ArrowDown");
-    await ctx.settle(20);
-    assert.equal(ctx.photosAsked.length, before);
+    assert.equal(ctx.document.getElementById("nav-sort"), null);
+    assert.equal(ctx.pane("library").querySelector("select"), null);
   });
 });
 

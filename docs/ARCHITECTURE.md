@@ -1916,7 +1916,8 @@ and one index-only migration (22).
   Checked by hand against #464 (nothing checks a migration's declared `touches`): a test holds that 22 adds exactly one index on
   `photos` and no column or trigger, that every table's rows are unchanged, and that a change journaled at 21 is still undoable. An
   order by name reads `photos p INDEXED BY idx_photos_name`, walking the index in order and testing each entry for the source (5 to
-  25 ms on photo_index whatever the source's size; sorting 15,000 photos by a name computed for each was 130 ms, the whole library
+  25 ms on photo_index for the sources then measured -- *not* for a small range of another index, which walked the whole library
+  for each page until #722: see the owner's second review; sorting 15,000 photos by a name computed for each was 130 ms, the whole library
   630 ms); without the index (a library not yet migrated) it is the sort, the same order. On the sandbox copy migration 22 took 0.7 to 1.1 s.
 - **The navigator** (`navigator.js`, `navigator-model.js`, `navigator-tree.js`): every tab is a multi-selectable tree
   (`aria-multiselectable`). A click selects the row **and every row under it** (shown selected) and opens a closed branch; Ctrl-click
@@ -1944,6 +1945,7 @@ and one index-only migration (22).
   deep at most), 9 not filed (117 photos); kr-track: 75 people, 62 filed under 1 branch. The read is 46 ms in-process where the flat list
   was 5 ms.
 - **The sort** is one control above the tabs (`#nav-sort`, `data-own-keys`): Date taken oldest or newest first, Name A to Z or Z to A.
+  *(Replaced by the header's Sort by, #714: the owner's second review, below.)*
   Choosing one reads the view open again in it (a new history entry) and the views opened after it are read in it until another
   is chosen or an address names one (`state.nav.order`).
 - **Measured** with `scripts/measure_library_review.py --run` on a sandbox copy of photo_index (68,324 photos; the copy migrated
@@ -2105,6 +2107,73 @@ folder -- Smart Rename, Camera Time Shift, the folder's own mechanics -- is **Or
   reads slower and was not measurable here. **#706:** `.partial` copies a crash left for the same name are taken away on the way in
   (they no longer push the name to "(2)"); a Downloads folder under a OneDrive folder (`OneDrive`, `OneDriveConsumer`,
   `OneDriveCommercial`) is refused. Tests set `TAGPUP_RECYCLE_BIN` (own_home: a large empty Bin) so none reads the owner's.
+
+### The owner's second review of the library views *(2026-10-04; #712-#714 on `arch/library-review-3`)*
+- **#712, Folders to Organize switches the sidebar.** Opening a folder of the selection details' Folders to Organize closed the view onto
+  it and showed the pane last chosen for a folder -- Library, when the owner had picked it before any view was open. `closeViewOntoFolder`
+  now ends with `choosePane('folder')`, the switch's own click handler (navigator.js, through `upper`): the switch, its pane and the
+  remembered choice are what a click on Organize leaves. A folder gone or a share away keeps the view and the switch as they were.
+- **#713, one floating header.** The strip and the header card sit in one wrapper, `#folder-view-top`; in a view (`.in-library-view`,
+  set by `showChrome`) it is the one sticky header: the view's name and total (one line, a long name cut short with the whole in its
+  tooltip), Refresh view as an icon button (`aria-label`, tooltip), Sort by, and the card's actions -- Select All, Select None, Delete,
+  the count, the thumbnails' size -- the card's own title and count hidden (they said the same and scrolled away). It sticks flush with
+  the scroller's top (`top: -20px`, the scroller's padding), so no card shows above it; `grid.js topInset` is its height and the 16 px
+  gutter, so a card the keys walk to is below it. Organize is not touched: the wrapper is a plain block there and the card is as it was
+  (Organize had no duplicate header). *Measured* in Chromium on a sandbox copy of photo_index (`measure_library_review.py --only d`):
+  at a 1,600 px window the header is 65 px tall; at 1,000 px the grid's column is 296 px (the sidebar and Selection Details keep their
+  360 and 340) and the header 163 px; at 720 px the column is 40 px and the page scrolls sideways -- it did on the trunk too, the grid's
+  cards are 150 px at the least; the header's controls stay inside it at 1,600 and 1,000. A card walked to by the arrow keys (30 rows
+  down, 12 up) landed 16 px below the header at every width (on the trunk, at 720, under the strip).
+- **#714, Sort by.** A button in the header opens a menu of two sections, as Windows Live Photo Gallery's: the field (Date Taken,
+  Caption, File name) and the direction (Ascending, Descending), each a group of `menuitemradio` showing the current choice
+  (`web/tagpup/sort-menu.js`; its state `state.sortMenu`). ArrowDown on the button opens it on the field chosen, ArrowUp on the
+  direction; ArrowUp/Down, Home and End move through the five items, Enter and Space choose, Escape closes it onto the button, Tab, a
+  click or the focus elsewhere close it, and so does the view changing under it (`showSortOrder`, called from `libraryChanged` and
+  `hideChrome`). A field keeps the direction and a direction keeps the field; what is chosen already asks for nothing; the order opens as
+  a new view (Back returns), and `state.nav.order` follows only when the view has opened, so Cancel on unsaved edits leaves the next
+  view's order alone. The sidebar's select is gone. **The address** keeps `order`, its grammar extended: `caption`, `caption-desc` beside
+  the first review's four, which read as they did. **The server**: `order=caption | caption-desc` (`store.library_view`): by the
+  photo's caption -- the first of `photos.captions`, the one the page shows -- its first 200 characters (`CAPTION_KEY`, which bounds
+  what a page token holds), without case, ties by id; the photos with none after the captioned ones in both directions, by id in the
+  order's direction, as the undated are by Date Taken. Name and caption are one machinery (`_KEYED`: the index walked in order, each
+  entry tested for the source; the keyset page a seek of it). **Migration 23** (additive, index only, touches no table, blocks no undo):
+  `idx_photos_caption` on `(<caption> COLLATE NOCASE, id)`, the caption an expression of built-in functions over `captions`
+  (`library_view.caption_sql`: `NULLIF(substr(CASE WHEN json_valid(captions) THEN json_extract(captions, '$[0]') END, 1, 200), '')`),
+  so SQLite keeps it and no writer of a caption has to know of it, as migration 22's on the path -- *decided over a column* (the owner's
+  rule of a column over `json_extract` is about reading JSON on every read; this is read once, by the index): a column would have had
+  every writer of captions (the indexer, a save, the bulk edits, an undo) keep it. Text that is not JSON is NULL, never an error that would
+  refuse the row's write. Checked by hand against #464: a test holds that 23 adds one index on `photos` and nothing else, every table's
+  rows unchanged, and a change journaled at 22 still undoable. The captioned photos are asked as `<caption> COLLATE NOCASE >= ''` -- a
+  range of the index -- not `IS NOT NULL`, which read each photo's row to compute the caption again; after a cursor only the cursor's
+  bound is given, or SQLite took the first of two lower bounds and walked each page from the start. **Measured** on a sandbox copy of
+  photo_index (68,324 photos; 57,775 with a caption, 10,549 without, 8,665 with more than one; the longest 616 characters -- counted
+  read-only): migration 23's index 0.18 s, the whole `ensure` 0.3 to 0.7 s; the whole library's id list by caption 24 to 31 ms either
+  way (by Date Taken 23, by name 25; with `IS NOT NULL` it was 218), the keyword node with the most photos of its own (14,838) 20 to
+  32 ms (its uncaptioned photos a seek of each id and a sort of those ids); 50 keyset pages of 200 in caption order 42 ms for the whole
+  library, 153 ms for that keyword (741 and 1,608 with two bounds). photo_index itself, read-only and not yet at 23: `SCAN p` and a
+  `TEMP B-TREE`, 394 to 1,255 ms -- what a library opened without its migration (a look) does, the same order. In Chromium (three fresh browsers each, from the click on Sort by to
+  the first window painted and idle): the whole library by Caption 332 to 717 ms (median 716; the ids request 172 to 305), by Caption
+  descending 215 to 230 ms; the largest keyword by Caption 544 to 595 ms, descending 229 to 253; the other orders 235 to 1,122 ms on
+  the same runs (a noisy machine: Date Taken's own first open was 404 to 2,330). Bulk edits, the tally and the selection resolve the
+  view's source in Date Taken order whatever the view's: the order is not part of a selection.
+- **#722, which sources walk the index.** Name and caption order forced `INDEXED BY` for every source, so a month, a year's Other
+  or a folder with its subfolders walked all 68,324 index entries for each page. `_walks` (store.library_view) now walks the index for
+  the whole library and for a source given by a list of ids (a keyword, a person, a folder alone, a union holding one of those), and
+  leaves a range of another index (`Scope.ranged`: a month, a year, a year's Other, a folder with its subfolders, a union of months and
+  years) to SQLite -- the range read and sorted -- unless it holds more than 1/16 of the library (`RANGE_SHARE`; counted at each read,
+  one covering count): the top folder of the Folders tab is the whole library through the path range, 114 to 949 ms a page sorted,
+  0.2 to 1.8 walked. **Measured** on a sandbox copy of photo_index, caption and name, either way, the first page of 200 and the
+  eleventh, then the id list, the walk forced everywhere (before) against the rule: a month (1,201) 1-117 / 44-156 ms against 2-11 /
+  7-9; a year's Other (50) 45-149 against 4-10 every time; a folder with subfolders of 3,573, 2-34 / 47-157 against 8-40 / 16-22; the
+  top folder 0.2-1.8 / 69-193 against 7-9 / 78-184 (the count, about 7 ms, paid on each read); a year of 5,579 (walked either way)
+  0.2-33 / 47-153; a keyword (14,838) 2-4 / 14-24, a person (14,840) 8-16 / 19-29, a folder alone (759) 0.3-7 / 6-7 and unions
+  (3,251 to 17,463) 3-29 / 27-175, unchanged. A test asserts the plan for each kind: the range's own index and a sort for a small
+  range, the name or caption index and no sort for the library, a keyword, a person, a year holding most of it and the top folder.
+- **#723.** A forged caption- or name-order token whose key held a lone surrogate passed `decode` and reached SQLite, which cannot
+  bind it: a 500. `decode` refuses a key that does not encode as UTF-8 (400).
+- **Found on the way.** The page token was refused over 400 characters, and an order by name's token holds the file name in JSON, six
+  characters for each one that is not ASCII: the page after a photo named with some 50 Cyrillic or Greek letters could not be asked for.
+  `MAX_TOKEN` is 5,000. No name on the live libraries came near 400 (counted).
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag

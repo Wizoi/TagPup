@@ -10,8 +10,9 @@ TOTAL and the cards of the page; `cards` turns any list of ids into cards.
 
 * **Order**: by Date Taken (`photos.taken`, ExifTool's text, which sorts as time does) and then id; photos with
   no date after them, by id -- or, asked (`order`, store.ORDERS), newest first (the undated still after the dated,
-  by id from the highest), or by file name either way (ties by id). Never by file time. A page is `limit` photos
-  (at most MAX_LIMIT) after a KEYSET
+  by id from the highest), by file name either way (ties by id), or by caption either way (ties by id; photos with no
+  caption after the captioned, by id in the order's direction, as the undated are). Never by file time. A page is
+  `limit` photos (at most MAX_LIMIT) after a KEYSET
   token (`after`, from the page before: opaque; a forged or corrupt one is refused, never trusted), never an
   OFFSET: a photo added, deleted or re-dated between two pages neither repeats nor skips another beyond what
   that change itself explains, and a page deep in a 20,000-photo source costs what the first does.
@@ -65,8 +66,9 @@ MAX_LIMIT = 500
 MAX_IDS = 200_000
 MAX_CARDS = 200
 
-#: The longest page token read: a token is a few dozen characters; a very large one is refused before it is decoded.
-MAX_TOKEN = 400
+#: The longest page token read: a token is a few dozen characters, a few hundred in an order by name or caption (a key of
+#: 260 characters, each up to twelve in JSON when it is not ASCII); a very large one is refused before it is decoded.
+MAX_TOKEN = 5000
 
 #: The most sources a union holds: the navigator's rows a person selected, compressed (a folder with every folder under it
 #: is one). A union of more is refused with a sentence; its address would be longer than the server reads.
@@ -246,7 +248,14 @@ def decode(token, order=store.TAKEN):
     if not (isinstance(found, list) and len(found) == 3):
         raise Refused("That page token is not one this server made.")
     phase, taken, photo_id = found
-    longest = 64 if order in (store.TAKEN, store.TAKEN_DESC) else 260
+    if isinstance(taken, str):
+        try:
+            taken.encode("utf-8")
+        except UnicodeEncodeError:
+            # JSON may spell a lone surrogate, which SQLite cannot bind: a forged token, refused, never a 500 (#723).
+            raise Refused("That page token is not one this server made.") from None
+    longest = {store.TAKEN: 64, store.TAKEN_DESC: 64, store.CAPTION: store.CAPTION_KEY,
+               store.CAPTION_DESC: store.CAPTION_KEY}.get(order, 260)
     ok = (phase in (0, 1) and type(phase) is int and type(photo_id) is int and 0 <= photo_id < 2 ** 62
           and (isinstance(taken, str) and 0 < len(taken) <= longest if phase == 0 else taken is None))
     if order in (store.NAME, store.NAME_DESC) and phase != 0:

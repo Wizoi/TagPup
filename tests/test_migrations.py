@@ -52,11 +52,12 @@ KINDS = {
     20: schema.ADDITIVE,     # idx_photos_taken and idx_photos_year: the indexes the library views page by
     21: schema.ADDITIVE,     # faces.tag_id and photo_people.tag_id, filled from the name and the tree
     22: schema.ADDITIVE,     # idx_photos_name: the index a library view orders by file name with
+    23: schema.ADDITIVE,     # idx_photos_caption: the index a library view orders by caption with
 }
 
 
 #: The migrations that only make indexes.
-INDEX_ONLY = (20, 22)
+INDEX_ONLY = (20, 22, 23)
 
 
 def backups(db_path):
@@ -556,7 +557,8 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
                               "the folders asked to be added", "the photo files found damaged",
                               "the photos whose faces are to be detected", "the library's roots",
                               "the tables the library views stand on", "photos by when they were taken",
-                              "people by their node's id", "photos by file name"],
+                              "people by their node's id", "photos by file name",
+                          "photos by caption"],
                              schema.ensure(path))
         # What it touches: change_files, which it makes, and changes, the runner's own;
         # migration 12 touches change_files alone, 13 job_runs, 14 sync_runs, 15

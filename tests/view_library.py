@@ -7,6 +7,7 @@ thumbnail cache decodes it) or only a row, as photo_index holds rows for photos 
 
 Fictional names only: the libraries are photographs of real people, many of them minors.
 """
+import json
 import os
 import sys
 
@@ -47,15 +48,19 @@ class ViewLibrary:
             taxonomy.add_path(self.conn, tag, root_has_face=1 if tag.split("/")[0] == face_root else 0)
         self.conn.commit()
 
-    def photo(self, folder, name, taken=None, tags=(), real=False, shade=(90, 110, 130), size=(800, 600), at=None):
+    def photo(self, folder, name, taken=None, tags=(), real=False, shade=(90, 110, 130), size=(800, 600), at=None,
+              caption=None, fields=None):
         """The id of a photo recorded as the indexer records a read of `folder`/`name` under Pictures (`at`: the whole
-        path instead), with Date Taken `taken` (None: no date) and keywords `tags`; a real JPEG on disk when `real`."""
+        path instead), with Date Taken `taken` (None: no date), keywords `tags` and caption `caption` (XMP:Description);
+        `fields`, more of what the read found; a real JPEG on disk when `real`."""
         path = at or os.path.join(self.pictures, folder, name)
         if real:
             make_jpeg(path, shade, size)
-        fields = {"XMP:Subject": list(tags)}
+        fields = dict(fields or {}, **{"XMP:Subject": list(tags)})
         if taken is not None:
             fields["EXIF:DateTimeOriginal"] = taken
+        if caption is not None:
+            fields["XMP:Description"] = caption
         photo_id = photo_rows.add_read(self.conn, path, fields)
         self.conn.commit()
         return photo_id
@@ -65,6 +70,10 @@ class ViewLibrary:
         photo_id = photo_rows.add_unread(self.conn, os.path.join(self.pictures, folder, name))
         self.conn.commit()
         return photo_id
+
+    def captions_of(self, photo_id):
+        """The captions the photo's row holds, as a list."""
+        return json.loads(self.conn.execute("SELECT captions FROM photos WHERE id = ?", (photo_id,)).fetchone()[0] or "[]")
 
     def path_of(self, photo_id):
         return self.conn.execute("SELECT path FROM photos WHERE id = ?", (photo_id,)).fetchone()[0]
