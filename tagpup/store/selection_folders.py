@@ -17,9 +17,9 @@ def counts(conn, ids=None, source=None, excluded=()):
     """{folder id: how many photos of the selection it holds} -- `ids`, or every photo of `source` but `excluded`. The
     selection is made as the tally makes it (library_view's temporary `sel` table), so it may be called inside the tally's
     read transaction and counts the same photos."""
-    # The tally's own selection (library_view._selected), not a copy of it: the panel's counts and its folders are of one set
+    # The tally's own selection (library_view.selected_sql), not a copy of it: the panel's counts and its folders are of one set
     # of photos. Private there; that module is another branch's this week (#671-#673), so it is used and not renamed here.
-    selected, params = library_view._selected(conn, ids, source, excluded)
+    selected, params = library_view.selected_sql(conn, ids, source, excluded)
     if selected is None:
         return {}
     return dict(conn.execute(
@@ -44,7 +44,7 @@ def bytes_by_folder(conn, ids=None, source=None, excluded=()):
     """{folder id: (the bytes -- photos.size, as the index last read them -- of the photos of the selection it holds, the largest
     of them)}: what copies of them would take on this PC (a delete from a place with no Recycle Bin goes through this PC's, #694,
     #703). One grouped read."""
-    selected, params = library_view._selected(conn, ids, source, excluded)
+    selected, params = library_view.selected_sql(conn, ids, source, excluded)
     if selected is None:
         return {}
     return {folder_id: (total, largest) for folder_id, total, largest in conn.execute(

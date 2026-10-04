@@ -480,7 +480,7 @@ def damaged(conn):
 
 # ---- A selection's tally ---------------------------------------------------------------------
 
-def _selected(conn, ids, source, excluded):
+def selected_sql(conn, ids, source, excluded):
     """(SQL that selects the ids of the photos selected -- `SELECT p.id ...` --, its parameters): the photos `ids` that have
     a row, or those of `source` but the `excluded` ones. The ids are put in a TEMP table of this connection (`sel`, by primary
     key; a read-only connection may make one), so a selection of 20,000 is one statement and not forty."""
@@ -506,7 +506,7 @@ def tally(conn, ids=None, source=None, excluded=()):
     the selection; names that are one person without regard to case are one entry under the spelling most photos hold
     (people_counts). Unsorted: the service orders and cuts them. One read transaction."""
     db.begin(conn)
-    selected, params = _selected(conn, ids, source, excluded)
+    selected, params = selected_sql(conn, ids, source, excluded)
     if selected is None:
         return {"total": 0, "tags": [], "people": []}
     total = conn.execute("SELECT COUNT(*) FROM (%s)" % selected, params).fetchone()[0]
