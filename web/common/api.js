@@ -26,11 +26,13 @@
  * Retry-After it was given, and again while nothing answers, for up to UPDATE_WAIT_MS:
  * the page waits out the update rather than showing it as an error. A request that finds
  * nothing answering (a TypeError, as a browser says it) with no update said is sent once
- * more after FIRST_FAILURE_RETRY_MS:
+ * more after FIRST_FAILURE_RETRY_MS, if it only reads (GET, HEAD):
  * a launch replacing the server (tagpup/launcher.py) ends the old one and listens on its
  * ports within a second, and a page that sent nothing while the old one drained meets
- * that gap with its first request. Nothing answering means nothing was received; a
- * server that crashed under it is not back within the retry. An /api/ image has
+ * that gap with its first request. A write is not sent again: a connection reset after
+ * it was sent may have lost the answer of a write that was done, and doing it twice --
+ * a bulk start, a tag write, a rename -- is worse than its error, which the page shows
+ * as before (the banner then says the server was updated). An /api/ image has
  * no such retry: one that fails makes the page ask how the server is, and once it has
  * seen the server away and answering again, it asks for the image again
  * (imagesAfterAnUpdate).
@@ -149,6 +151,12 @@ function pause(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/** Does a request with these fetch `options` only read: GET or HEAD? */
+function onlyReads(options) {
+    const method = String((options && options.method) || 'GET').toUpperCase();
+    return method === 'GET' || method === 'HEAD';
+}
+
 /**
  * fetch(url, options), sent again while the server is moving onto a new version: after
  * a refusal saying so, and -- once one has said so -- while nothing answers.
@@ -166,7 +174,7 @@ function fetchThroughAnUpdate(url, options, started = Date.now(), updating = fal
         return res;
     }, err => {
         if (updating && Date.now() - started < UPDATE_WAIT_MS) return again(RESTART_RETRY_MS);
-        if (!updating && !retried && err && err.name === 'TypeError') {
+        if (!updating && !retried && err && err.name === 'TypeError' && onlyReads(options)) {
             return pause(FIRST_FAILURE_RETRY_MS).then(() => fetchThroughAnUpdate(url, options, started, false, true));
         }
         throw err;
