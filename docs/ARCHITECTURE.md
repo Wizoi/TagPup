@@ -2365,6 +2365,20 @@ The page's half of 9e, over 9e-1's contract; no server change. `web/tagpup/searc
 
   (e) is the tally's 250 ms pause, its request and the panel; the search adds nothing to it. There is no trunk to compare: the
   page had no search. An earlier run on the same copy gave (a) 512 ms (ids 115 ms): these move by a factor of two run to run.
+- **The review (#768-#772)**, each a test that failed on the code before it:
+  - #768: the picker reads its names again on the navigator's own pause after writes (`NAV_COUNTS_MS`, inside its timer, after
+    the tab's own read whose answer it shares), once for a run of saves, not once a save.
+  - #769: Within and the box's words change only when a search view has opened (`searchFollows`): Cancel on "Save changes?"
+    after Enter keeps Within ticked and the words; after Clear keeps the search and its words.
+  - #770: every place the page makes in the history carries this load's id and its position (`state.entries`; positions are
+    consecutive, as a new place drops those after it); Back or Forward cancelled for unsaved edits goes back to the place the page
+    shows (`history.go`), whose own state (`searchBack`) is then right, and that return asks nothing (the address names what is
+    shown). When a position is not known (a place another load made, or one a folder's address replaced with `{}`), the place
+    moved to takes the view's address and its own state less `searchBack`: Clear then closes the view rather than go to a wrong place.
+  - #771: Enter while the picker's names are being read waits for them ("Reading the library's tags and people..."), then adds
+    the first offered.
+  - #772: a section the library could not answer is asked again only when the picker's box is focused again, not on each key;
+    when one of the two fails the list says so ("Could not read the library's tags, so only people are offered: ...").
 - **Known limits.** A list shows 50 chips; the rest of a long bookmarked list are counted and can be taken off only by Clear. A
   chip's mark (a tag or person gone) is as the navigator last read the section: a rename made in another tab shows when the
   picker or the navigator reads again. Back steps over the changes made to an open search (decided above).
