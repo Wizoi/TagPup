@@ -22,6 +22,7 @@ from tagpup.core import clustering, dates, paths, suggesting, vocabulary
 from tagpup.services import faces as face_records
 from tagpup.services import search
 from tagpup.store import faces as store_faces
+from tagpup.store import faces_detected as store_faces_detected
 from tagpup.store.taxonomy import TagTaxonomy
 
 logger = logging.getLogger("tagpup_cli.suggester")
@@ -400,6 +401,10 @@ class TagSuggester:
                                 "embedding": emb,
                                 "prob": prob
                             })
+                        # Detected before and none found: as good as faces on file (#773).
+                        if not has_rows and self.faces is not None:
+                            has_rows = store_faces_detected.detected(
+                                self.index.conn, photo_path, face_records.detector_of(self.faces))
                     except Exception as db_err:
                         logger.warning(f"Failed to query database faces: {db_err}")
                 return has_rows, detected
@@ -430,7 +435,8 @@ class TagSuggester:
                 # detect (store.faces_pending) is marked no longer.
                 if self.index is not None and self.remember:
                     try:
-                        saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces)
+                        saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces,
+                                                             detector=face_records.detector_of(self.faces))
                         if saved:
                             logger.info(f"Recorded {saved} newly detected face(s) for {photo_path}")
                     except Exception as save_err:

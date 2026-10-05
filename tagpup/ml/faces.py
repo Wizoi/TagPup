@@ -28,6 +28,13 @@ logger = logging.getLogger("tagpup_cli.faces")
 SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
 
 
+class NotDetected(list):
+    """What detect_and_embed_faces returns when detection did not run to the end -- the file
+    is gone, the picture did not decode, the model failed: no faces, as before, but not
+    "none found", which is recorded (tagpup.store.faces_detected) and never detected again."""
+    failed = True
+
+
 class FaceModel:
     """The detector and the face embedder, loaded the first time either is used."""
 
@@ -103,7 +110,7 @@ class FaceModel:
         self._init_models()
 
         if not os.path.exists(img_path):
-            return []
+            return NotDetected()
 
         try:
             # As stored: the coordinates face boxes are kept in (tagpup.files.images).
@@ -173,4 +180,4 @@ class FaceModel:
             return detected_faces
         except Exception as e:
             logger.error(f"Error processing faces in {img_path}: {e}")
-            return []
+            return NotDetected()

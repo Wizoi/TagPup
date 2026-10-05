@@ -17,6 +17,7 @@ seen.
 import time
 
 from tagpup.core import paths
+from tagpup.store import faces_detected
 from tagpup.store import roots as store_roots
 
 TABLE = "faces_pending"
@@ -39,6 +40,8 @@ def mark(conn, photo_path, now=None):
         return 0
     conn.execute("INSERT OR REPLACE INTO faces_pending (photo_id, since) VALUES (?, ?)",
                  (row[0], now or time.strftime(TIME)))
+    # Its faces are to be detected again: no record says they were (store.faces_detected).
+    faces_detected.forget(conn, row[0])
     return 1
 
 

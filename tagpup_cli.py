@@ -551,7 +551,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     if batch_faces:
                         # --force-reembed means redo the work; without it the
                         # existing face rows, and the curation on them, are kept.
-                        face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed)
+                        face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
+                                                  detector=face_records.detector_of(face_processor))
                         batch_faces.clear()
                     
                     taxonomy.save()
@@ -573,7 +574,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             
             # Save the remaining face embeddings
             if batch_faces:
-                face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed)
+                face_records.record_batch(photo_index.conn, batch_faces, overwrite=force_reembed,
+                                          detector=face_records.detector_of(face_processor))
                 batch_faces.clear()
             
             taxonomy.save()
@@ -1812,7 +1814,8 @@ def index_faces(ctx, directory: str, force: bool):
         count_faces = 0
         for path in tqdm(to_process, desc="Detecting and embedding faces"):
             faces = processor.detect_and_embed_faces(path)
-            face_records.replace_detected(photo_index.conn, path, faces)
+            face_records.replace_detected(photo_index.conn, path, faces,
+                                          detector=face_records.detector_of(processor))
             count_faces += len(faces)
 
         console.print(f"[bold green]Successfully indexed {count_faces} faces across {len(to_process)} photos.[/bold green]")

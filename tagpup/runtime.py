@@ -21,8 +21,9 @@ to date when a run begins, and a run keeps the one it began with to its end.
 
 A model is loaded onto the graphics card only with the process's turn on it
 (tagpup.ml.gpu; docs/findings.md, #750): a Suggest run takes one the first time it uses a
-model -- a run over photos the index has already read uses none and never waits -- and
-holds it to its end; the CLI's index takes one for its run (gpu_turn); the warm-up only
+model -- a run over photos the index has already read, their vectors kept and their
+faces' detection recorded (tagpup.store.faces_detected, #773), uses none and never waits --
+and holds it to its end; the CLI's index takes one for its run (gpu_turn); the warm-up only
 when no one has to wait for it. The web server keeps its turn while its models stay
 loaded between runs, and gives it up, unloading them, as soon as another process waits. Nothing below it builds a model or reads a
 setting: a service that uses a model is given it (docs/ARCHITECTURE.md, "The layers,
@@ -381,8 +382,9 @@ class RunModel:
 
 class _RunTurn:
     """One suggestion run's turn on the graphics card: taken the first time the run uses a
-    model on the card (ensure), not before -- a run over photos whose vectors and faces
-    the library holds runs no model, and waits for no one -- and held until the run ends
+    model on the card (ensure), not before -- a run over photos whose vectors the library
+    holds, and whose faces' detection it recorded (found or not: store.faces_detected),
+    runs no model, and waits for no one -- and held until the run ends
     (close)."""
 
     def __init__(self, card, what, models, cancelled=None, report=None):
