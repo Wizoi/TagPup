@@ -111,14 +111,14 @@
                             <button type="button" id="btn-library-search" class="btn btn-primary btn-sm">Search</button>
                             <button type="button" id="btn-library-search-clear" class="btn btn-secondary btn-sm btn-icon hidden" aria-label="Clear the search" title="Clear the search: back to the view before it"><span aria-hidden="true">&#x2715;</span></button>
                         </div>
+                        <!-- Shown while rows of the navigator are the view open: the search then looks only at their photos. -->
+                        <label id="library-search-within-row" class="library-search-within hidden" title="Search only the photos of the rows selected in the navigator below">
+                            <input type="checkbox" id="library-search-within">
+                            <span>Within the sidebar&rsquo;s selection:</span>
+                            <span id="library-search-within-name" class="library-search-within-name"></span>
+                        </label>
                         <button type="button" id="btn-library-search-filters" class="library-search-toggle" aria-expanded="false" aria-controls="library-search-filters">Filters</button>
-                        <div id="library-search-filters" class="library-search-filters hidden">
-                            <label class="library-search-within" title="Search only the photos of the rows selected in the navigator below">
-                                <input type="checkbox" id="library-search-within">
-                                <span>Within the sidebar&rsquo;s selection:</span>
-                                <span id="library-search-within-name" class="library-search-within-name"></span>
-                            </label>
-                        </div>
+                        <div id="library-search-filters" class="library-search-filters hidden"></div>
                         <p id="library-search-note" class="library-search-note hidden" role="status"></p>
                     </div>
                 </div>

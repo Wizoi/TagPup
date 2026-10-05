@@ -2519,6 +2519,7 @@ select {
 
 .library-search-within {
     display: flex;
+    cursor: pointer;
     flex-wrap: wrap;
     align-items: center;
     gap: 4px;

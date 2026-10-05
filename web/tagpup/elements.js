@@ -190,6 +190,7 @@ export const btnLibrarySearchClear = document.getElementById('btn-library-search
 export const btnLibrarySearchFilters = document.getElementById('btn-library-search-filters');
 export const librarySearchFilters = document.getElementById('library-search-filters');
 export const librarySearchWithin = document.getElementById('library-search-within');
+export const librarySearchWithinRow = document.getElementById('library-search-within-row');
 export const librarySearchWithinName = document.getElementById('library-search-within-name');
 export const librarySearchNote = document.getElementById('library-search-note');
 // Sort by, in a view's header, and its menu (sort-menu.js, #714)

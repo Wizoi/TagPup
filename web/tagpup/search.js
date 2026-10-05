@@ -10,8 +10,9 @@
 // THE FILTERS: three lists, All of, Any of, None of, each of tags and people picked from the library's own names (the
 // navigator's, search-model.js) by a combobox that completes as it is typed -- arrow keys, Enter to add, Escape, Backspace
 // on an empty box to take the last chip off. A chip added or taken off searches at once (a click on a navigator row does
-// too); so does ticking "Within the sidebar's selection" when there is something to search: the navigator's selection, the
-// view open, becomes the first member of All of (the contract of 9e-1), shown as a chip "Within ..." from then on.
+// too); so does ticking "Within the sidebar's selection" -- under the box while rows of the navigator are the view open --
+// when there is something to search: the navigator's selection becomes the first member of All of (the contract of 9e-1),
+// shown as a chip "Within ..." from then on.
 //
 // THE HISTORY: a search opened from another view is a new place (Back returns to that view); changing the search while one
 // is open replaces it, so Back from any search returns to the view before it. Clear (the x, or Enter on an empty box) returns
@@ -26,7 +27,7 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
 import {
     btnLibrarySearch, btnLibrarySearchClear, btnLibrarySearchFilters, librarySearchFilters, librarySearchNote, librarySearchWithin,
-    librarySearchWithinName, librarySearchWords
+    librarySearchWithinName, librarySearchWithinRow, librarySearchWords
 } from './elements.js';
 import { closeViewAsNewPlace, openLibraryView } from './library-view.js';
 import {
@@ -94,12 +95,15 @@ function paintNote() {
     librarySearchNote.classList.toggle('library-search-problem', problem);
 }
 
+/** "Within the sidebar's selection" is offered while the navigator's rows are the view open, and names them. */
 function paintWithin() {
     const source = withinSource();
+    librarySearchWithinRow.classList.toggle('hidden', !source);
     librarySearchWithin.disabled = !source;
     librarySearchWithin.checked = Boolean(source) && state.search.within;
-    librarySearchWithinName.textContent = source ? viewLabel(source) : 'Select rows in the navigator below to search within them.';
-    librarySearchWithinName.title = librarySearchWithinName.textContent;
+    const label = source ? viewLabel(source) : '';
+    if (librarySearchWithinName.textContent !== label) librarySearchWithinName.textContent = label;
+    librarySearchWithinName.title = label;
 }
 
 function paintClear() {
@@ -474,7 +478,7 @@ function buildLists() {
             buildElement('div', { className: 'library-search-chips', attrs: { role: 'list', 'aria-labelledby': labelId } }),
             buildElement('div', { className: 'library-search-pick-wrap' }, [pick, listbox]),
         ]);
-        librarySearchFilters.insertBefore(row, librarySearchFilters.querySelector('.library-search-within'));
+        librarySearchFilters.appendChild(row);
         pick.addEventListener('input', () => refreshPicker(list));
         pick.addEventListener('focus', () => { if (pick.value.trim()) refreshPicker(list); });
         pick.addEventListener('keydown', (event) => onPickKey(list, event));

@@ -348,6 +348,7 @@ describe("within the sidebar's selection", () => {
     const ctx = await loadViewPage(t, { search: `?view=month&value=${YEAR - 1}-07`, navigator: NAVIGATOR() });
     const within = ctx.document.getElementById("library-search-within");
     assert.equal(within.disabled, false);
+    assert.ok(!ctx.document.getElementById("library-search-within-row").classList.contains("hidden"), "offered under the box");
     assert.match(ctx.document.getElementById("library-search-within-name").textContent, /July/);
     within.checked = true;
     within.dispatchEvent(new ctx.window.Event("change"));
@@ -357,6 +358,7 @@ describe("within the sidebar's selection", () => {
     assert.deepEqual(lastSearch(ctx).value, { all_of: [{ kind: "month", value: `${YEAR - 1}-07` }], words: "beach" });
     assert.deepEqual(chipTexts(ctx, "all_of"), [`Within July ${YEAR - 1}`]);
     assert.equal(within.disabled, true, "a search is no selection of the navigator");
+    assert.ok(ctx.document.getElementById("library-search-within-row").classList.contains("hidden"));
   });
 
   test("a union of many rows within, and an address it would make too long: the sentence, nothing sent", async (t) => {
