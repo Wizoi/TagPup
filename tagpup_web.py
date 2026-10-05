@@ -149,6 +149,10 @@ def main(argv=None):
                         default=runtimes.RELEASE_MODELS_AFTER_MINUTES,
                         help="let the models go when none has been used for this long; the next Suggest loads "
                              "them again; 0 keeps them (default: %(default)s)")
+    parser.add_argument("--warm-up", action="store_true",
+                        help="load the models at start, for a first Suggest that does not wait for them. "
+                             "Off by default: they load when Suggest or indexing first needs them (about 15 s), "
+                             "and sit on the graphics card only while they are used")
     parser.add_argument("--listen", choices=web.LISTEN, default=web.LOCAL,
                         help="local (the default): answer this PC only. lan: every interface, for phase 10, "
                              "when the apps have logins; until then the apps answer anyone who can reach them")
@@ -252,7 +256,7 @@ def main(argv=None):
     # Each library's migrations now, beside the serving, not in the first request (#661); a drain
     # waits for them (Lifecycle.long_work, #664).
     library_actions.bring_up_to_date_in_background(served_libraries(startup))
-    if not os.environ.get("TAGPUP_WEB_NO_WARMUP"):
+    if args.warm_up and not os.environ.get("TAGPUP_WEB_NO_WARMUP"):
         runtime.warm_up_in_background(served_libraries(startup))
     background.start()
 

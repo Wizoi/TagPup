@@ -14,6 +14,8 @@ raw, downloaded) show background work. What it asks:
 - GET /api/activity/jobs: each recurring job, why it is scheduled, and for each library
   its last runs, what each changed as counts and why a failed one failed, and when it is
   due; POST /api/activity/jobs/run runs one now, on the recurring jobs' runner.
+- POST /api/activity/models/unload: Unload models now (the server's section); /server says
+  what is loaded.
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
   watched folders, its snapshots, the always-on process, and one timeline of what was done.
 - GET /api/activity/attention: what needs the owner -- each library's photos found damaged
@@ -451,12 +453,56 @@ def snapshot_list():
 
 # ---- The always-on process ------------------------------------------------------------------
 
+def _models():
+    """What the server has loaded, for the page: names, whether a run uses them, and since when."""
+    runtime = current_app.config.get("RUNTIME")
+    if runtime is None or not hasattr(runtime, "models_state"):
+        return None
+    state = runtime.models_state()
+    after = state["release_after"]
+    if state["loaded"]:
+        used = state["last_used"]
+        text = "Loaded: %s." % " and ".join(state["loaded"])
+        if state["in_use"]:
+            text += " In use by Suggest."
+        elif used is not None:
+            text += " Last used %s ago." % _span(used)
+            if after:
+                text += " Let go after %d minutes unused." % round(after / 60)
+    else:
+        text = "Not loaded; loads when Suggest or indexing needs it."
+    return {"loaded": state["loaded"], "in_use": state["in_use"], "last_used_seconds": state["last_used"],
+            "release_after_minutes": round(after / 60, 2) if after else None, "text": text}
+
+
+def _span(seconds):
+    if seconds < 90:
+        return "%d seconds" % round(seconds)
+    return "%d minutes" % round(seconds / 60)
+
+
+@routes.post("/api/activity/models/unload")
+def unload_models():
+    """Unload models now: every model let go and the graphics card given up at once, unless
+    a Suggest run is using them, which is answered in a sentence and nothing touched."""
+    runtime = current_app.config.get("RUNTIME")
+    if runtime is None or not hasattr(runtime, "unload_models_now"):
+        return responses.error(409, "This server keeps no models.")
+    done = runtime.unload_models_now()
+    if done["busy"]:
+        return responses.error(409, "Suggest is using them: they are let go when it ends.", unloaded=[])
+    names = done["unloaded"]
+    return jsonify({"success": True, "unloaded": names, "models": _models(),
+                    "message": ("Unloaded %s; the graphics card is free." % " and ".join(names)) if names
+                    else "Nothing was loaded."})
+
+
 @routes.get("/api/activity/server")
 def server():
     lifecycle = _lifecycle()
     status = lifecycle.status()
     background = lifecycle.background
-    return jsonify({"version": status["version"], "supervised": status["supervised"],
+    return jsonify({"models": _models(), "version": status["version"], "supervised": status["supervised"],
                     "taking_work": status["taking_work"], "busy": status["busy"],
                     "running_since": _stamp(lifecycle.started), "pid": os.getpid(),
                     "background": background.names() if background is not None else [],

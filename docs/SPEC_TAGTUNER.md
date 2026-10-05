@@ -527,6 +527,7 @@ Photo actions -- rotate, delete, open in Explorer, save metadata, bulk tags, tim
 Smart Rename -- are TagPup's (`SPEC_TAGPUP_GUI.md`). TagTuner kept copies of their routes
 that its page never called; they were removed in phase 2.
 
+- `/api/activity/models/unload` (POST): as in SPEC_TAGPUP_GUI.md (served by both apps alike): lets every model go and gives the graphics card up at once; `409` with a sentence and nothing touched while a Suggest run holds one; this PC only.
 - `/api/activity/jobs/run`: Expects JSON body `{"job": string, "library": string}`. Runs the recurring job now for the library (`library` is ignored for a job not run per library), on this server's runner, on a thread of its own, forced whether or not it is due. Answered once the run is claimed or refused: `{"success": true, "started": true, "run_id", "run"}`; `{"success": false, "started": false, "why", "error"}` when a run of it is under way already, or the library is behind this version's migrations; `{"success": true, "started": null, "why"}` when it has not started within ten seconds. `404` for a job or library there is not, `409` from a server that runs no recurring jobs. The page asks first.
 
 ## Database Schema (SQLite)
