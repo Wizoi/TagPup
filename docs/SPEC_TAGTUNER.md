@@ -198,6 +198,15 @@ more doubt. The box overlay carries a large spread shadow to dim everything outs
 so it is positioned directly when the preview image is already cached rather than only
 from its load event -- otherwise the whole preview sat dimmed behind a zero-sized box.
 
+**Zoom.** Clicking the photo in Face Crop Details (Enter or Space when it has focus), or the
+Original Image, opens the full-window zoom TagPup uses (`web/common/image-zoom.js`): the
+original file from `/api/photo-file` without `size`, as stored, the pane's copy as its first
+frame. For a face the box is drawn over the original in the stored pixels, placed by the same
+fit as the picture, so letterboxing does not move it. It is not drawn over the smaller copy the
+zoom falls back to when the original cannot be drawn, and the overlay says so. Click or
+`Escape` closes it and the focus returns to the photo. Sideways photos (EXIF orientation 5-8)
+are as the pane draws them: the box stays in the stored pixels.
+
 ### 0.3 Why a face appears where it does
 
 The queue is **keyword-driven**. A face is offered under a name when its photo's

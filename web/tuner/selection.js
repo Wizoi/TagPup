@@ -43,6 +43,7 @@ export function showFaceDetails(faceId) {
     const face = state.activePersonFaces.find(f => f.id === faceId);
     if (!face) return;
 
+    state.detailFace = face;
     matchingDetailsPlaceholder.classList.add('hidden');
     matchingDetailsContent.classList.remove('hidden');
 

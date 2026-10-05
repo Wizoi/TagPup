@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="common/settings-dialog.css">
     <link rel="stylesheet" href="common/history-dialog.css">
     <link rel="stylesheet" href="common/roots-banner.css">
+    <link rel="stylesheet" href="common/image-zoom.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -122,7 +123,7 @@
                             <h3>Original Image</h3>
                         </div>
                         <div class="image-viewer">
-                            <img id="main-image" src="" alt="Selected Photo">
+                            <img id="main-image" class="zoomable" tabindex="0" role="button" title="Click to see the photo full size" src="" alt="Selected Photo">
                         </div>
                     </div>
 
@@ -267,7 +268,7 @@
                                 <h3 style="margin: 0; font-size: 16px;">Face Crop Details</h3>
                             </div>
                             <div class="sidebar-face-preview-container" style="position: relative; width: 100%; border-radius: 6px; overflow: hidden; background: var(--bg-secondary); border: 1px solid var(--border-color); margin-bottom: 15px; max-height: 220px; display: flex; align-items: center; justify-content: center;">
-                                <img id="matching-detail-img" src="" alt="Original Photo Preview" style="max-width: 100%; max-height: 220px; object-fit: contain; display: block;">
+                                <img id="matching-detail-img" class="zoomable" tabindex="0" role="button" title="Click to see the photo full size, with the face boxed" src="" alt="Original Photo Preview" style="max-width: 100%; max-height: 220px; object-fit: contain; display: block;">
                                 <div id="matching-detail-bounding-box-overlay" class="bounding-box-overlay" style="position: absolute; border: 2px solid #ef4444; box-shadow: 0 0 0 9999px rgba(0,0,0,0.4); pointer-events: none; transition: all 0.2s ease;"></div>
                             </div>
                             <div class="face-crop-row">

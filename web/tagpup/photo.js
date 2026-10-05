@@ -2,6 +2,7 @@
 // forward, opening, rotating and deleting it, and editing when it was taken.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
+import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
 import { baseName, isUnc, pathKey } from './common/paths.js';
 import { photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
@@ -10,7 +11,7 @@ import {
     btnCancelDateModal, btnCarryForward, btnCloseDateModal, btnEditDateTaken, btnSaveDateModal,
     dateTakenModal, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
     emptyState, facesSection, facesStrip, facesSummary, folderViewContent, folderViewHeader,
-    folderViewStats, imageZoom, imageZoomImg, inputAddPerson, inputAddTag, inputDateTaken,
+    folderViewStats, inputAddPerson, inputAddTag, inputDateTaken,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
 } from './elements.js';
 import { setStatus } from './status.js';
@@ -401,76 +402,30 @@ export function updateCarryForwardState() {
 //
 // Click the photo to see it as large as the window allows -- for reading the
 // writing on a sign or a name tag -- and click again, or Escape, to put it back.
-// The 800px preview is already loaded, so it is shown at once, scaled up, as the
-// image's background; the original is the image itself and paints over it when
-// it arrives. The preview stays if the original is a format the browser cannot
-// draw (TIFF, HEIC).
+// The zoom is web/common/image-zoom.js, the one both pages use; what is TagPup's is
+// which file it shows: the 800px preview the panel holds is the zoom's first frame,
+// and the original (no size: the file as it is on disk) paints over it.
 //
 // Opening it is not leaving the photo: nothing in the panel changes, so it neither
 // asks about unsaved edits nor makes any. While it is open the arrow keys do
 // nothing, rather than change the photo underneath it.
-export function isZoomOpen() {
-    return Boolean(imageZoom) && !imageZoom.classList.contains('hidden');
-}
-
 export function openZoom() {
-    if (!imageZoom || !state.activePhotoPath || !mainImage.getAttribute('src')) return;
+    if (!state.activePhotoPath || !mainImage.getAttribute('src')) return;
     const preview = mainImage.src;               // absolute, database prefix included
     const original = new URL(preview, window.location.href);
     original.searchParams.delete('size');      // no size: the file as it is on disk
-    imageZoomImg.style.backgroundImage = `url("${preview}")`;
-    imageZoomImg.src = original.href;
-    imageZoom.classList.remove('hidden');
-}
-
-export function closeZoom() {
-    if (!isZoomOpen()) return;
-    imageZoom.classList.add('hidden');
-    imageZoomImg.removeAttribute('src');       // stop a large download nobody wants now
-    imageZoomImg.style.backgroundImage = '';
+    openImageZoom(original.href, { preview, opener: mainImage });
 }
 
 export function wireZoom() {
-    if (imageZoom) {
-        mainImage.addEventListener('click', () => {
-            if (mainImage.dataset.dragged === 'true') {
-                delete mainImage.dataset.dragged;  // that was a swipe
-                return;
-            }
-            openZoom();
-        });
-        imageZoom.addEventListener('click', closeZoom);
-        imageZoomImg.addEventListener('load', () => {
-            // The original has arrived; drop the preview so a transparent PNG does
-            // not show it through.
-            if (imageZoomImg.getAttribute('src')) imageZoomImg.style.backgroundImage = '';
-        });
-        imageZoomImg.addEventListener('error', () => {
-            // Not drawable here: fall back to the preview, scaled up. Once only --
-            // the preview failing too must not loop.
-            const preview = mainImage.src;
-            if (isZoomOpen() && preview && imageZoomImg.src !== preview) {
-                imageZoomImg.src = preview;
-            }
-        });
-
-        // Captured, so it is decided before the arrow-key navigation hears it.
-        // Ctrl+S is left alone: its own listener is registered first and saves.
-        document.addEventListener('keydown', (e) => {
-            if (!isZoomOpen()) return;
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                e.stopPropagation();
-                closeZoom();
-                return;
-            }
-            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', ' ',
-                 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-        }, true);
-    }
+    wireImageZoom();
+    mainImage.addEventListener('click', () => {
+        if (mainImage.dataset.dragged === 'true') {
+            delete mainImage.dataset.dragged;  // that was a swipe
+            return;
+        }
+        openZoom();
+    });
 }
 
 /**
