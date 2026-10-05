@@ -97,7 +97,7 @@ def start_server(sandbox, db_path, port):
     log_path = os.path.join(sandbox, "data", "logs", "tagpup_web.log")
     # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
     process = processes.start([sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
-                               "--tagpup-port", str(port), "--tuner-port", str(free_port())],
+                               "--tagpup-port", str(port), "--tuner-port", str(free_port()), "--warm-up"],
                               cwd=sandbox, env=dict(os.environ, TAGPUP_HOME=sandbox),
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return process, log_path

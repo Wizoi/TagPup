@@ -92,7 +92,7 @@ def start_sandbox_server(sandbox, db_path, port):
     them, as the apps people start get. A launcher written here once served the apps bare."""
     process = processes.start(
         [sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
-         "--tuner-port", str(port), "--tagpup-port", str(free_port())],
+         "--tuner-port", str(port), "--tagpup-port", str(free_port()), "--warm-up"],
         cwd=sandbox,
         # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
         env=dict(os.environ, TAGPUP_HOME=sandbox),
