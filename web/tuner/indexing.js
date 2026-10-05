@@ -480,6 +480,7 @@ export function wireIndexing() {
     if (btnCancelQueue) {
         btnCancelQueue.addEventListener('click', () => {
             if (!confirm('Forget the folders that have not started yet?\n\n' +
+                         'A folder still waiting for the graphics card stops too, having indexed nothing. ' +
                          'The folder being indexed now carries on.')) return;
             api.json('/api/folder/index-cancel', {
                 method: 'POST',

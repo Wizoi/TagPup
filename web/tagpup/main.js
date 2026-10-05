@@ -9,7 +9,7 @@ import {
     btnAddPerson, btnAddTag, btnApplyAllSingleSugg, btnApplyTimeshift, btnBrowseFolder,
     btnBulkAddPeople, btnBulkAddTags, btnCarryForward, btnCreateDb, btnDeletePhoto, btnDeleteSelection,
     btnFolderAutoApply, btnRefreshList, btnRotateLeft, btnRotateRight, btnSaveTitle,
-    btnSelectAllThumbnails, btnSelectNoneThumbnails, btnSuggestTags, btnSuggestTitleWand,
+    btnSelectAllThumbnails, btnSelectNoneThumbnails, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand,
     btnUndo, bulkAddPeopleInput, bulkAddTagsInput, dbSelect, detailPath, folderPathInput,
     folderViewHeader, inputAddPerson, inputAddTag, inputPhotoTitle, mainImage, photoSearch
 } from './elements.js';
@@ -50,7 +50,7 @@ import {
 import {
     applyAllSingleSuggestions, applyFolderSuggestionsLevel, applySuggestedTagDirect,
     applySuggestedTitle, checkIndexingStatus, checkSuggestionsStatus, renderSuggestionsPanel,
-    startSuggestions, updateFolderAutoApplyState, updateSuggestButtonState
+    cancelSuggestions, startSuggestions, updateFolderAutoApplyState, updateSuggestButtonState
 } from './suggestions.js';
 import {
     applyTimeShift, populateCameraModelsDropdown, updateCameraHighlights,
@@ -93,6 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnBrowseFolder.addEventListener('click', browseFolder);
     wireFolderPathInput();
     btnSuggestTags.addEventListener('click', startSuggestions);
+    btnSuggestCancel.addEventListener('click', cancelSuggestions);
     btnRefreshList.addEventListener('click', refreshFolderOrView);
     
     photoSearch.addEventListener('input', filterFileList);

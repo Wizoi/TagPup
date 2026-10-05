@@ -5,7 +5,7 @@ import { samePath } from './common/paths.js';
 import { leafOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
-    btnFolderAutoApply, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
+    btnFolderAutoApply, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
     indexProgressContainer, indexProgressText, inputPhotoTitle, statusDot, statusText,
     suggestedPeopleContainer, suggestedTagsContainer, suggestionsSection, suggestProgressBar,
     suggestProgressContainer, suggestProgressText
@@ -71,6 +71,30 @@ export function startSuggestions() {
         statusDot.className = 'status-indicator-dot';
         statusText.textContent = 'Error';
         alert("Error starting suggestions: " + err.message);
+    });
+}
+
+/**
+ * Stop the folder's Suggest. While it waits -- for the folder's index, or for the graphics card another
+ * program has -- it stops at once; under way, once the photos in hand are done. What it kept stays, and
+ * the next poll says "cancelled".
+ */
+export function cancelSuggestions() {
+    const path = state.scannedFolder;
+    if (!path) return;
+    btnSuggestCancel.disabled = true;
+    api.json('/api/folder/suggest-cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_path: path })
+    })
+    .then(data => {
+        if (data.cancelled) suggestProgressText.textContent = 'Cancelling...';
+        else btnSuggestCancel.disabled = false;
+    })
+    .catch(err => {
+        btnSuggestCancel.disabled = false;
+        alert('Could not cancel Suggest: ' + err.message);
     });
 }
 
@@ -184,14 +208,18 @@ export function checkSuggestionsStatus(folderPath) {
                     suggestProgressContainer.classList.remove('hidden');
                     const total = data.total || 0;
                     const completed = data.completed || 0;
+                    if (data.message !== 'Cancelling...') btnSuggestCancel.disabled = false;
                     
                     if (data.status === 'preparing' || total === 0) {
                         suggestProgressBar.style.width = `0%`;
-                        suggestProgressText.textContent = `Preparing AI models & scanning folder...`;
+                        // What it waits for, when it waits: the folder's index, or the graphics card and who has it.
+                        suggestProgressText.textContent = data.message || `Preparing AI models & scanning folder...`;
                     } else {
                         const pct = Math.round((completed / total) * 100);
                         suggestProgressBar.style.width = `${pct}%`;
-                        suggestProgressText.textContent = `Processing: ${completed} / ${total} (${pct}%)`;
+                        suggestProgressText.textContent = data.message
+                            ? `${completed} / ${total}: ${data.message}`
+                            : `Processing: ${completed} / ${total} (${pct}%)`;
                     }
                     
                     // Merge progressive suggestions
@@ -230,6 +258,9 @@ export function checkSuggestionsStatus(folderPath) {
                     clearInterval(state.progressTimer);
                     suggestProgressContainer.classList.add('hidden');
                     updateSuggestButtonState(data.status);
+                    if (data.status === 'cancelled') {
+                        setStatus('ready', 'Suggest was cancelled; what it suggested before is kept.', { transient: false });
+                    }
                     if (data.status === 'error') {
                         statusDot.className = 'status-indicator-dot';
                         statusText.textContent = 'Error';
