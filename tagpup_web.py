@@ -235,7 +235,9 @@ def main(argv=None):
     # libraries in the data folder share -- never a library held open (#99) -- and let go
     # after they have gone unused for a while.
     idle = args.release_models_after * 60 if args.release_models_after and args.release_models_after > 0 else None
-    runtime = Runtime(idle_after=idle)
+    # It keeps its models between runs -- with 0, for good -- and gives them up, with its
+    # turn on the graphics card, when another process waits for it (tagpup.ml.gpu, #774).
+    runtime = Runtime(idle_after=idle, keep_models=True)
     # What runs beside the requests (tagpup.runtime.BACKGROUND): the recurring jobs --
     # snapshots, pruning the journal -- of every library in the data folder, in the
     # process that runs them (none a test started), and letting idle models go

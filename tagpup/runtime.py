@@ -504,16 +504,18 @@ class Runtime:
     """
 
     def __init__(self, clip=None, faces=None, build_clip=None, build_faces=None, read_only=False,
-                 idle_after=None, clock=None, card=None):
+                 idle_after=None, clock=None, card=None, keep_models=False):
         self._clip = clip
         self._faces = faces
         #: The process's turn on the graphics card (tagpup.ml.gpu), or a test's: each model
-        #: built is handed it. Kept between runs where the models are (`idle_after`), and
-        #: given up -- every model unloaded first -- when another process waits for it.
+        #: built is handed it. With `keep_models` -- the web server, which keeps its models
+        #: between runs, for `idle_after` or, without one, for good (--release-models-after
+        #: 0) -- the turn is kept with them and given up, every model unloaded first, when
+        #: another process waits for it; without (the CLI), given up as each run ends (#774).
         self.card = card if card is not None else gpu.card()
-        self.card.keep_when_idle = bool(idle_after)
+        self.card.keep_when_idle = bool(keep_models)
         self.card.on_release = self._unload_every_model
-        if idle_after:
+        if keep_models:
             # What a waiter is told while no run holds it: given up within a second or two.
             self.card.idle_what = "the TagPup server's models, kept between runs (letting go)"
         self._build_clip = build_clip or _build_clip

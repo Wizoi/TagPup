@@ -249,6 +249,42 @@ class KeptBetweenRuns(_Folder):
         self.assertIsNotNone(self.card().try_hold("warming"))
 
 
+class ModelsKeptForGood(_Folder):
+    """--release-models-after 0: the web server keeps its models for good (#774). The turn on
+    the card is kept with them, and they are unloaded only when another process waits."""
+
+    def test_the_warm_ups_models_stay_loaded(self):
+        from tagpup.core.library import Library
+        from tagpup.runtime import Runtime
+        from tagpup.services import libraries as library_actions
+        home = own_home.for_test(self)
+        library_actions.create(home.library("harbour.db"))
+        built = []
+
+        def build(settings):
+            built.append(TheRuntimesTurns.Model())
+            return built[-1]
+        card = self.card(yield_poll=0.05)
+        runtime = Runtime(build_clip=build, build_faces=build, idle_after=None, card=card, keep_models=True)
+        runtime.warm_up([Library(home.library("harbour.db"))])
+        time.sleep(0.3)
+        self.assertEqual([0, 0], [model.unloads for model in built], "the warm-up's models were let go")
+        self.assertTrue(card.holds())
+        self.assertFalse(runtime.release_idle(), "with no idle period nothing is let go")
+        self.assertEqual([0, 0], [model.unloads for model in built])
+        card.release_if_idle()
+        self.assertFalse(card.holds())
+
+    def test_the_cli_lets_go_as_its_run_ends(self):
+        from tagpup.runtime import Runtime
+        card = self.card()
+        clip = TheRuntimesTurns.Model()
+        runtime = Runtime(clip=clip, card=card)
+        runtime.gpu_turn("indexing Regatta (harbour)", (clip,)).release()
+        self.assertFalse(card.holds())
+        self.assertEqual(1, clip.unloads)
+
+
 class TheRuntimesTurns(_Folder):
     """What the runtime does with the card: a run's turn is taken when a model is used, a
     model off the card takes none, and the warm-up never makes anyone wait."""
@@ -302,7 +338,7 @@ class TheRuntimesTurns(_Folder):
             built.append(self.Model())
             return built[-1]
         card = self.card(yield_poll=0.05)
-        runtime = Runtime(build_clip=build, build_faces=build, idle_after=60, card=card)
+        runtime = Runtime(build_clip=build, build_faces=build, idle_after=60, card=card, keep_models=True)
         other = self.card().hold("indexing Breakwater (harbour)")
         runtime.warm_up([Library(home.library("harbour.db"))])
         self.assertEqual([0, 0], [model.loads + model.used for model in built], "it loaded with the card taken")
