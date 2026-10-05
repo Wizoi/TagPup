@@ -17,6 +17,9 @@ export const state = {
     sync: null,
     snapshots: null,
     server: null,
+    //: Unload models now under way (its button disabled), and what it last answered: { text, ok } or null.
+    unloading: false,
+    unloaded: null,
     //: File access: what the check last found, whether one is under way, why it failed, and the
     //: findings the owner has dealt with in this browser ({ id: true }, localStorage).
     fileAccess: null,

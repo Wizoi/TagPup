@@ -331,6 +331,48 @@ describe("Run now is asked first", () => {
   });
 });
 
+describe("Unload models now", () => {
+  const LOADED = { loaded: ["CLIP", "faces"], in_use: false, last_used_seconds: 120, release_after_minutes: 5,
+                   text: "Loaded: CLIP and faces. Last used 2 minutes ago. Let go after 5 minutes unused." };
+  const NONE = { loaded: [], in_use: false, last_used_seconds: null, release_after_minutes: 5,
+                 text: "Not loaded; loads when Suggest or indexing needs it." };
+  const button = (document) => document.getElementById("unload-models");
+
+  test("the line says what is loaded and the button unloads, asking the server once", async (t) => {
+    let models = LOADED;
+    const fake = server({ first: [
+      ["/api/activity/server", () => ({ ...SERVER, models })],
+      ["/api/activity/models/unload", () => { models = NONE; return { success: true, unloaded: ["CLIP", "faces"],
+                                                                      message: "Unloaded CLIP and faces; the graphics card is free.", models: NONE }; }],
+    ] });
+    const { document, window } = await open(t, fake);
+    await flush(window, 6);
+    const always = document.getElementById("server-body");
+    assert.match(always.textContent, /Loaded: CLIP and faces\. Last used 2 minutes ago/);
+    assert.equal(button(document).disabled, false);
+    click(window, button(document));
+    click(window, button(document));
+    await flush(window, 8);
+    assert.equal(fake.calls.filter((call) => call.method === "POST").length, 1);
+    assert.match(always.textContent, /Unloaded CLIP and faces; the graphics card is free/);
+    assert.match(always.textContent, /Not loaded; loads when Suggest or indexing needs it/);
+    assert.equal(button(document).disabled, true, "offered with nothing loaded");
+  });
+
+  test("a refusal under a running Suggest is shown as the server said it", async (t) => {
+    const fake = server({ first: [
+      ["/api/activity/server", { ...SERVER, models: { ...LOADED, in_use: true } }],
+      ["/api/activity/models/unload", { success: false, error: "Suggest is using them: they are let go when it ends.", unloaded: [] }],
+    ] });
+    const { document, window } = await open(t, fake);
+    await flush(window, 6);
+    click(window, button(document));
+    await flush(window, 8);
+    assert.match(document.getElementById("server-body").textContent, /Suggest is using them: they are let go when it ends\./);
+    assert.equal(button(document).disabled, false);
+  });
+});
+
 describe("Logs", () => {
   test("a tab for each log, the web server's first, warnings and worse by default", async (t) => {
     const fake = server();
