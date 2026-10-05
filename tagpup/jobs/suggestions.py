@@ -12,8 +12,17 @@ models are the process's, built by tagpup.runtime and given to each run by the r
 that starts it. A module-level slot the web launcher filled held them before
 (docs/findings.md, #112).
 
-A run goes "preparing" -> "running" -> "completed", or "error". Nothing but a start
-changes a folder that is preparing or running, and a start leaves one alone.
+A run goes "preparing" -> "running" -> "completed", or "error", or "cancelled" (cancel).
+Nothing but a start or a cancel changes a folder that is preparing or running, and a start
+leaves one alone.
+
+A run of a folder this process is indexing, or has queued to index -- the folder or one
+above it (tagpup.jobs.indexing.IndexQueue.indexing) -- waits for that index first, saying
+so: the index writes the vectors and faces the run would otherwise make itself, on a
+graphics card the two cannot share (docs/findings.md, #750). It then waits, if a photo
+needs a model, for this process's turn on the card (tagpup.runtime.Runtime.begin), its
+status saying who has it and since when. Cancel stops either wait at once; a run under way
+stops after the photos in hand, and what it kept stays kept.
 
 A run in a folder the library does not hold only looks (Just look; `Work.looking`, decided
 by the route from the library's own answer at the start, never by the page). It analyses
@@ -36,6 +45,8 @@ import threading
 import numpy as np
 
 from tagpup.core import paths
+from tagpup.core.gpu_turns import Cancelled
+from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import libraries, suggester
 from tagpup.services import suggestions as saved
 
@@ -49,12 +60,22 @@ WORKERS = min(4, os.cpu_count() or 1)
 MAX_LOOKED_PHOTOS = 2000
 MAX_LOOKED_FOLDERS = 3
 
+#: How often a run waiting for its folder's index looks again (seconds).
+INDEX_POLL = 1.0
+
+#: What a cancelled run says.
+CANCELLED = "Cancelled. What was suggested before is kept."
+
 #: Called with a library's key when its looking runs' memory is used, to say the process's idle registry
 #: so (the web fills it in: tagpup.web.tagpup_routes.idle_caches): each library's is its own entry.
 on_looks_use = None
 
 _runs = {}
 _runs_lock = threading.Lock()
+
+#: What a run's cancel sets (SuggestionRuns.cancels): taken now, as a test may stand in for
+#: `threading` to run a run on the thread that starts it.
+_Event = threading.Event
 
 
 def work_for(library, photos, models, looking=False, held_now=None):
@@ -71,14 +92,29 @@ def work_for(library, photos, models, looking=False, held_now=None):
     indexing finished first, is the library's and what the run found is let go (#557)."""
 
     class Work:
+        _turn = {}
+
         def photos(self):
             return photos()
+
+        def indexing(self, folder):
+            """The index of `folder` this process runs or has queued, or None
+            (tagpup.jobs.indexing.IndexQueue.indexing)."""
+            return indexing_jobs.queue_for(library).indexing(folder)
+
+        def watch(self, folder, cancelled, report):
+            """How the run's wait for the graphics card is named, stopped and told of
+            (tagpup.runtime.Runtime.begin)."""
+            name = os.path.basename(paths.stored(folder).rstrip("/\\")) or folder
+            self._turn = {"what": "Suggest %s (%s)" % (name, library.name), "cancelled": cancelled,
+                          "report": report}
 
         def begin(self):
             if models is None:
                 raise RuntimeError("Suggest has no model: this app was made without a runtime "
                                    "(tagpup.web.app.create_app(runtime=...))")
-            return models.begin(library, remember=False) if looking else models.begin(library)
+            return models.begin(library, remember=False, **self._turn) if looking \
+                else models.begin(library, **self._turn)
 
     Work.looking = looking
     Work.held_now = staticmethod(held_now) if held_now else None
@@ -151,7 +187,7 @@ def under_way():
                     folder = runs.folders.get(key) or key
                     found.append({"library": library, "folder": os.path.basename(folder.rstrip("/\\")),
                                   "status": status["status"], "completed": status.get("completed", 0),
-                                  "total": status.get("total", 0)})
+                                  "total": status.get("total", 0), "message": status.get("message", "")})
     return found
 
 
@@ -245,6 +281,8 @@ class SuggestionRuns:
         self.spellings = {}
         #: {folder key: the folder as its run was handed it}: what the Activity page names.
         self.folders = {}
+        #: {folder key: the Event its run's cancel sets}.
+        self.cancels = {}
 
     def _saved(self, folder, photos=None):
         """{photo: entry} of what the library holds for a folder's photos, each under the
@@ -365,6 +403,7 @@ class SuggestionRuns:
         self.statuses.pop(key, None)
         self.spellings.pop(key, None)
         self.folders.pop(key, None)
+        self.cancels.pop(key, None)
 
     def _keep_looking_at(self, key):
         """Make room for a folder to be looked at: the oldest folders not under way beyond
@@ -405,6 +444,7 @@ class SuggestionRuns:
                 return status["status"]
             self.statuses[key] = {"status": "preparing", "completed": done, "total": 0}
             self.folders[key] = paths.stored(folder)
+            self.cancels[key] = _Event()
             if looking:
                 self._keep_looking_at(key)
             else:
@@ -414,6 +454,74 @@ class SuggestionRuns:
         threading.Thread(target=self.run_looking if looking else self.run, args=(folder, work),
                          name="FolderSuggestionsThread", daemon=True).start()
         return "running"
+
+    def cancel(self, folder):
+        """Stop the folder's run: at once while it waits -- for the folder's index, or for
+        the graphics card -- else once the photos in hand are done; what was kept stays, and
+        no consensus is taken. True when a run was told to."""
+        key = paths.key(folder)
+        with self.lock:
+            status = self.statuses.get(key)
+            stop = self.cancels.get(key)
+            if not status or status.get("status") not in ("preparing", "running") or stop is None:
+                return False
+            stop.set()
+            status["message"] = "Cancelling..."
+        return True
+
+    def _stop_of(self, key):
+        """The Event a cancel of the folder's run sets: the one start made, or a new one
+        for a run called directly -- never one an earlier run's cancel set."""
+        with self.lock:
+            stop = self.cancels.get(key)
+            under_way = self.statuses.get(key, {}).get("status") in ("preparing", "running")
+            if stop is None or (stop.is_set() and not under_way):
+                stop = self.cancels[key] = _Event()
+            return stop
+
+    def _cancelled(self, key):
+        with self.lock:
+            stop = self.cancels.get(key)
+        return stop is not None and stop.is_set()
+
+    def _say(self, key, line):
+        """Put `line` -- what the run waits for -- in its status; None takes it away."""
+        with self.lock:
+            entry = self.statuses.get(key)
+            if entry is None:
+                return
+            if line:
+                entry["message"] = line
+            else:
+                entry.pop("message", None)
+
+    def _get_ready(self, folder, key, work, stop):
+        """Wait for the folder's index, if this process runs or has queued one, then say how
+        the run's wait for the graphics card is named, stopped and told of. Raises
+        Cancelled when the run is cancelled meanwhile."""
+        indexing = getattr(work, "indexing", None)
+        while callable(indexing):
+            try:
+                found = indexing(folder)
+            except Exception as e:
+                logger.warning("Could not tell whether %s is being indexed: %s", folder, e)
+                break
+            if not found:
+                break
+            self._say(key, "Waiting for this folder to be indexed first: %s"
+                      % (found.get("message") or found.get("status") or "queued"))
+            if stop.wait(INDEX_POLL):
+                raise Cancelled("Suggest of %s was cancelled while it waited for the index" % folder)
+        self._say(key, None)
+        watch = getattr(work, "watch", None)
+        if callable(watch):
+            watch(folder, stop.is_set, lambda line: self._say(key, line))
+
+    def _say_cancelled(self, key):
+        with self.lock:
+            entry = self.statuses.get(key) or {"completed": 0, "total": 0}
+            entry.update(status="cancelled", message=CANCELLED)
+            self.statuses[key] = entry
 
     def run(self, folder, work):
         """Suggest for each photo of a folder not yet suggested for, then take the folder's
@@ -426,6 +534,7 @@ class SuggestionRuns:
         """
         folder = paths.stored(folder)
         key = paths.key(folder)
+        stop = self._stop_of(key)
         try:
             photos = work.photos()
             if not photos:
@@ -445,6 +554,7 @@ class SuggestionRuns:
                 self.statuses.setdefault(key, {"status": "preparing", "completed": 0, "total": 0}).update(
                     status="preparing", total=len(photos), completed=len(photos) - len(todo))
 
+            self._get_ready(folder, key, work, stop)
             model = work.begin()
             try:
                 with self.lock:
@@ -457,6 +567,9 @@ class SuggestionRuns:
                         if done.result() is not None:
                             fresh.append(done.result())
 
+                if stop.is_set():
+                    self._say_cancelled(key)
+                    return
                 if fresh and key in self.statuses:
                     self._take_consensus(folder, photos, model)
                 with self.lock:
@@ -464,6 +577,10 @@ class SuggestionRuns:
             finally:
                 _end(model)
         except Exception as e:
+            if stop.is_set():
+                logger.info("Suggest of %s was cancelled.", folder)
+                self._say_cancelled(key)
+                return
             logger.exception("Error running suggestions for %s: %s", folder, e)
             # Always said, even with the entry gone, so the page stops polling instead of
             # spinning on "preparing" for ever.
@@ -481,6 +598,7 @@ class SuggestionRuns:
         read (`unread`)."""
         folder = paths.stored(folder)
         key = paths.key(folder)
+        stop = self._stop_of(key)
         try:
             photos = work.photos()
             if not photos:
@@ -504,9 +622,12 @@ class SuggestionRuns:
                 self.statuses.setdefault(key, {"status": "preparing", "completed": 0, "total": 0}).update(
                     status="preparing", total=len(photos) - len(left_out), completed=len(photos) - len(todo) - len(left_out))
 
+            self._get_ready(folder, key, work, stop)
             try:
                 model = work.begin()
             except Exception as e:
+                if stop.is_set():
+                    raise
                 raise RuntimeError("The models could not be made ready, so no photo was analysed and nothing "
                                    "was changed: %s" % e) from e
             try:
@@ -519,6 +640,9 @@ class SuggestionRuns:
                         if done.result() is not None:
                             made.append(done.result())
 
+                if stop.is_set():
+                    self._say_cancelled(key)
+                    return
                 if made and key in self.statuses:
                     self._take_consensus_in_memory(key, photos, model)
                 # What the library lacks is read from it: outside the lock a poll waits on.
@@ -531,6 +655,10 @@ class SuggestionRuns:
             finally:
                 _end(model)
         except Exception as e:
+            if stop.is_set():
+                logger.info("Suggest of %s was cancelled.", folder)
+                self._say_cancelled(key)
+                return
             logger.exception("Error analysing the photos of %s without saving: %s", folder, e)
             said = str(e).strip()
             # Whatever failed -- the scan, the models -- a run that only looks has written nothing to the library.
@@ -587,7 +715,7 @@ class SuggestionRuns:
     def _suggest_in_memory(self, key, meta, model):
         """`_suggest` that keeps the suggestion in memory only. None when the folder's run is gone or the
         photo could not be suggested for (its entry says why, and is tried again by the next run)."""
-        if key not in self.statuses:
+        if key not in self.statuses or self._cancelled(key):
             return None
         photo = paths.stored(meta["path"])
         try:
@@ -596,10 +724,15 @@ class SuggestionRuns:
             found = {"tags": tags, "people": people, "title": title,
                      "raw_suggestions": suggestion, "raw_before_consensus": True}
         except Exception as e:
+            if self._cancelled(key):
+                return None
             logger.error("Error suggesting for %s: %s", photo, e)
             suggestion = None
             found = {"tags": [], "people": [], "title": None,
                      "raw_suggestions": {"suggested_tags": []}, "error": str(e) or type(e).__name__}
+        if self._cancelled(key):
+            # Cancelled while it was made: a wait stopped part-way may have left it short.
+            return None
         with self.lock:
             if key not in self.statuses or key not in self.looks:
                 return None
@@ -631,7 +764,7 @@ class SuggestionRuns:
             logger.error("Error taking folder consensus: %s", e)
 
     def _suggest(self, key, meta, model):
-        if key not in self.statuses:
+        if key not in self.statuses or self._cancelled(key):
             return None
         photo = paths.stored(meta["path"])
         try:
@@ -642,12 +775,18 @@ class SuggestionRuns:
             found = {"tags": tags, "people": people, "title": title,
                      "raw_suggestions": suggestion, "raw_before_consensus": True}
         except Exception as e:
+            if self._cancelled(key):
+                return None
             logger.error("Error suggesting for %s: %s", photo, e)
             suggestion = None
             # Marked as a failure, not stored as an empty suggestion: the next run retries
             # it instead of skipping it for good.
             found = {"tags": [], "people": [], "title": None,
                      "raw_suggestions": {"suggested_tags": []}, "error": str(e) or type(e).__name__}
+        if self._cancelled(key):
+            # Cancelled while it was made: a wait stopped part-way -- the face model's,
+            # inside the suggester -- may have left it short of its faces. Not kept.
+            return None
         try:
             saved.keep(self.db_path, photo, plain(found), getattr(model, "model_key", None))
         except Exception as e:

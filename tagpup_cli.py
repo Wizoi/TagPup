@@ -58,6 +58,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 # Load components
 from tagpup.files.metadata import IdentityWriter, MetadataExtractor
 from tagpup.store.taxonomy import TagTaxonomy
+from tagpup.core import gpu_turns
 from tagpup.core import paths
 from tagpup.store import db as tagpup_db
 from tagpup import config as tagpup_config
@@ -67,6 +68,7 @@ from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import identities
+from tagpup.services import indexing as indexing_service
 from tagpup.services import damaged_photos
 from tagpup.services import thumbnails
 from tagpup.core import runs as run_tags
@@ -442,7 +444,31 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             return
         damaged_photos.remember(Library(db_path), [(path, stamp, kind, detail, zeros)], run=found_by)
     
+    # The index queue's Cancel, while this waits for the graphics card (tagpup.jobs.indexing).
+    stop_file = os.environ.get(indexing_service.STOP_FILE)
+    turn = None
     try:
+        # One process at a time has a model on the graphics card (tagpup.ml.gpu): its turn is
+        # taken before the first photo, waited for in order -- each change of who has it said
+        # on stdout, the server's progress line -- and held to the end of the run. Stopped
+        # while it waits, nothing has been indexed (docs/findings.md, #750).
+        names = ", ".join(os.path.basename(d.rstrip("/\\")) or d for d in directories)
+        waited = []
+
+        def say_waiting(line):
+            waited.append(line)
+            console.print(line, markup=False, soft_wrap=True)
+        try:
+            turn = runtime.gpu_turn("indexing %s (%s)" % (names, Library(db_path).name),
+                                    (embeddings.clip, face_processor),
+                                    cancelled=lambda: bool(stop_file) and os.path.exists(stop_file),
+                                    report=say_waiting)
+        except gpu_turns.Cancelled:
+            console.print(indexing_service.CANCELLED_WAITING, markup=False, soft_wrap=True)
+            raise SystemExit(indexing_service.EXIT_CANCELLED) from None
+        if waited:
+            console.print("Took the graphics card.", markup=False, soft_wrap=True)
+
         # Generate Embeddings with incremental saving (batches of 100) to protect against halts/crashes
         console.print("[bold cyan]Generating embeddings...[/bold cyan]")
         batch_embeddings = []
@@ -593,6 +619,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             if len(incomplete) > 5:
                 console.print(f"  [dim]... and {len(incomplete) - 5} more[/dim]")
     finally:
+        if turn is not None:
+            turn.release()
         identity_writer.close()
         locker.release_all()
         photo_index.close()

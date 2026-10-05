@@ -380,29 +380,40 @@ class TagSuggester:
 
         # 4b. Face recognition suggestions
         try:
-            detected_faces = []
-            has_face_rows = False
+            def on_file():
+                """(whether the photo has faces on file, those to compare)."""
+                detected, has_rows = [], False
+                if self.index and self.index.conn:
+                    try:
+                        for row in store_faces.in_photo(self.index.conn, photo_path):
+                            box_json, emb_bytes, prob, excluded, name, name_source = row
+                            has_rows = True
+                            # A face someone excluded, or decided is nobody, is not to be
+                            # named again by resemblance. It still counts as a face on
+                            # file, so the photo is not sent through detection again.
+                            if excluded or (name is None and name_source == "manual"):
+                                continue
+                            box = json.loads(box_json)
+                            emb = np.frombuffer(emb_bytes, dtype=np.float32).tolist()
+                            detected.append({
+                                "box": box,
+                                "embedding": emb,
+                                "prob": prob
+                            })
+                    except Exception as db_err:
+                        logger.warning(f"Failed to query database faces: {db_err}")
+                return has_rows, detected
 
             # Check database cache first
-            if self.index and self.index.conn:
-                try:
-                    for row in store_faces.in_photo(self.index.conn, photo_path):
-                        box_json, emb_bytes, prob, excluded, name, name_source = row
-                        has_face_rows = True
-                        # A face someone excluded, or decided is nobody, is not to be
-                        # named again by resemblance. It still counts as a face on
-                        # file, so the photo is not sent through detection again.
-                        if excluded or (name is None and name_source == "manual"):
-                            continue
-                        box = json.loads(box_json)
-                        emb = np.frombuffer(emb_bytes, dtype=np.float32).tolist()
-                        detected_faces.append({
-                            "box": box,
-                            "embedding": emb,
-                            "prob": prob
-                        })
-                except Exception as db_err:
-                    logger.warning(f"Failed to query database faces: {db_err}")
+            has_face_rows, detected_faces = on_file()
+
+            # A face model that waits for its turn on the graphics card (a Suggest run's,
+            # tagpup.runtime) is waited for first, and the library asked again: the turn
+            # may have been the index's, recording this photo's faces (#750).
+            ready = getattr(self.faces, "ready", None)
+            if not has_face_rows and callable(ready):
+                ready()
+                has_face_rows, detected_faces = on_file()
 
             # If not in database, detect and embed on-the-fly
             if not has_face_rows and self.faces is not None:

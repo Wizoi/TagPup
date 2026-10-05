@@ -8,8 +8,11 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+import uuid
 from contextlib import nullcontext
 
+from tagpup.core import gpu_turns
 from tagpup.core import paths
 from tagpup.core import processes
 from tagpup.core import runs
@@ -25,6 +28,16 @@ CLUSTER_ELSEWHERE = "%s in TagPup Runner" % CLUSTERING_BUTTON
 
 #: The kind of log the indexer writes, one file a run (tagpup.logs.run_log).
 INDEXER_LOG = "indexer"
+
+#: The file whose appearing tells the indexer to stop while it waits for its turn on the
+#: graphics card (the CLI's `index`; tagpup.ml.gpu), and what it exits with when it did:
+#: nothing was indexed. Once it has the card it carries on: a run part-way through writing
+#: rows is not stopped (tagpup.jobs.indexing.IndexQueue.cancel).
+STOP_FILE = "TAGPUP_STOP_FILE"
+EXIT_CANCELLED = 76
+
+#: What a run stopped while it waited says.
+CANCELLED_WAITING = "Cancelled while it waited for the graphics card; nothing was indexed."
 
 _INDEXER_TQDM =re.compile(r"^(.*?):\s*(\d+)%\|[^|]*\|\s*(\d+)/(\d+)")
 
@@ -67,6 +80,9 @@ def summarize_indexer_line(line):
         return None
     if any(pattern.match(clean) for pattern in _INDEXER_NOISE):
         return None
+    if gpu_turns.is_waiting(clean):
+        # Whole: who has the card and since when is the line's point.
+        return clean
 
     match = _INDEXER_TQDM.match(clean)
     if match:
@@ -95,8 +111,13 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
     Both copies of this reported "identities resolved" when cluster-faces had failed:
     its exit code was never read. It is now, and a failure is the Result's error.
 
-    details: `message`, what to tell the person; `percent`, where the bar stops.
+    details: `message`, what to tell the person; `percent`, where the bar stops;
+    `cancelled`, true when the indexer was stopped while it waited for the graphics card.
     `folder` may be a list of folders, indexed in one run of the indexer.
+
+    A `report` with a `stop_file` attribute (tagpup.jobs.indexing) is told the file that
+    stops the indexer while it waits for its turn on the graphics card: the queue's Cancel
+    creates it.
 
     Refused, and nothing run, for a folder that is not named by its full path
     (tagpup.core.validation). Without `subfolders`, only the photos directly in the
@@ -117,6 +138,10 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
     # The indexer logs to a file of its run's own in data/logs as well as to this pipe, each
     # line carrying the tags of the run it is part of (tagpup.core.runs).
     runs.child_environment(env, log_to=INDEXER_LOG)
+    stop_file = os.path.join(tempfile.gettempdir(), "tagpup-stop-%s" % uuid.uuid4().hex)
+    env[STOP_FILE] = stop_file
+    if hasattr(report, "stop_file"):
+        report.stop_file = stop_file
 
     def run(args, scale):
         proc = processes.start(
@@ -134,8 +159,20 @@ def index_folder(library, folder, code_folder, cluster=False, report=None, while
         return proc.returncode
 
     # The indexer stores the paths it walks as given, so it is handed the stored form.
-    code = run(["index"] + [paths.stored(each) for each in folders] + ([] if subfolders else ["--no-subfolders"]),
-               0.9)
+    try:
+        code = run(["index"] + [paths.stored(each) for each in folders] + ([] if subfolders else ["--no-subfolders"]),
+                   0.9)
+    finally:
+        if hasattr(report, "stop_file"):
+            report.stop_file = None
+        try:
+            os.remove(stop_file)
+        except OSError:
+            pass
+    if code == EXIT_CANCELLED:
+        result.skip(", ".join(folders), CANCELLED_WAITING)
+        result.details.update(percent=0, cancelled=True, message=CANCELLED_WAITING)
+        return result
     if code == roots_service.EXIT_ROOTS_CHANGED:
         # The indexer holds the library's roots for its whole run (tagpup.services.roots.pinned) and
         # stopped: another process changed them. Said as it is, not as an exit code.

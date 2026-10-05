@@ -18,7 +18,7 @@ import os
 import threading
 import time
 
-from tagpup.core import paths, runs
+from tagpup.core import gpu_turns, paths, runs
 from tagpup.core.result import Result
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,22 @@ def forget(library):
         _queues.pop(library.key, None)
 
 
+class _Progress:
+    """What a run of the indexer reports through: `report(message, percent)` into its
+    status, and `stop_file`, set by tagpup.services.indexing while its indexer runs: the
+    file that stops it while it waits for the graphics card."""
+
+    def __init__(self, status):
+        self.status = status
+        self.stop_file = None
+
+    def __call__(self, message=None, percent=None):
+        if message is not None:
+            self.status["message"] = message
+        if percent is not None:
+            self.status["percent"] = percent
+
+
 class IndexQueue:
     """One library's folders: those waiting, the one being indexed, and what became of
     each.
@@ -93,6 +109,9 @@ class IndexQueue:
         self._history = []
         #: The run under way: {"run", "started", "folders", "name", "status"}, or None.
         self._current = None
+        #: The folders of the run under way, and what it reports through (_Progress).
+        self._current_folders = []
+        self._progress = None
 
     def start(self, folders, index, cluster=False, together=False):
         """Queue folders to be indexed by `index(folder, cluster, report)`, which returns
@@ -158,10 +177,18 @@ class IndexQueue:
         forgetting a folder that has not begun. A dropped folder reports "cancelled":
         with its status gone, asking about it answered "completed".
 
-        details: `cancelled`, the folders dropped; `pending`, how many still wait.
+        A run still waiting for its turn on the graphics card has not begun either: named,
+        or with `everything`, it is told to stop (tagpup.services.indexing.STOP_FILE),
+        which it does within half a second, writing nothing, and its folders report
+        "cancelled" then. Its indexer decides, so a run that took the card that same moment
+        carries on (docs/findings.md, #750).
+
+        details: `cancelled`, the folders dropped; `stopping`, the folders of the run told
+        to stop; `pending`, how many still wait.
         """
         targets = {paths.key(folder) for folder in folders if folder}
         cancelled = []
+        stopping = self._stop_waiting_run(targets, everything)
         with self._lock:
             kept = []
             for job in self._pending:
@@ -177,8 +204,46 @@ class IndexQueue:
             self._pending = kept
             pending = len(kept)
         result = Result(attempted=len(cancelled) if everything else len(targets), changed=len(cancelled))
-        result.details.update(cancelled=cancelled, pending=pending)
+        result.details.update(cancelled=cancelled, stopping=stopping, pending=pending)
         return result
+
+    def _stop_waiting_run(self, targets, everything):
+        """Tell the run under way to stop if it is named (or `everything`) and still waits
+        for the graphics card: the folders told, or []."""
+        with self._lock:
+            progress, folders = self._progress, list(self._current_folders)
+        if progress is None or not folders:
+            return []
+        if not everything and not targets.intersection(paths.key(each) for each in folders):
+            return []
+        if not gpu_turns.is_waiting(progress.status.get("message")) or not progress.stop_file:
+            return []
+        try:
+            with open(progress.stop_file, "w", encoding="utf-8") as handle:
+                handle.write("stop")
+        except OSError as e:
+            logger.warning("Could not tell the indexer to stop waiting: %s", e)
+            return []
+        progress.status["message"] = "Cancelling: the run was waiting for the graphics card..."
+        return folders
+
+    def indexing(self, folder):
+        """The job that indexes `folder` -- it, or a folder above it -- running or waiting:
+        {"status": "running" or "queued", "message", "folder"}; None when none does. What a
+        Suggest of the folder waits for (tagpup.jobs.suggestions): the index writes the
+        vectors and faces it would otherwise make itself."""
+        key = paths.key(folder)
+
+        def covers(each):
+            return paths.key(each) == key or paths.is_under(key, each)
+        with self._lock:
+            if any(covers(each) for each in self._current_folders) and self._progress is not None:
+                status = self._progress.status
+                return {"status": "running", "message": status.get("message", ""), "folder": status.get("folder")}
+            for job in self._pending:
+                if any(covers(each) for each in _folders_of(job)):
+                    return {"status": "queued", "message": "Waiting to be indexed...", "folder": job["folder"]}
+        return None
 
     def status(self, folder):
         """Where a folder has got -- queued, running, completed, failed or cancelled --
@@ -273,13 +338,19 @@ class IndexQueue:
                                      "folders": len(_folders_of(job)), "name": os.path.basename(job["folder"]),
                                      "parents": list(job.get("parents") or ()), "status": status}
                     run = self._current["run"]
+                    progress = self._progress = _Progress(status)
+                    self._current_folders = list(_folders_of(job))
                     # A batch's folders share one status: they are one run.
                     for each in _folders_of(job):
                         self._statuses[paths.key(each)] = status
                 # Every line the run logs here carries its tag, and the indexer it starts is
                 # told it (tagpup.services.indexing).
-                with runs.running(*(job.get("parents") or ()), run):
-                    self._index(job, status)
+                try:
+                    with runs.running(*(job.get("parents") or ()), run):
+                        self._index(job, progress)
+                finally:
+                    with self._lock:
+                        self._progress, self._current_folders = None, []
                 self._remember(job, status)
         finally:
             # Only this worker's own entry: a newer one may have started already.
@@ -309,20 +380,17 @@ class IndexQueue:
             self._runner.start()
 
     @staticmethod
-    def _index(job, status):
-        def report(message=None, percent=None):
-            if message is not None:
-                status["message"] = message
-            if percent is not None:
-                status["percent"] = percent
-
+    def _index(job, report):
+        status = report.status
         try:
             result = job["index"](job["folders"] if "folders" in job else job["folder"], job["cluster"], report)
         except Exception as e:
             logger.exception("Indexing %s failed", job["folder"])
             status.update(status="failed", percent=0, message="Error: %s" % e)
             return
-        if result.ok:
+        if result.details.get("cancelled"):
+            status.update(status="cancelled", percent=0, message=result.details.get("message", "Cancelled."))
+        elif result.ok:
             status.update(status="completed", percent=result.details.get("percent", 100),
                           message=result.details.get("message", "Folder indexed."))
         else:

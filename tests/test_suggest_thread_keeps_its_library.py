@@ -40,7 +40,7 @@ class FakeModels:
         self.began = []
         self.suggested_on = set()
 
-    def begin(self, library):
+    def begin(self, library, **turn):
         self.began.append((library, threading.current_thread().name))
         return FakeModel(self)
 
