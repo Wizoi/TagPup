@@ -78,9 +78,16 @@ def folder():
         global _test_folder
         if _test_folder is None:
             _test_folder = tempfile.mkdtemp(prefix="tagpup_gpu_test_")
-            atexit.register(shutil.rmtree, _test_folder, True)
+            atexit.register(_remove_test_folder, _test_folder)
         return _test_folder
     return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "TagPup", "gpu")
+
+
+def _remove_test_folder(where):
+    """At a test process's exit: end its turn, whatever still holds it -- an open card.lock
+    cannot be deleted -- and delete the folder."""
+    _card.close()
+    shutil.rmtree(where, True)
 
 
 def on_the_card(device):
@@ -335,6 +342,22 @@ class Card:
             self._yielding = True
         self._let_go()
         return True
+
+    def close(self):
+        """End this process's turn now, whatever holds it, unloading nothing: for a test's
+        cleanup and a test process's exit, where the folder it is in is to be deleted."""
+        with self._cond:
+            fd, self._fd = self._fd, None
+            self._held_in = self._since = self._said = None
+            self._users = []
+            self._pinned = self._yielding = False
+            if fd is not None:
+                try:
+                    _unlock(fd)
+                except OSError:
+                    pass
+                os.close(fd)
+            self._cond.notify_all()
 
     # ---- Taking and giving up ---------------------------------------------------------
 

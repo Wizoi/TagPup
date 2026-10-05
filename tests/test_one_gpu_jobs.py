@@ -224,7 +224,11 @@ class SuggestWaitsForTheCard(_Library):
         self.clip = _CudaClip()
         self.card = gpu.Card(poll=0.05)
         self.runtime = Runtime(clip=self.clip, faces=_CudaFaces(), card=self.card)
-        self.other = gpu.Card(poll=0.05).hold("indexing Lighthouse (harbour)")
+        other = gpu.Card(poll=0.05)
+        # Every turn ends before the home is deleted: an open card.lock cannot be (#775).
+        self.addCleanup(self.card.close)
+        self.addCleanup(other.close)
+        self.other = other.hold("indexing Lighthouse (harbour)")
         self.addCleanup(self.other.release)
 
     def start(self):

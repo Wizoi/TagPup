@@ -41,6 +41,16 @@ print("RELEASED " + what, flush=True)
 
 DEADLINE = 20
 
+#: A test process that takes its turn on the default card -- in the folder a test run is
+#: given, TAGPUP_GPU_LOCK unset -- says the folder, and ends without letting go.
+LEAVES_IT_HELD = """
+import os, sys
+sys.path.insert(0, os.getcwd())
+from tagpup.ml import gpu
+gpu.card().hold("Suggest Regatta (harbour)")
+print(gpu.folder(), flush=True)
+"""
+
 
 def until(condition, seconds=DEADLINE, step=0.02):
     """Wait for `condition()`; whether it came true."""
@@ -55,8 +65,8 @@ def until(condition, seconds=DEADLINE, step=0.02):
 class _Folder(unittest.TestCase):
     def setUp(self):
         self.where = tempfile.mkdtemp(prefix="tagpup_gpu_")
-        self.addCleanup(own_home.remove, self.where)
         self.children = []
+        self.cards = []
 
     def tearDown(self):
         for child in self.children:
@@ -65,10 +75,17 @@ class _Folder(unittest.TestCase):
                 child.wait(timeout=30)
             if child.stdout:
                 child.stdout.close()
+        # Every turn a test took ends here, so its folder goes with it (#775): an open
+        # card.lock cannot be deleted, and a folder was left in %TEMP% for each.
+        for card in self.cards:
+            card.close()
+        self.assertTrue(until(lambda: own_home.remove(self.where), 10), "left behind: %s" % self.where)
 
     def card(self, **kwargs):
         kwargs.setdefault("poll", 0.05)
-        return gpu.Card(self.where, **kwargs)
+        card = gpu.Card(self.where, **kwargs)
+        self.cards.append(card)
+        return card
 
     def holder(self, what):
         """A process holding the card as `what` until release(what) -- once it says so."""
@@ -171,6 +188,17 @@ class AWaitThatIsCancelled(_Folder):
         outcome["hold"].release()
 
 
+class ATestRunsFolder(unittest.TestCase):
+    def test_is_deleted_when_the_process_ends_holding_the_card(self):
+        env = {key: value for key, value in os.environ.items() if key != gpu.ENV}
+        env["TAGPUP_NO_MODEL_WEIGHTS"] = "1"
+        done = processes.run([sys.executable, "-c", LEAVES_IT_HELD], capture_output=True, text=True,
+                             cwd=WORKSPACE_DIR, env=env, timeout=60)
+        folder = done.stdout.strip()
+        self.assertTrue(os.path.basename(folder).startswith("tagpup_gpu_test_"), done.stdout + done.stderr)
+        self.assertFalse(os.path.exists(folder), "a test run's lock folder was left behind (#775)")
+
+
 class InOrder(_Folder):
     def test_waiters_take_it_in_the_order_they_asked(self):
         held = self.card().hold("indexing Quay (harbour)")
@@ -202,7 +230,9 @@ class InOrder(_Folder):
         self.assertTrue(card.holds())
         two.release()
         self.assertFalse(card.holds())
-        self.assertIsNotNone(self.card().try_hold("indexing Quay (harbour)"))
+        took = self.card().try_hold("indexing Quay (harbour)")
+        self.assertIsNotNone(took)
+        took.release()
 
 
 class KeptBetweenRuns(_Folder):
@@ -246,7 +276,9 @@ class KeptBetweenRuns(_Folder):
         other.release()
         thread.join(DEADLINE)
         outcome["hold"].release()
-        self.assertIsNotNone(self.card().try_hold("warming"))
+        took = self.card().try_hold("warming")
+        self.assertIsNotNone(took)
+        took.release()
 
 
 class ModelsKeptForGood(_Folder):
