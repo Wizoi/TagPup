@@ -183,6 +183,16 @@ export const libraryStripSource = document.getElementById('library-strip-source'
 export const libraryStripTotal = document.getElementById('library-strip-total');
 export const libraryStripStatus = document.getElementById('library-strip-status');
 export const btnLibraryRefresh = document.getElementById('btn-library-refresh');
+// The search box of the Library pane (search.js, phase 9e-2)
+export const librarySearchWords = document.getElementById('library-search-words');
+export const btnLibrarySearch = document.getElementById('btn-library-search');
+export const btnLibrarySearchClear = document.getElementById('btn-library-search-clear');
+export const btnLibrarySearchFilters = document.getElementById('btn-library-search-filters');
+export const librarySearchFilters = document.getElementById('library-search-filters');
+export const librarySearchWithin = document.getElementById('library-search-within');
+export const librarySearchWithinRow = document.getElementById('library-search-within-row');
+export const librarySearchWithinName = document.getElementById('library-search-within-name');
+export const librarySearchNote = document.getElementById('library-search-note');
 // Sort by, in a view's header, and its menu (sort-menu.js, #714)
 export const btnSortBy = document.getElementById('btn-sort-by');
 export const sortByCurrent = document.getElementById('sort-by-current');

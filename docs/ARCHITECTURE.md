@@ -937,7 +937,8 @@ click in a real browser on a sandbox copy (CLAUDE.md, "Performance work"):
   through the same journaled writes (History lists and undoes them); a file changed
   outside while an edit is planned is a conflict for sync to settle, never overwritten.
 - **9e. Search.** *(9e-1, the server's half -- a search as a source, migration 24's word index -- built 2026-10-04, see "Phase
-  9e-1" below; 9e-2, the page, to come.)* A search is a source: *all of* these tags or people, *any of* those,
+  9e-1" below; 9e-2, the page -- the Library pane's search box, the picker, a search as a view -- built 2026-10-04, see "Phase
+  9e-2" below.)* A search is a source: *all of* these tags or people, *any of* those,
   *none of* these, and words matched against file name, tags, captions and people (as
   Photo Gallery's search box did), optionally within the folder, tag or date the
   navigator has selected. Built on `photo_tags` and `photo_people` as set operations in
@@ -2284,6 +2285,103 @@ Server and store only; the page's search box and picker are 9e-2's, and this is 
   quoted phrase typed as one term ("rowan_coast") must be in one column. Camera make
   and model and the author are not words yet (the owner's call). The words of a photo's people are the names as `photo_people`
   holds them, so a rename shows in a search as it shows in the navigator. CLIP (semantic) search is not 9e.
+
+### Phase 9e-2: the search page *(built 2026-10-04; branch `arch/phase-9e2-search-page`)*
+The page's half of 9e, over 9e-1's contract; no server change. `web/tagpup/search.js` (the box, the picker, the chips),
+`search-model.js` (what the picker offers and a chip says, as data), and a new kind of view in `library-source.js`.
+
+- **Where the box is** *(decided)*: at the top of the **Library pane**, above the navigator's tabs -- not in the floating header
+  (#713). A search is a way to open a view, so it is there with no view open; it sits beside the navigator whose selection it
+  can look within; and the header stays one line at 1,600 px (it is 163 px at 1,000 already). Organize's "Filter files" box is
+  the folder's list filter and stays Organize's (in a view its tooltip points at the Library pane's box). As WLPG's: words in
+  one box and the filters beside it -- a **Filters** toggle opens All of, Any of and None of, each a row of chips and a picker.
+  **Within the sidebar's selection** is a checkbox under the box, shown only while the navigator's rows are the view open,
+  naming them (#713's header is untouched).
+- **A search is a view of kind `search`** (`LIBRARY_KINDS`): `searchValue` keeps its value in the contract's one order (`all_of`,
+  `any_of`, `none_of`, `words`, empty parts left out, a source named twice in a list once, words' blanks made single), so
+  `sameView` compares one text and the same search asked twice asks once. It is always POSTed (`idsRequest`), like a union. The
+  address is `?view=search&value=<JSON>&order=`; `viewSpecFromSearch` refuses with a sentence, no request, a part it does not know,
+  a search in a search, a list over 1,000, words over 500, JSON that is not an object, and a search that asks for nothing. The
+  header names it ("Search: “beach”; all of Trips/Coast and Rowan Thackeray; none of Places/Home", three of a list and "N more"); an
+  empty one says "Nothing in the library matches this search." The selection, the tally, every bulk edit and Delete carry
+  `{kind: 'search', value, recursive}` unchanged (a test: Select all's tally names the search). The navigator selects no row of a
+  search (`membersOf` is `[]`), so a Ctrl-click in a search starts a selection again rather than make a union holding a search,
+  which the server refuses.
+- **Words are searched on Enter** (or the Search button), *decided over a pause*: each search is a new view -- the grid rebuilt,
+  the selection cleared, the address changed -- and every term is matched as a prefix, so a half-typed word finds a broad set
+  (a common word: 16,203 photos, 94 KB of ids); searching on a pause would clear a selection and redraw the grid while the
+  person is still typing. The picker completes as it is typed: it asks nothing per key (photo_index's 895 keyword nodes and
+  413 people, counted read-only, are filtered in the page).
+- **One source of names** *(decided)*: the picker offers what the navigator's rows are -- `readSectionIndex('keywords')` and
+  `('people')` (navigator.js; a read already under way is waited for, not repeated) -- because a member is exactly a row's
+  source. People by name, by the store's one rule (`person_ids`); every node of the tag tree as its path, but a filed person's
+  own node (`<branch>/<name>`), who is offered by name. **A name that is a branch is never a person** (#660): the people answer
+  lists "Family" when a photo is tagged People/Family, unfiled; a person not filed whose name is a branch of the answer's
+  `groups` is not offered as a person, the branch is offered as the tag (photo_index: 4 such names, each a group of the answer;
+  kr-track and renton_parkrun: none -- counted read-only 2026-10-04). Not `/api/tags` and `/api/people`: those are the edit
+  fields' lists (tags typed into photos, names on faces). Best first: a name that starts with what is typed, then a word of it,
+  then one that holds it; people before tags; then alphabetically; 30 shown, "N more: keep typing".
+- **Keys**: the pickers are ARIA comboboxes (`aria-activedescendant`); ArrowDown and ArrowUp move, Enter adds (the first name if
+  none is chosen; a name of no tag or person is a sentence, nothing added), Escape closes the list and a second empties the box,
+  Backspace on an empty box takes the last chip off, Tab closes; Enter in an empty picker searches. A chip's x is a button named
+  "Take Trips/Coast off All of"; the focus goes to the next chip or the box. A mousedown on a name keeps the focus in the box.
+- **When it runs, and the history** *(decided)*: a chip added or taken off searches at once, as a navigator click does; ticking
+  Within does when there is something to search. A search started from another view is a new place; a change while a search is
+  open **replaces** it, so Back from any search returns to the view before it. That place's history state holds `searchBack`
+  (1, or one more for each search after it in a new place -- a sort; 0 when not known: a search opened by its address), and
+  **Clear** (the x, or a search emptied of its words and its last chip) is `history.go(-searchBack)`, or, for a
+  bookmarked search, closes the view as a new place (`closeViewAsNewPlace`). The box mirrors the view (`searchFollows`, called from
+  `libraryChanged`, `closeLibraryView` and the stay of "Save changes?" through `upper`): a search opened -- by the box, a bookmark,
+  Back, Forward -- puts its words and chips in the box; leaving a search empties them; a move between two views that are not
+  searches leaves what is typed alone (type, then click a year and tick Within). Within becomes the first member of All of and
+  is shown from then on as a chip "Within July 2021" (a keyword or person selection is its own chip: the same member).
+- **How it fails**, each a test (`tests/frontend/search-page.test.mjs`; 23 of its 24 fail on the trunk, the 24th guards
+  `VIEW_PARAMS`): rapid Enter (the same search twice asks once; a second search while the first is out wins, the first answer
+  dropped by the view's identity); a search with no result; words of only punctuation (a sentence, nothing sent; beside a chip
+  they are left out and said so; "..." is three characters and sent, as the server looks for it in file names); the vocabulary
+  changing while the picker is in use -- the tag editor renames Trips/Coast, the picker offers Trips/Shore when the focus comes
+  back to it and the chip already added is marked (dashed, struck through, its tooltip "the library has no such tag now: this
+  finds nothing"); the tag editor's edits now mark the navigator's counts out of date (`gear.js`), which they did not; a bookmark
+  naming a tag that is gone (the chip so marked, the search sent, the empty view says why); an address over `MAX_ADDRESS` (a
+  union of 375 share folders within, a 400-letter word: the sentence by the box, nothing sent, the view as it was); a bookmark of
+  1,000 people in Any of (one request, 50 chips and "and 950 more"; a 1,001st refused with a sentence); five addresses that are no
+  search; markup in a tag (text, no element); the server's **400** (its sentence by the box and in the strip); **503** with
+  Retry-After (#753: the sentence in the strip, asked again after each Retry-After, at most 30 s each, until a minute of them has
+  passed -- twelve asks after the first at 5 s -- then the view fails with the sentence; a view replaced meanwhile asks nothing
+  more, its timer cleared by `destroyLibrary`); going to another library drops the search with the view's parameters. Found by
+  the tests on the way: the picker took a section read under way for fresh (`loadSection` marks it not stale as it starts) and
+  painted the old names.
+- **Measured** with `scripts/measure_search.py --run` on a sandbox copy of photo_index (68,324 photos; migration 24 by the served
+  code 5.9 s), headless Chromium 1,600 x 1,000, a fresh browser each, three rounds, medians (range), thumbnails a 1-pixel picture;
+  from the key or click to the first window painted and the main thread idle; no long task in any:
+
+  | the action | painted and idle | the ids request | photos |
+  |---|---|---|---|
+  | (a) a common caption word (9,531 captions hold it), Enter | 336 ms (327-517) | 226 ms, 94 KB | 16,203 |
+  | (b) All of three tags, the third Enter | 136 ms (136-139) | 29 ms | 5 |
+  | (c) Any of two people, None of the largest tag, the last Enter | 253 ms (221-272) | 165 ms, 52 KB | 22,867 |
+  | (d) the word within the year with the most photos (5,579), Enter | 136 ms (120-173) | 26 ms | 62 |
+  | (e) Select all of None of the largest tag, to the tally's tags and people painted | 879 ms (878-937) | the tally 349 ms, 33 KB | 65,949 |
+
+  (e) is the tally's 250 ms pause, its request and the panel; the search adds nothing to it. There is no trunk to compare: the
+  page had no search. An earlier run on the same copy gave (a) 512 ms (ids 115 ms): these move by a factor of two run to run.
+- **The review (#768-#772)**, each a test that failed on the code before it:
+  - #768: the picker reads its names again on the navigator's own pause after writes (`NAV_COUNTS_MS`, inside its timer, after
+    the tab's own read whose answer it shares), once for a run of saves, not once a save.
+  - #769: Within and the box's words change only when a search view has opened (`searchFollows`): Cancel on "Save changes?"
+    after Enter keeps Within ticked and the words; after Clear keeps the search and its words.
+  - #770: every place the page makes in the history carries this load's id and its position (`state.entries`; positions are
+    consecutive, as a new place drops those after it); Back or Forward cancelled for unsaved edits goes back to the place the page
+    shows (`history.go`), whose own state (`searchBack`) is then right, and that return asks nothing (the address names what is
+    shown). When a position is not known (a place another load made, or one a folder's address replaced with `{}`), the place
+    moved to takes the view's address and its own state less `searchBack`: Clear then closes the view rather than go to a wrong place.
+  - #771: Enter while the picker's names are being read waits for them ("Reading the library's tags and people..."), then adds
+    the first offered.
+  - #772: a section the library could not answer is asked again only when the picker's box is focused again, not on each key;
+    when one of the two fails the list says so ("Could not read the library's tags, so only people are offered: ...").
+- **Known limits.** A list shows 50 chips; the rest of a long bookmarked list are counted and can be taken off only by Clear. A
+  chip's mark (a tag or person gone) is as the navigator last read the section: a rename made in another tab shows when the
+  picker or the navigator reads again. Back steps over the changes made to an open search (decided above).
 
 ### Identity by id *(owner, 2026-10-02; `photo_tags` built in 9a-1; stage 1, the id beside the name, built 2026-10-04 on `arch/identity-by-id`, migration 21; stage 2 design)*
 Today a person is a leaf name in `faces.name`, `photo_people.name` and the suggester, and a tag

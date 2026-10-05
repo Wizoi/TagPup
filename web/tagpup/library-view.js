@@ -8,7 +8,9 @@
 // The address is the view: `?view=<kind>&value=<value>[&recursive=1]` (library-source.js,
 // viewSpecFromSearch), pushed when a view is opened, so Back and Forward move between views and
 // folders, and a bookmark opens one. A `?view` wins over a `?path`. The navigator (navigator.js) opens views
-// through here and follows them (phase 9c): `upper.navigatorFollows` as one opens or closes.
+// through here and follows them (phase 9c): `upper.navigatorFollows` as one opens or closes; so does the search box
+// (search.js, phase 9e-2: `upper.searchFollows`). A search's place in the history says how many places back the view before
+// it is (`searchBack`), so clearing the search returns to that view.
 import { VIEW_PARAMS } from './common/library.js';
 import { baseName } from './common/paths.js';
 import { upper } from './hooks.js';
@@ -33,7 +35,7 @@ import {
     destroyLibrary, forgetCards, loadLibraryIds, newLibrary, sameView, viewLabel, viewSearch, viewSpecFromSearch
 } from './library-source.js';
 
-const SEARCH_OFF = 'Search arrives with the library views’ later stages.';
+const SEARCH_OFF = 'A library view has no file list to filter: search the library from the Library pane’s search box.';
 
 /** Is this the view that is open (the same source in the same order)? */
 function isOpen(spec) {
@@ -126,7 +128,9 @@ export function libraryChanged() {
     libraryStripTotal.textContent = total;
     libraryStripTotal.classList.toggle('hidden', !total);
     let status = lib.notice;
-    if (lib.loading && lib.status !== 'loading') {
+    if (lib.waiting) {
+        status = lib.waiting;        // the library asked to be asked again: a 503 with Retry-After (library-source.js)
+    } else if (lib.loading && lib.status !== 'loading') {
         status = 'Refreshing...';
     } else if (lib.status === 'error') {
         status = lib.message;
@@ -134,7 +138,7 @@ export function libraryChanged() {
         status = lib.message;
     }
     libraryStripStatus.textContent = status || '';
-    libraryStripStatus.classList.toggle('library-strip-problem', lib.status === 'error' || Boolean(lib.notice));
+    libraryStripStatus.classList.toggle('library-strip-problem', lib.status === 'error' || Boolean(lib.notice) || Boolean(lib.waiting));
     libraryStripStatus.title = status || '';
     btnLibraryRefresh.disabled = lib.invalid || lib.loading;
     upper.showSortOrder();
@@ -145,6 +149,7 @@ export function libraryChanged() {
     document.title = `${label} — TagPup`;
     updateListStats();
     updatePhotoPosition();
+    upper.searchFollows();   // the search box shows the search that is open, and what the library said of it
 }
 
 // ---- The address ---------------------------------------------------------------------------
@@ -157,13 +162,39 @@ function saveScroll() {
     }
 }
 
-function writeAddress(spec, mode) {
+/**
+ * How many places back the view before a search is, for the search's own place: 1 from another view, a folder or nothing; one
+ * more than the search it replaces in a new place (a sort of it); 0 when that is not known (a search opened by its address).
+ */
+function searchBackOf(previous) {
+    if (!previous || previous.invalid || previous.kind !== 'search') return 1;
+    const here = Number(window.history.state && window.history.state.searchBack);
+    return here > 0 ? here + 1 : 0;
+}
+
+/**
+ * A new place in the history, tagged with its position when the place the page is at has one (#770): positions are consecutive,
+ * since a new place drops the places after the one it is made from.
+ */
+function pushEntry(entry, url) {
+    const at = state.entries.at;
+    const pos = at === null ? null : at + 1;
+    window.history.pushState(pos === null ? entry : { ...entry, entryLoad: state.entries.load, entryPos: pos }, '', url);
+    state.entries.at = pos;
+}
+
+/** The position of a place in the history this load made, or null. */
+function positionOf(entry) {
+    return entry && entry.entryLoad === state.entries.load && Number.isInteger(entry.entryPos) ? entry.entryPos : null;
+}
+
+function writeAddress(spec, mode, back = 0) {
     if (mode === 'none' || spec.error) return;
     const url = new URL(window.location.href);
     url.search = viewSearch(spec);
     if (mode === 'push') {
         saveScroll();
-        window.history.pushState({}, '', url);
+        pushEntry(back > 0 ? { searchBack: back } : {}, url);
     } else {
         window.history.replaceState(window.history.state, '', url);
     }
@@ -190,14 +221,48 @@ export function openLibraryView(spec, { history = 'push', scrollTop = 0 } = {}) 
     leavePhotoThen(() => beginView(spec, history, scrollTop), { onStay: keepAddress });
 }
 
-/** The person stayed on the photo: the address goes back to the place the page is still at. */
+/** The person stayed on the photo: the address goes back to the place the page is still at, and the search box with it. */
 function keepAddress() {
     const lib = state.library;
     if (lib && !lib.invalid) writeAddress(lib, 'replace');
+    upper.searchFollows({ force: true });
+}
+
+/**
+ * The person stayed on the photo after Back or Forward had already moved the history (#770): the history goes back to the place
+ * the page shows (`from`), whose own state -- a search's `searchBack` -- is then the place's again; the popstate of that return
+ * names what is shown and asks nothing. When either position is not known, the place moved to is given the view's address and
+ * the view's own state, less `searchBack`, which no longer says where the view before the search is (Clear then closes the view).
+ */
+function stayAfterMove(from, to) {
+    if (from !== null && to !== null && from !== to) {
+        window.history.go(from - to);
+        upper.searchFollows({ force: true });
+        return;
+    }
+    const lib = state.library;
+    if (lib && !lib.invalid) {
+        const kept = { ...(lib.entryState || {}) };
+        for (const name of ['searchBack', 'entryLoad', 'entryPos', 'scrollTop']) delete kept[name];
+        const here = window.history.state || {};
+        if (positionOf(here) !== null) Object.assign(kept, { entryLoad: here.entryLoad, entryPos: here.entryPos });
+        const url = new URL(window.location.href);
+        url.search = viewSearch(lib);
+        window.history.replaceState(kept, '', url);
+    }
+    upper.searchFollows({ force: true });
+}
+
+/** Does the address name what the page shows: the view open, or no view while none is? A return to it asks nothing. */
+function addressNamesWhatIsShown() {
+    const spec = viewSpecFromSearch(window.location.search);
+    if (!spec) return !state.library;
+    return !spec.error && isOpen(spec);
 }
 
 function beginView(spec, history, scrollTop) {
     const previous = state.library;
+    const back = !spec.error && spec.kind === 'search' ? searchBackOf(previous) : 0;
     if (previous) destroyLibrary(previous);
     else quietTheFolder();
     const lib = newLibrary(spec.error ? { kind: 'all' } : spec);
@@ -212,7 +277,8 @@ function beginView(spec, history, scrollTop) {
     state.lastSelectedPath = null;
     state.folderPhotos = [];
     forgetBanner();            // what the disk held of the view before is not this view's
-    writeAddress(spec, history);
+    writeAddress(spec, history, back);
+    lib.entryState = { ...(window.history.state || {}) };   // the state of its place in the history (#770)
     showChrome();
     upper.navigatorFollows();  // the sidebar shows the source, in the tab it belongs to
     openFolderView();          // the grid, empty: 'Opening the view...' until the order is here
@@ -261,6 +327,7 @@ export function closeLibraryView({ folder = '' } = {}) {
     hideChrome();
     lockBulkControls();
     upper.navigatorFollows();   // no source is open: the sidebar goes back to the pane a folder view has
+    upper.searchFollows();      // and the search box, if it showed a search, is empty
     if (folder) {
         folderPathInput.value = folder;
         scanFolder(false);
@@ -287,9 +354,24 @@ export function closeViewOntoFolder(folder) {
         const url = new URL(window.location.href);
         for (const name of VIEW_PARAMS) url.searchParams.delete(name);
         saveScroll();
-        window.history.pushState({}, '', url);
+        pushEntry({}, url);
         closeLibraryView({ folder });
         upper.choosePane('folder');
+    });
+}
+
+/**
+ * Close the view onto nothing, as a new place in the history (Back returns to the view): a search cleared that no view came
+ * before in this page (it was opened by its address). Asks first about edits in the open photo.
+ */
+export function closeViewAsNewPlace() {
+    leavePhotoThen(() => {
+        if (!state.library) return;
+        const url = new URL(window.location.href);
+        for (const name of VIEW_PARAMS) url.searchParams.delete(name);
+        saveScroll();
+        pushEntry({}, url);
+        closeLibraryView();
     });
 }
 
@@ -397,10 +479,17 @@ export function openViewFromAddress() {
 
 export function wireLibraryView() {
     btnLibraryRefresh.addEventListener('click', refreshLibraryView);
+    // This place in the history is the first this load knows: position 0 (#770).
+    window.history.replaceState({ ...(window.history.state || {}), entryLoad: state.entries.load, entryPos: 0 }, '');
+    state.entries.at = 0;
     window.addEventListener('popstate', (event) => {
         // Back or Forward between a folder and a view, or between two views.
+        const from = state.entries.at;
+        const to = positionOf(event.state);
+        state.entries.at = to;
+        if (addressNamesWhatIsShown()) return;   // a cancelled move put back (stayAfterMove): nothing to show, nothing to ask
         if (hasUnsavedEdits() || openPhotoWrite()) {
-            leavePhotoThen(() => showAddress((event.state && event.state.scrollTop) || 0), { onStay: keepAddress });
+            leavePhotoThen(() => showAddress((event.state && event.state.scrollTop) || 0), { onStay: () => stayAfterMove(from, to) });
             return;
         }
         showAddress((event.state && event.state.scrollTop) || 0);

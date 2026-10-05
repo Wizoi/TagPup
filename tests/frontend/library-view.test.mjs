@@ -182,7 +182,7 @@ describe("opening a view from the address", () => {
     assert.ok(ctx.document.getElementById("btn-toggle-rename").classList.contains("hidden"), "Smart Rename is Organize's (#669)");
     assert.ok(ctx.document.getElementById("btn-toggle-timeshift").classList.contains("hidden"), "and so is the time shift (#669)");
     assert.equal(ctx.document.getElementById("photo-search").disabled, true);
-    assert.match(ctx.document.getElementById("photo-search").title, /later stages/);
+    assert.match(ctx.document.getElementById("photo-search").title, /Library pane’s search box/);
   });
 
   test("a ?view wins over the remembered ?path", async (t) => {

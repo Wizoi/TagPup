@@ -25,6 +25,7 @@
 // opened in is the one the next view is opened in (state.nav.order), whichever tab it is opened from.
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
+import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
     sidebarPaneFolder, sidebarPaneLibrary, sidebarSwitch, sidebarTabFolder, sidebarTabLibrary
@@ -155,7 +156,7 @@ function loadSection(name, quiet) {
         sec.message = '';
     }
     paintIfShown(name);
-    return api.fetch(`/api/library/navigator?section=${name}`)
+    const asking = api.fetch(`/api/library/navigator?section=${name}`)
         .then(res => res.json().catch(() => ({})).then(body => ({ ok: res.ok, status: res.status, body })))
         .then(({ ok, status, body }) => {
             if (token !== sec.asked) return;             // a newer ask is out: this answer is not the section's
@@ -181,7 +182,25 @@ function loadSection(name, quiet) {
             sec.status = sec.index ? 'ready' : 'error';
             sec.message = err.fromServer ? err.message : `Could not read the ${cfg.noun} (${err.message}).`;
             paintIfShown(name);
+        })
+        .finally(() => {
+            if (sec.pending === asking) sec.pending = null;
         });
+    sec.pending = asking;
+    return asking;
+}
+
+/**
+ * A section's index for another feature -- the search's picker reads the keywords and the people from here, the names the
+ * navigator's rows are (search.js): resolves the index, read first when it has not been or its counts are out of date (an
+ * ask already under way is waited for, not repeated), or null when it cannot be read (`state.nav.sections[name].message` says
+ * why). Paints the section only if it is on screen.
+ */
+export function readSectionIndex(name) {
+    const sec = state.nav.sections[name];
+    if (sec.pending) return sec.pending.then(() => sec.index);
+    if (sec.index && !sec.stale) return Promise.resolve(sec.index);
+    return loadSection(name, true).then(() => sec.index);
 }
 
 /** Read a section if it has not been, or its counts are out of date; draw it either way. */
@@ -211,6 +230,9 @@ export function navigatorCountsChanged({ now = false } = {}) {
     nav.timer = window.setTimeout(() => {
         nav.timer = null;
         if (nav.shown === 'library') ensureLoaded(nav.tab);
+        // The names the search's picker offers are read again if it is open: on the same pause, once for a run of writes (#768),
+        // and after the tab's own read, whose answer it then shares.
+        upper.searchVocabularyChanged();
     }, now ? 0 : NAV_COUNTS_MS);
 }
 

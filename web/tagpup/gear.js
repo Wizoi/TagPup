@@ -6,6 +6,7 @@ import { wireGear } from './common/gear.js';
 import { wireTagEditor } from './common/tag-editor.js';
 import { openSettings } from './common/settings-dialog.js';
 import { openHistory } from './common/history-dialog.js';
+import { upper } from './hooks.js';
 import { state } from './state.js';
 import { statusDot, statusText } from './elements.js';
 import { fetchKnownTagsAndPeople, loadTaxonomy } from './tags.js';
@@ -15,8 +16,9 @@ import { browseWholeLibrary, libraryViewOfFolder, syncLibraryMenu } from './libr
 /**
  * The tag editor, over the tree this page keeps (state.taxonomyNodes, read by
  * loadTaxonomy), saying what it does in the page's status line. After an edit the
- * names offered while typing are read again, and an edit that rewrote photos opens
- * the folder again, so its photos show what they now hold.
+ * names offered while typing are read again -- the fields' lists, and the navigator's
+ * keywords and people, which the search's picker offers -- and an edit that rewrote
+ * photos opens the folder again, so its photos show what they now hold.
  */
 export function wireTagPupGear() {
     const editor = wireTagEditor({
@@ -28,6 +30,7 @@ export function wireTagPupGear() {
         },
         edited: ({ treeChanged, photosChanged }) => {
             if (treeChanged) fetchKnownTagsAndPeople();
+            if (treeChanged || photosChanged) upper.navigatorCountsChanged();
             if (photosChanged && state.scannedFolder) scanFolder(true);
         },
     });

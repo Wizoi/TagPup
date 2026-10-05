@@ -460,6 +460,7 @@ export function locate(section, index, spec) {
 export function sectionOf(spec) {
     if (!spec) return null;
     if (spec.kind === 'any_of') return Array.isArray(spec.value) && spec.value.length ? sectionOf(spec.value[0]) : null;
+    if (spec.kind === 'search') return null;
     if (spec.kind === 'folder') return 'folders';
     if (spec.kind === 'keyword' || spec.kind === 'keyword_only') return 'keywords';
     if (spec.kind === 'person') return 'people';
@@ -469,9 +470,12 @@ export function sectionOf(spec) {
 
 // ---- Several rows selected: the union (#672) ---------------------------------------------------
 
-/** The sources a view's source is the union of: a union's list, a source alone, nothing for the whole library. */
+/**
+ * The sources a view's source is the union of: a union's list, a source alone, nothing for the whole library -- nor for a search,
+ * which no row is (a Ctrl-click in a search starts the selection again).
+ */
 export function membersOf(spec) {
-    if (!spec || spec.kind === 'all') return [];
+    if (!spec || spec.kind === 'all' || spec.kind === 'search') return [];
     if (spec.kind === 'any_of') return Array.isArray(spec.value) ? spec.value : [];
     return [{ kind: spec.kind, value: spec.value, recursive: Boolean(spec.recursive) }];
 }
