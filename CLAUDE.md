@@ -33,7 +33,7 @@ this codebase, add it there with a comment saying why rather than working around
 No `pip.exe`, no `Activate.ps1`, no pytest — invoke the interpreter by path. Use the
 glob for the frontend suite; `node --test tests/frontend/` fails on `harness.mjs`.
 
-**The whole Python suite is `tools/run_tests.py`: 3,641 tests, about 4 minutes (200-600 s
+**The whole Python suite is `tools/run_tests.py`: 3,930 tests, about 4.5 minutes (200-600 s
 under load, counted 2026-10-04).** Run all of it
 before a commit that touches Python; choosing which files to run cost more turns than
 it saved. `tools/affected_tests.py` is for the loop while editing, not for the commit.
@@ -64,6 +64,13 @@ enforces it.
 with ~4 KB of warnings fills the stderr pipe and both sides wait forever -- two scripts
 sat at 0% CPU for two days. The session drains both and gives each command a deadline.
 `tests/test_exiftool_single_owner.py` enforces it.
+
+**Never load a model on the GPU yourself.** `tagpup/ml/gpu.py` owns the graphics card: one
+process at a time on the machine has a model on it, in turn, and a waiter says who has it
+and since when. Take a turn through `tagpup.runtime` (`begin` for a Suggest run, `gpu_turn`
+for the indexer). The server's Suggest and the indexer it had started each loaded a ViT-H-14
+onto one 10 GB card and both sat at 0 of 165 for 48 minutes (#750).
+`tests/test_gpu_single_owner.py` enforces it.
 
 **Never spell or compare a photo path by hand.** `tagpup/core/paths.py` owns it: `stored()`
 for anything written to the database, walked or sent to the browser; `key()` for
