@@ -511,7 +511,8 @@ class TheJournalsWrites(WithALibrary):
                 "photos", (1,), {"tags": '["People/Wren Halloway"]'}, {"tags": '["Trips/Coast"]'})])
         schema._current.clear()
         self.assertEqual(["the tables the library views stand on", "photos by when they were taken", "people by their node's id", "photos by file name",
-                          "photos by caption", "photos by their words"],
+                          "photos by caption", "photos by their words",
+                          "the photos whose faces were detected"],
                          schema.ensure(old))
         journal.undo(old, applied.change_id)
         conn = db.connect(db.readonly_uri(old), uri=True)

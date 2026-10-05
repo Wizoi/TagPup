@@ -236,6 +236,13 @@ body {
     font-weight: 500;
 }
 
+/* Stops a Suggest (suggestions.js cancelSuggestions). */
+.suggest-cancel {
+    align-self: center;
+    padding: 2px 10px;
+    font-size: 11px;
+}
+
 /* Search Box */
 .search-container {
     padding: 12px 16px;

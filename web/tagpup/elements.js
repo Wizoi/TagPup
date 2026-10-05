@@ -15,6 +15,7 @@ export const btnSuggestTags = document.getElementById('btn-suggest-tags');
 export const suggestProgressContainer = document.getElementById('suggest-progress-container');
 export const suggestProgressBar = document.getElementById('suggest-progress-bar');
 export const suggestProgressText = document.getElementById('suggest-progress-text');
+export const btnSuggestCancel = document.getElementById('btn-suggest-cancel');
 export const indexProgressContainer = document.getElementById('index-progress-container');
 export const indexProgressBar = document.getElementById('index-progress-bar');
 export const indexProgressText = document.getElementById('index-progress-text');

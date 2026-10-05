@@ -54,6 +54,7 @@ KINDS = {
     22: schema.ADDITIVE,     # idx_photos_name: the index a library view orders by file name with
     23: schema.ADDITIVE,     # idx_photos_caption: the index a library view orders by caption with
     24: schema.ADDITIVE,     # search_words, search_names: the word index a search matches words in (derived)
+    25: schema.ADDITIVE,     # the faces_detected table, empty
 }
 
 
@@ -559,14 +560,15 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
                               "the photos whose faces are to be detected", "the library's roots",
                               "the tables the library views stand on", "photos by when they were taken",
                               "people by their node's id", "photos by file name",
-                          "photos by caption", "photos by their words"],
+                          "photos by caption", "photos by their words", "the photos whose faces were detected"],
                              schema.ensure(path))
         # What it touches: change_files, which it makes, and changes, the runner's own;
         # migration 12 touches change_files alone, 13 job_runs, 14 sync_runs, 15
         # added_folders and 16 damaged_files, which they make; 21 faces and photo_people, whose
         # columns it adds (a count of faces reads its smallest index, not its rows).
         self.assertLessEqual(set(counted), {"change_files", "changes", "job_runs", "sync_runs", "added_folders",
-                                            "damaged_files", "faces_pending", "faces", "photo_people"})
+                                            "damaged_files", "faces_pending", "faces", "photo_people",
+                                            "faces_detected"})
 
 
 class ANewLibrary(unittest.TestCase):

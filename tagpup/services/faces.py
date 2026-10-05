@@ -21,7 +21,8 @@ import numpy as np
 from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
 from tagpup.services import thumbnails
-from tagpup.store import db, faces, faces_pending, photos
+from tagpup.store import db, faces, faces_detected, faces_pending, photos
+from tagpup.store import embeddings as store_embeddings
 from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
@@ -491,7 +492,38 @@ def _insert_detected(conn, photo_path, face, name=None):
                  name=name, crop=face.get("crop_image"), prob=face.get("prob"))
 
 
-def record_detected(db_path, photo_path, detected):
+#: What a face model is told apart by: the settings it detects with (tagpup.ml.faces.SETTINGS).
+DETECTOR_SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds")
+
+
+def detector_of(model):
+    """The name the detections of face model `model` are recorded under
+    (tagpup.store.faces_detected): its settings. A setting it does not hold reads as None."""
+    settings = {}
+    for key in DETECTOR_SETTINGS:
+        value = getattr(model, key, None)
+        if isinstance(value, tuple):
+            value = list(value)
+        if not isinstance(value, (int, float, str, list, type(None))) or isinstance(value, bool):
+            value = None
+        settings[key] = value
+    return faces_detected.detector(settings)
+
+
+def ran(detected):
+    """Did the detection that returned `detected` run to the end (tagpup.ml.faces.NotDetected)?"""
+    return not getattr(detected, "failed", False)
+
+
+def _record_detection(conn, photo_path, detector, detected):
+    """Record that `detector` ran on the photo and what it found, unless it failed. The
+    caller commits."""
+    if detector is None or not ran(detected):
+        return 0
+    return faces_detected.record(conn, photo_path, detector, store_embeddings.stamp_of(photo_path), len(detected))
+
+
+def record_detected(db_path, photo_path, detected, detector=None):
     """Record the faces found in a photo only when it has none yet. Returns rows inserted.
 
     Never deletes: replace_detected clears the photo's rows first, which would discard
@@ -499,28 +531,40 @@ def record_detected(db_path, photo_path, detected):
     effect of doing something else (the suggester) and want to keep the work without
     disturbing anything already recorded.
 
+    Given the `detector` that ran (detector_of), that it ran is recorded -- faces found or
+    not -- so the photo is not detected again (tagpup.store.faces_detected, #773); a
+    detection that failed (ran) is not recorded.
+
     On a connection of its own: callers run inside worker pools, and sharing one sqlite
     connection across threads is how "objects created in a thread" errors and lock
     contention start. Raised on inside the write, not swallowed: its retry waits out a
     locked database, and returning 0 before the retry saw the error lost a photo's faces
     for good.
     """
+    if not ran(detected):
+        return 0
     if not detected:
-        # Detection ran and found no face: nothing to record, and no longer anything still
-        # to detect (store.faces_pending). Written only when a photo is marked at all.
-        conn = db.connect(db.readonly_uri(db_path), uri=True)
-        try:
-            marked = faces_pending.count(conn)
-        finally:
-            conn.close()
-        if marked:
-            db.write_with_connection(db_path, lambda conn: faces_pending.clear(conn, [photo_path]),
-                                     label="faces detected in %s" % os.path.basename(photo_path))
+        # Detection ran and found no face: no face to record, and no longer anything still
+        # to detect (store.faces_pending); that it ran is recorded, given its detector.
+        if detector is None:
+            conn = db.connect(db.readonly_uri(db_path), uri=True)
+            try:
+                marked = faces_pending.count(conn)
+            finally:
+                conn.close()
+            if not marked:
+                return 0
+
+        def none_found(conn):
+            faces_pending.clear(conn, [photo_path])
+            _record_detection(conn, photo_path, detector, detected)
+        db.write_with_connection(db_path, none_found, label="faces detected in %s" % os.path.basename(photo_path))
         return 0
 
     def insert(conn):
         # Detection ran: the photo's faces are no longer still to detect (store.faces_pending).
         faces_pending.clear(conn, [photo_path])
+        _record_detection(conn, photo_path, detector, detected)
         if faces.count_for_photo(conn, photo_path) > 0:
             return 0  # already recorded; leave it alone
         inserted = 0
@@ -544,7 +588,7 @@ def record_detected(db_path, photo_path, detected):
         return 0
 
 
-def replace_detected(conn, photo_path, detected):
+def replace_detected(conn, photo_path, detected, detector=None):
     """Replace a photo's faces with freshly detected ones, and commit.
 
     This discards any names, manual overrides, exclusions and cached crops on the
@@ -558,13 +602,14 @@ def replace_detected(conn, photo_path, detected):
         for face in detected:
             _insert_detected(conn, photo_path, face, name=face.get("name"))
         faces_pending.clear(conn, [photo_path])
+        _record_detection(conn, photo_path, detector, detected)
         conn.commit()
     except Exception as e:
         logger.error(f"Error saving faces for {photo_path}: {e}")
         conn.rollback()
 
 
-def record_batch(conn, batch, overwrite=False):
+def record_batch(conn, batch, overwrite=False, detector=None):
     """Record the faces found in a batch of photos ({path: faces}) in one transaction.
 
     By default a photo that already has face rows is left alone. Those rows carry
@@ -574,13 +619,15 @@ def record_batch(conn, batch, overwrite=False):
     were indexed and matters a great deal now that every photo is.
 
     Pass overwrite=True to force re-detection, accepting the loss. Without a connection,
-    nothing.
+    nothing. Given the `detector` that ran (detector_of), that it ran on each photo is
+    recorded, faces found or not (tagpup.store.faces_detected, #773), unless it failed.
     """
     if conn is None or not batch:
         return
     try:
         db.begin(conn)
         for photo_path, detected in batch.items():
+            _record_detection(conn, photo_path, detector, detected)
             if not overwrite and faces.count_for_photo(conn, photo_path) > 0:
                 continue
             faces.remove_for_photo(conn, photo_path)

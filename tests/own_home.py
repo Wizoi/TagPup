@@ -54,9 +54,11 @@ class OwnHome:
         # a test never writes the owner's Downloads; and the Recycle Bin's size and settings are a large empty Bin's (#703),
         # so no test reads the owner's (asking Windows took 11.8 s here).
         # The records a server writes of where it answers (tagpup.launcher) are the home's too,
-        # not the user's folder the owner's servers write theirs in.
+        # not the user's folder the owner's servers write theirs in; and so is the turn on the
+        # graphics card (tagpup.ml.gpu): a test never waits for the owner's index, nor holds it up.
         self._environ = mock.patch.dict(os.environ, {"TAGPUP_HOME": self.root,
                                                      "TAGPUP_SERVERS": os.path.join(self.root, "servers"),
+                                                     "TAGPUP_GPU_LOCK": os.path.join(self.root, "gpu"),
                                                      "TAGPUP_DOWNLOADS": os.path.join(self.root, "Downloads"),
                                                      "TAGPUP_RECYCLE_BIN": "1000000,0,0"})
         self._environ.start()

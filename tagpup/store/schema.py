@@ -652,6 +652,23 @@ def _faces_pending(conn):
                  " since TEXT NOT NULL)")
 
 
+def _faces_detected(conn):
+    """The photos whose faces were detected: `faces_detected`, each photo's id, the detector
+    that ran (its settings), the file's stamp it read, how many faces it found and when
+    (tagpup.store.faces_detected; docs/findings.md, #773). No foreign key and no trigger,
+    as faces_pending: a row whose photo is gone is read as none, so deleting a photo takes
+    nothing the journal must account for. Only adds a table, empty: a photo indexed before
+    it is detected once more by the next Suggest that looks at it.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS faces_detected ("
+                 " photo_id INTEGER PRIMARY KEY,"
+                 " detector TEXT NOT NULL,"
+                 " mtime REAL,"
+                 " size INTEGER,"
+                 " found INTEGER NOT NULL,"
+                 " at TEXT NOT NULL)")
+
+
 def _roots(conn):
     """The library's roots: `roots`, one row for each, its name (`pictures`), the share's own
     address and when it was added (tagpup.store.roots; docs/ARCHITECTURE.md, "Roots and
@@ -1331,6 +1348,11 @@ MIGRATIONS = (
               "there changes",
               ("search_words", "search_names"),
               (RowsKept(), SearchIndexAgrees()) + STANDARD),
+    Migration(25, "the photos whose faces were detected", _faces_detected, ADDITIVE,
+              "adds the faces_detected table, empty: a photo indexed before it has its faces detected once more by "
+              "the next Suggest that looks at it",
+              ("faces_detected",),
+              (RowsKept(),) + STANDARD),
 )
 
 #: The columns a migration adds to a table the journal keys that the journal derives

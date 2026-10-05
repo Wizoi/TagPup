@@ -17,7 +17,15 @@ and a library on another gets its own. A model no library it serves uses any mor
 no run holds, is unloaded; so is every model none has used for `idle_after` seconds
 (the web server's `--release-models-after`), and the next Suggest loads them again.
 It keeps each library's photo index for Suggest, brought up
-to date when a run begins, and a run keeps the one it began with to its end. Nothing below it builds a model or reads a
+to date when a run begins, and a run keeps the one it began with to its end.
+
+A model is loaded onto the graphics card only with the process's turn on it
+(tagpup.ml.gpu; docs/findings.md, #750): a Suggest run takes one the first time it uses a
+model -- a run over photos the index has already read, their vectors kept and their
+faces' detection recorded (tagpup.store.faces_detected, #773), uses none and never waits --
+and holds it to its end; the CLI's index takes one for its run (gpu_turn); the warm-up only
+when no one has to wait for it. The web server keeps its turn while its models stay
+loaded between runs, and gives it up, unloading them, as soon as another process waits. Nothing below it builds a model or reads a
 setting: a service that uses a model is given it (docs/ARCHITECTURE.md, "The layers,
 revisited").
 
@@ -41,6 +49,7 @@ from tagpup.core import library as libraries
 from tagpup.core.idle import IdleCaches
 from tagpup.core.library import Library
 from tagpup.files import images
+from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring, watching
 from tagpup.services import damaged_photos, file_changes, indexing, search
@@ -371,6 +380,83 @@ class RunModel:
         self._end()
 
 
+class _RunTurn:
+    """One suggestion run's turn on the graphics card: taken the first time the run uses a
+    model on the card (ensure), not before -- a run over photos whose vectors the library
+    holds, and whose faces' detection it recorded (found or not: store.faces_detected),
+    runs no model, and waits for no one -- and held until the run ends
+    (close)."""
+
+    def __init__(self, card, what, models, cancelled=None, report=None):
+        self.card, self.what = card, what
+        self.cancelled, self.report = cancelled, report
+        self.needed = any(gpu.on_the_card(getattr(model, "device", None)) for model in models)
+        self._hold = None
+        self._closed = False
+        self._lock = threading.Lock()
+
+    def ensure(self):
+        if not self.needed or self._hold is not None:
+            return
+        with self._lock:
+            if self._hold is not None:
+                return
+            if self._closed:
+                raise gpu.Cancelled("%s has ended" % self.what)
+            waited = []
+
+            def say(line):
+                waited.append(line)
+                if self.report is not None:
+                    self.report(line)
+            self._hold = self.card.hold(self.what, cancelled=self.cancelled, report=say)
+            if waited and self.report is not None:
+                self.report(None)
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+            hold, self._hold = self._hold, None
+        if hold is not None:
+            hold.release()
+
+
+class _OnTheCard:
+    """A run's view of a model: each use takes the run's turn on the graphics card first
+    (_RunTurn.ensure); everything else is the model's. `ready()` takes it without using
+    the model: what PhotoEmbeddings and the suggester call before they look again for what
+    an index may have written while they waited."""
+
+    def __init__(self, model, turn):
+        self._model, self._turn = model, turn
+
+    def __getattr__(self, name):
+        return getattr(self._model, name)
+
+    def ready(self):
+        self._turn.ensure()
+
+    def load(self, *args, **kwargs):
+        self._turn.ensure()
+        return self._model.load(*args, **kwargs)
+
+    def embed_image(self, *args, **kwargs):
+        self._turn.ensure()
+        return self._model.embed_image(*args, **kwargs)
+
+    def embed_picture(self, *args, **kwargs):
+        self._turn.ensure()
+        return self._model.embed_picture(*args, **kwargs)
+
+    def embed_text(self, *args, **kwargs):
+        self._turn.ensure()
+        return self._model.embed_text(*args, **kwargs)
+
+    def detect_and_embed_faces(self, *args, **kwargs):
+        self._turn.ensure()
+        return self._model.detect_and_embed_faces(*args, **kwargs)
+
+
 class _Lease:
     """One run's hold on a photo index and a pair of models."""
 
@@ -418,9 +504,20 @@ class Runtime:
     """
 
     def __init__(self, clip=None, faces=None, build_clip=None, build_faces=None, read_only=False,
-                 idle_after=None, clock=None):
+                 idle_after=None, clock=None, card=None, keep_models=False):
         self._clip = clip
         self._faces = faces
+        #: The process's turn on the graphics card (tagpup.ml.gpu), or a test's: each model
+        #: built is handed it. With `keep_models` -- the web server, which keeps its models
+        #: between runs, for `idle_after` or, without one, for good (--release-models-after
+        #: 0) -- the turn is kept with them and given up, every model unloaded first, when
+        #: another process waits for it; without (the CLI), given up as each run ends (#774).
+        self.card = card if card is not None else gpu.card()
+        self.card.keep_when_idle = bool(keep_models)
+        self.card.on_release = self._unload_every_model
+        if keep_models:
+            # What a waiter is told while no run holds it: given up within a second or two.
+            self.card.idle_what = "the TagPup server's models, kept between runs (letting go)"
         self._build_clip = build_clip or _build_clip
         self._build_faces = build_faces or _build_faces
         self._read_only = read_only
@@ -514,8 +611,33 @@ class Runtime:
     def _model(self, built, build, settings):
         key = _frozen(settings)
         if key not in built:
-            built[key] = build(settings)
+            model = built[key] = build(settings)
+            try:
+                model.gpu = self.card
+            except AttributeError:
+                pass
         return built[key]
+
+    def _unload_every_model(self):
+        """Unload every model, keeping each built: the turn on the graphics card is being
+        given up (tagpup.ml.gpu.Card.on_release), and the next use loads it again -- once
+        this process has a turn again."""
+        with self._lock:
+            models = list(self._clips.values()) + list(self._face_models.values())
+        for given in (self._clip, self._faces):
+            if given is not None:
+                models.append(given)
+        _unload(models)
+
+    def gpu_turn(self, what, models, cancelled=None, report=None):
+        """A turn on the graphics card for `what` ("indexing Regatta (harbour)"), for as long
+        as `models` are used: a Hold to release, waited for in order behind any other
+        process (tagpup.ml.gpu.Card.hold, with `cancelled` and `report`); nothing to wait
+        for when none of them runs on the card. What the CLI's index takes before its first
+        photo."""
+        if not any(gpu.on_the_card(getattr(model, "device", None)) for model in models if model is not None):
+            return gpu.NoHold()
+        return self.card.hold(what, cancelled=cancelled, report=report)
 
     def _note(self, library, settings):
         """Record which models `library` uses now. True when that changed from before."""
@@ -559,6 +681,8 @@ class Runtime:
             self._clips.clear()
             self._face_models.clear()
         _unload(dropped)
+        # Nothing left on the card to keep the turn for.
+        self.card.release_if_idle()
         return len(dropped)
 
     def _release_indexes(self):
@@ -584,6 +708,10 @@ class Runtime:
         the background, keeping it open until the process ended -- and a thread that
         started after the file had gone made an empty library in its place
         (docs/findings.md, #99). The models are the process's; a library is a request's.
+
+        Only when no one has to wait for the graphics card (tagpup.ml.gpu.Card.try_hold):
+        with an index or a Suggest holding it or waiting for it, the warm-up is skipped and
+        the first Suggest loads the models (#750).
         """
         wanted = None
         if self._clip is not None or self._faces is not None:
@@ -605,24 +733,39 @@ class Runtime:
         if wanted is None:
             return
         library, settings = wanted
-        logger.info("Background thread starting CLIP model warmup...")
         try:
-            clip = self.clip(library, settings)
-            clip.load()
-            clip.embed_text("warmup")
-            logger.info("Background CLIP model warmup completed successfully.")
+            models = (self.clip(library, settings), self.faces(library, settings))
         except Exception as e:
-            logger.error("Error warming up CLIP model: %s", e)
+            logger.error("Could not make the models to warm them up: %s", e)
+            return
+        hold = gpu.NoHold()
+        if any(gpu.on_the_card(getattr(model, "device", None)) for model in models):
+            hold = self.card.try_hold("warming Suggest's models (TagPup server)")
+            if hold is None:
+                holder = gpu.read_holder(self.card.where)
+                logger.info("Not warming the models: the graphics card is in use by %s, or a process waits "
+                            "for it. The first Suggest loads them.",
+                            (holder or {}).get("what") or "another TagPup program")
+                return
+        with hold:
+            logger.info("Background thread starting CLIP model warmup...")
+            try:
+                clip = models[0]
+                clip.load()
+                clip.embed_text("warmup")
+                logger.info("Background CLIP model warmup completed successfully.")
+            except Exception as e:
+                logger.error("Error warming up CLIP model: %s", e)
 
-        try:
-            logger.info("Background thread starting Face model warmup...")
-            # Building the model loads nothing; its weights load on first use. So a
-            # warm-up that only built it reported the face models warm while the first
-            # Suggest still paid for loading them.
-            self.faces(library, settings).load()
-            logger.info("Background Face model warmup completed successfully.")
-        except Exception as e:
-            logger.error("Error warming up Face models: %s", e)
+            try:
+                logger.info("Background thread starting Face model warmup...")
+                # Building the model loads nothing; its weights load on first use. So a
+                # warm-up that only built it reported the face models warm while the first
+                # Suggest still paid for loading them.
+                models[1].load()
+                logger.info("Background Face model warmup completed successfully.")
+            except Exception as e:
+                logger.error("Error warming up Face models: %s", e)
 
     def warm_up_in_background(self, libraries=()):
         """warm_up on a daemon thread; returns the thread."""
@@ -683,14 +826,19 @@ class Runtime:
 
     # ---- What a suggestion run is given ----------------------------------------------
 
-    def begin(self, library, remember=True):
+    def begin(self, library, remember=True, what=None, cancelled=None, report=None):
         """Ready the suggester for a run over `library`, on the run's thread: what
         tagpup.jobs.suggestions calls (tagpup.services.suggester.SuggestionModel). The
         library's settings are read once for the run, and what it is given -- its photo
         index, its models -- is held until it ends (RunModel.end): a model change
         meanwhile leaves the run on what it began with. Not `remember`: a run that only
         looks (Just look, a folder the library does not hold) reads the library and keeps
-        nothing in it."""
+        nothing in it.
+
+        The models it is given take the process's turn on the graphics card the first
+        time the run uses one (_RunTurn), as `what` ("Suggest Regatta (harbour)"), and
+        hold it until the run ends: `report(line)` hears the waiting line meanwhile, and
+        None once the turn is had; `cancelled()` true stops the wait (gpu_turns.Cancelled)."""
         settings = self.settings(library)
         model_key = self.model_key(library, settings)
         with self._lock:
@@ -700,6 +848,12 @@ class Runtime:
             self._index_runs[id(photo_index)] += 1
             self._held[("clip", lease.clip_key)] += 1
             self._held[("faces", lease.faces_key)] += 1
+        turn = _RunTurn(self.card, what or "Suggest in %s" % library.name, (clip, faces), cancelled, report)
+        clip, faces = _OnTheCard(clip, turn), _OnTheCard(faces, turn)
+
+        def end():
+            turn.close()
+            self._end(lease)
         try:
             photo_index.reload_if_changed()
             if remember:
@@ -708,9 +862,9 @@ class Runtime:
                 model = suggestions.model_for_run(photo_index, clip, faces, settings.candidate_words,
                                                   remember=False)
         except BaseException:
-            self._end(lease)
+            end()
             raise
-        return RunModel(model, lambda: self._end(lease))
+        return RunModel(model, end)
 
     def _end(self, lease):
         """A run is done: what it held, and nothing else uses, is let go."""

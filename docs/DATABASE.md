@@ -360,6 +360,18 @@ The file name and the folders of each photo, for a search's words found inside a
 | `name` | TEXT | FTS5 | The file name (`IMG_0412.jpg`). |
 | `folders` | TEXT | FTS5 | Of a root-relative row every folder below the root (`@pictures/2024/Coast` holds `2024/Coast`: the root's name is never a word); of a native row the one folder it is directly in. |
 
+### 27. `faces_detected` Table
+The photos whose faces were detected (`tagpup.store.faces_detected`, migration 25; findings #773): one row for each photo a face detector ran on, faces found or not. A photo in which the index found no face had nothing in the library, so Suggest could not tell it from one never looked at, and detected it again on the graphics card each time (10,732 of photo_index's 68,324 photos have no face row, counted 2026-10-04). Written by the indexer (`faces.record_batch`) and by Suggest (`faces.record_detected`) for every photo they detect -- not for a detection that failed (`tagpup.ml.faces.NotDetected`); read by Suggest before it detects, under the detector it would run (other face settings detect again). A photo marked as having faces still to detect (`faces_pending`) has its row taken away. Photos indexed before migration 25 have no row and are detected once more, by the next Suggest that looks at them: nothing in the library proves the index detected a photo's faces (`index --skip-faces` makes vectors without, and Suggest makes vectors too). No foreign key and no trigger, as `faces_pending`: a row whose photo is gone is read as none, so deleting a photo takes nothing the journal must account for. Not journaled, as indexing is not.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `photo_id` | INTEGER | PRIMARY KEY | The photo (`photos.id`). No foreign key: a row whose photo is gone is read as none. |
+| `detector` | TEXT | NOT NULL | The detector that ran: its settings as JSON with sorted keys (`min_face_size`, `confidence_threshold`, `mtcnn_thresholds`). |
+| `mtime` | REAL | | The file's modified time when it was recorded. Kept, not compared: a metadata write changes it and not the picture. |
+| `size` | INTEGER | | The file's size then, in bytes. |
+| `found` | INTEGER | NOT NULL | How many faces it found. |
+| `at` | TEXT | NOT NULL | Local time it was recorded, `YYYY-MM-DD HH:MM:SS`. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram

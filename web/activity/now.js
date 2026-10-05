@@ -48,7 +48,9 @@ function indexingLines(library) {
         lines.push(buildElement('div', { className: 'activity' }, [
             badge('Suggest', 'busy'),
             buildElement('span', { className: 'what', text: run.folder }),
-            buildElement('span', { className: 'detail', text: `${run.status}, ${run.completed} of ${run.total}` }),
+            // What it waits for, when it waits: the folder's index, or the graphics card and who has it.
+            buildElement('span', { className: 'detail',
+                                   text: `${run.status}, ${run.completed} of ${run.total}${run.message ? `: ${run.message}` : ''}` }),
         ]));
     }
     for (const job of library.jobs || []) {

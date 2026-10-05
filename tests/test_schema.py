@@ -100,7 +100,8 @@ class ANewLibrary(SchemaTestCase):
         self.assertEqual({"photos", "faces", "face_crops", "embeddings", "photo_people", "suggestions", "tag_taxonomy",
                           "tag_embeddings", "generations", "schema_version", "changes", "change_rows", "settings",
                           "change_files", "job_runs", "sync_runs", "added_folders", "damaged_files",
-                          "faces_pending", "roots", "photo_tags", "folders", "photo_folder", "photo_meta",
+                          "faces_pending", "faces_detected", "roots", "photo_tags", "folders", "photo_folder",
+                          "photo_meta",
                           "search_words", "search_names"} | {"search_%s_%s" % (table, shadow) for table in ("words", "names")
                                                              for shadow in ("data", "idx", "docsize", "config")},
                          tables(conn))

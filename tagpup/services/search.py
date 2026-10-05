@@ -118,6 +118,15 @@ class PhotoEmbeddings:
             cached = self.cached(file_path)
             if cached is not None:
                 return cached
+            # A model that waits for its turn on the graphics card (a Suggest run's,
+            # tagpup.runtime) is waited for first, and the library asked again: the turn
+            # may have been the index's, writing this very vector (docs/findings.md, #750).
+            ready = getattr(self.clip, "ready", None)
+            if callable(ready):
+                ready()
+                cached = self.cached(file_path)
+                if cached is not None:
+                    return cached
         # Before the file is opened: see keep.
         stamp = store_embeddings.stamp_of(file_path)
         embedding = self.embed(file_path, seen=seen) if seen is not None else self.embed(file_path)

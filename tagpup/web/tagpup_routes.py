@@ -379,6 +379,19 @@ def folder_suggest_start():
                     "in_memory": looking})
 
 
+@routes.post("/api/folder/suggest-cancel")
+def folder_suggest_cancel():
+    """Stop a folder's Suggest (tagpup.jobs.suggestions.SuggestionRuns.cancel): at once while
+    it waits for the folder's index or for the graphics card, else once the photos in hand
+    are done; what it kept stays. `cancelled`: whether a run was told to stop."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    folder = body.get("folder_path")
+    if not folder or not isinstance(folder, str):
+        return responses.error(400, "Missing 'folder_path'")
+    return jsonify({"success": True, "cancelled": suggestion_jobs.runs_for(library).cancel(folder)})
+
+
 @routes.post("/api/folder/auto-apply")
 def folder_auto_apply():
     library = state.require()

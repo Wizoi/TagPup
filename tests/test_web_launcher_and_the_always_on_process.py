@@ -158,6 +158,8 @@ class BesideItsRequests(unittest.TestCase):
             tagpup_web.main(ARGS + ["--release-models-after", "5"])
             tagpup_web.main(ARGS + ["--release-models-after", "0"])
         self.assertEqual([30 * 60, 5 * 60, None], [kw["idle_after"] for kw in made])
+        # Kept between runs in each, "0" keeping them for good (#774).
+        self.assertEqual([True, True, True], [kw.get("keep_models") for kw in made])
 
 
 if __name__ == "__main__":
