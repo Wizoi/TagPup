@@ -22,6 +22,7 @@ import {
 import { restoreIndexingState, wireIndexing } from './indexing.js';
 import { wireReview } from './review.js';
 import { wireTunerGear } from './gear.js';
+import { wireZoom } from './zoom.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     // What may be set, as the server says (web/common/validate.js): once.
@@ -68,6 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
     wireAssign();
     wireNewPerson();
     wireSelection();
+    wireZoom();
     wireGrid();
     wireIndexing();
     wirePeople();

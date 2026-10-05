@@ -48,6 +48,8 @@ export const state = {
     //: that face, and must not quietly follow a later, different selection.
     nameFilledForFaceIds: null,
     activePersonFaces: [],
+    //: The face the Face Crop Details pane shows (selection.js): the zoom draws its box.
+    detailFace: null,
     activeTab: 'matches', // 'matches' or 'outliers'
     modalSelectedFaceIds: [],
 
