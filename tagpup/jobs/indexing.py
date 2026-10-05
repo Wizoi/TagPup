@@ -202,14 +202,19 @@ class IndexQueue:
         could not tell that a folder is being indexed, nor how many are left.
         """
         running = []
-        for key, status in list(self._statuses.items()):
+        # Both under the lock the worker takes a job under: read apart, a job taken between
+        # the two reads was neither running nor waiting, and the queue said it was idle.
+        with self._lock:
+            statuses = list(self._statuses.items())
+            pending = self.pending()
+        for key, status in statuses:
             if status.get("status") == "running":
                 folder = status.get("folder") or key
                 running.append({"folder": folder, "name": os.path.basename(folder),
                                 "percent": status.get("percent", 0),
                                 "message": status.get("message", "")})
         waiting = [{"folder": job["folder"], "name": os.path.basename(job["folder"])}
-                   for job in self.pending()]
+                   for job in pending]
         return {"active": running, "queued": waiting, "busy": bool(running or waiting),
                 "remaining": len(running) + len(waiting)}
 
