@@ -155,10 +155,6 @@ export const photoMissingNote = document.getElementById('photo-missing-note');
 // The grid's right-click menu (grid.js)
 export const gridContextMenu = document.getElementById('grid-context-menu');
 
-// The photo, zoomed (photo.js)
-export const imageZoom = document.getElementById('image-zoom');
-export const imageZoomImg = document.getElementById('image-zoom-img');
-
 // Date Taken Editor Dialog Controls
 export const btnEditDateTaken = document.getElementById('btn-edit-date-taken');
 export const dateTakenModal = document.getElementById('date-taken-modal');
