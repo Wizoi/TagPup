@@ -2336,6 +2336,215 @@ select {
     overflow: hidden;
 }
 
+/* The search box of the Library pane (search.js, phase 9e-2): words, Search, Clear; the filters under it. */
+.library-search {
+    padding: 10px 12px 6px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: none;
+}
+
+.library-search-box {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.library-search-words,
+.library-search-pick {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 10px;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 13px;
+    outline: none;
+}
+
+.library-search-words:focus,
+.library-search-pick:focus {
+    border-color: var(--accent);
+}
+
+.library-search-toggle {
+    align-self: flex-start;
+    background: none;
+    border: none;
+    padding: 2px 0;
+    color: var(--accent);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.library-search-toggle::before {
+    content: '\25B8  ';
+}
+
+.library-search-toggle[aria-expanded="true"]::before {
+    content: '\25BE  ';
+}
+
+.library-search-filters {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+.library-search-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.library-search-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+}
+
+.library-search-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.library-search-chips:empty {
+    display: none;
+}
+
+.library-search-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 100%;
+    padding: 2px 4px 2px 8px;
+    border-radius: 12px;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    font-size: 12px;
+}
+
+.library-search-chip-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.library-search-chip-unknown {
+    border-style: dashed;
+    color: var(--text-muted);
+    text-decoration: line-through;
+}
+
+.library-search-chip-remove {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 4px;
+}
+
+.library-search-chip-remove:hover,
+.library-search-chip-remove:focus-visible {
+    color: var(--text-primary);
+}
+
+.library-search-more {
+    font-size: 12px;
+    color: var(--text-muted);
+    align-self: center;
+}
+
+.library-search-pick-wrap {
+    position: relative;
+    display: flex;
+}
+
+.library-search-options {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 30;
+    max-height: 260px;
+    overflow-y: auto;
+    margin-top: 2px;
+    background-color: var(--bg-card, var(--bg-secondary));
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.library-search-option {
+    display: flex;
+    flex-direction: column;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.library-search-option.active,
+.library-search-option:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.library-search-option-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.library-search-option-what,
+.library-search-option-note {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.library-search-option-note {
+    padding: 5px 10px;
+}
+
+.library-search-within {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-secondary, var(--text-muted));
+}
+
+.library-search-within-name {
+    flex-basis: 100%;
+    padding-left: 20px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-muted);
+}
+
+.library-search-note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.library-search-note.library-search-problem {
+    color: #f59e0b;
+}
+
 /* The navigator: four tabs, and for each a filter, a line that says what is going on, the rows, a note. */
 .nav-tabs {
     display: flex;

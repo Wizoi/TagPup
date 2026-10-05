@@ -30,6 +30,8 @@ export const upper = {
     renderSuggestionsPanel: null,
     renderTags: null,
     renderThumbnails: null,
+    searchFollows: null,
+    searchVocabularyChanged: null,
     selectPhoto: null,
     showSortOrder: null,
     updateCameraHighlights: null,

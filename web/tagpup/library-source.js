@@ -23,11 +23,21 @@ import { forgetSelectedIds, newIdSelection, reconcileIdSelection } from './selec
 /**
  * The kinds a view is, as GET /api/library/view names them: the sources a navigator row holds -- `keyword_only` a keyword's
  * node without the nodes under it, `year_other` the photos of a year whose date names no month of it -- and `any_of`, the
- * union of a list of them (the rows selected together, #672; its value is the list, each { kind, value, recursive }).
+ * union of a list of them (the rows selected together, #672; its value is the list, each { kind, value, recursive }) -- and
+ * `search` (phase 9e): its value { all_of, any_of, none_of, words }, three lists of sources and the words typed (search.js).
  */
-export const LIBRARY_KINDS = ['all', 'folder', 'keyword', 'person', 'year', 'month', 'keyword_only', 'year_other', 'any_of'];
+export const LIBRARY_KINDS = ['all', 'folder', 'keyword', 'person', 'year', 'month', 'keyword_only', 'year_other', 'any_of', 'search'];
 /** The kinds a union holds. */
-export const MEMBER_KINDS = LIBRARY_KINDS.filter(kind => kind !== 'any_of');
+export const MEMBER_KINDS = LIBRARY_KINDS.filter(kind => kind !== 'any_of' && kind !== 'search');
+/** A search's lists, in the order its address names them (the contract of phase 9e-1); `words` follows them. */
+export const SEARCH_LISTS = ['all_of', 'any_of', 'none_of'];
+/** The longest text of words a search reads (services.library_view.MAX_WORDS). */
+export const MAX_WORDS = 500;
+/**
+ * How long a view waits, in all, for a library answering 503 with Retry-After -- the word index being made (#753) -- asking
+ * again after each Retry-After; then it stops and leaves the server's sentence.
+ */
+export const WAIT_FOR_INDEX_MS = 60000;
 /** The most sources a union holds: as the server takes (services.library_view.MAX_MEMBERS). */
 export const MAX_MEMBERS = 1000;
 /**
@@ -115,6 +125,10 @@ export function viewSpecFromSearch(search) {
         const members = unionFromText(params.get('value') || '');
         return members.error ? members : { kind, value: members, recursive: false, order };
     }
+    if (kind === 'search') {
+        const value = searchFromText(params.get('value') || '');
+        return value.error ? value : { kind, value, recursive: false, order };
+    }
     const found = memberOf(kind, params.get('value'), ['1', 'true', 'yes'].includes((params.get('recursive') || '').toLowerCase()));
     return found.error ? found : { ...found, order };
 }
@@ -142,6 +156,11 @@ function unionFromText(text) {
         return { error: 'This address names a view of several rows that cannot be read.' };
     }
     if (!Array.isArray(found) || found.length === 0) return { error: 'This address names a view of several rows that cannot be read.' };
+    return unionMembers(found);
+}
+
+/** The sources of a union's list, or { error }: at most MAX_MEMBERS, none a union. */
+function unionMembers(found) {
     if (found.length > MAX_MEMBERS) return { error: `This address names ${found.length.toLocaleString()} rows; a view shows at most ${MAX_MEMBERS.toLocaleString()} at once.` };
     const members = [];
     for (const each of found) {
@@ -152,9 +171,109 @@ function unionFromText(text) {
     return members;
 }
 
-/** A union's sources as its JSON holds them: short, `recursive` only where it is true. */
+/** One source as its JSON holds it: short, `recursive` only where it is true; a union (in a search's lists) its sources so. */
+function memberJson(m) {
+    if (m.kind === 'any_of') return { kind: m.kind, value: (Array.isArray(m.value) ? m.value : []).map(memberJson) };
+    return m.recursive ? { kind: m.kind, value: m.value, recursive: true } : { kind: m.kind, value: m.value };
+}
+
+/** A union's sources as its JSON holds them. */
 function unionText(members) {
-    return JSON.stringify(members.map(m => (m.recursive ? { kind: m.kind, value: m.value, recursive: true } : { kind: m.kind, value: m.value })));
+    return JSON.stringify(members.map(memberJson));
+}
+
+// ---- A search (phase 9e) ----------------------------------------------------------------
+
+/** The text of the words a search asks: its blanks made single, trimmed. */
+export function searchWords(text) {
+    return String(text ?? '').trim().split(/\s+/).filter(Boolean).join(' ');
+}
+
+/**
+ * Does this term say something to the server (store.search_index.terms)? A term with a letter or a digit does, and so does one of
+ * three characters or more (it is looked for inside file names); one of a dash or a dot alone is dropped by the server.
+ */
+export function termSaysSomething(term) {
+    return /[\p{L}\p{N}]/u.test(term) || [...term].length >= 3;
+}
+
+/**
+ * A search's value as the page holds and the address names it: the parts in the order all_of, any_of, none_of, words, the empty
+ * ones left out, a source named twice in a list once -- so one search has one address (`sameView` compares them).
+ */
+export function searchValue({ all_of: allOf = [], any_of: anyOf = [], none_of: noneOf = [], words = '' } = {}) {
+    const value = {};
+    for (const [part, list] of [['all_of', allOf], ['any_of', anyOf], ['none_of', noneOf]]) {
+        const seen = new Set();
+        const kept = [];
+        for (const member of Array.isArray(list) ? list : []) {
+            const json = memberJson(member);
+            const key = JSON.stringify(json);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            kept.push(member.kind === 'any_of' ? { kind: 'any_of', value: json.value.map(each => ({ ...each, recursive: Boolean(each.recursive) })), recursive: false }
+                : { kind: member.kind, value: member.value ?? null, recursive: Boolean(member.recursive) });
+        }
+        if (kept.length) value[part] = kept;
+    }
+    const text = searchWords(words);
+    if (text) value.words = text;
+    return value;
+}
+
+/** A search's value as its JSON holds it, in its one order. */
+export function searchText(value) {
+    const canonical = searchValue(value || {});
+    const json = {};
+    for (const part of SEARCH_LISTS) if (canonical[part]) json[part] = canonical[part].map(memberJson);
+    if (canonical.words) json.words = canonical.words;
+    return JSON.stringify(json);
+}
+
+/** Does a search's value ask anything: a source in a list, or words? */
+export function searchAsksSomething(value) {
+    return Boolean(value) && (SEARCH_LISTS.some(part => Array.isArray(value[part]) && value[part].length > 0) || Boolean(searchWords(value.words)));
+}
+
+/** A search's value as an address names it (its JSON), or { error } saying why it is none. Never an exception. */
+function searchFromText(text) {
+    const unreadable = { error: 'This address names a search that cannot be read.' };
+    if (!text.trim()) return { error: 'This address names a search without saying what it looks for.' };
+    if (text.length > MAX_ADDRESS) return { error: 'This address names a search longer than an address can hold.' };
+    let found;
+    try {
+        found = JSON.parse(text);
+    } catch (err) {
+        return unreadable;
+    }
+    if (!found || typeof found !== 'object' || Array.isArray(found)) return unreadable;
+    const unknown = Object.keys(found).filter(key => !SEARCH_LISTS.includes(key) && key !== 'words');
+    if (unknown.length) return { error: `This address names a search with a part TagPup does not know (“${unknown[0].slice(0, 40)}”). The parts are ${[...SEARCH_LISTS, 'words'].join(', ')}.` };
+    if (found.words !== undefined && found.words !== null && typeof found.words !== 'string') return unreadable;
+    if (typeof found.words === 'string' && found.words.length > MAX_WORDS) return { error: `A search's words are at most ${MAX_WORDS} characters.` };
+    const parts = { words: found.words || '' };
+    for (const part of SEARCH_LISTS) {
+        const list = found[part] ?? [];
+        if (!Array.isArray(list)) return unreadable;
+        if (list.length > MAX_MEMBERS) return { error: `This address names a search of ${list.length.toLocaleString()} sources in one list; a list holds at most ${MAX_MEMBERS.toLocaleString()}.` };
+        const members = [];
+        for (const each of list) {
+            if (!each || typeof each !== 'object') return unreadable;
+            if (each.kind === 'search') return { error: 'A search cannot hold a search.' };
+            if (each.kind === 'any_of') {
+                const union = Array.isArray(each.value) && each.value.length ? unionMembers(each.value) : unreadable;
+                if (union.error) return union;
+                members.push({ kind: 'any_of', value: union, recursive: false });
+                continue;
+            }
+            const member = memberOf(each.kind, each.value, each.recursive);
+            if (member.error) return member;
+            members.push(member);
+        }
+        parts[part] = members;
+    }
+    const value = searchValue(parts);
+    return searchAsksSomething(value) ? value : { error: 'This address names a search that asks for nothing.' };
 }
 
 /** The query string that opens a view: the inverse of viewSpecFromSearch. */
@@ -162,6 +281,7 @@ export function viewSearch(spec) {
     const params = new URLSearchParams();
     params.set('view', spec.kind);
     if (spec.kind === 'any_of') params.set('value', unionText(spec.value));
+    else if (spec.kind === 'search') params.set('value', searchText(spec.value));
     else if (spec.kind !== 'all') params.set('value', spec.value);
     if (spec.recursive) params.set('recursive', '1');
     if (spec.order && spec.order !== DEFAULT_ORDER) params.set('order', spec.order);
@@ -173,14 +293,20 @@ export function sameView(a, b) {
     if (!a || !b || a.kind !== b.kind || Boolean(a.recursive) !== Boolean(b.recursive)) return false;
     if ((a.order || DEFAULT_ORDER) !== (b.order || DEFAULT_ORDER)) return false;
     if (a.kind === 'any_of') return unionText(a.value || []) === unionText(b.value || []);
+    if (a.kind === 'search') return searchText(a.value) === searchText(b.value);
     return (a.value ?? null) === (b.value ?? null);
 }
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
     'October', 'November', 'December'];
 
-/** What one source of a union is called, short. */
-function memberLabel(spec) {
+/** What one source of a union or a search's list is called, short. */
+export function memberLabel(spec) {
+    if (spec.kind === 'any_of') {
+        const members = Array.isArray(spec.value) ? spec.value : [];
+        const named = members.slice(0, 2).map(memberLabel);
+        return members.length <= 2 ? named.join(' or ') : `${named.join(', ')} or ${(members.length - 2).toLocaleString()} more`;
+    }
     if (spec.kind === 'month') {
         const [year, month] = String(spec.value).split('-');
         return `${MONTHS[Number(month) - 1] || month} ${year}`;
@@ -193,9 +319,27 @@ function memberLabel(spec) {
     return String(spec.value);
 }
 
+/** A search's list, short: its first three sources and how many more. */
+function listLabel(list, joiner) {
+    const named = list.slice(0, 3).map(member => (member.kind === 'any_of' ? `(${memberLabel(member)})` : memberLabel(member)));
+    if (list.length <= 3) return `${named.slice(0, -1).join(', ')}${list.length > 1 ? ` ${joiner} ` : ''}${named.at(-1) || ''}`;
+    return `${named.join(', ')} ${joiner} ${(list.length - 3).toLocaleString()} more`;
+}
+
+/** What a search is called: "Search: “beach”; all of Trips/Coast and Rowan Thackeray; none of Places/Home". */
+function searchLabel(value) {
+    const parts = [];
+    if (value.words) parts.push(`“${value.words}”`);
+    if (value.all_of) parts.push(`all of ${listLabel(value.all_of, 'and')}`);
+    if (value.any_of) parts.push(`any of ${listLabel(value.any_of, 'or')}`);
+    if (value.none_of) parts.push(`none of ${listLabel(value.none_of, 'or')}`);
+    return `Search: ${parts.join('; ')}`;
+}
+
 /** What a view is called, in the header. */
 export function viewLabel(spec) {
     if (spec.kind === 'all') return 'The whole library';
+    if (spec.kind === 'search') return searchLabel(spec.value || {});
     if (spec.kind === 'any_of') {
         const members = Array.isArray(spec.value) ? spec.value : [];
         const named = members.slice(0, 3).map(memberLabel);
@@ -218,6 +362,7 @@ export function viewLabel(spec) {
 export function emptySentence(spec) {
     if (spec.kind === 'all') return 'This library holds no photos.';
     if (spec.kind === 'any_of') return 'None of the rows selected holds a photo, or the library no longer has them.';
+    if (spec.kind === 'search') return 'Nothing in the library matches this search.';
     if (spec.kind === 'keyword_only') return `No photo carries the keyword “${spec.value}” itself, or the library's tag tree has no such keyword.`;
     if (spec.kind === 'year_other') return `Every photo of ${spec.value} has a month.`;
     if (spec.kind === 'keyword') return `No photo carries the keyword “${spec.value}”, or the library's tag tree has no such keyword.`;
@@ -231,10 +376,13 @@ export function addressTooLong(spec) {
     return viewSearch(spec).length > MAX_ADDRESS;
 }
 
-/** The request for a view's ids: a GET of its address's words, or a POST of a union, which may be longer than an address (#696). */
+/**
+ * The request for a view's ids: a GET of its address's words, or a POST of a union or a search, which may be longer than an
+ * address (#696).
+ */
 function idsRequest(lib, signal) {
-    if (lib.kind !== 'any_of') return [idsUrl(lib), { signal }];
-    const body = { kind: lib.kind, value: JSON.parse(unionText(lib.value)) };
+    if (lib.kind !== 'any_of' && lib.kind !== 'search') return [idsUrl(lib), { signal }];
+    const body = { kind: lib.kind, value: JSON.parse(lib.kind === 'search' ? searchText(lib.value) : unionText(lib.value)) };
     if (lib.order && lib.order !== DEFAULT_ORDER) body.order = lib.order;
     return ['/api/library/ids', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
@@ -262,6 +410,9 @@ export function newLibrary(spec) {
         status: 'loading',            // loading | ready | empty | error
         message: '',                  // why it is empty or failed, in a sentence
         notice: '',                   // something that went wrong beside the view: a refresh, a selection
+        waiting: '',                  // the library's sentence while its ids are asked again after a 503 (the word index being made)
+        waitTimer: 0,                 // the next ask, after the 503's Retry-After
+        failure: null,                // { status } of the ids request that failed: a search's 400 is said by the box (search.js)
         ids: [], total: 0, complete: true,
         loading: false, controller: null,
         cards: new Map(),             // id -> card, least recently used first
@@ -283,24 +434,57 @@ export function destroyLibrary(lib) {
     lib.requested.clear();
     window.clearTimeout(lib.timer);
     window.clearTimeout(lib.retryTimer);
+    window.clearTimeout(lib.waitTimer);
     lib.timer = 0;
     lib.retryTimer = 0;
+    lib.waitTimer = 0;
 }
 
-/** Ask for the view's order: its ids and total. Resolves true when they were replaced. */
+/**
+ * Ask for the view's order: its ids and total. Resolves true when they were replaced. A library answering 503 with Retry-After
+ * (a search's words while the word index is being made, #753) is asked again after it, its sentence in the strip meanwhile,
+ * until WAIT_FOR_INDEX_MS of Retry-After have passed: then the view fails with that sentence. A view replaced meanwhile asks
+ * nothing more.
+ */
 export function loadLibraryIds(lib, refreshing = false) {
     if (lib.controller) lib.controller.abort();
+    window.clearTimeout(lib.waitTimer);
+    lib.waitTimer = 0;
+    lib.waiting = '';
     const controller = new AbortController();
     lib.controller = controller;
     lib.loading = true;
     if (!refreshing) lib.status = 'loading';
     upper.libraryChanged();
     const current = () => lib === state.library && controller === lib.controller;
-    return api.fetch(...idsRequest(lib, controller.signal))
-        .then(res => res.json().catch(() => ({})).then(body => ({ ok: res.ok, body })))
-        .then(({ ok, body }) => {
+    let waited = 0;
+    const ask = () => api.fetch(...idsRequest(lib, controller.signal))
+        .then(res => res.json().catch(() => ({})).then(body => {
+            const header = res.headers && typeof res.headers.get === 'function' ? res.headers.get('Retry-After') : null;
+            return { ok: res.ok, status: res.status, body, retryAfter: header };
+        }))
+        .then(reply => {
+            if (!current() || reply.status !== 503 || reply.retryAfter === null) return reply;
+            const seconds = Number(reply.retryAfter);
+            const wait = (Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 30) : 5) * 1000;
+            if (waited + wait > WAIT_FOR_INDEX_MS) return reply;
+            waited += wait;
+            lib.waiting = (reply.body && reply.body.error) || 'The library is busy; asking again in a few seconds.';
+            upper.libraryChanged();
+            return new Promise(resolve => { lib.waitTimer = window.setTimeout(resolve, wait); })
+                .then(() => (current() ? ask() : reply));
+        });
+    return ask()
+        .then(({ ok, status, body }) => {
             if (!current()) return false;
-            if (!ok) throw new Error((body && body.error) || 'The library could not be asked.');
+            lib.waiting = '';
+            lib.waitTimer = 0;
+            if (!ok) {
+                const failure = new Error((body && body.error) || 'The library could not be asked.');
+                failure.status = status;
+                throw failure;
+            }
+            lib.failure = null;
             lib.loading = false;
             lib.ids = Array.isArray(body.ids) ? body.ids : [];
             lib.total = Number.isFinite(body.total) ? body.total : lib.ids.length;
@@ -314,6 +498,8 @@ export function loadLibraryIds(lib, refreshing = false) {
         .catch(err => {
             if (err.name === 'AbortError' || !current()) return false;
             lib.loading = false;
+            lib.waiting = '';
+            lib.failure = { status: err.status || 0 };
             if (refreshing) lib.notice = `Could not refresh the view: ${err.message}`;
             else {
                 lib.status = 'error';

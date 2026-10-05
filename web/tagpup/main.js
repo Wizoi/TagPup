@@ -27,6 +27,7 @@ import { deleteSelection } from './bulk-edit.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
 import { choosePane, navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
 import { showSortOrder, wireSortMenu } from './sort-menu.js';
+import { searchFollows, searchVocabularyChanged, wireSearch } from './search.js';
 import { addedFromView, wireBanner } from './library-banner.js';
 import { attachBulk, wireBulk } from './bulk-job.js';
 import { renderSyncInfo } from './sync-state.js';
@@ -62,7 +63,8 @@ Object.assign(upper, {
     addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, choosePane,
     deleteSelection,
     populateCameraModelsDropdown, recordUndo,
-    renderFileList, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, selectPhoto,
+    renderFileList, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
+    selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
     photosDeleted, photosWritten, reloadChangedPhoto, showSortOrder,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
@@ -141,6 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // The navigator beside the grid, the move between a folder and its view, and the banner for photos the library lacks.
     wireNavigator();
+    wireSearch();
     wireSortMenu();
     wireMoves();
     wireBanner();

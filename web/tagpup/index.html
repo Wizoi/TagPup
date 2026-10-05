@@ -99,8 +99,29 @@
                     <button type="button" id="sidebar-tab-library" class="sidebar-switch-tab" role="tab" aria-selected="false" aria-controls="sidebar-pane-library" tabindex="-1" title="Browse the whole library by folder, keyword, person or date">Library</button>
                     <button type="button" id="sidebar-tab-folder" class="sidebar-switch-tab active" role="tab" aria-selected="true" aria-controls="sidebar-pane-folder" tabindex="0" title="Organize one folder on disk: its photos, Smart Rename, Camera Time Shift and the folder's own tools">Organize</button>
                 </div>
-                <!-- The library's navigator: Folders, Keywords, People and Dates, each built by navigator.js on first use. -->
-                <div id="sidebar-pane-library" class="sidebar-pane hidden" role="tabpanel" aria-labelledby="sidebar-tab-library"></div>
+                <!-- The library's search and its navigator. The search (web/tagpup/search.js, phase 9e-2), as Windows Live Photo
+                     Gallery's: words in one box, Enter searches; beside it the filters -- All of, Any of, None of, each a list of
+                     the library's tags and people (search.js builds them) -- and Within the sidebar's selection. A search opens in
+                     the grid as a view. Under it the navigator: Folders, Keywords, People and Dates, each built by navigator.js on
+                     first use. -->
+                <div id="sidebar-pane-library" class="sidebar-pane hidden" role="tabpanel" aria-labelledby="sidebar-tab-library">
+                    <div id="library-search" class="library-search" role="search" aria-label="Search the library">
+                        <div class="library-search-box">
+                            <input type="search" id="library-search-words" class="library-search-words" placeholder="Search the library..." aria-label="Words to search for: captions, tags, people, file and folder names" title="Words in captions, tags, people's names and file and folder names; press Enter to search" autocomplete="off" spellcheck="false" enterkeyhint="search">
+                            <button type="button" id="btn-library-search" class="btn btn-primary btn-sm">Search</button>
+                            <button type="button" id="btn-library-search-clear" class="btn btn-secondary btn-sm btn-icon hidden" aria-label="Clear the search" title="Clear the search: back to the view before it"><span aria-hidden="true">&#x2715;</span></button>
+                        </div>
+                        <button type="button" id="btn-library-search-filters" class="library-search-toggle" aria-expanded="false" aria-controls="library-search-filters">Filters</button>
+                        <div id="library-search-filters" class="library-search-filters hidden">
+                            <label class="library-search-within" title="Search only the photos of the rows selected in the navigator below">
+                                <input type="checkbox" id="library-search-within">
+                                <span>Within the sidebar&rsquo;s selection:</span>
+                                <span id="library-search-within-name" class="library-search-within-name"></span>
+                            </label>
+                        </div>
+                        <p id="library-search-note" class="library-search-note hidden" role="status"></p>
+                    </div>
+                </div>
                 <div id="sidebar-pane-folder" class="sidebar-pane" role="tabpanel" aria-labelledby="sidebar-tab-folder">
                 <!-- Folder Picker -->
                 <div class="folder-control-panel">

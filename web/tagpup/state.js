@@ -28,7 +28,8 @@ export const state = {
     // is to be shown in it once it is here. Several rows are selected at once (#672): the selection is the followed source
     // itself (a union of the rows' sources, held in the address), so a section keeps only `anchor`, the row a Shift-click
     // runs from, `notice`, a sentence about the last click (too many rows), and `opened`, whether its first index was opened
-    // (People's branches start open). `order` is the order views are read in, as last chosen or opened (#671).
+    // (People's branches start open). `order` is the order views are read in, as last chosen or opened (#671). `pending`: the
+    // section's read under way, for another feature waiting on it (the search's picker, navigator.js readSectionIndex).
     nav: {
         shown: 'folder',
         choice: { library: 'library', folder: 'folder' },
@@ -37,10 +38,10 @@ export const state = {
         order: 'taken',
         timer: null,
         sections: {
-            folders: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false },
-            keywords: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false },
-            people: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false },
-            dates: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false },
+            folders: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false, pending: null },
+            keywords: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false, pending: null },
+            people: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false, pending: null },
+            dates: { status: 'idle', message: '', notice: '', index: null, expanded: new Set(), filter: '', filterTimer: null, currentId: null, anchor: null, rows: [], asked: 0, stale: false, reveal: false, opened: false, pending: null },
         },
     },
     // Moving between a folder on disk and its view of the library (library-moves.js): the photo to land on in the
@@ -52,6 +53,18 @@ export const state = {
     moves: { anchor: null, dismissed: new Set(), banner: null, asked: 0, controller: null, addFor: null, cache: new Map(), leaving: false },
     // The Sort by menu of a view's header (sort-menu.js, #714): whether it is open, and the token of the view it was drawn for.
     sortMenu: { open: false, token: 0 },
+    // The search box of the Library pane (search.js, phase 9e-2). `lists` the chips of All of, Any of and None of -- each a source
+    // { kind, value, recursive }, as the open search holds them, or as just changed by the person before the search opens --;
+    // `within` whether "Within the sidebar's selection" is ticked; `shownToken` the view the box last showed and `showing`
+    // whether that was a search; `note` the sentence by the box (`problem`: it says something went wrong). The picker: the list
+    // it adds to, what is offered (`options`, { member, label, hint, count, what }), the one the keys are on (`active`), how
+    // many more matched than are shown, the names it offers (`names`, made once for the indexes `from`), and `asked`, the
+    // number of the read whose answer counts.
+    search: {
+        lists: { all_of: [], any_of: [], none_of: [] }, within: false, shownToken: -1, showing: false,
+        note: '', problem: false, filtersOpen: false,
+        picker: { list: null, options: [], active: -1, more: 0, asked: 0, names: [], from: null, message: '' },
+    },
     // When the library was last in step with its folders, for the view's strip (sync-state.js).
     // `lastRunInStep`: whether the newest sync, of the whole library or a folder, left it in step (null: none, or not known).
     syncInfo: { status: 'idle', lastInStep: null, lastRunInStep: null, syncing: false, known: false, asked: 0, controller: null },
