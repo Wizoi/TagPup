@@ -12,7 +12,7 @@ process, and read and wrote the library's cache itself (docs/ARCHITECTURE.md, "T
 layers, revisited"). A model is now one object, built once by the runtime and shared by
 handing it on.
 """
-from tagpup.ml import free_device_memory, refuse_in_tests
+from tagpup.ml import free_device_memory, gpu, refuse_in_tests
 import logging
 import os
 import threading
@@ -69,6 +69,9 @@ class ClipModel:
         self.tokenizer = None
         #: Held while loading and while the model runs.
         self.model_lock = threading.Lock()
+        #: The process's turn on the graphics card (tagpup.ml.gpu), which the runtime hands
+        #: it; this process's own, card(), when none was.
+        self.gpu = None
 
     def load(self):
         """Load the model now, if it is not loaded yet."""
@@ -85,11 +88,17 @@ class ClipModel:
         free_device_memory()
 
     def _init_model(self):
-        """Lazily load the CLIP model."""
+        """Lazily load the CLIP model: on the graphics card only with this process's turn
+        on it (tagpup.ml.gpu), waited for before the model's lock is taken -- a turn being
+        given up unloads this model under that lock."""
+        if self.model is not None:
+            return
+        refuse_in_tests("CLIP")
+        if gpu.on_the_card(self.device):
+            (self.gpu or gpu.card()).ensure("loading CLIP %s" % self.model_name)
         with self.model_lock:
             if self.model is not None:
                 return
-            refuse_in_tests("CLIP")
 
             logger.info(f"Loading CLIP model {self.model_name} (pretrained on {self.pretrained}) on {self.device.upper()}...")
             try:

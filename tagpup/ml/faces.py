@@ -7,7 +7,7 @@ FaceProcessor, which read config.ini itself and also resolved who is who across 
 library -- which is a service's, tagpup.services.identities (docs/ARCHITECTURE.md, "The
 layers, revisited").
 """
-from tagpup.ml import free_device_memory, refuse_in_tests
+from tagpup.ml import free_device_memory, gpu, refuse_in_tests
 import logging
 import os
 import threading
@@ -36,6 +36,9 @@ class FaceModel:
         self.mtcnn = None
         self.resnet = None
         self._init_lock = threading.Lock()
+        #: The process's turn on the graphics card (tagpup.ml.gpu), which the runtime hands
+        #: it; this process's own, card(), when none was.
+        self.gpu = None
 
         self.min_face_size = min_face_size
         self.confidence_threshold = confidence_threshold
@@ -59,8 +62,13 @@ class FaceModel:
         """Lazily initialize MTCNN detector and InceptionResnetV1 face embedder.
 
         Locked: the suggester shares one model across a pool, and unlocked every
-        worker saw no model yet and loaded its own copy onto the GPU.
+        worker saw no model yet and loaded its own copy onto the GPU. On the graphics card
+        only with this process's turn on it (tagpup.ml.gpu), waited for before the lock.
         """
+        if self.mtcnn is not None:
+            return
+        if gpu.on_the_card(self.device):
+            (self.gpu or gpu.card()).ensure("loading the face models")
         with self._init_lock:
             if self.mtcnn is None:
                 self._load_models()
