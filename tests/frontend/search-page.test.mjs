@@ -189,6 +189,8 @@ describe("words, Enter, and the address", () => {
     ctx.window.history.go = (delta) => went.push(delta);
     ctx.document.getElementById("btn-library-search-clear").click();
     assert.deepEqual(went, [-2], "back to the month");
+    assert.equal(words(ctx).value, "beach", "the box is emptied as the month opens, not before (#769)");
+    await ctx.popTo(`?view=month&value=${YEAR - 1}-07`);
     assert.equal(words(ctx).value, "");
   });
 
@@ -527,5 +529,137 @@ describe("a search is a view like any other", () => {
       delete globalThis.localStorage;
     }
     assert.deepEqual(calls, ["/other/"]);
+  });
+});
+
+/** Open a photo of the view in the details panel and type a caption without saving it: the page now asks before leaving it. */
+async function unsavedEdits(ctx) {
+  ctx.cards().find((card) => card.querySelector(".btn-thumbnail-detail")).querySelector(".btn-thumbnail-detail").click();
+  await ctx.settle(60);
+  const title = ctx.document.getElementById("input-photo-title");
+  title.value = "Unsaved caption";
+  title.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+}
+
+/** Answer "Save changes?": cancel, discard or save. */
+async function answer(ctx, choice) {
+  const modal = ctx.document.querySelector(".unsaved-edits-modal.active") || ctx.document.querySelector(".unsaved-edits-modal");
+  assert.ok(modal, "Save, Discard or Cancel is asked");
+  modal.querySelector(`[data-choice='${choice}']`).click();
+  await ctx.settle(120);
+}
+
+describe("the 9e-2 review (#768-#772)", () => {
+  test("#768: a run of writes with the picker open reads its names once, on the navigator's pause, not once a write", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", navigator: NAVIGATOR() });
+    await type(ctx, "all_of", "coa");
+    const asked = () => ctx.navigatorAsked.filter((name) => name === "keywords" || name === "people").length;
+    const before = asked();
+    const { upper } = ctx.module("hooks.js");
+    // Five saves finishing 40 ms apart: what each does (write-queue.js) is tell the navigator its counts changed.
+    for (let i = 0; i < 5; i++) {
+      upper.navigatorCountsChanged();
+      await ctx.settle(40);
+    }
+    assert.equal(asked(), before, "nothing read while the writes come");
+    await ctx.until(() => asked() > before);
+    await ctx.settle(100);
+    assert.equal(asked(), before + 2, "the keywords and the people, once, on the navigator's own pause");
+    assert.deepEqual(optionLabels(ctx, "all_of"), ["Trips/Coast"], "and the picker is still open");
+  });
+
+  test("#769: Within ticked and Enter, Cancel for unsaved edits: Within stays ticked, the words stay, nothing is asked", async (t) => {
+    const ctx = await loadViewPage(t, { search: `?view=month&value=${YEAR - 1}-07`, navigator: NAVIGATOR() });
+    await unsavedEdits(ctx);
+    const within = ctx.document.getElementById("library-search-within");
+    within.checked = true;
+    within.dispatchEvent(new ctx.window.Event("change"));
+    const before = idsCalls(ctx).length;
+    words(ctx).value = "beach";
+    ctx.key(words(ctx), "Enter");
+    await ctx.settle(60);
+    await answer(ctx, "cancel");
+    assert.equal(idsCalls(ctx).length, before, "nothing asked");
+    assert.equal(ctx.state.library.kind, "month");
+    assert.equal(ctx.state.search.within, true);
+    assert.equal(within.checked, true, "Within is still ticked");
+    assert.equal(words(ctx).value, "beach");
+    // And the next Enter, the edits discarded, searches within the month.
+    ctx.key(words(ctx), "Enter");
+    await ctx.settle(60);
+    await answer(ctx, "discard");
+    assert.deepEqual(lastSearch(ctx).value, { all_of: [{ kind: "month", value: `${YEAR - 1}-07` }], words: "beach" });
+    assert.equal(within.checked, false, "the month is a chip now");
+  });
+
+  test("#769: Clear with unsaved edits, Cancel: the search and its words stay", async (t) => {
+    const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}` });
+    await search(ctx, "beach");
+    await unsavedEdits(ctx);
+    ctx.document.getElementById("btn-library-search-clear").click();
+    await ctx.settle(120);
+    await answer(ctx, "cancel");
+    assert.equal(ctx.state.library.kind, "search");
+    assert.equal(words(ctx).value, "beach", "the words the owner typed are kept");
+    assert.equal(new URLSearchParams(ctx.window.location.search).get("view"), "search");
+  });
+
+  test("#770: view, search, Back with unsaved edits, Cancel, then Clear: back to the view before the search", async (t) => {
+    const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}` });
+    await search(ctx, "beach");
+    await unsavedEdits(ctx);
+    ctx.window.history.back();
+    await ctx.settle(200);
+    await answer(ctx, "cancel");
+    await ctx.settle(200);
+    assert.equal(ctx.state.library.kind, "search", "the search is still shown");
+    assert.equal(new URLSearchParams(ctx.window.location.search).get("view"), "search", "and the address names it");
+    assert.equal(ctx.window.history.state.searchBack, 1, "its place says where the view before it is");
+    assert.equal(ctx.document.querySelector(".unsaved-edits-modal.active"), null, "the return asked nothing more");
+    ctx.document.getElementById("btn-library-search-clear").click();
+    await ctx.settle(200);
+    await answer(ctx, "discard");
+    await ctx.settle(200);
+    assert.equal(ctx.state.library && ctx.state.library.kind, "year", "Clear went back to the year");
+    assert.equal(words(ctx).value, "");
+  });
+
+  test("#771: Enter before the picker's first read has answered waits for it, then adds the name", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", navigator: NAVIGATOR() });
+    ctx.hold.keywords = true;
+    ctx.hold.people = true;
+    await type(ctx, "all_of", "coa");
+    assert.match(ctx.document.getElementById("library-search-options-all_of").textContent, /Reading the library’s tags and people/);
+    const before = idsCalls(ctx).length;
+    ctx.key(pick(ctx, "all_of"), "Enter");
+    await ctx.settle(40);
+    assert.doesNotMatch(note(ctx).textContent, /No tag or person/);
+    assert.match(note(ctx).textContent, /Reading the library’s tags and people/);
+    assert.equal(idsCalls(ctx).length, before);
+    ctx.hold.keywords = false;
+    ctx.hold.people = false;
+    await ctx.release();
+    await ctx.settle();
+    assert.deepEqual(chipTexts(ctx, "all_of"), ["Trips/Coast"]);
+    assert.deepEqual(lastSearch(ctx).value, { all_of: [{ kind: "keyword", value: "Trips/Coast" }] });
+    assert.equal(note(ctx).textContent, "");
+  });
+
+  test("#772: tags the library cannot answer are asked once, not on each key; a sentence says only people are offered", async (t) => {
+    const ctx = await loadViewPage(t, {
+      search: "?view=all",
+      navigator: { keywords: { status: 500, body: { error: "The library is busy." } }, people: PEOPLE() },
+    });
+    ctx.server.first("/api/library/navigator?section=keywords", (url) => {
+      ctx.navigatorAsked.push("keywords");
+      return { success: false, error: "The library is busy." };
+    }, { status: 500 });
+    await type(ctx, "any_of", "w");
+    await type(ctx, "any_of", "wr");
+    await type(ctx, "any_of", "wre");
+    assert.equal(ctx.navigatorAsked.filter((name) => name === "keywords").length, 1, "asked once");
+    assert.deepEqual(optionLabels(ctx, "any_of"), ["Wren Halloway"], "the people are offered");
+    assert.match(ctx.document.getElementById("library-search-options-any_of").textContent,
+      /Could not read the library’s tags, so only people are offered: The library is busy\./);
   });
 });

@@ -204,7 +204,10 @@ export function searchFollows({ force = false } = {}) {
     if (fresh || force) {
         if (search) {
             s.lists = listsOf(search.value);
-            if (fresh) librarySearchWords.value = search.value.words || '';
+            if (fresh) {
+                librarySearchWords.value = search.value.words || '';
+                s.within = false;   // the selection is in the search now, as a chip of All of (#769: only once it has opened)
+            }
             if (SEARCH_LISTS.some(list => s.lists[list].length)) s.filtersOpen = true;
         } else {
             s.lists = emptyLists();
@@ -275,18 +278,23 @@ export function runSearch() {
         refuse('This search is too long to name in the page’s address: take some tags or people off, or search within fewer rows.');
         return;
     }
-    s.within = false;   // the selection is in the search now, as a chip of All of
+    // Within and the words are left as they are until the view opens (searchFollows): a person who stays on a photo with
+    // unsaved edits keeps what they typed and ticked (#769).
     openLibraryView(spec, { history: inSearch ? 'replace' : 'push' });
     if (wordsNote) say(`${wordsNote} It was left out of the search.`, true);
 }
 
-/** Clear the search: back to the view before it, or, for a search opened by its address, no view. Typed words alone are emptied. */
+/**
+ * Clear the search: back to the view before it, or, for a search opened by its address, no view -- the box emptied as that view
+ * opens (searchFollows), so a person who stays on a photo with unsaved edits keeps the search and its words (#769). With no
+ * search open, typed words alone are emptied.
+ */
 export function clearSearch() {
     const s = state.search;
-    librarySearchWords.value = '';
-    s.within = false;
     closePicker();
     if (!openSearch()) {
+        librarySearchWords.value = '';
+        s.within = false;
         s.lists = emptyLists();
         say('');
         paintChips();
@@ -305,6 +313,8 @@ function closePicker() {
     if (!picker.list) return;
     const list = picker.list;
     picker.list = null;
+    picker.reading = false;
+    picker.enterWaits = false;
     picker.options = [];
     picker.active = -1;
     picker.asked += 1;   // an answer on its way is for a picker no longer open
@@ -345,11 +355,11 @@ function paintOptions(list, { reading = false } = {}) {
             text: `${name.what}${name.hint ? `, ${name.hint}` : ''} · ${name.count.toLocaleString()}`,
         }),
     ]));
-    let said = '';
-    if (picker.message) said = picker.message;
-    else if (!picker.options.length && typed) said = reading ? 'Reading the library’s tags and people...' : `No tag or person of this library is called “${clip(typed)}”.`;
-    else if (picker.more) said = `${picker.more.toLocaleString()} more: keep typing.`;
-    if (said) items.push(buildElement('div', { className: 'library-search-option-note', attrs: { role: 'presentation' }, text: said }));
+    const said = [];
+    if (!picker.options.length && typed) said.push(reading ? 'Reading the library’s tags and people...' : `No tag or person of this library is called “${clip(typed)}”.`);
+    else if (picker.more) said.push(`${picker.more.toLocaleString()} more: keep typing.`);
+    if (picker.message) said.push(picker.message);
+    for (const text of said) items.push(buildElement('div', { className: 'library-search-option-note', attrs: { role: 'presentation' }, text }));
     replaceContent(listbox, ...items);
     const open = Boolean(typed) && items.length > 0;
     listbox.classList.toggle('hidden', !open);
@@ -358,12 +368,24 @@ function paintOptions(list, { reading = false } = {}) {
     else pick.removeAttribute('aria-activedescendant');
 }
 
+/** What the picker says of the sections the library could not answer: tags, people, or both (#772). */
+function unreadSentence(keywordsSec, peopleSec) {
+    const keywordsFailed = !keywordsSec.index && keywordsSec.status === 'error';
+    const peopleFailed = !peopleSec.index && peopleSec.status === 'error';
+    if (keywordsFailed && peopleFailed) return `Could not read the library’s tags and people: ${keywordsSec.message || peopleSec.message || 'no answer'}`;
+    if (keywordsFailed) return `Could not read the library’s tags, so only people are offered: ${keywordsSec.message || 'no answer'}`;
+    if (peopleFailed) return `Could not read the library’s people, so only tags are offered: ${peopleSec.message || 'no answer'}`;
+    return '';
+}
+
 /**
  * Offer the names that match what is typed in `list`'s box: at once from what is held, and again when the keywords and the
- * people are read -- when they never were, or the library changed them since (a tag renamed in the tag editor while the list
- * is open: navigator.js calls `searchVocabularyChanged`). An answer for a picker closed or typed in since is dropped.
+ * people are read -- when they never were, or the library changed them since (navigator.js calls `searchVocabularyChanged`
+ * on its pause after writes, #768; the tag editor's edits are writes). A section the library could not answer is not asked
+ * again on each key, only when the box is focused again (`retry`, #772). An answer for a picker closed or typed in since is
+ * dropped; an Enter pressed while the names were read adds the first one offered once they are here (#771).
  */
-function refreshPicker(list) {
+function refreshPicker(list, { retry = false } = {}) {
     const picker = state.search.picker;
     if (picker.list !== list) {
         closePicker();
@@ -374,20 +396,46 @@ function refreshPicker(list) {
     const asked = picker.asked;
     const keywordsSec = state.nav.sections.keywords;
     const peopleSec = state.nav.sections.people;
-    // Held and up to date, and not being read again (a read under way has already said the section is not stale).
-    const fresh = [keywordsSec, peopleSec].every(sec => sec.index && !sec.stale && !sec.pending);
+    // Held and up to date and not being read again (a read under way has already said the section is not stale), or failed
+    // and not to be asked again now.
+    const settled = sec => !sec.pending && ((sec.index && !sec.stale) || (!sec.index && sec.status === 'error' && !retry));
+    const toRead = ['keywords', 'people'].filter(name => !settled(state.nav.sections[name]));
     namesFrom(keywordsSec.index, peopleSec.index);
-    paintOptions(list, { reading: !fresh });
-    if (fresh) return;
-    Promise.all([readSectionIndex('keywords'), readSectionIndex('people')]).then(([keywords, people]) => {
+    picker.message = unreadSentence(keywordsSec, peopleSec);
+    picker.reading = toRead.length > 0;
+    paintOptions(list, { reading: picker.reading });
+    if (!picker.reading) return;
+    const reads = ['keywords', 'people'].map(name => (toRead.includes(name) ? readSectionIndex(name) : Promise.resolve(state.nav.sections[name].index)));
+    Promise.all(reads).then(([keywords, people]) => {
         if (asked !== picker.asked || picker.list !== list) return;
+        picker.reading = false;
         namesFrom(keywords, people);
-        picker.message = !keywords && !people
-            ? `Could not read the library’s tags and people: ${keywordsSec.message || peopleSec.message || 'no answer'}`
-            : '';
+        picker.message = unreadSentence(keywordsSec, peopleSec);
         paintOptions(list);
         paintChips();   // a chip's tag or person may be gone, or back
+        if (picker.enterWaits) {
+            picker.enterWaits = false;
+            pickEntered(list);
+        }
     });
+}
+
+/** Enter in a picker: the name the keys are on, or the first offered; a text that names none says so; an empty box searches. */
+function pickEntered(list) {
+    const picker = state.search.picker;
+    const pick = pickOf(list);
+    const typed = pick.value.trim();
+    if (picker.list === list && picker.reading && typed) {
+        // The names are being read (the first time, or after a change): the Enter waits for them (#771).
+        picker.enterWaits = true;
+        say('Reading the library’s tags and people...');
+        return;
+    }
+    if (picker.list === list && picker.options.length && picker.active >= 0) {
+        say('');
+        choose(list, picker.options[picker.active]);
+    } else if (typed) say(`No tag or person of this library is called “${clip(typed)}”: pick one from the list.`, true);
+    else runSearch();
 }
 
 /** The tags and people of the library may have changed (a write, the tag editor): an open picker reads them again. */
@@ -435,9 +483,7 @@ function onPickKey(list, event) {
     } else if (event.key === 'Enter') {
         event.preventDefault();
         event.stopPropagation();
-        if (open && picker.active >= 0) choose(list, picker.options[picker.active]);
-        else if (pick.value.trim()) say(`No tag or person of this library is called “${clip(pick.value.trim())}”: pick one from the list.`, true);
-        else runSearch();
+        pickEntered(list);
     } else if (event.key === 'Escape') {
         if (picker.list === list && !optionsOf(list).classList.contains('hidden')) {
             event.preventDefault();
@@ -480,7 +526,7 @@ function buildLists() {
         ]);
         librarySearchFilters.appendChild(row);
         pick.addEventListener('input', () => refreshPicker(list));
-        pick.addEventListener('focus', () => { if (pick.value.trim()) refreshPicker(list); });
+        pick.addEventListener('focus', () => { if (pick.value.trim()) refreshPicker(list, { retry: true }); });
         pick.addEventListener('keydown', (event) => onPickKey(list, event));
         pick.addEventListener('blur', () => { if (state.search.picker.list === list) closePicker(); });
         listbox.addEventListener('mousedown', (event) => {

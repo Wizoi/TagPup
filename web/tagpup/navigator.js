@@ -225,12 +225,14 @@ export function navigatorCountsChanged({ now = false } = {}) {
             any = true;
         }
     }
-    upper.searchVocabularyChanged();   // the names the search's picker offers are read again if it is open
     if (!any) return;
     window.clearTimeout(nav.timer);
     nav.timer = window.setTimeout(() => {
         nav.timer = null;
         if (nav.shown === 'library') ensureLoaded(nav.tab);
+        // The names the search's picker offers are read again if it is open: on the same pause, once for a run of writes (#768),
+        // and after the tab's own read, whose answer it then shares.
+        upper.searchVocabularyChanged();
     }, now ? 0 : NAV_COUNTS_MS);
 }
 

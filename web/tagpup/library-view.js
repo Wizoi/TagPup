@@ -172,13 +172,29 @@ function searchBackOf(previous) {
     return here > 0 ? here + 1 : 0;
 }
 
+/**
+ * A new place in the history, tagged with its position when the place the page is at has one (#770): positions are consecutive,
+ * since a new place drops the places after the one it is made from.
+ */
+function pushEntry(entry, url) {
+    const at = state.entries.at;
+    const pos = at === null ? null : at + 1;
+    window.history.pushState(pos === null ? entry : { ...entry, entryLoad: state.entries.load, entryPos: pos }, '', url);
+    state.entries.at = pos;
+}
+
+/** The position of a place in the history this load made, or null. */
+function positionOf(entry) {
+    return entry && entry.entryLoad === state.entries.load && Number.isInteger(entry.entryPos) ? entry.entryPos : null;
+}
+
 function writeAddress(spec, mode, back = 0) {
     if (mode === 'none' || spec.error) return;
     const url = new URL(window.location.href);
     url.search = viewSearch(spec);
     if (mode === 'push') {
         saveScroll();
-        window.history.pushState(back > 0 ? { searchBack: back } : {}, '', url);
+        pushEntry(back > 0 ? { searchBack: back } : {}, url);
     } else {
         window.history.replaceState(window.history.state, '', url);
     }
@@ -212,6 +228,38 @@ function keepAddress() {
     upper.searchFollows({ force: true });
 }
 
+/**
+ * The person stayed on the photo after Back or Forward had already moved the history (#770): the history goes back to the place
+ * the page shows (`from`), whose own state -- a search's `searchBack` -- is then the place's again; the popstate of that return
+ * names what is shown and asks nothing. When either position is not known, the place moved to is given the view's address and
+ * the view's own state, less `searchBack`, which no longer says where the view before the search is (Clear then closes the view).
+ */
+function stayAfterMove(from, to) {
+    if (from !== null && to !== null && from !== to) {
+        window.history.go(from - to);
+        upper.searchFollows({ force: true });
+        return;
+    }
+    const lib = state.library;
+    if (lib && !lib.invalid) {
+        const kept = { ...(lib.entryState || {}) };
+        for (const name of ['searchBack', 'entryLoad', 'entryPos', 'scrollTop']) delete kept[name];
+        const here = window.history.state || {};
+        if (positionOf(here) !== null) Object.assign(kept, { entryLoad: here.entryLoad, entryPos: here.entryPos });
+        const url = new URL(window.location.href);
+        url.search = viewSearch(lib);
+        window.history.replaceState(kept, '', url);
+    }
+    upper.searchFollows({ force: true });
+}
+
+/** Does the address name what the page shows: the view open, or no view while none is? A return to it asks nothing. */
+function addressNamesWhatIsShown() {
+    const spec = viewSpecFromSearch(window.location.search);
+    if (!spec) return !state.library;
+    return !spec.error && isOpen(spec);
+}
+
 function beginView(spec, history, scrollTop) {
     const previous = state.library;
     const back = !spec.error && spec.kind === 'search' ? searchBackOf(previous) : 0;
@@ -230,6 +278,7 @@ function beginView(spec, history, scrollTop) {
     state.folderPhotos = [];
     forgetBanner();            // what the disk held of the view before is not this view's
     writeAddress(spec, history, back);
+    lib.entryState = { ...(window.history.state || {}) };   // the state of its place in the history (#770)
     showChrome();
     upper.navigatorFollows();  // the sidebar shows the source, in the tab it belongs to
     openFolderView();          // the grid, empty: 'Opening the view...' until the order is here
@@ -305,7 +354,7 @@ export function closeViewOntoFolder(folder) {
         const url = new URL(window.location.href);
         for (const name of VIEW_PARAMS) url.searchParams.delete(name);
         saveScroll();
-        window.history.pushState({}, '', url);
+        pushEntry({}, url);
         closeLibraryView({ folder });
         upper.choosePane('folder');
     });
@@ -321,7 +370,7 @@ export function closeViewAsNewPlace() {
         const url = new URL(window.location.href);
         for (const name of VIEW_PARAMS) url.searchParams.delete(name);
         saveScroll();
-        window.history.pushState({}, '', url);
+        pushEntry({}, url);
         closeLibraryView();
     });
 }
@@ -430,10 +479,17 @@ export function openViewFromAddress() {
 
 export function wireLibraryView() {
     btnLibraryRefresh.addEventListener('click', refreshLibraryView);
+    // This place in the history is the first this load knows: position 0 (#770).
+    window.history.replaceState({ ...(window.history.state || {}), entryLoad: state.entries.load, entryPos: 0 }, '');
+    state.entries.at = 0;
     window.addEventListener('popstate', (event) => {
         // Back or Forward between a folder and a view, or between two views.
+        const from = state.entries.at;
+        const to = positionOf(event.state);
+        state.entries.at = to;
+        if (addressNamesWhatIsShown()) return;   // a cancelled move put back (stayAfterMove): nothing to show, nothing to ask
         if (hasUnsavedEdits() || openPhotoWrite()) {
-            leavePhotoThen(() => showAddress((event.state && event.state.scrollTop) || 0), { onStay: keepAddress });
+            leavePhotoThen(() => showAddress((event.state && event.state.scrollTop) || 0), { onStay: () => stayAfterMove(from, to) });
             return;
         }
         showAddress((event.state && event.state.scrollTop) || 0);
