@@ -2620,9 +2620,13 @@ Analysis, in the order it would be decided:
 In a library view, the right pane's tags and people should stop working the way Organize's do (chips that change
 what photos hold). Clicking a person opens the People tab on that person's photos; clicking a tag opens the
 Keywords tab on that tag's photos -- a view change, the navigator showing it selected, as a sidebar click does.
-Suggest's auto-apply of AI suggestions does not belong in a library view and leaves its pane. Open when it is
-built: whether a library view keeps any way to add or take off a tag for a selection (9d-2's bulk add, the chip's
-x), or all editing moves to Organize.
+Suggest's auto-apply of AI suggestions does not belong in a library view and leaves its pane. *Owner,
+2026-10-04 (scheduled Thursday 2026-10-08):* the pane splits in two. **Navigation** on top: Folders to Organize (as
+now), **People jump** (each person of the selection a link to the People view of that person) and **Keyword jump**
+(each keyword a link to the Keywords view of that tag, leaving out the tags of people already under People).
+**Tagging** below, collapsible and collapsed at first, holding the people and tag editing tools (9d-2's bulk add
+and take-off stay, here). Also: the magnifying glass's photo page needs a way back to the view exactly as it was
+left -- scroll, selection, view -- since a library view's sidebar is not one-to-one with its photos.
 
 ### Backlog: which photo fields are searchable *(owner, 2026-10-04; after phase 9)*
 A later review of which metadata fields search offers, as members (all of / any of / none of) and as words. Named
