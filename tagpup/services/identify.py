@@ -142,6 +142,45 @@ def decided_faces(library):
     return stamp, (ids, names, np.vstack(vecs) if vecs else None)
 
 
+def _closest_to_mean(ids, names, matrix, skip=()):
+    """{name: id of the face nearest the mean of that name's faces}, for each name not in `skip`.
+    One pass over the matrix's rows: the names are grouped once and each group is read as
+    a slice, so no group's mean is the size of the table. A tie goes to the lowest id."""
+    if matrix is None or not len(ids):
+        return {}
+    ids = np.asarray(ids)
+    uniq, inverse = np.unique(np.asarray(names), return_inverse=True)
+    order = np.argsort(inverse, kind="stable")
+    bounds = np.searchsorted(inverse[order], np.arange(len(uniq) + 1))
+    chosen = {}
+    for group, name in enumerate(uniq):
+        name = str(name)
+        if name in skip:
+            continue
+        rows = order[bounds[group]:bounds[group + 1]]
+        vectors = matrix[rows]
+        centre = vectors.mean(axis=0)
+        norm = np.linalg.norm(centre)
+        scores = vectors @ (centre / norm) if norm else np.zeros(len(rows))
+        best = np.flatnonzero(scores >= scores.max() - 1e-7)
+        chosen[name] = int(ids[rows[best]].min())
+    return chosen
+
+
+def representative_faces(decided, named):
+    """{name: face id}: for each person the face most like them, to show beside the name.
+
+    The decided face (decided_faces: named by hand, or borne out by its photo's keyword)
+    nearest the mean of that person's decided faces. A person none of whose faces is
+    decided gets the face nearest the mean of their named ones; a person with neither
+    (every named face unreadable or excluded) is absent. An excluded face is in neither
+    matrix, so is never chosen. Both arguments are (ids, names, matrix) as the matrices
+    are cached."""
+    chosen = _closest_to_mean(*decided)
+    chosen.update(_closest_to_mean(*named, skip=chosen))
+    return chosen
+
+
 # ---- The photos, and one photo ----------------------------------------------------------
 
 def photos_waiting(library, show_matched=False):

@@ -451,6 +451,7 @@ matching can still read its name.
 - `/api/face-crop?id=<face_id>`: Dynamically crops the face from the original photo and returns it as a JPEG (caches the JPEG crop binary in the database).
 - `/api/people`: Returns an alphabetical list (`tag_sort_key`) of all unique people names in the database, leaving out people hidden from autocomplete. `include_hidden=1` includes them: the page asks that way to check whether a name already exists.
 - `/api/people-with-counts`: Returns unique names with their respective face counts.
+- `/api/people-faces`: Returns `{name: face_id}`, the face most like each person, for Review People's "By face" list. The decided face (named by hand, or borne out by its photo's keyword: #640) nearest the mean of the person's decided faces; a person with none decided gets the face nearest the mean of their named ones; one with no readable face is absent and the page draws a placeholder. Excluded faces are never chosen. Computed in one pass over the cached decided and named matrices and cached with the decided matrix's stamp. The crop is `/api/face-crop`.
 - `/api/person-faces?name=<name>`: Returns matched/outlier faces for a person (an outlier is a face `possibly_wrong`:
   `tagpup.core.clustering.looks_wrong` against the person's closest face in the years around the photo).
 - `/api/face-matches?id=<face_id>`: Evaluates face similarity and returns the top 5 closest matched people.
