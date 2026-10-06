@@ -235,6 +235,17 @@ def people_with_counts():
     return jsonify(people_service.with_counts(library))
 
 
+@routes.get("/api/people-faces")
+def people_faces():
+    """{name: face id}: the face most like each person, for the people list shown by face
+    (tagpup.services.identify.representative_faces). A person with no readable face is
+    absent; the crop is /api/face-crop?id=."""
+    library = state.require()
+    if not _library_there(library):
+        return jsonify({})
+    return jsonify(identify_jobs.representative_faces(library, identify_cache.of(library)))
+
+
 @routes.get("/api/tags/list")
 def tags_list():
     """Every tag this library knows, with what it touches (tagpup.services.tags.listing).
