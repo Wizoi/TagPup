@@ -16,6 +16,7 @@ the owner's Ctrl+C, the always-on process chosen; and, for real, in a home of th
 own on ports of its own: an idle server replaced, a hung one ended, and a new version that
 does not start once the old has gone, the old started again.
 """
+import http.client
 import json
 import os
 import subprocess
@@ -233,6 +234,18 @@ class Choices(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 self.hand_over()
         self.assertIn("nothing answers on port 5, 6; start TagPup or TagTuner", self.said[-1])
+
+
+class AReplyThatIsNotHttp(unittest.TestCase):
+    """The hand-over's test met it: GET /api/server answered by its own request read back
+    (http.client.BadStatusLine), which ask() let through and the install stopped on a
+    traceback, the old server ended and nothing started."""
+
+    def test_is_no_answer(self):
+        with mock.patch("urllib.request.urlopen", side_effect=http.client.BadStatusLine("GET /api/server HTTP/1.1")):
+            self.assertIsNone(launcher.ask(5, timeout=1))
+            self.assertFalse(launcher.drain(5, "t", quiet=0, seconds=1)["drained"])
+            self.assertIn("no_answer", launcher.drain(5, "t", quiet=0, seconds=1))
 
 
 class TheInstallsMain(unittest.TestCase):

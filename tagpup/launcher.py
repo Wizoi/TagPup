@@ -43,6 +43,7 @@ process, it is started (if it is not running) rather than a server of the instal
 Two installs at once take turns (HANDOVER_LOCK); the second leaves the server to the first,
 which starts the version current.txt names when it starts it.
 """
+import http.client
 import json
 import os
 import socket
@@ -184,7 +185,9 @@ def ask(port, timeout=None):
     try:
         with urllib.request.urlopen("http://127.0.0.1:%d/api/server" % port, timeout=timeout) as reply:
             value = json.loads(reply.read().decode("utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
+        # Not HTTP is no answer too: a port reached as it is let go, or a connection to
+        # itself -- the request read back as the reply (http.client.BadStatusLine).
         return None
     return value if isinstance(value, dict) and "version" in value else None
 
@@ -203,8 +206,8 @@ def drain(port, token, quiet=QUIET, seconds=None):
             value = json.loads(reply.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         return {"drained": False, "refused": e.code}
-    except (OSError, ValueError) as e:
-        return {"drained": False, "no_answer": str(e)}
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        return {"drained": False, "no_answer": str(e) or type(e).__name__}
     return value if isinstance(value, dict) else {"drained": False, "no_answer": "not JSON"}
 
 
