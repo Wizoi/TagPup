@@ -7,9 +7,11 @@ looks like is checked in a real browser by scripts/measure_select_list.py; this 
 """
 import os
 import re
+import sys
 import unittest
 
-import web_client
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import web_client  # noqa: E402
 
 WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 PAGES = ("tagpup", "tuner", "activity")
