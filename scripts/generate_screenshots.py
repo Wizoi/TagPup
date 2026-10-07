@@ -2,6 +2,7 @@
 import os
 import socket
 import sys
+import tempfile
 import time
 import subprocess
 from urllib.parse import quote
@@ -13,6 +14,7 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 
 import _root  # noqa: E402,F401
 from tagpup.core import processes  # noqa: E402
+from sandbox import environment, remove_sandbox  # noqa: E402
 
 # Import environment prep to seed test DB
 from prepare_test_environment import main as prepare_env
@@ -36,16 +38,19 @@ def run_screenshot_flow():
     return
 
     server = None
+    home = None
     gui_port, tuner_port = TAGPUP_PORT, TUNER_PORT
 
     try:
         # One server for both pages (tagpup_web.py), logging where the apps log
         # (data/logs), not into whatever folder this was run from.
         print(f"Starting the server: TagPup on port {gui_port}, TagTuner on port {tuner_port}...")
+        # A home of its own (unreachable today; copy the test library into its data/ when this is wired again).
+        home = tempfile.mkdtemp(prefix="tagpup_screenshots_home_")
         server = processes.start(
             [sys.executable, os.path.join(PROJECT_ROOT, "tagpup_web.py"), "--db", "test_photo_index",
              "--tagpup-port", str(gui_port), "--tuner-port", str(tuner_port)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment(home),
         )
         for _ in range(60):
             try:
@@ -175,6 +180,8 @@ def run_screenshot_flow():
                     server.kill()
                 except Exception:
                     pass
+        if home:
+            remove_sandbox(home)
         print("Done.")
 
 if __name__ == "__main__":

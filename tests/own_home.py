@@ -50,17 +50,11 @@ class OwnHome:
         _reap_after_exit(self.root)
         self.data = os.path.join(self.root, "data")
         os.makedirs(self.data)
-        # The Downloads folder a delete from a share is copied through is the home's too (tagpup.files.recycle_bin, #694):
-        # a test never writes the owner's Downloads; and the Recycle Bin's size and settings are a large empty Bin's (#703),
-        # so no test reads the owner's (asking Windows took 11.8 s here).
-        # The records a server writes of where it answers (tagpup.launcher) are the home's too,
-        # not the user's folder the owner's servers write theirs in; and so is the turn on the
-        # graphics card (tagpup.ml.gpu): a test never waits for the owner's index, nor holds it up.
-        self._environ = mock.patch.dict(os.environ, {"TAGPUP_HOME": self.root,
-                                                     "TAGPUP_SERVERS": os.path.join(self.root, "servers"),
-                                                     "TAGPUP_GPU_LOCK": os.path.join(self.root, "gpu"),
-                                                     "TAGPUP_DOWNLOADS": os.path.join(self.root, "Downloads"),
-                                                     "TAGPUP_RECYCLE_BIN": "1000000,0,0"})
+        # The folders of the user's own beside the home are the home's too (tagpup.config.own_home_environment, which
+        # the measurements' sandboxes use as well): the Downloads folder a delete from a share is copied through (#694),
+        # the Recycle Bin's size and settings, a large empty Bin's (#703: asking Windows took 11.8 s here), the records
+        # a server writes of where it answers (tagpup.launcher), and the turns on the graphics card (tagpup.ml.gpu).
+        self._environ = mock.patch.dict(os.environ, tagpup_config.own_home_environment(self.root))
         self._environ.start()
         self._open = True
 

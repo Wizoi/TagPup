@@ -26,12 +26,16 @@ TAKERS = {OWNER, RUNTIME, os.path.join("tagpup", "ml", "clip.py"), os.path.join(
 #: The byte locks of the machine's shared files: the card's, and the installer's own
 #: (tagpup.supervisor.Lock), which is not the card's.
 LOCKERS = {OWNER, os.path.join("tagpup", "supervisor.py")}
+#: Names the turns' folder, to move it into a home of its own (tagpup.config.own_home_environment,
+#: a test's and a sandbox's, #796), and locks nothing: held to the locks themselves.
+NAMES_THE_FOLDER = {os.path.join("tagpup", "config.py")}
 
 #: What loads a model's weights (onto its device): open_clip's and facenet's own.
 WEIGHTS = {"create_model_and_transforms", "MTCNN", "InceptionResnetV1"}
 
 TURNS = re.compile(r"\b(gpu|card)\b.*\.(hold|try_hold|ensure|release_if_idle)\(|\bgpu\.Card\(")
 LOCKS = re.compile(r"msvcrt\.locking|fcntl\.flock|\bcard\.lock\b|TAGPUP_GPU_LOCK")
+LOCKS_ONLY = re.compile(r"msvcrt\.locking|fcntl\.flock|\bcard\.lock\b")
 
 
 def loads_weights(source):
@@ -84,7 +88,9 @@ class TheCardHasOneOwner(unittest.TestCase):
     def test_the_card_is_locked_only_by_its_owner(self):
         problems = []
         for relative in python_sources():
-            if relative not in LOCKERS:
+            if relative in NAMES_THE_FOLDER:
+                problems += lines_matching(LOCKS_ONLY, relative)
+            elif relative not in LOCKERS:
                 problems += lines_matching(LOCKS, relative)
         self.assertEqual([], problems)
 

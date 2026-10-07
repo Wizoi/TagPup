@@ -36,10 +36,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from .code_snapshot import REPO_ROOT, copy_code
-    from .sandbox import free_port, place_roots, remove_sandbox
+    from .sandbox import environment, free_port, place_roots, remove_sandbox
 except ImportError:  # imported as a top-level module
     from code_snapshot import REPO_ROOT, copy_code
-    from sandbox import free_port, place_roots, remove_sandbox
+    from sandbox import environment, free_port, place_roots, remove_sandbox
 
 import _root  # noqa: E402,F401
 from tagpup.store import db as tagpup_db  # noqa: E402
@@ -98,7 +98,7 @@ def start_server(sandbox, db_path, port):
     # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
     process = processes.start([sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
                                "--tagpup-port", str(port), "--tuner-port", str(free_port()), "--warm-up"],
-                              cwd=sandbox, env=dict(os.environ, TAGPUP_HOME=sandbox),
+                              cwd=sandbox, env=environment(sandbox),
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return process, log_path
 

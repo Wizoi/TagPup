@@ -27,14 +27,34 @@ it was, and the owner ended old servers by hand to reach the version installed. 
 Two launches at once (TagPup.cmd and TagTuner.cmd clicked together) both make way; the
 ports decide which serves (tagpup.web.app.bind refuses a port in use), and the other opens
 the page of the one that won.
+
+An install by hand (scripts/install_app.py --apply) hands the server over itself
+(`hand_over`, #795): the server of an earlier version this installed app runs is made way
+for as a launch would (the same make_way, opening no page), and the version installed is
+started in its place, on its ports, as a process of its own with a hidden console
+(`start_server`): an open page says TagPup was updated, and a reload reaches the new
+version. The old server is ended before the new one starts -- they share the ports the
+pages and bookmarks use, and two servers starting on one library run its migrations at
+once -- so first the new version is checked to start at all (`starts`: its tagpup_web.py
+--help, every module the server imports); and when it does not answer once started, the
+old version is started again. A server run from a checkout, one of another installed
+folder, and the always-on process's are left alone; when the owner chose the always-on
+process, it is started (if it is not running) rather than a server of the install's own.
+Two installs at once take turns (HANDOVER_LOCK); the second leaves the server to the first,
+which starts the version current.txt names when it starts it.
 """
+import http.client
 import json
 import os
+import socket
+import subprocess
 import time
 import urllib.error
 import urllib.request
 
+from tagpup import config
 from tagpup import supervisor
+from tagpup.core import library as libraries
 from tagpup.core import processes
 
 #: Where the records are, when not the user's own folder (a test's home, a sandbox).
@@ -166,7 +186,9 @@ def ask(port, timeout=None):
     try:
         with urllib.request.urlopen("http://127.0.0.1:%d/api/server" % port, timeout=timeout) as reply:
             value = json.loads(reply.read().decode("utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
+        # Not HTTP is no answer too: a port reached as it is let go, or a connection to
+        # itself -- the request read back as the reply (http.client.BadStatusLine).
         return None
     return value if isinstance(value, dict) and "version" in value else None
 
@@ -185,8 +207,8 @@ def drain(port, token, quiet=QUIET, seconds=None):
             value = json.loads(reply.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         return {"drained": False, "refused": e.code}
-    except (OSError, ValueError) as e:
-        return {"drained": False, "no_answer": str(e)}
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        return {"drained": False, "no_answer": str(e) or type(e).__name__}
     return value if isinstance(value, dict) else {"drained": False, "no_answer": "not JSON"}
 
 
@@ -212,11 +234,23 @@ def _name(version):
     return version or "from a checkout"
 
 
-def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=time.monotonic):
+def answering(port):
+    """Is something already answering on `port` on this machine?"""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=time.monotonic, page=True):
     """Before a launcher of `version` serves on `port`: what answers there, if anything,
     and whether to replace it (module doc). (OPEN or SERVE, whether `open_page()` was
     already called: the page of the server answering, opened while it finishes a long job.)
-    `say(line)` tells the owner, at the launcher's window."""
+    `say(line)` tells the owner, at the launcher's window. Not `page`: an install's, which
+    opens no page and says what it leaves running instead."""
+    then = "opening its page" if page else "leaving it running"
+    stopping = "closing this window" if page else "stopping this install (Ctrl+C)"
     opened = False
     said, said_at = None, None
     unanswered = 0
@@ -234,14 +268,13 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
                 # comes once it serves), or no TagPup server of this user's.
                 starting_since = clock() if starting_since is None else starting_since
                 if clock() - starting_since >= STARTING_WAIT:
-                    say("Port %d answers, but not as a TagPup server this user started; opening its page." % port)
+                    say("Port %d answers, but not as a TagPup server this user started; %s." % (port, then))
                     return OPEN, opened
                 sleep(1)
                 continue
             if theirs.get("supervised"):
                 say("TagPup %s (process %s), run by the always-on process, is not answering; the always-on "
-                    "process ends a server that hangs. Opening its page." % (_name(theirs.get("version")),
-                                                                              theirs.get("pid")))
+                    "process ends a server that hangs; %s." % (_name(theirs.get("version")), theirs.get("pid"), then))
                 return OPEN, opened
             unanswered += 1
             if unanswered < HUNG_TRIES:
@@ -251,7 +284,7 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
             say("TagPup %s (process %s) has not answered for %d tries of %d s; ending it."
                 % (_name(theirs.get("version")), theirs.get("pid"), HUNG_TRIES, HUNG_TIMEOUT))
             if not end(theirs, port, answering, sleep=sleep):
-                say("It did not end; opening the page on port %d." % port)
+                say("It did not end; %s, on port %d." % (then, port))
                 return OPEN, opened
             continue
         unanswered = 0
@@ -261,12 +294,12 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
             return OPEN, opened
         if status.get("supervised"):
             say("TagPup %s answers, run by the always-on process, which moves it onto %s at its next quiet "
-                "moment; opening its page." % (_name(running_version), _name(version)))
+                "moment; %s." % (_name(running_version), _name(version), then))
             return OPEN, opened
         if theirs is None or theirs.get("version") != running_version:
             say("TagPup %s answers on port %d and cannot be asked to make way for %s: it was started before "
                 "a launch could replace it, or by another user. Close its window (or end it in Task Manager) "
-                "and launch again; opening its page now." % (_name(running_version), port, _name(version)))
+                "and launch again; %s now." % (_name(running_version), port, _name(version), then))
             return OPEN, opened
         if said is None:
             say("TagPup %s is running (process %s); handing over to %s."
@@ -278,11 +311,11 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
             say("TagPup %s finished what it was doing; ending it and starting %s."
                 % (_name(running_version), _name(version)))
             if not end(theirs, port, answering, sleep=sleep):
-                say("It did not end; opening the page on port %d." % port)
+                say("It did not end; %s, on port %d." % (then, port))
                 return OPEN, opened
             continue
         if answer.get("refused"):
-            say("TagPup %s refused to make way (%s); opening its page." % (_name(running_version), answer["refused"]))
+            say("TagPup %s refused to make way (%s); %s." % (_name(running_version), answer["refused"], then))
             return OPEN, opened
         if answer.get("no_answer"):
             continue   # asked again: gone (serve), or hanging (counted above)
@@ -296,10 +329,280 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
             quiet_since = None
         waiting = ", ".join(reasons)
         if waiting != said or clock() - said_at >= SAY_AGAIN:
-            say("TagPup %s is busy (%s): %s takes over when that ends. It answers meanwhile; closing this "
-                "window leaves the update to the next launch." % (_name(running_version), waiting, _name(version)))
+            say("TagPup %s is busy (%s): %s takes over when that ends. It answers meanwhile; %s leaves the "
+                "update to the next launch." % (_name(running_version), waiting, _name(version), stopping))
             said, said_at = waiting, clock()
         if not opened:
             open_page()
             opened = True
         sleep(RETRY_BUSY)
+
+
+# ---- An install's hand-over (#795) -----------------------------------------------------------
+
+#: Held, in the installed app's folder, while an install hands a server over: a second
+#: install leaves it to the first, which starts what current.txt names when it starts it.
+HANDOVER_LOCK = "handover.lock"
+
+#: How long the check that a version starts at all may take (its tagpup_web.py --help, about
+#: 2 s here, 36-41 s under another suite's load); how long a server an install started has
+#: to answer as its version: START_MULTIPLE times what that check took, never under
+#: START_WAIT (a quiet machine's 2 s would give 20 s) nor over START_CEILING (#807).
+CHECK_WAIT = 120
+START_WAIT = 120
+START_MULTIPLE = 10
+START_CEILING = 600
+SAY_WAITING = 30
+
+#: Where a server an install started writes what it prints, in its home's data/logs: its log
+#: is server.log (tagpup.logs), and this holds what comes before it -- a traceback that stops
+#: it starting.
+STARTED_LOG = "tagpup_web.installed.log"
+
+#: What an install does with each server running (`kind_of`).
+SAME, ALWAYS_ON, CHECKOUT, ELSEWHERE, REPLACE = "same", "always-on", "checkout", "elsewhere", "replace"
+
+
+def kind_of(found, installed, current):
+    """What an install of `current` into `installed` does with the server `found` names:
+    SAME (it runs `current`), ALWAYS_ON (the always-on process's, which moves its own),
+    CHECKOUT (run from a checkout: a developer's, left to the next launch), ELSEWHERE (a
+    version this installed folder does not hold), or REPLACE."""
+    version = found.get("version")
+    if version == current:
+        return SAME
+    if found.get("supervised"):
+        return ALWAYS_ON
+    if not version:
+        return CHECKOUT
+    if not os.path.isdir(os.path.join(installed, "versions", version)):
+        return ELSEWHERE
+    return REPLACE
+
+
+def ports_of(found):
+    """The ports a record names, as the owner reads them: each once, in order, by commas."""
+    return ", ".join(str(port) for port in sorted(set((found.get("ports") or {}).values())))
+
+
+def _main_port(found):
+    ports = found.get("ports") or {}
+    return ports.get("tagpup") or sorted(ports.values())[0]
+
+
+def server_command(python, code, ports):
+    """The command line of the server of the code in `code` on `ports` ({"tagpup", "tuner"}),
+    opening no page."""
+    command = [supervisor.console_python(python), os.path.join(code, "tagpup_web.py"), "--open", "none"]
+    for kind in ("tagpup", "tuner"):
+        if kind in ports:
+            command += ["--%s-port" % kind, str(int(ports[kind]))]
+    return command
+
+
+def _environment(home):
+    env = dict(os.environ, TAGPUP_HOME=home)
+    env.pop(supervisor.TOKEN, None)   # never the always-on process's child
+    return env
+
+
+def starts(python, code, home):
+    """Does the server of `code` start at all -- does its tagpup_web.py import every module
+    the server needs, and answer --help? None when it does, else why not."""
+    try:
+        done = processes.run([supervisor.console_python(python), os.path.join(code, "tagpup_web.py"), "--help"],
+                             cwd=home, env=_environment(home), stdin=subprocess.DEVNULL, capture_output=True,
+                             text=True, errors="replace", timeout=CHECK_WAIT)
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e)
+    if done.returncode == 0:
+        return None
+    last = [line.strip() for line in (done.stderr or "").splitlines() if line.strip()]
+    return "it exited with %s%s" % (done.returncode, ": " + last[-1] if last else "")
+
+
+def started_log(home):
+    return os.path.join(home, config.DATA, "logs", STARTED_LOG)
+
+
+def start_server(python, code, home, ports):
+    """Start the server of `code` on `ports`, `home` its home: a process of its own that
+    outlives the install -- a hidden console and a process group of its own
+    (tagpup.core.processes), its output in STARTED_LOG -- opening no page. The Popen."""
+    log_path = started_log(home)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    try:   # rotated as each starts, as the always-on process's console log is
+        if os.path.getsize(log_path) > supervisor.CONSOLE_LOG_MAX:
+            os.replace(log_path, log_path + ".1")
+    except OSError:
+        pass
+    with open(log_path, "ab") as output:
+        return processes.start(server_command(python, code, ports), own_group=True, cwd=home, env=_environment(home),
+                               stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
+
+
+def start_wait(checked):
+    """How long to wait for a server to answer, when the check that it starts took `checked`
+    seconds: START_MULTIPLE times that, between START_WAIT and START_CEILING."""
+    return max(START_WAIT, min(START_CEILING, int(START_MULTIPLE * checked)))
+
+
+class Failed(str):
+    """Why a wait ended unanswered. `answers` is the version that answers the port instead
+    when one does (a launch took the ports): not a server that failed to start."""
+    answers = None
+
+
+def wait_for(port, version, started, wait=START_WAIT, sleep=time.sleep, clock=time.monotonic, say=None):
+    """Wait for `version` to answer on `port`: the server `started` (a Popen; None for the
+    always-on process's), or one a launch started meanwhile. None once it answers, else why
+    not -- a `Failed` naming what answers instead, when the server started has exited and
+    another version answers: stop at once, nothing is wrong with it (#806). `say` tells the
+    owner every SAY_WAITING seconds that it still waits."""
+    began = clock()
+    deadline, said = began + wait, began
+    while True:
+        status = ask(port, timeout=5)
+        if status is not None and status.get("version") == version:
+            return None
+        if started is not None and started.poll() is not None:
+            if status is not None:
+                why = Failed("it exited with %s, and TagPup %s answers on port %d instead"
+                             % (started.poll(), _name(status.get("version")), port))
+                why.answers = _name(status.get("version"))
+                return why
+            if not answering(port):
+                return "it exited with %s" % started.poll()
+        if clock() >= deadline:
+            return "it did not answer in %d s" % wait
+        if say is not None and clock() - said >= SAY_WAITING:
+            said = clock()
+            say("Still waiting for TagPup %s to import and start (%d of %d s)." % (_name(version), clock() - began, wait))
+        sleep(0.5)
+
+
+def has_libraries(home):
+    """Does the data folder of `home` hold a library the picker offers (core.library.picker_names,
+    the one rule: a .db file without the test prefix)? picker_names offers the default name for
+    an empty folder, which is not a library there."""
+    try:
+        files = os.listdir(os.path.join(home, config.DATA))
+    except OSError:
+        return False
+    return any(name + ".db" in files for name in libraries.picker_names(files, False))
+
+
+def no_library_said(home):
+    """What an install says when `home` holds no library, #816."""
+    return ("%s holds no library (no library file in its data folder), so the launchers would start TagPup on "
+            "none. Run the install again with --home naming the folder whose data/ holds the libraries "
+            "(what TAGPUP_HOME is in the launchers)." % os.path.join(home, config.DATA))
+
+
+def hand_over(installed, python, home, say, sleep=time.sleep, clock=time.monotonic):
+    """After an install into `installed`: hand each server of an earlier version this
+    installed app runs over to the version current.txt names (module doc), `home` the new
+    one's home. `say(line)` tells the owner, at the install's window. False when a server
+    was not handed over: left running (busy and refusing, not this user's), or the new
+    version did not start."""
+    lock = supervisor.Lock(os.path.join(installed, HANDOVER_LOCK))
+    if not lock.acquire(0):
+        say("Another install is handing the running server over; it starts the version installed last.")
+        return True
+    try:
+        current = supervisor.read_current(installed)
+        replacing = [found for found in running() if kind_of(found, installed, current) == REPLACE]
+        if replacing and not has_libraries(home):
+            # --home defaults to the installer's own folder, a worktree's when an agent runs it:
+            # a server started there would show an empty picker where the owner's has libraries.
+            say("TagPup %s was left running: %s" % (", ".join(_name(found.get("version")) for found in replacing),
+                                                      no_library_said(home)))
+            return False
+        return all([_hand_over(found, installed, python, home, say, sleep, clock) for found in replacing])
+    finally:
+        lock.release()
+
+
+def _hand_over(found, installed, python, home, say, sleep, clock):
+    old, ports, port = found.get("version"), dict(found.get("ports") or {}), _main_port(found)
+    new = supervisor.read_current(installed)
+    back = os.path.join(installed, "current.txt")
+    checking = clock()
+    why = starts(python, os.path.join(installed, "versions", new), home)
+    checked = clock() - checking
+    if why:
+        say("TagPup %s does not start (%s), so TagPup %s was left running. The launchers start %s now: run "
+            "TagPup.cmd to see why, or write %s in %s to go back." % (new, why, old, new, old, back))
+        return False
+    started = None
+    try:
+        way, _shown = make_way(port, new, say=say, open_page=lambda: None, answering=answering, sleep=sleep,
+                               clock=clock, page=False)
+        if way == OPEN:
+            # Left running (make_way said why), or already the new version: a launch was quicker.
+            status = ask(port, timeout=5)
+            return bool(status) and status.get("version") == new
+        new = supervisor.read_current(installed) or new   # another install's, since
+        if supervisor.always_on(installed):
+            # The owner chose the always-on process: the launchers' way, it serves, never a server of ours.
+            if supervisor.running() is None:
+                say("Starting the always-on process, which serves %s." % new)
+                supervisor.start_in_background(installed, python)
+        else:
+            started = start_server(python, os.path.join(installed, "versions", new), home, ports)
+        wait = start_wait(checked)
+        say("Waiting for TagPup %s to import and start (importing alone took %.0f s; up to %d s)."
+            % (new, checked, wait))
+        why = wait_for(port, new, started, wait=wait, sleep=sleep, clock=clock, say=say)
+        if why is None:
+            now = record(port) or {}
+            if started is not None and started.poll() is not None:
+                say("TagPup %s answers on port %s (process %s): a launch of it took the ports first, and the server "
+                    "this install started stood down. A page left open says TagPup was updated; a reload shows %s."
+                    % (new, ports_of(found), now.get("pid"), new))
+            else:
+                say("TagPup %s answers on port %s (process %s), with no window of its own: a page left open says "
+                    "TagPup was updated, and a reload shows %s. The next install or launch of another version "
+                    "replaces it." % (new, ports_of(found), now.get("pid"), new))
+            return True
+        if getattr(why, "answers", None):
+            say("TagPup %s did not start here (%s). What answers is left running; nothing else was done. "
+                "Install again, or launch TagPup, when you want %s." % (new, why, new))
+            return False
+        if started is not None and started.poll() is None:
+            processes.kill_tree(started.pid)
+        say("TagPup %s did not start (%s); what it said is in %s." % (new, why, started_log(home)))
+        started = None
+        return _start_again(found, installed, python, home, say, sleep, clock, new, back)
+    except KeyboardInterrupt:
+        if started is not None and started.poll() is None:
+            say("Stopped: TagPup %s was started (process %s) and goes on without this window." % (new, started.pid))
+        elif answering(port):
+            say("Stopped: TagPup %s still answers on port %s; the next launch of TagPup or TagTuner replaces it."
+                % (_name(old), ports_of(found)))
+        else:
+            say("Stopped: TagPup %s was ended and nothing answers on port %s; start TagPup or TagTuner."
+                % (_name(old), ports_of(found)))
+        raise
+
+
+def _start_again(found, installed, python, home, say, sleep, clock, new, back):
+    """The new version did not start, and the old was ended: start the old again, so the
+    pages answer as they did. False: the hand-over failed either way."""
+    old, ports, port = found.get("version"), dict(found.get("ports") or {}), _main_port(found)
+    code = os.path.join(installed, "versions", old)
+    if answering(port) or not os.path.isfile(os.path.join(code, "tagpup_web.py")):
+        say("TagPup %s was not started again (%s). Start TagPup or TagTuner: its window says why %s does not start."
+            % (old, "something answers on port %d" % port if answering(port) else "its folder is gone", new))
+        return False
+    again = start_server(python, code, home, ports)
+    why = wait_for(port, old, again, sleep=sleep, clock=clock)
+    if why is None:
+        say("Started TagPup %s again (process %s): the pages answer as before. The launchers start %s now: run "
+            "TagPup.cmd to see why it does not start, or write %s in %s to go back." % (old, again.pid, new, old, back))
+        return False
+    if again.poll() is None:
+        processes.kill_tree(again.pid)
+    say("TagPup %s did not start again either (%s): nothing answers on port %s. Start TagPup or TagTuner."
+        % (old, why, ports_of(found)))
+    return False

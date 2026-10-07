@@ -64,7 +64,7 @@ import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 # The sandbox's helpers, shared with the other measurement scripts; the tests reach them here too.
-from sandbox import copy_library, free_port, place_roots, remove_sandbox  # noqa: E402,F401
+from sandbox import copy_library, environment, free_port, place_roots, remove_sandbox  # noqa: E402,F401
 # The code a sandbox runs: scripts/code_snapshot.py, shared with the installer.
 from code_snapshot import copy_code  # noqa: E402
 
@@ -97,7 +97,7 @@ def start_sandbox_server(sandbox, db_path, port):
          "--tuner-port", str(port), "--tagpup-port", str(free_port()), "--warm-up"],
         cwd=sandbox,
         # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
-        env=dict(os.environ, TAGPUP_HOME=sandbox),
+        env=environment(sandbox),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

@@ -26,7 +26,6 @@ import argparse
 import logging
 import os
 import secrets
-import socket
 import sys
 import time
 import webbrowser
@@ -71,12 +70,8 @@ def page_url(port):
 
 
 def answering(port):
-    """Is something already answering on `port` on this machine?"""
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-            return True
-    except OSError:
-        return False
+    """Is something already answering on `port` on this machine? (tagpup.launcher's, which an install asks too.)"""
+    return launcher.answering(port)
 
 
 def open_page(url):
@@ -93,6 +88,13 @@ def open_page(url):
     restarting = bool(os.environ.get("TAGPUP_WEB_RELOADED"))
     if serving and not restarting:
         webbrowser.open(url)
+
+
+def release(sockets):
+    """Close the sockets bound for a server that does not serve after all (an early return), so
+    a process that goes on -- a test calling main() -- does not hold the ports."""
+    for sock in sockets or []:
+        sock.close()
 
 
 def tell(line):
@@ -207,12 +209,22 @@ def main(argv=None):
             logger.error("Could not bind ports %s after %d tries; see the lines above.",
                          ", ".join(str(port) for port in ports.values()), BIND_TRIES)
             return 1
+    if sockets is None and (not args.reload or os.environ.get(RELOADER + "_CHILD")):
+        # No launcher makes way (the always-on process's child, a server an install starts, a
+        # sandbox's, the reloader's child -- not its parent, which only restarts it): the ports are still bound first, before a migration, the folder watcher or
+        # any model is started, so a start that loses them -- a launch took them while an
+        # install waited out a job -- exits at once having begun nothing (docs/findings.md, #805).
+        try:
+            sockets = web.bind_all(list(ports.values()), args.listen)
+        except OSError as e:
+            logger.warning("The ports are held by another server (%s); this one is not started.", e)
+            return supervisor.PORTS_TAKEN
 
     # The always-on process's child: it hands this server a token -- taken out of the
     # environment, so no program the server starts inherits it -- and waits rather than
     # counting a crash while another server holds the ports.
     token = os.environ.pop(supervisor.TOKEN, None)
-    if token:
+    if token and sockets is None:   # bound already: the ports are ours, and answer for that reason
         taken = [port for port in ports.values() if answering(port)]
         if taken:
             logger.warning("A server is already answering on port %d; this one is not started.", taken[0])
@@ -232,6 +244,7 @@ def main(argv=None):
                 # A name the library-name rule refuses makes nothing; serving it would
                 # answer every request against a library that is not there.
                 logger.error("Could not make a library at %s: %s", db_path, made.refused)
+                release(sockets)
                 return 2
         startup = Library(db_path)
     # The process's models, one per set of settings a library names, given to both apps;
@@ -271,6 +284,7 @@ def main(argv=None):
     try:
         web.serve(apps, ready=ready, listen=args.listen, sockets=sockets)
     finally:
+        release(sockets)   # waitress closed them when it served; a serve that returned early did not
         background.stop()
         launcher.forget(ports)
         if token:
