@@ -365,6 +365,20 @@ describe("naming a face names the person on the photo too", () => {
     assert.equal(ctx.posts("/api/face/match").length, 1);
   });
 
+  test("a person only a face names is not on the photo: the tag is written", async (t) => {
+    // photo.people lists a person a face names (source face); the keywords are what the tag is (#835).
+    const photo = photoRecord({ filename: "a.jpg", tags: ["Trips"], people: ["Hazel Brookmire"] });
+    const ctx = await openPhoto(t, { photo });
+    ctx.show();
+    click(ctx.window, ctx.boxes()[0]);
+    await flush(ctx.window, 4);
+    click(ctx.window, ctx.panel().querySelector(".face-panel-suggestion"));
+    await flush(ctx.window, 14);
+    assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["Trips", "People/Hazel Brookmire"]);
+    assert.equal(ctx.posts("/api/face/match").length, 1);
+    assert.match(ctx.$("status-text").textContent, /Named Hazel Brookmire/);
+  });
+
   test("a typed name that the tree holds: Enter does the same", async (t) => {
     const ctx = await openPhoto(t);
     ctx.show();

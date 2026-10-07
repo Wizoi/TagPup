@@ -27,7 +27,7 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { boxInContainedImage } from './common/image-zoom.js';
 import { samePath } from './common/paths.js';
 import { attachPersonFaces, forgetPersonFaces, hidePersonFaces } from './common/person-faces.js';
-import { leafOf, nameProblem, photoAlreadyHas, samePerson } from './common/vocabulary.js';
+import { leafOf, nameProblem, samePerson } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { faceLayer, imageViewer, mainImage } from './elements.js';
@@ -420,8 +420,9 @@ function say(text) {
     if (where) where.textContent = text;
 }
 
+/** Is the person among the photo's KEYWORDS? Not photo.people, which also lists a person only a face names (#835). */
 function photoHasPerson(photo, name) {
-    return (photo.people || []).some(person => samePerson(person, name)) || photoAlreadyHas(photo, name, namesAPerson);
+    return (photo.tags || []).some(tag => samePerson(tag, name) && namesAPerson(tag));
 }
 
 /** Say what a refused write said, in the server's own words. */
