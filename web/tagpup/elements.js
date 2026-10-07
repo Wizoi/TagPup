@@ -60,6 +60,13 @@ export const selectionDateGroup = document.getElementById('selection-date-group'
 export const selectionDateLabel = document.getElementById('selection-date-label');
 export const selectionFoldersGroup = document.getElementById('selection-folders-group');
 export const selectionFoldersList = document.getElementById('selection-folders-list');
+// The panel's two halves (selection-panel.js, #781)
+export const selectionNavigation = document.getElementById('selection-navigation');
+export const selectionPeopleJump = document.getElementById('selection-people-jump');
+export const selectionKeywordJump = document.getElementById('selection-keyword-jump');
+export const btnSelectionTagging = document.getElementById('btn-selection-tagging');
+export const selectionTaggingBody = document.getElementById('selection-tagging-body');
+export const selectionAutoApply = document.getElementById('selection-auto-apply');
 export const selectionDateValue = document.getElementById('selection-date-value');
 export const bulkAddPeopleInput = document.getElementById('bulk-add-people-input');
 export const btnBulkAddPeople = document.getElementById('btn-bulk-add-people');

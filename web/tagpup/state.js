@@ -70,6 +70,9 @@ export const state = {
         note: '', problem: false, filtersOpen: false,
         picker: { list: null, options: [], active: -1, more: 0, asked: 0, names: [], from: null, message: '', reading: false, enterWaits: false },
     },
+    // The selection details of a library view (selection-panel.js, #781): whether the Tagging section is open (this browser remembers it),
+    // and which jump lists were opened past their first few links ("and N more").
+    selectionPanel: { taggingOpen: false, expanded: { people: false, keywords: false } },
     // When the library was last in step with its folders, for the view's strip (sync-state.js).
     // `lastRunInStep`: whether the newest sync, of the whole library or a folder, left it in step (null: none, or not known).
     syncInfo: { status: 'idle', lastInStep: null, lastRunInStep: null, syncing: false, known: false, asked: 0, controller: null },

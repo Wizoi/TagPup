@@ -21,8 +21,9 @@ import {
 } from './folder.js';
 import { wireTagPupGear } from './gear.js';
 import {
-    leaveLibraryView, libraryChanged, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
+    leaveLibraryView, libraryChanged, openLibraryView, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
 } from './library-view.js';
+import { wireSelectionPanel } from './selection-panel.js';
 import { deleteSelection } from './bulk-edit.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
 import { choosePane, navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
@@ -67,6 +68,7 @@ Object.assign(upper, {
     renderFileList, renderPhotoFaces, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
+    openLibraryView,
     photosDeleted, photosWritten, reloadChangedPhoto, showSortOrder,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
@@ -149,6 +151,9 @@ document.addEventListener('DOMContentLoaded', () => {
     wireSortMenu();
     wireMoves();
     wireBanner();
+
+    // The selection details: the Tagging section's button, and what this browser remembers of it.
+    wireSelectionPanel();
 
     // The strip of a bulk edit of the library's photos: Cancel, Resume, Start again.
     wireBulk();
