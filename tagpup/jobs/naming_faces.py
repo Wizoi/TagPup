@@ -341,10 +341,11 @@ class Job:
                          % _plural(self.applied["changed"], "face name"))
         if self.grouped:
             delta = self.grouped["named_more"]
-            parts.append("Grouping named %s %s the library, %s." % (
-                _plural(self.grouped["people"], "person", "people"), "across",
-                ("%s more faces than before" % _number(delta)) if delta > 0 else
-                ("%s fewer faces than before" % _number(-delta)) if delta < 0 else "the same number of faces as before"))
+            parts.append("Grouping re-derived the library's automatic names (%s): %s." % (
+                _plural(self.grouped["people"], "person", "people"),
+                ("%s more named faces than before it ran" % _number(delta)) if delta > 0 else
+                ("%s fewer named faces than before it ran" % _number(-delta)) if delta < 0 else
+                "the same number of named faces as before it ran"))
         if not parts:
             parts.append("Nothing needed naming.")
         self._finish(DONE, " ".join(parts), what)

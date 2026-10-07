@@ -101,6 +101,7 @@ for (const appName of ["tagpup", "tagtuner"]) {
       const text = ctx.text(".name-faces-group");
       assert.match(text, /every face in the library/);
       assert.match(text, /re-derives the automatic names/);
+      assert.match(text, /can take away some of the names written above/);
       assert.match(text, /names you gave by hand are kept/);
       assert.match(text, /needs no graphics card/);
       assert.match(text, /History cannot undo it/);

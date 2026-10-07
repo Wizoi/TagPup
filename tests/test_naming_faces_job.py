@@ -387,7 +387,7 @@ class Grouping(Case789):
         self.assertIsNotNone(found["grouped"])
         self.assertEqual((WREN, "manual"), look(self.path, "SELECT name, name_source FROM faces WHERE id = ?",
                                                 (self.known_face,))[0], "a name given by hand is kept")
-        self.assertIn("Grouping named", found["message"])
+        self.assertIn("Grouping re-derived the library's automatic names", found["message"])
 
     def test_grouping_is_not_run_unless_ticked(self):
         self.seed()
