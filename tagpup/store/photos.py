@@ -658,7 +658,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     if held:
         # A photo read again: its faces are there, and its keywords may have changed. A new
         # photo has none yet; the faces recorded for it name themselves (services.faces).
-        face_tags.name_photos(conn, [photo_id], vocabulary=known)
+        face_tags.name_photos(conn, [photo_id], vocabulary=known, batch=batch)
     derived.record(conn, photo_id, row_path, row.get("tags", []), row.get("raw_metadata", {}), batch)
     if row.get("embedding") is not None:
         if model is None:

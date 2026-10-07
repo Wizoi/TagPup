@@ -25,7 +25,7 @@ import photo_rows  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import faces_from_tags, identify, journal as journal_service  # noqa: E402
-from tagpup.store import db, faces, people, photos, schema, taxonomy  # noqa: E402
+from tagpup.store import db, derived, face_tags, faces, people, photos, schema, taxonomy  # noqa: E402
 from unittest import mock  # noqa: E402
 
 WREN = "Wren Halloway"
@@ -123,7 +123,7 @@ class OneFaceOnePerson(Case):
 
     def test_a_batch_of_detections_names_the_photos_that_have_one_face_and_one_person(self):
         one = self.photo("regatta_003.jpg", ["People/" + WREN])
-        two = self.photo("regatta_004.jpg", ["People/" + WREN])
+        two = self.photo("regatta_004.jpg", ["People/" + ODA])
         face = {"box": [10, 10, 110, 110], "embedding": [0.5] * 8, "prob": 0.99, "crop_image": None}
         conn = db.connect(self.path)
         try:
@@ -306,9 +306,10 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         self.assertEqual(1, run.changed)
         self.assertEqual(WREN, self.name(first))
         self.assertEqual({"faces": 1}, run.details["remaining"], "the plan said 1 and nothing was recounted")
-        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True).changed)
+        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True, again=True).changed)
         self.assertEqual(ODA, self.name(second))
-        self.assertEqual(0, faces_from_tags.faces_from_tags(self.library, apply=True).changed, "a third run has nothing to do")
+        self.assertEqual(0, faces_from_tags.faces_from_tags(self.library, apply=True, again=True).changed,
+                         "a third run has nothing to do")
 
     def test_the_command_says_what_is_left_after_the_write(self):
         from click.testing import CliRunner
@@ -322,6 +323,41 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         self.assertIn("the face is like them, at 0.80 or more", dry.output)
         self.assertIn("not like them (under 0.70)", dry.output)
 
+    def test_a_second_apply_needs_again_and_says_why(self):
+        self.one_pass_leaves_one_more()
+        first = faces_from_tags.faces_from_tags(self.library, apply=True)
+        self.assertEqual(1, first.changed)
+        refused = faces_from_tags.faces_from_tags(self.library, apply=True)
+        self.assertEqual(faces_from_tags.AGAIN, refused.refused)
+        self.assertEqual(0, refused.changed)
+        self.assertEqual(1, refused.details["counts"]["faces"], "the counts it would have named are shown")
+        again = faces_from_tags.faces_from_tags(self.library, apply=True, again=True)
+        self.assertEqual(1, again.changed)
+
+    def test_the_dry_run_says_it_was_applied_before_and_an_undo_forgives(self):
+        self.one_pass_leaves_one_more()
+        self.assertFalse(faces_from_tags.faces_from_tags(self.library).details["earlier_apply"])
+        change = faces_from_tags.faces_from_tags(self.library, apply=True).details["change"]
+        self.assertTrue(faces_from_tags.faces_from_tags(self.library).details["earlier_apply"])
+        journal_service.undo(self.library, change, apply=True)
+        self.assertFalse(faces_from_tags.faces_from_tags(self.library).details["earlier_apply"])
+        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True).changed)
+
+    def test_the_command_refuses_a_second_apply_without_again(self):
+        from click.testing import CliRunner
+
+        import tagpup_cli
+        self.one_pass_leaves_one_more()
+        runner = CliRunner()
+        self.assertEqual(0, runner.invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags", "--apply"]).exit_code)
+        said = runner.invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags", "--apply"])
+        self.assertEqual(1, said.exit_code)
+        self.assertIn("--again", said.output)
+        self.assertIn("Would name 1 face(s). Nothing changed.", said.output)
+        dry = runner.invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags"])
+        self.assertIn("Applied before", dry.output)
+        self.assertEqual(0, runner.invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags", "--apply", "--again"]).exit_code)
+
     def test_the_dry_run_counts_the_bands(self):
         self.decided(0)
         for name, degrees in (("a", 10), ("b", 40), ("c", 120)):        # 0.98, 0.77, -0.5
@@ -334,6 +370,68 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
                                            counts["like_them_from_0.70_to_0.80"], counts["not_like_them"],
                                            counts["person_has_no_decided_face"]))
         self.assertEqual(3, counts["faces"])
+
+
+class APersonWithNoDecidedFace(Case):
+    """#839: named by the tag alone only when exactly one photo of theirs waits; the library's count, so the
+    same for the backfill and the live rule, for one at a time and for a batch, in any order."""
+
+    def several(self, count=3):
+        """`count` photos of Oda, each with one unnamed face, tagged. Returns the photos' paths."""
+        made = []
+        for n in range(count):
+            photo = self.photo("many_%d.jpg" % n, ["People/" + ODA])
+            self.face(photo, at(30 * n))
+            made.append(photo)
+        return made
+
+    def named(self):
+        return look(self.path, "SELECT name FROM faces WHERE name IS NOT NULL")
+
+    def ids_of(self, photo_paths):
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        try:
+            return face_tags.photo_ids_of(conn, photo_paths)
+        finally:
+            conn.close()
+
+    def test_one_photo_is_named_by_the_tag_alone(self):
+        (only,) = self.several(1)
+        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True).changed)
+        self.assertEqual([(ODA,)], self.named())
+        self.assertIsNotNone(only)
+
+    def test_several_photos_are_all_left_and_counted(self):
+        self.several(3)
+        run = faces_from_tags.faces_from_tags(self.library, apply=True)
+        self.assertEqual(0, run.changed)
+        counts = run.details["counts"]
+        self.assertEqual((3, 0), (counts["not_decidable_yet"], counts["person_has_no_decided_face"]))
+        self.assertEqual([], self.named())
+
+    def test_a_batch_and_one_at_a_time_in_either_order_name_the_same_faces(self):
+        photos_ = self.several(3)
+        ids = self.ids_of(photos_)
+
+        def run(order):
+            for photo_id in order:
+                write(self.path, lambda conn, photo_id=photo_id: face_tags.name_photos(conn, [photo_id]))
+
+        run(ids)
+        self.assertEqual([], self.named())
+        run(list(reversed(ids)))
+        self.assertEqual([], self.named())
+        write(self.path, lambda conn: face_tags.name_photos(conn, ids))
+        self.assertEqual([], self.named(), "a batch named what one at a time did not")
+
+    def test_the_other_photos_of_the_person_need_a_face_to_be_named_to_count(self):
+        # A photo whose face is a speck, or already named, or ruled out, is not one that waits.
+        (first,) = self.several(1)
+        other = self.photo("not_waiting.jpg", ["People/" + ODA])
+        self.face(other, at(90), box=[0, 0, 30, 30])
+        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True).changed)
+        self.assertEqual([(ODA,)], self.named())
+        self.assertIsNotNone(first)
 
 
 class AIndexPassReadsTheTreeOnce(Case):
@@ -361,6 +459,43 @@ class AIndexPassReadsTheTreeOnce(Case):
             write(self.path, indexed)
         self.assertEqual(5, len(look(self.path, "SELECT name FROM faces WHERE name IS NOT NULL")), "the faces were not named")
         self.assertEqual([], reads, "the tree was read again for a photo that named a face")
+
+
+class APassReadsAPersonsDecidedFacesOnce(Case):
+    """#841: the gate reads a person's decided faces once for a batch, not once for each photo."""
+
+    def test_fifty_photos_of_one_person_read_their_decided_faces_once(self):
+        known = self.photo("known.jpg")
+        self.face(known, at(0), name=WREN, name_source="manual")
+        photo_paths = []
+        for n in range(50):
+            photo_paths.append(self.photo("fifty_%d.jpg" % n))
+            self.face(photo_paths[-1], at(n % 10))
+        reads = []
+        real = face_tags._decided_of
+
+        def counted(conn, name):
+            reads.append(name)
+            return real(conn, name)
+
+        def indexed(conn):
+            batch = derived.Batch(conn)
+            for photo_path in photo_paths:
+                row = photo_rows.as_read(photo_path, {"XMP:Subject": ["People/" + WREN]})
+                photos.record_indexed(conn, photo_path, row, batch=batch)
+
+        with mock.patch.object(face_tags, "_decided_of", counted):
+            write(self.path, indexed)
+        self.assertEqual(50, len(look(self.path, "SELECT name FROM faces WHERE name = ? AND name_source IS NULL", (WREN,))))
+        self.assertEqual(1, len(reads), "the person's decided faces were read again for a photo of the pass")
+
+    def test_a_save_on_its_own_still_reads_them_fresh(self):
+        known = self.photo("known_2.jpg")
+        self.face(known, at(0), name=WREN, name_source="manual")
+        photo = self.photo("alone.jpg")
+        face = self.face(photo, at(5))
+        self.tag(photo, "People/" + WREN)
+        self.assertEqual(WREN, self.name(face))
 
 
 class Backfill(Case):

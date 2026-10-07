@@ -1256,15 +1256,19 @@ def sync(ctx, folder, apply_):
 @cli.command("faces-from-tags")
 @click.option("--apply", "apply_", is_flag=True,
               help="Name the faces, as one change of the journal. Without it, only says how many it would.")
+@click.option("--again", is_flag=True,
+              help="Apply once more to a library it was applied to before: the names it gave then are references now.")
 @click.pass_context
-def faces_from_tags(ctx, apply_):
+def faces_from_tags(ctx, apply_, again):
     """Name the faces a photo's person tag names: a photo with one face still to be named and
     one tagged person no face of it carries gives the face that person; several faces or
     people only when one person's named faces alike leave no doubt. Names are automatic, so
     clustering may revise them; faces unmatched by hand or excluded are left alone. A dry run
     unless --apply; counts only, never names."""
     library = _existing_library(ctx)
-    result = faces_from_tags_service.faces_from_tags(library, apply=apply_)
+    result = faces_from_tags_service.faces_from_tags(library, apply=apply_, again=again)
+    if result.refused and result.details.get("earlier_apply"):
+        console.print("Would name %d face(s). Nothing changed." % result.details["counts"]["faces"])
     if result.refused or result.errors:
         for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
             console.print(line, markup=False, soft_wrap=True)
@@ -1278,6 +1282,9 @@ def faces_from_tags(ctx, apply_):
     console.print("      the face is like them, at 0.80 or more: %d, from 0.70 to 0.80: %d (named)"
                   % (counts["like_them_from_0.80"], counts["like_them_from_0.70_to_0.80"]))
     console.print("      the face is not like them (under 0.70): %d (left for Identify Faces)" % counts["not_like_them"])
+    if counts["not_decidable_yet"]:
+        console.print("      the person has no named face and several photos wait: %d (left for Identify Faces)"
+                      % counts["not_decidable_yet"])
     if counts["face_unreadable"]:
         console.print("      the face cannot be compared: %d (left)" % counts["face_unreadable"])
     if counts["background_sized_faces_passed_over"]:
@@ -1288,7 +1295,10 @@ def faces_from_tags(ctx, apply_):
     console.print("%d face(s) %s." % (counts["faces"], "named" if apply_ else "would be named"))
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
-        console.print("Nothing changed. --apply names them.")
+        if result.details.get("earlier_apply"):
+            console.print("Applied before: " + faces_from_tags_service.AGAIN, markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply names them%s."
+                      % (" (with --again)" if result.details.get("earlier_apply") else ""))
         return
     console.print("Wrote %d face(s). %s" % (result.changed, maintenance.recorded(result, library.path)),
                   markup=False, soft_wrap=True)

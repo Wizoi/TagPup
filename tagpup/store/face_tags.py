@@ -17,8 +17,12 @@ makes it a reference for later guesses (tagpup.services.identify.decided_faces, 
   the other person in frame, not the tagged one: on photo_index a third of the faces the tag alone would
   name were below 0.70 of the person's decided faces. So when the person HAS decided faces, the face must
   be one a name is offered at (clustering.is_offered, 0.70) against them; otherwise it is left for Identify Faces. A person with NO
-  decided face -- a new person on one photo -- is named by the tag alone: there is nothing to compare, and
-  the face is then the person's first decided face. A face under clustering.BACKGROUND_AREA is never
+  decided face -- a new person on one photo -- is named by the tag alone, but ONLY when exactly one photo of
+  theirs has a face to be named (#839): there is nothing to compare, and the face is then the person's first
+  decided face. With several such photos none is named by the tag (clustering or Identify Faces names them):
+  naming the first would make it the reference the next is compared with, and the answer would depend on
+  the order of the photos and on whether they came in one batch or one at a time. The count is the whole
+  library's, so it is the same either way. A face under clustering.BACKGROUND_AREA is never
   named by the tag. Because of the gate, a face named by this rule is a keyword-confirmed reference only
   when it passed it or the person had no decided face, so a stranger cannot seed a person.
 * With several faces or several people nothing is guessed from the tag alone. Given
@@ -62,14 +66,15 @@ class Plan:
     with one face and one person (`tag_alone`): `no_decided_face`, the person has none, so the
     tag alone names it; `like_them`, `like_them_somewhat` and `not_like_them`, the face's best
     cosine to their decided faces at or above 0.80, from 0.70 to 0.80, and below 0.70 (those are
-    left); `unreadable_face`, a face with no embedding to compare, left; `background_sized`,
+    left); `not_decidable_yet`, the person has no decided face and several photos with a face to be named,
+    all left; `unreadable_face`, a face with no embedding to compare, left; `background_sized`,
     faces under clustering.BACKGROUND_AREA that were not counted as faces to be named."""
 
     def __init__(self):
         self.named = []
         self.counts = collections.Counter(
             photos=0, one_face_one_person=0, matched=0, left=0, tag_alone=0, no_decided_face=0, like_them=0,
-            like_them_somewhat=0, not_like_them=0, unreadable_face=0, background_sized=0)
+            like_them_somewhat=0, not_like_them=0, unreadable_face=0, background_sized=0, not_decidable_yet=0)
 
 
 def _chunks(items):
@@ -169,19 +174,40 @@ def _decided_of(conn, name):
     return np.stack(vectors) if vectors else None
 
 
-def _gated(conn, singles, result):
+def _photos_to_be_named(conn, name):
+    """How many photos -- 2 at most: it is asked whether there is one or several -- have a face to be named
+    (unnamed, not excluded, not called nobody, no speck) and `name` among their keyword people. By the
+    people's name index (idx_photo_people_name), one person at a time."""
+    seen = set()
+    for photo_id, box in conn.execute(
+            "SELECT pp.photo_id, f.box FROM photo_people pp JOIN faces f ON f.photo_id = pp.photo_id"
+            " WHERE pp.name = ? AND pp.source = 'keyword' AND f.name IS NULL AND f.excluded = 0"
+            " AND COALESCE(f.name_source, '') <> 'manual'", (name,)):
+        if photo_id not in seen and not _small(box):
+            seen.add(photo_id)
+            if len(seen) > 1:
+                break
+    return len(seen)
+
+
+def _gated(conn, singles, result, cache):
     """The `singles` -- (photo id, face id, person name, name_source), each a photo's one face to be named
     and one person -- that the tag alone may name (#833), as Choices, counted in `result.counts`.
     A person with no decided face is named; one with decided faces only if the face's best cosine to them
-    is one a name is offered at (clustering.is_offered). The decided faces are read once per person, not once per photo."""
+    is one a name is offered at (clustering.is_offered); one with none, only when no other photo of theirs has a face
+    to be named (#839). The decided faces are read once per person, kept in `cache` ({name: vectors or None},
+    a batch's: #841), not once per photo."""
     vectors = _embeddings(conn, [face_id for _photo, face_id, _name, _source in singles])
-    by_person = {}
     for photo_id, face_id, name, source in singles:
         result.counts["tag_alone"] += 1
-        if name not in by_person:
-            by_person[name] = _decided_of(conn, name)
-        decided = by_person[name]
+        if name not in cache:
+            cache[name] = _decided_of(conn, name)
+        decided = cache[name]
         if decided is None:
+            if _photos_to_be_named(conn, name) > 1:
+                result.counts["not_decidable_yet"] += 1
+                result.counts["left"] += 1
+                continue
             result.counts["no_decided_face"] += 1
         else:
             blob = vectors.get(face_id)
@@ -247,7 +273,7 @@ def _matched(unnamed, free, reached):
     return [(faces_for[0], wanted[key]) for key, faces_for in proposed.items() if len(faces_for) == 1]
 
 
-def plan(conn, photo_ids=None, references=None):
+def plan(conn, photo_ids=None, references=None, cache=None):
     """A Plan: which faces of `photo_ids` -- every photo, without -- a keyword person names.
     Reads only, on `conn` as it stands; the photos with such a person are found from
     photo_people and their faces by idx_faces_photo_id, a chunk at a time, never a photo at a
@@ -275,7 +301,7 @@ def plan(conn, photo_ids=None, references=None):
         else:
             result.counts["left"] += 1
     if singles:
-        _gated(conn, singles, result)
+        _gated(conn, singles, result, {} if cache is None else cache)
     if open_ones:
         vectors = _embeddings(conn, [face_id for _photo, unnamed, _free in open_ones for face_id in unnamed])
         references = references() if callable(references) else references
@@ -287,22 +313,44 @@ def plan(conn, photo_ids=None, references=None):
     return result
 
 
-def name_photos(conn, photo_ids, references=None, vocabulary=None):
+def _remember(conn, cache, choices, done):
+    """Add the vectors of the faces just named to the decided faces a batch holds of their people: they are
+    keyword-confirmed now, and the next photo of the batch is compared with them as a save after it would."""
+    named = {choice.face_id: choice.name for choice in choices if choice.face_id in set(done)}
+    for face_id, blob in _embeddings(conn, list(named)).items():
+        name = named[face_id]
+        if name not in cache or not blob:
+            continue
+        vec = np.frombuffer(blob, dtype=np.float32)
+        norm = np.linalg.norm(vec)
+        if not norm:
+            continue
+        row = (vec / norm)[None, :]
+        known = cache[name]
+        cache[name] = row if known is None or known.shape[1] != row.shape[1] else np.vstack([known, row])
+
+
+def name_photos(conn, photo_ids, references=None, vocabulary=None, batch=None):
     """Name the faces of `photo_ids` that their keyword people name (`plan`), in the caller's
     write: the people the plan read are read in the same transaction as the write, begun here
     when the caller has none open, so a person renamed by another process meanwhile is not
     written under the old spelling. Returns the ids of the faces named -- those the write
     changed, a face named or ruled out meanwhile not counted. `vocabulary` is the tree's people when the
-    caller has read them (a batch of photos reads the tree once, #838). The caller commits."""
+    caller has read them (a batch of photos reads the tree once, #838); `batch` the run's derived.Batch, which
+    keeps each person's decided faces for the run (#841). The caller commits."""
     photo_ids = sorted(set(photo_ids))
     if not photo_ids:
         return []
     if not conn.in_transaction:
         db.begin(conn, immediate=True)
-    found = plan(conn, photo_ids, references)
+    cache = batch.decided if batch is not None else None
+    found = plan(conn, photo_ids, references, cache)
     if not found.named:
         return []
-    return faces.name_unnamed(conn, {choice.face_id: choice.name for choice in found.named}, vocabulary)
+    done = faces.name_unnamed(conn, {choice.face_id: choice.name for choice in found.named}, vocabulary)
+    if cache is not None and done:
+        _remember(conn, cache, found.named, done)
+    return done
 
 
 def photo_ids_of(conn, photo_paths):
