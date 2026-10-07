@@ -101,7 +101,7 @@ export function createVGrid(options) {
     let viewTo = 0;
     let marginFrom = 0;            // and a row either side of it
     let marginTo = 0;
-    let moved = 0;                 // when the view last changed what it showed
+    let moved = 0;                 // when the view last changed what it showed; -1: just now, by the render under way
     let lastWidth = -1;
     let observer = null;
 
@@ -132,7 +132,8 @@ export function createVGrid(options) {
     function setViewRange(firstSeen, lastSeen, columns, rows) {
         const from = firstSeen * columns;
         const to = (lastSeen + 1) * columns;
-        if (from !== viewFrom || to !== viewTo) moved = Date.now();
+        // Timed when the cards are drawn (settleImages), not before: a slow draw is not the view standing still.
+        if (from !== viewFrom || to !== viewTo) moved = -1;
         viewFrom = from;
         viewTo = to;
         marginFrom = clamp(firstSeen - imageRows, 0, rows - 1) * columns;
@@ -158,6 +159,7 @@ export function createVGrid(options) {
             }
         }
         const now = Date.now();
+        if (moved < 0) moved = now;
         let next = Infinity;
         for (const entry of live.values()) {
             const img = entry.img;
