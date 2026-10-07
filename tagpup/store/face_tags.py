@@ -194,7 +194,7 @@ def _photos_to_be_named(conn, name):
     return len(seen)
 
 
-def _gated(conn, singles, result, cache):
+def _gated(conn, singles, result, cache, on_step=None):
     """The `singles` -- (photo id, face id, person name, name_source), each a photo's one face to be named
     and one person -- that the tag alone may name (#833), as Choices, counted in `result.counts`.
     A person with no decided face is named; one with decided faces only if the face's best cosine to them
@@ -202,7 +202,9 @@ def _gated(conn, singles, result, cache):
     to be named (#839). The decided faces are read once per person, kept in `cache` ({name: vectors or None},
     a batch's: #841), not once per photo."""
     vectors = _embeddings(conn, [face_id for _photo, face_id, _name, _source in singles])
-    for photo_id, face_id, name, source in singles:
+    for number, (photo_id, face_id, name, source) in enumerate(singles):
+        if on_step is not None and number % STEP == 0:
+            on_step("checking", number, len(singles))
         result.counts["tag_alone"] += 1
         if name not in cache:
             cache[name] = _decided_of(conn, name)
@@ -231,12 +233,15 @@ def _gated(conn, singles, result, cache):
         result.counts["one_face_one_person"] += 1
 
 
+#: How many photos or faces a plan goes through between two calls of its `on_step`.
+STEP = 50
+
 #: How many faces are compared with every decided face at once: a block of faces x the decided
 #: faces, 73 MB for 36,000 of them (services.faces.COMPARE_BLOCK).
 BLOCK = 512
 
 
-def _reached(vectors, references):
+def _reached(vectors, references, on_step=None):
     """{face id: {the keys of the people some decided face of whom it is alike enough to}} for the
     faces of `vectors` {face id: embedding bytes} that can be compared: compared a block at a
     time, never a face at a time (a library's faces to place are tens of thousands)."""
@@ -251,6 +256,8 @@ def _reached(vectors, references):
     usable = [(face_id, blob) for face_id, blob in vectors.items() if blob and len(blob) == width * 4]
     reached = {}
     for start in range(0, len(usable), BLOCK):
+        if on_step is not None:
+            on_step("comparing", start, len(usable))
         block = usable[start:start + BLOCK]
         stacked = np.stack([np.frombuffer(blob, dtype=np.float32) for _face, blob in block])
         norms = np.linalg.norm(stacked, axis=1)
@@ -277,14 +284,20 @@ def _matched(unnamed, free, reached):
     return [(faces_for[0], wanted[key]) for key, faces_for in proposed.items() if len(faces_for) == 1]
 
 
-def plan(conn, photo_ids=None, references=None, cache=None):
+def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
     """A Plan: which faces of `photo_ids` -- every photo, without -- a keyword person names.
     Reads only, on `conn` as it stands; the photos with such a person are found from
     photo_people and their faces by idx_faces_photo_id, a chunk at a time, never a photo at a
     time. `references` as the module's docstring says -- or a function that gives them, called
     only when a photo needs them: without them, only the photos with one face to be named and
-    one person are decided."""
+    one person are decided.
+
+    `on_step(stage, done, total)`, if given, hears where the plan has got -- "reading", "checking" (the photos with
+    one face and one person), "comparing" (the faces of the others against the decided faces), "deciding" -- every
+    STEP photos or each block of faces, and may raise to stop it: the plan writes nothing, so nothing is left."""
     result = Plan()
+    if on_step is not None:
+        on_step("reading", 0, 1)
     people_of = _keyword_people(conn, None if photo_ids is None else sorted(set(photo_ids)))
     faces_of = _faces_of(conn, sorted(people_of))
     open_ones = []   # (photo id, unnamed face ids, free people) still to be compared
@@ -305,11 +318,15 @@ def plan(conn, photo_ids=None, references=None, cache=None):
         else:
             result.counts["left"] += 1
     if singles:
-        _gated(conn, singles, result, {} if cache is None else cache)
+        _gated(conn, singles, result, {} if cache is None else cache, on_step)
     if open_ones:
         vectors = _embeddings(conn, [face_id for _photo, unnamed, _free in open_ones for face_id in unnamed])
+        if on_step is not None:
+            on_step("comparing", 0, len(vectors))
         references = references() if callable(references) else references
-        reached = _reached(vectors, references)
+        reached = _reached(vectors, references, on_step)
+        if on_step is not None:
+            on_step("deciding", 0, len(open_ones))
         for photo_id, unnamed, free in open_ones:
             found = _matched(unnamed, free, reached)
             result.named += [Choice(face_id, photo_id, name, "match", unnamed[face_id]) for face_id, name in found]

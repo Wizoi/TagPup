@@ -544,6 +544,20 @@ def count_unnamed(conn):
     return conn.execute("SELECT COUNT(*) FROM faces WHERE name IS NULL AND excluded = 0").fetchone()[0]
 
 
+def named_and_unnamed(conn, folder=None):
+    """(named, unnamed) faces in play -- an excluded face is neither -- in the whole library, or in the photos under
+    `folder` at any depth. The library's by idx_faces_identify, without the rows; a folder's by its photos'
+    faces (UNDER_FROM_PHOTOS), as unnamed_counts."""
+    if folder is None:
+        named = conn.execute("SELECT COUNT(*) FROM faces WHERE excluded = 0 AND name IS NOT NULL").fetchone()[0]
+        return named, count_unnamed(conn)
+    where, params = _photos_under(conn, folder)
+    named, unnamed = conn.execute(
+        "SELECT COUNT(f.name), COUNT(*) - COUNT(f.name)" + UNDER_FROM_PHOTOS + " WHERE " + where
+        + " AND f.excluded = 0", params).fetchone()
+    return named, unnamed
+
+
 def unnamed_embeddings(conn):
     """(id, embedding) of every nameless face in play, by id: New Person's pool
     (tagpup.services.identify.unnamed_faces). idx_faces_identify finds them. A cursor,

@@ -37,10 +37,10 @@ def _decided(library):
     return identify.decided_faces(library)[1]
 
 
-def _plan(library):
+def _plan(library, on_step=None):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        found = face_tags.plan(conn, references=lambda: _decided(library))
+        found = face_tags.plan(conn, references=lambda: _decided(library), on_step=on_step)
     finally:
         conn.close()
     named = found.named
@@ -65,6 +65,14 @@ def _plan(library):
         work=named)
 
 
+def plan(library, on_step=None):
+    """The plan alone, for a caller that shows it before anything is written (the job behind the apps' button, which asks
+    first): a maintenance.Plan -- `size` the faces it would name, `counts` as faces_from_tags' details, `work` what
+    `faces_from_tags(..., planned=)` applies. `on_step(stage, done, total)` hears the plan's progress and may raise to stop
+    it (tagpup.store.face_tags.plan). Reads only."""
+    return _plan(library, on_step)
+
+
 def _edits(planned):
     """Each face by id, while it is still what the plan read: unnamed, not excluded, and not
     marked nobody by hand since."""
@@ -78,18 +86,25 @@ def _remaining(library):
     return {"faces": len(_plan(library).work)}
 
 
-def faces_from_tags(library, apply=False, again=False):
+def faces_from_tags(library, apply=False, again=False, planned=None):
     """Plan, and with `apply` make, the naming of every face a keyword person of its photo
     names (see the module's docstring). A Result on the maintenance scaffold: `changed` is the
     face rows written; details `counts` as _plan's, and `earlier_apply`. A second apply is refused
-    without `again` (#840), with the counts it would have named in the details."""
+    without `again` (#840), with the counts it would have named in the details.
+
+    With `planned`, a plan read earlier (`plan`), that plan is what is applied -- the faces a person was
+    asked about -- instead of one read again, which took 13.6 s on photo_index and could name other faces
+    than the question said; the counts after the write are not read again either. The write is as
+    guarded as ever: each face must still be what the plan read, or nothing is written."""
     earlier = earlier_apply(library)
+    plan_of = _plan if planned is None else (lambda _library: planned)
     if apply and earlier and not again:
-        planned = _plan(library)
+        planned = plan_of(library)
         result = Result(attempted=planned.size, details={"dry_run": True, "change": None, "counts": dict(planned.counts),
                                                          "ids": dict(planned.ids), "reveal": {}, "earlier_apply": True})
         result.refuse(AGAIN)
         return result
-    result = maintenance.run(library, "faces_from_tags", _plan, _edits, apply=apply, remaining=_remaining)
+    result = maintenance.run(library, "faces_from_tags", plan_of, _edits, apply=apply,
+                             remaining=_remaining if planned is None else None)
     result.details["earlier_apply"] = earlier
     return result

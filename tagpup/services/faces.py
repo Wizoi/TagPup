@@ -682,6 +682,17 @@ def clear_automatic_names(conn):
         raise e
 
 
+def named_counts(library, folder=None):
+    """{"named", "unnamed"}: the faces in play (not excluded) that have a name and those that have none, in the whole
+    library or in the photos under `folder` at any depth. A look; a library that cannot be read raises."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        named, unnamed = faces.named_and_unnamed(conn, folder)
+    finally:
+        conn.close()
+    return {"named": named, "unnamed": unnamed}
+
+
 def known_faces(db_path):
     """Every named face that is not excluded, as tagpup.core.clustering.KnownFaces: what a
     face is compared with to say who it is. It was each person's mean face, with no
