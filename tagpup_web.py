@@ -26,7 +26,6 @@ import argparse
 import logging
 import os
 import secrets
-import socket
 import sys
 import time
 import webbrowser
@@ -71,12 +70,8 @@ def page_url(port):
 
 
 def answering(port):
-    """Is something already answering on `port` on this machine?"""
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-            return True
-    except OSError:
-        return False
+    """Is something already answering on `port` on this machine? (tagpup.launcher's, which an install asks too.)"""
+    return launcher.answering(port)
 
 
 def open_page(url):
