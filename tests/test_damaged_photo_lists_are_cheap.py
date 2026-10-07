@@ -109,7 +109,10 @@ class AShareGoneAway(Case):
         waits, joins = share_waits.counted()
         with mock.patch.object(damaged, "_stamps_in", side_effect=listing), \
                 mock.patch.object(damaged, "SHARE_WAIT", 0.3), joins:
+            started = time.monotonic()
             damaged.listed(self.library)
+            waited = time.monotonic() - started
+        self.assertLess(waited, 5.0, "a backstop: the listing that never comes back hangs for 10 s")
         self.assertEqual(1, len(asked), "each folder of the share was waited on, on a thread of its own")
         self.assertEqual([0.3], waits, "one wait for the share, not one for each folder")
 

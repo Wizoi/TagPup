@@ -337,6 +337,7 @@ class TheAttributeIsReadBounded(unittest.TestCase):
             return mock.Mock(st_file_attributes=0)
 
         waits, counting = share_waits.counted()
+        started = time.monotonic()
         with mock.patch.object(fa.shares, "on_a_network_drive", lambda path: True), \
                 mock.patch.object(fa.os, "stat", hang), mock.patch.object(fa, "SHARE_SECONDS", 0.2), counting:
             first = fa.read_not_indexed("\\\\nas\\photos")
@@ -345,6 +346,7 @@ class TheAttributeIsReadBounded(unittest.TestCase):
             for _ in range(5):
                 self.assertIsNone(fa.read_not_indexed("\\\\nas\\photos"))
             self.assertEqual([0.2], waits, "the failed answer is remembered for a while")
+        self.assertLess(time.monotonic() - started, 5, "a backstop: the stat that hangs ends in 30 s")
         self.assertEqual(1, len(stats), "no second thread was started at the share that is away")
 
     def test_a_local_folder_is_read_without_a_thread(self):
@@ -417,9 +419,19 @@ class OneFailureDoesNotHideTheOthers(unittest.TestCase):
             gate.wait(30)
             return shell()
 
+        joined = []
+        real_join = threading.Thread.join
+
+        def join(thread, timeout=None):
+            if thread.name == "file-access-check":
+                joined.append(timeout)
+            return real_join(thread, timeout)
+
         started = time.monotonic()
-        result = fa.check(DATA, [], probes=probes(powershell=stuck), total=0.2)
-        self.assertLess(time.monotonic() - started, 10, "a backstop: the probe it waited for ends in 30 s")
+        with mock.patch.object(threading.Thread, "join", join):
+            result = fa.check(DATA, [], probes=probes(powershell=stuck), total=0.2)
+        self.assertEqual([0.2], joined, "the worker is waited for the total it was given, and no longer")
+        self.assertLess(time.monotonic() - started, 5, "a backstop: the probe it waited for ends in 30 s")
         self.assertEqual("timeout", result["findings"][-1]["id"])
 
     def test_the_answer_is_remembered_and_refreshed_on_request(self):

@@ -6,7 +6,8 @@ What is asserted is what that defect was: the reads of the tree (derived.Tree.re
 refresh without a batch makes), and the times the write lock was taken, counted. Not the time it took: a wall-clock limit failed whenever the machine was busy
 (#721: 1.2 s seen as 2.97 s beside 32 busy processes), and measured the machine, not the code. The
 process's CPU time is kept as a backstop, ten times what it is on a quiet machine, against a cost that
-grows some other way.
+grows some other way. It is deliberately loose: it catches an O(n^2) or a query per photo, not a regression of
+1 ms a photo; the counted assertions are the guard.
 """
 import contextlib
 import os
