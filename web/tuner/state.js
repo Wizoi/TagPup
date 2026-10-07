@@ -55,6 +55,8 @@ export const state = {
     activePersonFaces: [],
     //: The face the Face Crop Details pane shows (selection.js): the zoom draws its box.
     detailFace: null,
+    /** [width, height] of the file the details face's box is in, once the details say; else null. */
+    detailPhotoSize: null,
     activeTab: 'matches', // 'matches' or 'outliers'
     modalSelectedFaceIds: [],
 

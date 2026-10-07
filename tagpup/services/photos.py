@@ -5,7 +5,7 @@ import os
 
 from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
-from tagpup.files import images, metadata, names, recycle_bin
+from tagpup.files import images, metadata, names, recycle_bin, shares
 from tagpup.services import file_changes, file_only, libraries, thumbnails
 from tagpup.services import roots as roots_service
 from tagpup.store import db, embeddings, faces, photos, taxonomy
@@ -198,6 +198,42 @@ def page_copy(photo_path, max_size=None, upright=True):
             logger.warning("Could not make a smaller copy of %s: %s", photo_path, e)
     with open(photo_path, "rb") as f:
         return f.read(), images.content_type(photo_path)
+
+
+#: How long a look at a photo's header waits on a network share, and how long a share that did not
+#: answer is taken as away (tagpup.files.shares.bounded).
+SHAPE_WAIT = 1.0
+SHAPE_AWAY = 30.0
+
+
+def box_shape(photo_path):
+    """What a page needs to draw a face's box over the photo: {"size": [width, height] of the
+    pixels the boxes are in (the file as stored; images.shown_size), or None when the file
+    cannot be read -- no size, no box, rather than a box on the wrong face (#787) --, "turned":
+    does the file declare an Orientation (2 to 8) that the picture is shown by, so that a box
+    drawn over it in the stored pixels is not where the face is. Only the header is read, once (a
+    TIFF is decoded, and its boxes turn with it: never "turned"). On a network share or drive the look is
+    bounded (tagpup.files.shares.bounded): a share that does not answer in a second gives no size
+    and no box, and is not asked again for a while, never a request stalled for as long as Windows
+    waits (#836)."""
+    none = {"size": None, "turned": False}
+    if shares.on_a_network_drive(photo_path):
+        state, shape = shares.bounded(photo_path, lambda: images.shown_shape(photo_path), SHAPE_WAIT, SHAPE_AWAY)
+    else:
+        # A local disk is not a share that can stop answering: a slow look (a decoded TIFF, a disk
+        # spinning up) must not mark the drive away for every photo on it (#842).
+        try:
+            state, shape = "ok", images.shown_shape(photo_path)
+        except Exception as error:
+            state, shape = "error", error
+    if state != "ok":
+        if state == "error":
+            logger.info("No size for %s: %s", photo_path, shape)
+        return none
+    width, height, oriented, orientation = shape
+    if width <= 0 or height <= 0:
+        return none
+    return {"size": [width, height], "turned": orientation != 1 and not oriented}
 
 
 def face_crop(library, face_id):

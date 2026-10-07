@@ -3,9 +3,11 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
-import { baseName, isUnc, pathKey } from './common/paths.js';
+import { attachPersonFaces } from './common/person-faces.js';
+import { baseName, isUnc, pathKey, samePath } from './common/paths.js';
 import { photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
+import { clearPhotoFaces, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
 import {
     btnCancelDateModal, btnCarryForward, btnCloseDateModal, btnEditDateTaken, btnSaveDateModal,
@@ -46,6 +48,9 @@ export function renderPhotoFaces(photoPath) {
     facesStrip.innerHTML = '';
     facesSection.classList.add('hidden');
     if (facesSummary) facesSummary.textContent = '';
+    // The boxes over the photo are another photo's until this one's faces arrive. The same photo drawn
+    // again (after a face was named) keeps its boxes and its panel until the new answer replaces them.
+    if (!state.faceBoxes.path || !samePath(state.faceBoxes.path, photoPath)) clearPhotoFaces();
 
     api.fetch(`/api/photo-faces?path=${encodeURIComponent(photoPath)}`)
         .then(res => res.ok ? res.json() : { faces: [] })
@@ -54,6 +59,7 @@ export function renderPhotoFaces(photoPath) {
             // the strip for the one now on screen.
             if (token !== state.facesRequestToken) return;
             const faces = data.faces || [];
+            showPhotoFaces(photoPath, data);
             if (faces.length === 0) return;
 
             // Who this photo already names, so a face is only offered when acting
@@ -113,6 +119,8 @@ export function renderPhotoFaces(photoPath) {
                     label.textContent = `${face.suggestion}?`;
                     card.title = `Closest match: ${face.suggestion} (${pct}%). Not assigned.`;
                     label.classList.add('face-card-suggestion');
+                    card.tabIndex = 0;
+                    attachPersonFaces(card, face.suggestion);
                 } else {
                     label.textContent = 'Unidentified';
                     card.title = 'No similar face in this database yet';
@@ -151,7 +159,10 @@ Click to add ${namesSomebody} to this photo.`;
                 facesStrip.appendChild(card);
             });
         })
-        .catch(err => console.error('Error loading faces:', err));
+        .catch(err => {
+            if (token === state.facesRequestToken) clearPhotoFaces();
+            console.error('Error loading faces:', err);
+        });
 }
 
 // Select Single Photo View
@@ -602,6 +613,8 @@ export function rotatePhoto(direction) {
             photo.mtime = data.mtime || Date.now() / 1000;
             if (Number.isFinite(data.size)) photo.size = data.size;
             mainImage.src = photoFileUrl(photo, 800);
+            // The faces' boxes turned with the file; the strip and the boxes ask again.
+            renderPhotoFaces(path);
             // A library view's card has the file's old stamp in its thumbnail's address: asked for again.
             if (state.library && photo.id !== undefined) refetchCards([photo.id]);
             const thumb = document.querySelector(

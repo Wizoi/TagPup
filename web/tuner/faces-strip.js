@@ -1,5 +1,6 @@
 // A photo's details and the strip of its faces.
 import { api } from './common/api.js';
+import { attachPersonFaces } from './common/person-faces.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { samePath } from './common/paths.js';
 import { nameProblem, samePerson, sortedTags } from './common/vocabulary.js';
@@ -340,6 +341,7 @@ function renderPhotoDetails(details) {
                             pill.className = 'suggestion-pill';
                             pill.textContent = name;
                             pill.title = name;
+                            attachPersonFaces(pill, name);
                             pill.addEventListener('click', (e) => {
                                 e.stopPropagation();
                                 postMatch(face.id, name);

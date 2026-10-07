@@ -18,7 +18,7 @@ import os
 import threading
 from contextlib import contextmanager
 
-from flask import Blueprint, abort, current_app, jsonify, make_response, request
+from flask import Blueprint, abort, current_app, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup.core import paths
@@ -36,16 +36,16 @@ from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.services import roots_location, roots_verify
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, responses, roots_gate, roots_ingress, security, state, tagpup_routes
+from tagpup.web import desktop, face_routes, responses, roots_gate, roots_ingress, security, state, tagpup_routes
 from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
 
 routes = Blueprint("tuner", __name__)
 
-#: Each library's cached Identify Faces answers: the queue, the grids and the matrix of
-#: named faces (tagpup.jobs.identify.GridCache).
-identify_cache = state.PerLibrary(lambda library: identify_jobs.GridCache())
+#: Each library's cached Identify Faces answers (tagpup.jobs.identify.GridCache): the process's,
+#: kept in tagpup.web.face_routes, which the reads of faces both apps serve use.
+identify_cache = face_routes.identify_cache
 
 #: How far along each grid being built for a library has got (tagpup.jobs.identify
 #: .BuildProgress): written by the request doing the work, read by a status request on
@@ -115,37 +115,14 @@ def folder_indexer(library):
     return index
 
 
-def _refuse(status, message):
-    """Answer with the JSON error (tagpup.web.responses.error) from wherever the
-    refusal is found, helpers included."""
-    abort(make_response(responses.error(status, message)))
+_refuse = face_routes.refuse
 
 
-def _library_there(library):
-    """Is the library's file there? The reads answer nothing for one that is not, as
-    they always did, rather than failing the page."""
-    return os.path.exists(library.path)
-
-
-def _named(library):
-    """Every named face as unit vectors, kept per state of the faces table."""
-    return lambda: identify_jobs.named_faces(library, identify_cache.of(library))
-
-
-def _decided(library):
-    """The faces a person decided as unit vectors: what automatch compares with."""
-    return lambda: identify_jobs.decided_faces(library, identify_cache.of(library))
-
-
-def _int_arg(name, what):
-    """A query parameter that must be an integer, or the 400 the old handlers sent."""
-    value = request.args.get(name)
-    if not value:
-        abort(400, description="Missing '%s' parameter" % what)
-    try:
-        return int(value)
-    except ValueError:
-        abort(400, description="Invalid '%s' parameter" % what)
+_library_there = face_routes.library_there
+_named = face_routes.named
+_decided = face_routes.decided
+_int_arg = face_routes.int_arg
+_read_face_ids = face_routes._read_face_ids
 
 
 def clustering_refusal(library):
@@ -235,17 +212,6 @@ def people_with_counts():
     return jsonify(people_service.with_counts(library))
 
 
-@routes.get("/api/people-faces")
-def people_faces():
-    """{name: face id}: the face most like each person, for the people list shown by face
-    (tagpup.services.identify.representative_faces). A person with no readable face is
-    absent; the crop is /api/face-crop?id=."""
-    library = state.require()
-    if not _library_there(library):
-        return jsonify({})
-    return jsonify(identify_jobs.representative_faces(library, identify_cache.of(library)))
-
-
 @routes.get("/api/tags/list")
 def tags_list():
     """Every tag this library knows, with what it touches (tagpup.services.tags.listing).
@@ -320,18 +286,6 @@ def person_rename():
 
 
 # ---- Faces: who they resemble --------------------------------------------------------------
-
-@routes.get("/api/face-matches")
-def face_matches():
-    library = state.require()
-    face_id = _int_arg("id", "id")
-    if not _library_there(library):
-        return jsonify([])
-    try:
-        return jsonify(identify_service.face_matches(library, face_id, _named(library)))
-    except NotFound:
-        abort(404, description="Face not found")
-
 
 @routes.get("/api/face-matches-unmatched")
 def face_matches_unmatched():
@@ -414,76 +368,12 @@ def unmatched_faces_build_status():
 
 # ---- Faces: the writes -------------------------------------------------------------------------
 
-def _faces_write(library, action):
-    """Run a face action (tagpup.services.faces) on the request's library, and answer
-    what went wrong: 404 for a face or a library that is not there, 409 for a face
-    that cannot be named as things stand, 400 for a request refused, 500 for anything
-    else. Returns its Result.
-
-    The faces an action took out of the identify pool come off the cached grids,
-    rather than making the next click rebuild them: the action says which, and the
-    fingerprints either side of its write (tagpup.store.faces.accounted_write).
-    """
-    try:
-        result = action(library)
-    except NotFound as missing:
-        abort(404, description=str(missing))
-    except Conflict as conflict:
-        _refuse(409, str(conflict))
-    except Exception as e:
-        logger.error("Error in a face action: %s", e)
-        abort(500, description="Internal error: %s" % e)
-    if result.refused:
-        _refuse(400, result.refused)
-    fingerprints = result.details.get("fingerprints")
-    if fingerprints and result.changed:
-        identify_cache.of(library).forget_faces(result.details["face_ids"], *fingerprints)
-    return result
-
-
-def _read_face_ids(body):
-    """Accept either face_ids (list) or a single face_id, as ints; None when neither."""
-    face_ids = body.get("face_ids")
-    if face_ids is None and body.get("face_id") is not None:
-        face_ids = [body.get("face_id")]
-    if not face_ids or not isinstance(face_ids, list):
-        return None
-    try:
-        return [int(x) for x in face_ids]
-    except (ValueError, TypeError):
-        return None
-
-
-@routes.post("/api/face/match")
-def face_match():
-    """Name one face (tagpup.services.faces.name_face)."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    face_id, person_name = body.get("face_id"), body.get("person_name")
-    if face_id is None or not person_name:
-        abort(400, description="Missing face_id or person_name")
-    try:
-        face_id, person_name = int(face_id), str(person_name).strip()
-    except (ValueError, TypeError):
-        abort(400, description="Invalid parameters")
-    _faces_write(library, lambda lib: faces_service.name_face(lib, face_id, person_name))
-    return jsonify({"success": True})
-
-
-@routes.post("/api/face/unmatch")
-def face_unmatch():
-    """Take a face's name off (tagpup.services.faces.unname_face)."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    face_id = body.get("face_id")
-    if face_id is None:
-        abort(400, description="Missing face_id")
-    try:
-        face_id = int(face_id)
-    except (ValueError, TypeError):
-        abort(400, description="Invalid face_id")
-    _faces_write(library, lambda lib: faces_service.unname_face(lib, face_id))
-    return jsonify({"success": True})
+# The writes of one face, which TagPup's Organize makes as well (tagpup.web.photo_face_routes): one view each
+# (tagpup.web.face_routes), registered in each app's blueprint, which refuses them while clustering.
+routes.add_url_rule("/api/face/match", view_func=face_routes.face_match, methods=["POST"])
+routes.add_url_rule("/api/face/unmatch", view_func=face_routes.face_unmatch, methods=["POST"])
+routes.add_url_rule("/api/faces/exclude", view_func=face_routes.faces_exclude, methods=["POST"])
+_faces_write = face_routes.faces_write
 
 
 @routes.post("/api/faces/match-bulk")
@@ -567,21 +457,6 @@ def folder_automatch():
         answer.update(remaining_counts=details.get("remaining_counts", {}),
                       photos_named=details.get("photos_named", []))
     return jsonify(answer)
-
-
-@routes.post("/api/faces/exclude")
-def faces_exclude():
-    """Take faces out of identity work (tagpup.services.faces.exclude)."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    face_ids = _read_face_ids(body)
-    if face_ids is None:
-        abort(400, description="Missing or invalid face_ids")
-    reason = body.get("reason")   # none: the service's default
-    result = _faces_write(library, lambda lib: faces_service.exclude(lib, face_ids, reason))
-    # The rows changed, not the ids sent: an id that is not in the table was never
-    # excluded, and saying it was is how a write reports success on nothing.
-    return jsonify({"success": True, "excluded": result.changed})
 
 
 @routes.post("/api/faces/restore")

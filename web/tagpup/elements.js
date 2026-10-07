@@ -83,6 +83,8 @@ export const renameGroupingInput = document.getElementById('rename-grouping-inpu
 export const btnApplyRename = document.getElementById('btn-apply-rename');
 
 export const mainImage = document.getElementById('main-image');
+export const imageViewer = document.getElementById('image-viewer');
+export const faceLayer = document.getElementById('face-layer');
 export const btnRotateLeft = document.getElementById('btn-rotate-left');
 export const btnRotateRight = document.getElementById('btn-rotate-right');
 export const btnDeletePhoto = document.getElementById('btn-delete-photo');

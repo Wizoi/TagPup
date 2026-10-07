@@ -21,6 +21,7 @@ from tagpup.core import clustering as face_rules
 from tagpup.core import dates, vocabulary
 from tagpup.core.result import NotFound
 from tagpup.ml import grouping
+from tagpup.services import photos as photos_service
 from tagpup.services import roots as roots_service
 from tagpup.store import db, faces, generations, people, photos
 
@@ -181,6 +182,47 @@ def representative_faces(decided, named):
     return chosen
 
 
+#: How many faces of a person a hover shows (web/common/person-faces.js).
+SAMPLE_FACES = 4
+
+
+def _ranked_by_mean(ids, names, matrix, limit):
+    """{name: [up to `limit` face ids]}: each person's faces, the one nearest the mean of theirs
+    first, as _closest_to_mean chooses it (a tie to the lowest id), the rest by the same
+    closeness. One pass over the matrix, the names grouped once."""
+    if matrix is None or not len(ids):
+        return {}
+    ids = np.asarray(ids)
+    uniq, inverse = np.unique(np.asarray(names), return_inverse=True)
+    order = np.argsort(inverse, kind="stable")
+    bounds = np.searchsorted(inverse[order], np.arange(len(uniq) + 1))
+    ranked = {}
+    for group, name in enumerate(uniq):
+        rows = order[bounds[group]:bounds[group + 1]]
+        vectors = matrix[rows]
+        centre = vectors.mean(axis=0)
+        norm = np.linalg.norm(centre)
+        scores = vectors @ (centre / norm) if norm else np.zeros(len(rows))
+        # Closest first; faces as close as 1e-7 are one rank, the lowest id first.
+        best = np.lexsort((ids[rows], -np.round(scores, 7)))
+        ranked[str(name)] = [int(face_id) for face_id in ids[rows[best[:limit]]]]
+    return ranked
+
+
+def face_samples(decided, named, limit=SAMPLE_FACES):
+    """{name: [face ids]}: up to `limit` faces to show of each person, the faces a person
+    decided first (decided_faces: named by hand, or borne out by the photo's keyword), most
+    like the person first, and, to fill the places left, their other named faces in the same
+    order. A person with no readable face is absent. Both arguments are (ids, names, matrix)
+    as the matrices are cached; an excluded face is in neither, so is never shown."""
+    chosen = _ranked_by_mean(*decided, limit)
+    for name, more in _ranked_by_mean(*named, limit).items():
+        have = chosen.setdefault(name, [])
+        have.extend(face_id for face_id in more if face_id not in have)
+        del have[limit:]
+    return chosen
+
+
 # ---- The photos, and one photo ----------------------------------------------------------
 
 def photos_waiting(library, show_matched=False):
@@ -209,7 +251,8 @@ def photos_waiting(library, show_matched=False):
 def photo_details(library, photo_path, named):
     """One photo for the panel: its people, tags, caption and year, and each face with
     how like the closest named face it is. A photo with no row still answers, with
-    nothing on it: the panel opens on any file the page names."""
+    nothing on it: the panel opens on any file the page names. `size` is the pixel size
+    the faces' boxes are in (_box_pixels)."""
     conn = _reading(library)
     try:
         photo_row = photos.details(conn, photo_path)
@@ -268,6 +311,7 @@ def photo_details(library, photo_path, named):
         "caption": caption,
         "faces": found,
         "year": shown_year(year_taken),
+        "size": photos_service.box_shape(photo_path)["size"],
     }
 
 

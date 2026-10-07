@@ -1,5 +1,6 @@
 // The Identify grid: building it, and its tabs.
 import { api } from './common/api.js';
+import { attachPersonFaces } from './common/person-faces.js';
 import { compareTagNames } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
@@ -265,6 +266,8 @@ export function renderPersonFaces(faces) {
                     });
                 });
 
+                attachPersonFaces(guessLabel, guessName);
+                attachPersonFaces(guessAccept, guessName);
                 guess.appendChild(guessLabel);
                 guess.appendChild(guessAccept);
                 suggestionSlot.appendChild(guess);

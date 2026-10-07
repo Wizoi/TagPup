@@ -112,6 +112,56 @@ describe("where a box falls on a letterboxed picture", () => {
   });
 });
 
+describe("the box on the Face Crop Details photo (#787)", () => {
+  /** The pane's picture as a browser that has loaded the 512 copy of a 4000 x 3000 photo. */
+  function paneLoaded(window, document, { natural = [512, 384], shown = [200, 150] } = {}) {
+    const img = pane(document);
+    Object.defineProperty(img, "complete", { value: true, configurable: true });
+    Object.defineProperty(img, "naturalWidth", { value: natural[0], configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: natural[1], configurable: true });
+    Object.defineProperty(img, "clientWidth", { value: shown[0], configurable: true });
+    Object.defineProperty(img, "clientHeight", { value: shown[1], configurable: true });
+    img.dispatchEvent(new window.Event("load"));
+  }
+  const overlayBox = (document) => document.getElementById("matching-detail-bounding-box-overlay");
+
+  test("a box in the stored pixels of a 4000 x 3000 photo lands where the face is on the 512 copy", async (t) => {
+    const server = new FakeServer()
+      .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
+      .on("/api/unmatched-faces/people", [{ name: NAME, count: FACES.length, unit: "face" }])
+      .on("/api/unmatched-faces/person-matches", {
+        faces: FACES, total: FACES.length, total_count: FACES.length, unclustered_total: FACES.length,
+        unclustered_shown: FACES.length, has_more: false, page: 1, limit: -1,
+      })
+      .on("/api/people-with-counts", [])
+      .on("/api/people", [])
+      .on("/api/photo-details", { tags: [], people: [], size: [4000, 3000] })
+      .on("/api/face-matches", []);
+    const { window, document } = await loadApp("tagtuner", {
+      t, server,
+      url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
+    });
+    await new Promise((r) => window.setTimeout(r, 140));
+    await selectFace(window, document, 1);
+    paneLoaded(window, document);
+    await settle(window);
+    const box = overlayBox(document);
+    // [1000, 500, 1400, 900] of 4000 x 3000 on a picture shown 200 x 150.
+    assert.equal(parseFloat(box.style.left), 50);
+    assert.equal(parseFloat(box.style.top), 25);
+    assert.equal(parseFloat(box.style.width), 20);
+    assert.equal(parseFloat(box.style.height), 20);
+  });
+
+  test("with no stored size the box is not drawn, rather than drawn on the wrong face", async (t) => {
+    const { window, document } = await open(t);       // details with no size
+    await selectFace(window, document, 1);
+    paneLoaded(window, document);
+    await settle(window);
+    assert.equal(parseFloat(overlayBox(document).style.width), 0);
+  });
+});
+
 describe("zooming the Face Crop Details photo", () => {
   test("the photo says it zooms, and can be reached by keyboard", async (t) => {
     const { document } = await open(t);

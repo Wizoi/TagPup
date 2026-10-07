@@ -1,0 +1,48 @@
+/* The popup of a suggested person's faces (web/common/person-faces.js): above the pages,
+   a picture and not a control -- it takes no pointer, so a click goes to the button under it. */
+
+.person-faces {
+    position: fixed;
+    z-index: 2500;
+    box-sizing: border-box;
+    max-width: 280px;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #444);
+    background: var(--bg-secondary, #1f2937);
+    color: var(--text-primary, #f3f4f6);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+}
+
+.person-faces.hidden {
+    display: none !important;
+}
+
+.person-faces-name {
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.person-faces-row {
+    display: flex;
+    gap: 4px;
+}
+
+.person-faces-crop {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.person-faces-none {
+    font-size: 11px;
+    font-style: italic;
+    color: var(--text-muted, #9ca3af);
+}

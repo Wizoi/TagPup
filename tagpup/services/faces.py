@@ -20,8 +20,9 @@ import numpy as np
 
 from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
+from tagpup.services import photos as photo_files
 from tagpup.services import thumbnails
-from tagpup.store import db, faces, faces_detected, faces_pending, photos
+from tagpup.store import db, face_tags, faces, faces_detected, faces_pending, photos
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import folders as store_folders
 
@@ -38,8 +39,10 @@ def name_face(library, face_id, person_name):
     """Name one face. Clicking a suggestion, or typing a name, on a face card.
 
     A person chose this, so it is recorded as a manual decision: re-clustering re-derives
-    every name from scratch and must not discard it. Refused when somebody else's face in
-    the photo already carries the name; a Conflict for a face that has been excluded.
+    every name from scratch and must not discard it -- also when the face already carries
+    this name as an automatic one (a person confirming a guess: `changed` 1). Refused when
+    somebody else's face in the photo already carries the name; a Conflict for a face that
+    has been excluded.
     """
     result = Result(attempted=1)
     person_name = (person_name or "").strip()
@@ -57,7 +60,11 @@ def name_face(library, face_id, person_name):
         # that is both ruled out and claimed, which no view shows and no Undo reaches.
         if excluded:
             raise Conflict("Cannot match: this face is excluded. Restore it first to name it.")
+        # Already this person: nothing to change but who decided -- an automatic name (clustering's, or a
+        # photo's tag's, #788) a person now confirms becomes their decision, in the spelling it has.
         if old_name and vocabulary.key(old_name) == vocabulary.key(person_name):
+            result.changed = faces.confirm(write.conn, face_id)
+            result.details.update(face_ids=[face_id], fingerprints=(write.before, write.after))
             return result
         if faces.named_elsewhere_in_photo(write.conn, photo_path, person_name, face_id):
             result.refuse("Cannot match: '%s' is already tagged on another face in this photo."
@@ -417,9 +424,11 @@ def _library_there(library):
 # ---- What TagPup's photo panel shows -------------------------------------------------------
 
 def panel(library, photo_path):
-    """The faces detected on one photo, for the strip under its details: {"faces",
-    "total", "unmatched"}, each face with its box, area, name, prob, exclusion, and for
-    an unnamed one the closest name elsewhere in the library and how alike.
+    """The faces detected on one photo, for the strip under its details and the boxes over
+    it: {"faces", "total", "unmatched", "size", "turned"}, each face with its box, area, name,
+    prob, exclusion, and for an unnamed one the closest name elsewhere in the library and how
+    alike. `size` is [width, height] of the pixels the boxes are in, or None, and `turned`
+    says the photo declares an EXIF Orientation its boxes do not follow (photos.box_shape).
 
     TagPup ran face recognition invisibly: the suggester matched faces and surfaced
     only a name pill, so there was no way to see which face was unrecognised while
@@ -468,7 +477,8 @@ def panel(library, photo_path):
         })
     found.sort(key=lambda f: (f["name"] is None, -(f["similarity"] or 0.0), -f["area"]))
     return {"faces": found, "total": len(found),
-            "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"])}
+            "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"]),
+            **photo_files.box_shape(photo_path)}
 
 
 def _unit(embedding):
@@ -573,6 +583,8 @@ def record_detected(db_path, photo_path, detected, detector=None):
                 continue
             _insert_detected(conn, photo_path, face)
             inserted += 1
+        if inserted:
+            face_tags.name_paths(conn, [photo_path])   # the photo's person tag names its face (#788)
         return inserted
 
     try:
@@ -601,6 +613,8 @@ def replace_detected(conn, photo_path, detected, detector=None):
         faces.remove_for_photo(conn, photo_path)
         for face in detected:
             _insert_detected(conn, photo_path, face, name=face.get("name"))
+        if detected:
+            face_tags.name_paths(conn, [photo_path])   # (#788)
         faces_pending.clear(conn, [photo_path])
         _record_detection(conn, photo_path, detector, detected)
         conn.commit()
@@ -626,6 +640,7 @@ def record_batch(conn, batch, overwrite=False, detector=None):
         return
     try:
         db.begin(conn)
+        recorded = []
         for photo_path, detected in batch.items():
             _record_detection(conn, photo_path, detector, detected)
             if not overwrite and faces.count_for_photo(conn, photo_path) > 0:
@@ -633,6 +648,10 @@ def record_batch(conn, batch, overwrite=False, detector=None):
             faces.remove_for_photo(conn, photo_path)
             for face in detected:
                 _insert_detected(conn, photo_path, face, name=face.get("name"))
+            if detected:
+                recorded.append(photo_path)
+        # The photos' person tags name their faces (#788), once the batch's faces are all there.
+        face_tags.name_paths(conn, recorded)
         # Detection ran on each photo of the batch: none is still to detect (store.faces_pending).
         faces_pending.clear(conn, list(batch))
         conn.commit()

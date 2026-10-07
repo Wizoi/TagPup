@@ -301,6 +301,19 @@ def representative_faces(library, cache):
     return value
 
 
+def face_samples(library, cache):
+    """{name: [face ids]} of the faces to show of each person (tagpup.services.identify.face_samples),
+    cached against the decided matrix's stamp like representative_faces: one pass over every
+    named face, read again when a name, a keyword or an exclusion changes it."""
+    stamp = identify.decided_stamp(library)
+    cached = cache.get("face_samples", stamp)
+    if cached is not None:
+        return cached
+    value = identify.face_samples(decided_faces(library, cache), named_faces(library, cache))
+    cache.put("face_samples", stamp, value)
+    return value
+
+
 def unnamed_faces(library, cache):
     """Every nameless face in play (tagpup.services.identify.UnnamedFaces), read once per
     state of the faces table rather than each time New Person opens; naming or excluding

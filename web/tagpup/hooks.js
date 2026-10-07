@@ -26,6 +26,7 @@ export const upper = {
     recordUndo: null,
     reloadChangedPhoto: null,
     renderFileList: null,
+    renderPhotoFaces: null,
     renderSyncInfo: null,
     renderSuggestionsPanel: null,
     renderTags: null,

@@ -67,6 +67,7 @@ from tagpup.runtime import Runtime
 from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
+from tagpup.services import faces_from_tags as faces_from_tags_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import damaged_photos
@@ -1252,6 +1253,61 @@ def sync(ctx, folder, apply_):
     console.print("In step." if result.details["in_step"] else "Not yet in step: sync again once indexing is done.")
     if result.errors:
         raise SystemExit(1)
+@cli.command("faces-from-tags")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Name the faces, as one change of the journal. Without it, only says how many it would.")
+@click.option("--again", is_flag=True,
+              help="Apply once more to a library it was applied to before: the names it gave then are references now.")
+@click.pass_context
+def faces_from_tags(ctx, apply_, again):
+    """Name the faces a photo's person tag names: a photo with one face still to be named and
+    one tagged person no face of it carries gives the face that person; several faces or
+    people only when one person's named faces alike leave no doubt. Names are automatic, so
+    clustering may revise them; faces unmatched by hand or excluded are left alone. A dry run
+    unless --apply; counts only, never names."""
+    library = _existing_library(ctx)
+    result = faces_from_tags_service.faces_from_tags(library, apply=apply_, again=again)
+    if result.refused and result.details.get("earlier_apply"):
+        console.print("Would name %d face(s). Nothing changed." % result.details["counts"]["faces"])
+    if result.refused or result.errors:
+        for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
+            console.print(line, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d photo(s) have a face to be named and a tagged person no face carries."
+                  % counts["photos_with_a_face_and_a_person_to_place"])
+    console.print("  %d photo(s): one face, one person; named by the tag alone: %d"
+                  % (counts["one_face_one_person"], counts["named_by_the_tag_alone"]))
+    console.print("      the person has no named face to compare with: %d (named)" % counts["person_has_no_decided_face"])
+    console.print("      the face is like them, at 0.80 or more: %d, from 0.70 to 0.80: %d (named)"
+                  % (counts["like_them_from_0.80"], counts["like_them_from_0.70_to_0.80"]))
+    console.print("      the face is not like them (under 0.70): %d (left for Identify Faces)" % counts["not_like_them"])
+    if counts["not_decidable_yet"]:
+        console.print("      the person has no named face and several photos wait: %d (left for Identify Faces)"
+                      % counts["not_decidable_yet"])
+    if counts["face_unreadable"]:
+        console.print("      the face cannot be compared: %d (left)" % counts["face_unreadable"])
+    if counts["background_sized_faces_passed_over"]:
+        console.print("  %d face(s) under 2,000 square pixels passed over" % counts["background_sized_faces_passed_over"])
+    console.print("  %d photo(s): named by comparison with the person's named faces"
+                  % counts["photos_named_by_comparison"])
+    console.print("  %d photo(s) left for Identify Faces" % counts["photos_left_for_identify_faces"])
+    console.print("%d face(s) %s." % (counts["faces"], "named" if apply_ else "would be named"))
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        if result.details.get("earlier_apply"):
+            console.print("Applied before: " + faces_from_tags_service.AGAIN, markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply names them%s."
+                      % (" (with --again)" if result.details.get("earlier_apply") else ""))
+        return
+    console.print("Wrote %d face(s). %s" % (result.changed, maintenance.recorded(result, library.path)),
+                  markup=False, soft_wrap=True)
+    # Counted again after the write: the faces just named change which photos have one face left.
+    console.print("Still to be named by the rule now: %d face(s)." % result.details.get("remaining", {"faces": 0})["faces"])
+    for line in maintenance.skipped(result):
+        console.print(line, markup=False, soft_wrap=True)
+
+
 def _job_libraries(ctx):
     """The library --db names, or every library in the data folder."""
     if ctx.obj.get("db"):
