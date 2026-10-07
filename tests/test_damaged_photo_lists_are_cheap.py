@@ -62,6 +62,20 @@ class EachFolderOnce(Case):
         self.assertEqual([], [path for path in looked if "cut " in path], "each photo was looked at, not its folder")
 
 
+def share_waits():
+    """A list that is filled, while the block runs, with the timeout of each wait for a share's look (a join of a
+    ShareLook thread, tagpup.files.shares.bounded). What a share gone away costs is counted in these, not in the
+    seconds a busy machine takes around them (#721)."""
+    waits = []
+    real = threading.Thread.join
+
+    def join(thread, timeout=None):
+        if thread.name == "ShareLook":
+            waits.append(timeout)
+        return real(thread, timeout)
+    return waits, mock.patch.object(threading.Thread, "join", join)
+
+
 class AShareGoneAway(Case):
     def test_the_list_waits_at_most_a_moment_and_then_not_at_all(self):
         on_share = SHARE + "\\" + "far.jpg"
@@ -76,16 +90,17 @@ class AShareGoneAway(Case):
                 return {}
             return real(folder)
 
+        waits, joins = share_waits()
         with mock.patch.object(damaged, "_stamps_in", side_effect=listing), \
-                mock.patch.object(damaged, "SHARE_WAIT", 0.3):
+                mock.patch.object(damaged, "SHARE_WAIT", 0.3), joins:
             started = time.monotonic()
             first = damaged.listed(self.library)
             waited = time.monotonic() - started
-            started = time.monotonic()
+            looked = list(waits)
             damaged.counts(self.library)
-            again = time.monotonic() - started
-        self.assertLess(waited, 2.0)
-        self.assertLess(again, 0.2, "the share gone away was waited on again")
+        self.assertEqual([0.3], looked, "one wait for the share, of SHARE_WAIT")
+        self.assertLess(waited, 5.0, "a backstop: the listing that never comes back hangs for 10 s")
+        self.assertEqual([0.3], waits, "the share gone away was waited on again")
         self.assertEqual(3, len(first), "the photos on disk were not listed")
 
     def test_two_folders_of_one_share_cost_one_wait_and_one_thread(self):
@@ -104,13 +119,12 @@ class AShareGoneAway(Case):
                 return {}
             return real(folder)
 
+        waits, joins = share_waits()
         with mock.patch.object(damaged, "_stamps_in", side_effect=listing), \
-                mock.patch.object(damaged, "SHARE_WAIT", 0.3):
-            started = time.monotonic()
+                mock.patch.object(damaged, "SHARE_WAIT", 0.3), joins:
             damaged.listed(self.library)
-            waited = time.monotonic() - started
         self.assertEqual(1, len(asked), "each folder of the share was waited on, on a thread of its own")
-        self.assertLess(waited, 0.55)
+        self.assertEqual([0.3], waits, "one wait for the share, not one for each folder")
 
 
 if __name__ == "__main__":
