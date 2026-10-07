@@ -139,7 +139,9 @@ describe("a folder added while its Suggest is going", () => {
     await flush(ctx.window, 12);
     click(ctx.window, ctx.$("btn-add-folder-from-note"));
     await flush(ctx.window, 12);
-    await new Promise((resolve) => setTimeout(resolve, 3200));
+    // Waited for, not for 3.2 s: the page polls Suggest's status about once a second, and the third poll is the one that finds
+    // the look gone; under load it came later (#721).
+    for (const end = Date.now() + 20000; polls.count < 3 && Date.now() < end;) await flush(ctx.window, 4);
     await flush(ctx.window, 12);
     assert.match(ctx.$("status-text").textContent, /The folder was added: Suggest again to save its suggestions/);
     assert.doesNotMatch(ctx.$("status-text").textContent, /let go after a while/);
