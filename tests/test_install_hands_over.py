@@ -34,6 +34,7 @@ import own_home  # noqa: E402
 from free_port import free_port  # noqa: E402
 
 import install_app  # noqa: E402
+import tagpup_web  # noqa: E402
 from tagpup import launcher  # noqa: E402
 from tagpup import supervisor  # noqa: E402
 from tagpup.core import processes  # noqa: E402
@@ -68,6 +69,8 @@ class Choices(unittest.TestCase):
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="handover_unit_")
+        with open(self.home.library("lib.db"), "wb"):
+            pass
         self.installed = os.path.join(self.home.root, "installed")
         for version in (OLD, NEW):
             os.makedirs(os.path.join(self.installed, "versions", version))
@@ -166,6 +169,75 @@ class Choices(unittest.TestCase):
         # --no-restart: as before, the next launch.
         self.assertIn("the next launch of TagPup or TagTuner replaces it", install_app.still_running(NEW, self.installed)[0])
 
+    def test_a_home_with_no_library_never_replaces_a_server(self):
+        """#808: --home defaults to the installer's folder, a worktree's when an agent runs it."""
+        os.remove(self.home.library("lib.db"))
+        with mock.patch.object(launcher, "make_way") as make_way:
+            self.assertFalse(self.hand_over())
+        make_way.assert_not_called()
+        self.assertEqual([], self.started)
+        self.assertIn("holds no library", self.said[-1])
+        self.assertIn("--home", self.said[-1])
+        self.assertIn(OLD, self.said[-1])
+
+    def test_a_launch_took_the_ports_first_is_a_success_and_says_so(self):
+        """#806: the server this install started stood down; a launch of the same version serves."""
+        self.drains = [{"drained": True}]
+        exited = Started()
+        exited.code = 3
+
+        def start_server(python, code, home, ports):
+            self.port_held, self.serving = True, NEW   # the launch's server answers
+            return exited
+        with mock.patch.object(launcher, "start_server", side_effect=start_server):
+            self.assertTrue(self.hand_over())
+        self.assertIn("a launch of it took the ports first", self.said[-1])
+
+    def test_a_launch_of_another_version_took_the_ports_stops_the_wait_at_once(self):
+        """#806: it waited the full time and said "did not start" while something served fine."""
+        self.drains = [{"drained": True}]
+        exited = Started()
+        exited.code = 3
+
+        def start_server(python, code, home, ports):
+            self.port_held, self.serving = True, "20260101-000000-zzzzzzz"
+            return exited
+        with mock.patch.object(launcher, "start_server", side_effect=start_server):
+            self.assertFalse(self.hand_over())
+        self.assertLess(self.clock.now, 5, "it waited for a server that had already stood down")
+        self.assertIn("20260101-000000-zzzzzzz answers on port 5 instead", self.said[-1])
+        self.assertIn("What answers is left running", self.said[-1])
+
+    def test_the_wait_is_ten_times_the_check_between_a_floor_and_a_ceiling(self):
+        self.assertEqual(launcher.START_WAIT, launcher.start_wait(2))
+        self.assertEqual(400, launcher.start_wait(40))
+        self.assertEqual(launcher.START_CEILING, launcher.start_wait(5000))
+
+    def test_it_says_it_waits_for_the_import_and_again_while_it_does(self):
+        self.drains = [{"drained": True}]
+        started = Started()
+        answers = []
+
+        def ask(port, timeout=None):
+            if self.clock.now > 70:
+                return {"version": NEW, "supervised": False}
+            return {"version": OLD, "supervised": False} if self.port_held and not answers else None
+
+        def end(found, port, answering, sleep=None):
+            answers.append(1)
+            self.port_held = False
+            return True
+
+        def start_server(python, code, home, ports):
+            return started
+        with mock.patch.object(launcher, "start_server", side_effect=start_server), \
+                mock.patch.object(launcher, "end", side_effect=end), \
+                mock.patch.object(launcher, "ask", side_effect=ask):
+            self.assertTrue(self.hand_over())
+        waiting = [line for line in self.said if "to import and start" in line]
+        self.assertGreaterEqual(len(waiting), 3, self.said)   # once, then every 30 s of the 70
+        self.assertIn("importing alone took", waiting[0])
+
     def test_a_second_install_at_once_leaves_the_server_to_the_first(self):
         held = supervisor.Lock(os.path.join(self.installed, launcher.HANDOVER_LOCK))
         self.assertTrue(held.acquire())
@@ -236,6 +308,58 @@ class Choices(unittest.TestCase):
         self.assertIn("nothing answers on port 5, 6; start TagPup or TagTuner", self.said[-1])
 
 
+class TheServerBindsFirst(unittest.TestCase):
+    """#805: the server an install starts (--open none) binds its ports before it begins a
+    migration, the folder watcher or any model, as a launch's does."""
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="bind_first_")
+        for patch in (mock.patch.dict(os.environ, {"TAGPUP_WEB_NO_WARMUP": "1", "TAGPUP_WEB_RELOADED": "1"}),
+                      mock.patch.object(tagpup_web.logs, "to_file", return_value="(no log file)")):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_a_start_that_loses_the_ports_begins_nothing(self):
+        with mock.patch.object(tagpup_web.web, "bind_all", side_effect=OSError("in use")), \
+                mock.patch.object(tagpup_web.library_actions, "bring_up_to_date_in_background") as migrating, \
+                mock.patch.object(tagpup_web.runtimes, "background") as background, \
+                mock.patch.object(tagpup_web, "Runtime") as runtime, \
+                mock.patch.object(tagpup_web.web, "create_app") as create_app, \
+                mock.patch.object(tagpup_web.web, "serve") as serve:
+            code = tagpup_web.main(["--tagpup-port", "7", "--tuner-port", "8"])
+        self.assertEqual(supervisor.PORTS_TAKEN, code)
+        for began in (migrating, background, runtime, create_app, serve):
+            began.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "the owner's folders are Windows'")
+    def test_a_real_start_with_a_port_held_exits_at_once_and_logs_no_start(self):
+        import socket
+        self.addCleanup(own_home.end_processes, self.home.root)
+        with open(self.home.library("lib.db"), "wb"):
+            pass
+        ports = [free_port(), free_port()]
+        held = socket.socket()
+        self.addCleanup(held.close)
+        held.bind(("127.0.0.1", ports[1]))
+        held.listen(5)
+        env = dict(os.environ, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1")
+        env.pop(supervisor.TOKEN, None)
+        began = time.time()
+        server = processes.start([sys.executable, os.path.join(WORKSPACE_DIR, "tagpup_web.py"), "--open", "none",
+                                  "--tagpup-port", str(ports[0]), "--tuner-port", str(ports[1])],
+                                 env=env, cwd=self.home.root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: server.poll() is None and processes.kill_tree(server.pid))
+        self.assertEqual(supervisor.PORTS_TAKEN, server.wait(timeout=120))
+        log = os.path.join(self.home.data, "logs", "tagpup_web.log")
+        with open(log, encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+        self.assertIn("ports are held by another server", text)
+        for began_line in ("Brought", "Serving", "watch"):
+            self.assertNotIn(began_line, text)
+        self.assertIsNone(launcher.record(ports[0]), "it said where it answers, and it did not")
+
+
 class AReplyThatIsNotHttp(unittest.TestCase):
     """The hand-over's test met it: GET /api/server answered by its own request read back
     (http.client.BadStatusLine), which ask() let through and the install stopped on a
@@ -294,6 +418,8 @@ class ForReal(unittest.TestCase):
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="handover_real_")
+        with open(self.home.library("lib.db"), "wb"):
+            pass
         # Before anything starts: every process the test started, and theirs (#727).
         self.addCleanup(own_home.end_processes, self.home.root)
         self.ports = {"tagpup": free_port(), "tuner": free_port()}
