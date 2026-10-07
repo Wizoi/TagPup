@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="common/tag-editor.css">
     <link rel="stylesheet" href="common/settings-dialog.css">
     <link rel="stylesheet" href="common/history-dialog.css">
+    <link rel="stylesheet" href="common/name-faces.css">
     <link rel="stylesheet" href="common/roots-banner.css">
     <link rel="stylesheet" href="common/image-zoom.css">
     <link rel="stylesheet" href="common/person-faces.css">
@@ -57,6 +58,10 @@
                         <span class="switch-label">Show Matched Photos</span>
                     </label>
                 </div>
+                <!-- Name faces from tags (web/tuner/name-faces.js, web/common/name-faces.js): shown with Folder Matches. -->
+                <div class="control-group" id="name-faces-container">
+                    <button id="btn-name-faces" type="button" class="btn btn-secondary btn-sm" title="Name the faces the photos' person tags name, in the whole library, not only here. You are shown the plan and asked before anything is written.">Name faces from tags</button>
+                </div>
                 <!-- How many folders under the library's roots wait to be included or ignored (review.js). -->
                 <div class="control-group">
                     <button id="review-notice" type="button" class="btn btn-secondary btn-sm review-notice hidden" title="Folders under the library's roots that hold photos not in it: include or ignore each"></button>
@@ -68,6 +73,7 @@
                         <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
                         <button type="button" role="menuitem" data-action="library-settings" title="This library's settings: the CLIP model, face detection and ExifTool (Suggest's words and the rename format are in TagPup's gear)">Library settings</button>
                         <button type="button" role="menuitem" data-action="library-history" title="This library's last changes, and Undo beside each that can be undone">History...</button>
+                        <button type="button" role="menuitem" data-action="name-faces" title="Name the faces the photos' person tags name, in the whole library. You are shown the plan and asked before anything is written.">Name faces from tags...</button>
                         <button type="button" role="menuitem" data-action="folders-review" title="Folders under the library's roots that hold photos not in it: include or ignore each">Folders to review...</button>
                         <button type="button" role="menuitem" data-action="library-roots" title="Where this computer keeps each root of the library: check a place, move a root, move it back">Roots...</button>
                         <a role="menuitem" href="/activity/" target="_blank" rel="noopener" title="What runs and what ran in every library: indexing, jobs, syncs, snapshots, logs">Activity...</a>

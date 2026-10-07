@@ -20,6 +20,7 @@ import {
     wireChangeDogPark, wireFolderPathInput, wireSidebarResizer
 } from './folder.js';
 import { wireTagPupGear } from './gear.js';
+import { wireNameFaces } from './name-faces.js';
 import {
     leaveLibraryView, libraryChanged, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
 } from './library-view.js';
@@ -165,6 +166,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // The gear: the tag editor (web/common/tag-editor.js) and TagTuner on this library.
     wireTagPupGear();
+
+    // The folder view's "Name faces from tags".
+    wireNameFaces();
 
     // A library whose root this computer does not place says so, at the top of the page.
     wireRootsBanner();
