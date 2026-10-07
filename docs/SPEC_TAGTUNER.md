@@ -62,8 +62,9 @@ takes it back). When it was done before, the question says **Applied before** an
 time can name more (the faces it named are references now); Yes is then the CLI's `--again`. **No**
 changes nothing. A second box, **off**, also groups the rest of the faces by who they look like
 and names those groups from the tags (`cluster-faces`): its text says that it works on every face
-of the library, re-derives the automatic names, keeps those given by hand, can take many
-minutes, needs no graphics card and cannot be undone from History. Cancel before the write
+of the library, re-derives the automatic names (so it can take away some of the names the first step
+wrote), keeps those given by hand, can take about an hour on a large library, needs no graphics card
+and cannot be undone from History. Cancel before the write
 changes nothing; a write begun finishes whole (and the grouping is then not run); grouping
 stops before its names are written. Closing the dialog leaves the job running; the button shows it
 again. While the names are written and while faces are grouped, assignments here are refused
