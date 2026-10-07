@@ -2650,7 +2650,9 @@ indexer already keeps the lens tag -- check first). Author is not used and stays
   regions (MWG) and the embeddings, each tagged with the model that made it, in the file's XMP (a private
   namespace for vectors), so a photo moved or held by several libraries is read, not recomputed. Size: per model
   a CLIP vector (1024 floats, float16 about 2.7 KB base64) and about 3.9 face vectors (512 floats each); JPEG's
-  standard XMP holds 64 KB -- keep only the vectors of the models in use, float16.
+  standard XMP holds 64 KB -- keep only the vectors of the models in use, float16. *Owner, 2026-10-07: baking
+  only the CURRENT model's vectors into a photo is fine*; older models' vectors stay in the database only, and a
+  model change rewrites the photos' baked vectors in the same pass as the re-embed.
 **People by id, stage 2:**
 - The 4 names with no person tag: **create the tag**. The name that matches two tags (1 face): **remove the
   tags** -- to be confirmed with the owner by name before anything is written (the tags also sit on photos'
