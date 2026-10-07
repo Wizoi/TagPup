@@ -7,9 +7,14 @@ fails does not hide the others.
 import os
 import re
 import sys
+import threading
 import time
 import unittest
 from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import share_waits  # noqa: E402
 
 from tagpup.services import file_access as fa
 
@@ -331,16 +336,15 @@ class TheAttributeIsReadBounded(unittest.TestCase):
             gate.wait(30)
             return mock.Mock(st_file_attributes=0)
 
+        waits, counting = share_waits.counted()
         with mock.patch.object(fa.shares, "on_a_network_drive", lambda path: True), \
-                mock.patch.object(fa.os, "stat", hang), mock.patch.object(fa, "SHARE_SECONDS", 0.2):
-            started = time.monotonic()
+                mock.patch.object(fa.os, "stat", hang), mock.patch.object(fa, "SHARE_SECONDS", 0.2), counting:
             first = fa.read_not_indexed("\\\\nas\\photos")
             self.assertIsNone(first)
-            self.assertLess(time.monotonic() - started, 1.5)
-            started = time.monotonic()
+            self.assertEqual([0.2], waits, "one wait, of SHARE_SECONDS")
             for _ in range(5):
                 self.assertIsNone(fa.read_not_indexed("\\\\nas\\photos"))
-            self.assertLess(time.monotonic() - started, 0.5, "the failed answer is remembered for a while")
+            self.assertEqual([0.2], waits, "the failed answer is remembered for a while")
         self.assertEqual(1, len(stats), "no second thread was started at the share that is away")
 
     def test_a_local_folder_is_read_without_a_thread(self):
@@ -404,13 +408,18 @@ class OneFailureDoesNotHideTheOthers(unittest.TestCase):
         self.assertIn("could not be checked", found["defender"]["title"])
 
     def test_a_check_that_does_not_finish_returns_what_it_had(self):
-        def slow():
-            time.sleep(1.0)
+        # A probe that does not finish until the test ends, rather than one of a second: told from the 0.2 s it was
+        # given by a busy machine's seconds too (#721).
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+
+        def stuck():
+            gate.wait(30)
             return shell()
 
         started = time.monotonic()
-        result = fa.check(DATA, [], probes=probes(powershell=slow), total=0.2)
-        self.assertLess(time.monotonic() - started, 0.9)
+        result = fa.check(DATA, [], probes=probes(powershell=stuck), total=0.2)
+        self.assertLess(time.monotonic() - started, 10, "a backstop: the probe it waited for ends in 30 s")
         self.assertEqual("timeout", result["findings"][-1]["id"])
 
     def test_the_answer_is_remembered_and_refreshed_on_request(self):
