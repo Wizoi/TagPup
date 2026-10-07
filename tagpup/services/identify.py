@@ -182,6 +182,47 @@ def representative_faces(decided, named):
     return chosen
 
 
+#: How many faces of a person a hover shows (web/common/person-faces.js).
+SAMPLE_FACES = 4
+
+
+def _ranked_by_mean(ids, names, matrix, limit):
+    """{name: [up to `limit` face ids]}: each person's faces, the one nearest the mean of theirs
+    first, as _closest_to_mean chooses it (a tie to the lowest id), the rest by the same
+    closeness. One pass over the matrix, the names grouped once."""
+    if matrix is None or not len(ids):
+        return {}
+    ids = np.asarray(ids)
+    uniq, inverse = np.unique(np.asarray(names), return_inverse=True)
+    order = np.argsort(inverse, kind="stable")
+    bounds = np.searchsorted(inverse[order], np.arange(len(uniq) + 1))
+    ranked = {}
+    for group, name in enumerate(uniq):
+        rows = order[bounds[group]:bounds[group + 1]]
+        vectors = matrix[rows]
+        centre = vectors.mean(axis=0)
+        norm = np.linalg.norm(centre)
+        scores = vectors @ (centre / norm) if norm else np.zeros(len(rows))
+        # Closest first; faces as close as 1e-7 are one rank, the lowest id first.
+        best = np.lexsort((ids[rows], -np.round(scores, 7)))
+        ranked[str(name)] = [int(face_id) for face_id in ids[rows[best[:limit]]]]
+    return ranked
+
+
+def face_samples(decided, named, limit=SAMPLE_FACES):
+    """{name: [face ids]}: up to `limit` faces to show of each person, the faces a person
+    decided first (decided_faces: named by hand, or borne out by the photo's keyword), most
+    like the person first, and, to fill the places left, their other named faces in the same
+    order. A person with no readable face is absent. Both arguments are (ids, names, matrix)
+    as the matrices are cached; an excluded face is in neither, so is never shown."""
+    chosen = _ranked_by_mean(*decided, limit)
+    for name, more in _ranked_by_mean(*named, limit).items():
+        have = chosen.setdefault(name, [])
+        have.extend(face_id for face_id in more if face_id not in have)
+        del have[limit:]
+    return chosen
+
+
 # ---- The photos, and one photo ----------------------------------------------------------
 
 def photos_waiting(library, show_matched=False):

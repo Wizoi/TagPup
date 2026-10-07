@@ -3,6 +3,7 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
+import { attachPersonFaces } from './common/person-faces.js';
 import { baseName, isUnc, pathKey } from './common/paths.js';
 import { photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
@@ -113,6 +114,8 @@ export function renderPhotoFaces(photoPath) {
                     label.textContent = `${face.suggestion}?`;
                     card.title = `Closest match: ${face.suggestion} (${pct}%). Not assigned.`;
                     label.classList.add('face-card-suggestion');
+                    card.tabIndex = 0;
+                    attachPersonFaces(card, face.suggestion);
                 } else {
                     label.textContent = 'Unidentified';
                     card.title = 'No similar face in this database yet';

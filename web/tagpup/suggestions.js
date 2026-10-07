@@ -1,6 +1,7 @@
 // TagPup's page: suggestions -- asking for them, following their progress and an index's,
 // showing them for a photo, and applying them.
 import { api } from './common/api.js';
+import { attachPersonFaces } from './common/person-faces.js';
 import { samePath } from './common/paths.js';
 import { leafOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
@@ -355,6 +356,10 @@ export function renderSuggestionsPanel(photoPath) {
             chip.style.cursor = 'pointer';
             chip.textContent = pct ? `${name} · ${pct}%` : name;
             chip.title = `Click to add ${name} to this photo.`;
+            if (isPerson) {
+                chip.tabIndex = 0;      // focusable, so the keyboard sees their faces as well
+                attachPersonFaces(chip, name);
+            }
             chip.addEventListener('click', () => applySuggestedTagDirect(name, isPerson, photoPath));
             container.appendChild(chip);
         });

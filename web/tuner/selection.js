@@ -1,5 +1,6 @@
 // Selecting faces in the Identify grid, and the selected face's details.
 import { api } from './common/api.js';
+import { attachPersonFaces } from './common/person-faces.js';
 import { sortedTags } from './common/vocabulary.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { boxInContainedImage } from './common/image-zoom.js';
@@ -188,6 +189,9 @@ export function showFaceDetails(faceId) {
 
                     itemDiv.appendChild(nameSpan);
                     itemDiv.appendChild(simSpan);
+                    // A suggested person too: focusable, so the keyboard sees their faces as well.
+                    itemDiv.tabIndex = 0;
+                    attachPersonFaces(itemDiv, item.name);
                     matchingDetailDiagnostics.appendChild(itemDiv);
                 });
             }
