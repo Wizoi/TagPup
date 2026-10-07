@@ -74,13 +74,15 @@ STAGES = {
     "comparing": ("Comparing faces with the confirmed faces of the people", 0.25, 0.65),
     "deciding": ("Deciding which faces to name", 0.90, 0.10),
 }
+#: Grouping, measured on a copy of photo_index (225,000 faces, 2026-10-07; 53 min in all): reading 2 s, DBSCAN 220 s, voting 2 s,
+#: propagating 112 s, matching the rest 2,807 s (89%), writing 19 s.
 GROUPING_STAGES = {
-    "reading": ("Reading every face of the library", 0.0, 0.10),
-    "grouping": ("Grouping the faces by who they look like (this step shows no progress inside)", 0.10, 0.45),
-    "voting": ("Naming the groups from their photos' tags", 0.55, 0.10),
-    "propagating": ("Placing the faces of photos with several people", 0.65, 0.20),
-    "matching": ("Checking the faces still unnamed against the named", 0.85, 0.10),
-    "saving": ("Writing the names", 0.95, 0.05),
+    "reading": ("Reading every face of the library", 0.0, 0.005),
+    "grouping": ("Grouping the faces by who they look like (this step shows no progress inside; a few minutes)", 0.005, 0.07),
+    "voting": ("Naming the groups from their photos' tags", 0.075, 0.005),
+    "propagating": ("Placing the faces of photos with several people", 0.08, 0.035),
+    "matching": ("Checking the faces still unnamed against the named (most of the time)", 0.115, 0.875),
+    "saving": ("Writing the names", 0.99, 0.01),
 }
 
 #: What the status says of a restart, and of a plan that was not answered.

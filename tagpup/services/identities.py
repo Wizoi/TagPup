@@ -611,7 +611,7 @@ def resolve(photo_index, max_iterations=5, on_step=None):
             assigned_names_by_photo.setdefault(face["photo_path"], set()).add(name)
 
     for number, face in enumerate(all_faces):
-        if number % (STEP * 5) == 0:
+        if number % STEP == 0:
             step("matching", number, len(all_faces))
         final_name = refined_resolved_names.get(face["id"])
 

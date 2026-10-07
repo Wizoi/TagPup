@@ -129,7 +129,7 @@ function nfRenderQuestion(status) {
         nfDialog.group,
         buildElement('span', { text: 'Also group the rest of the faces by who they look like, and name those groups from the tags. '
             + 'This works on every face in the library and re-derives the automatic names it has been given (names you gave by '
-            + 'hand are kept). It can take many minutes, needs no graphics card, and History cannot undo it.' }),
+            + 'hand are kept). It can take about an hour on a large library, needs no graphics card, and History cannot undo it.' }),
     ]));
     replaceContent(nfDialog.body, ...children);
     nfButtons({ yes: true, no: true });
