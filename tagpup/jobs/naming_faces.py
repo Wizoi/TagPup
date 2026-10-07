@@ -90,6 +90,8 @@ EXPIRED_SAYS = "The plan was not answered in %d minutes and was let go: the face
     ASK_SECONDS // 60)
 REFUSED_SAYS = ("Nothing was written: some faces changed since the question was asked (a name given in TagTuner or TagPup, "
                 "say). Start again to see what can be named now.")
+APPLIED_MEANWHILE = ("The names were written by another run since this plan was read (in another window or process); they are "
+                     "references for this one now. Nothing was written. Start again to see what can be named now.")
 NO_FACES = "This library holds no faces yet: index photos first. Nothing was changed."
 
 _jobs = {}            # {library.key: {handle: Job}}
@@ -282,7 +284,8 @@ class Job:
                     if result.refused or result.errors:
                         logger.warning("Name faces from tags in %s: the change was not written: %s", self.library.name,
                                        result.refused or result.errors)
-                        return self._finish(FAILED, REFUSED_SAYS if result.refused else
+                        return self._finish(FAILED, APPLIED_MEANWHILE if result.refused == faces_from_tags.AGAIN else
+                                            REFUSED_SAYS if result.refused else
                                             "The change could not be written; the server's log says why. Nothing was written.",
                                             what, failed=True)
                     written = result.changed

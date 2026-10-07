@@ -219,6 +219,24 @@ class WhenTheFacesChangeBeforeTheAnswer(Case789):
         self.assertIsNone(look(self.path, "SELECT name FROM faces WHERE id = ?", (self.single_face,))[0][0])
 
 
+class TwoWindows(Case789):
+    def test_a_plan_made_before_another_window_applied_is_refused_whole(self):
+        # TagPup and TagTuner (or two processes) each read a plan; the first Yes is the first apply, the second is refused.
+        self.seed()
+        mine, yours = self.start(), None
+        naming_faces._held(self.library).pop(mine.handle)           # the other window's job, as another process holds it
+        yours = self.start()
+        naming_faces._held(self.library)[mine.handle] = mine
+        naming_faces.confirm(self.library, yours.handle)
+        self.assertEqual(naming_faces.DONE, wait(yours)["state"])
+        before = self.names()
+        naming_faces.confirm(self.library, mine.handle)
+        found = wait(mine)
+        self.assertEqual(naming_faces.FAILED, found["state"])
+        self.assertEqual(naming_faces.APPLIED_MEANWHILE, found["message"])
+        self.assertEqual(before, self.names(), "the second window wrote nothing")
+
+
 class TwoClicks(Case789):
     def blocked_plan(self):
         """A plan that waits to be let go, as a slow one on a big library does."""
