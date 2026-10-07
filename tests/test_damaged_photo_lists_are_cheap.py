@@ -16,6 +16,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import damaged_photos  # noqa: E402
 import own_home  # noqa: E402
+import share_waits  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import damaged_photos as damaged  # noqa: E402
@@ -62,20 +63,6 @@ class EachFolderOnce(Case):
         self.assertEqual([], [path for path in looked if "cut " in path], "each photo was looked at, not its folder")
 
 
-def share_waits():
-    """A list that is filled, while the block runs, with the timeout of each wait for a share's look (a join of a
-    ShareLook thread, tagpup.files.shares.bounded). What a share gone away costs is counted in these, not in the
-    seconds a busy machine takes around them (#721)."""
-    waits = []
-    real = threading.Thread.join
-
-    def join(thread, timeout=None):
-        if thread.name == "ShareLook":
-            waits.append(timeout)
-        return real(thread, timeout)
-    return waits, mock.patch.object(threading.Thread, "join", join)
-
-
 class AShareGoneAway(Case):
     def test_the_list_waits_at_most_a_moment_and_then_not_at_all(self):
         on_share = SHARE + "\\" + "far.jpg"
@@ -90,7 +77,7 @@ class AShareGoneAway(Case):
                 return {}
             return real(folder)
 
-        waits, joins = share_waits()
+        waits, joins = share_waits.counted()
         with mock.patch.object(damaged, "_stamps_in", side_effect=listing), \
                 mock.patch.object(damaged, "SHARE_WAIT", 0.3), joins:
             started = time.monotonic()
@@ -119,7 +106,7 @@ class AShareGoneAway(Case):
                 return {}
             return real(folder)
 
-        waits, joins = share_waits()
+        waits, joins = share_waits.counted()
         with mock.patch.object(damaged, "_stamps_in", side_effect=listing), \
                 mock.patch.object(damaged, "SHARE_WAIT", 0.3), joins:
             damaged.listed(self.library)
