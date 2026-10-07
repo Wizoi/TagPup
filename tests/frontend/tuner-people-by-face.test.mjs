@@ -28,7 +28,11 @@ const base = (faces = FACES) => new FakeServer()
 async function open(t, { server = base(), view, mode = "face-matching" } = {}) {
   const ctx = await loadApp("tagtuner", {
     t, url: "http://localhost:8080/kr-track/", server,
-    before: (window) => { if (view) window.localStorage.setItem("tagtuner.peopleView", view); },
+    before: (window) => {
+      if (view) window.localStorage.setItem("tagtuner.peopleView", view);
+      // These tests read the biggest first, so they come with that remembered (the first visit is by name, #793).
+      window.localStorage.setItem("tagtuner.peopleSort", "count");
+    },
   });
   const select = ctx.document.getElementById("tuner-mode");
   select.value = mode;

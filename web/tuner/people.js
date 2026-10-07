@@ -487,7 +487,8 @@ export function wirePeople() {
     if (peopleSort) {
         try {
             const saved = localStorage.getItem(PEOPLE_SORT_KEY);
-            if (saved) peopleSort.value = saved;
+            // Only a choice the list offers; the first visit has none and starts on Name (A-Z) (#793).
+            if (saved && [...peopleSort.options].some(o => o.value === saved)) peopleSort.value = saved;
         } catch (e) { /* the preference just will not stick */ }
 
         peopleSort.addEventListener('change', () => {

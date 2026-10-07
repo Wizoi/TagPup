@@ -914,8 +914,13 @@ describe("ordering the people list", () => {
     return [...document.querySelectorAll("#photo-list .photo-title")].map((el) => el.textContent);
   }
 
-  test("it defaults to the most photos first", async (t) => {
+  test("it starts on Name (A-Z) the first time (#793)", async (t) => {
     const { document } = await sidebar(t);
+    assert.deepEqual(names(document).slice(1), ["Alba Castellan", "bram nordquist", "Zoe Abbott"]);
+  });
+
+  test("the most photos first is one choice away", async (t) => {
+    const { document } = await sidebar(t, "count");
     assert.deepEqual(names(document).slice(1), ["bram nordquist", "Alba Castellan", "Zoe Abbott"]);
   });
 
