@@ -532,13 +532,25 @@ describe("counts after an edit", () => {
     assert.equal(trips.querySelector(".nav-count").textContent, "10");
     const asked = ctx.navigatorAsked.filter((name) => name === "keywords").length;
     count = 11;
-    // A tag is added to a photo in the view: the write queue finishes an entry.
+    // A tag is added to a photo in the view: the write queue finishes an entry. "After a moment" is the delay the page asks
+    // for, recorded: timed instead, a busy machine's 40 ms ran past it (#721).
+    const delays = [];
+    const realTimeout = ctx.window.setTimeout;
+    ctx.window.setTimeout = (fn, ms, ...rest) => {
+      delays.push(ms);
+      return realTimeout.call(ctx.window, fn, ms, ...rest);
+    };
+    const keywordsAsked = () => ctx.navigatorAsked.filter((name) => name === "keywords").length;
     const queue = ctx.module("write-queue.js");
     queue.markEntry(queue.queueEntry("Add tag"), "done");
-    await ctx.settle(40);
-    assert.equal(ctx.navigatorAsked.filter((name) => name === "keywords").length, asked, "not at once: edits come in runs");
-    await ctx.settle(1400);
-    assert.equal(ctx.navigatorAsked.filter((name) => name === "keywords").length, asked + 1, "one ask for the run");
+    queue.markEntry(queue.queueEntry("Add tag"), "done");
+    ctx.window.setTimeout = realTimeout;
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    assert.equal(keywordsAsked(), asked, "not at once: edits come in runs");
+    assert.ok(delays.includes(ctx.module("navigator.js").NAV_COUNTS_MS), `read after NAV_COUNTS_MS: ${delays.join(", ")}`);
+    await ctx.until(() => keywordsAsked() > asked, 10000);
+    await ctx.settle(100);
+    assert.equal(keywordsAsked(), asked + 1, "one ask for the run");
     assert.equal(ctx.rowByLabel("keywords", "Trips"), trips, "the same element: no rebuild, no flicker");
     assert.equal(trips.querySelector(".nav-count").textContent, "11");
     assert.equal(ctx.rowByLabel("keywords", "Activity"), activity);

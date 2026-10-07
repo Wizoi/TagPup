@@ -103,7 +103,9 @@ describe("a folder looked at, then added", () => {
     // enabled; the page does not claim anything was let go.
     const scans = () => ctx.s.calls.filter((c) => c.method === "GET" && c.url.includes("/api/folder/scan")).length;
     const before = scans();
-    await new Promise((resolve) => setTimeout(resolve, 1300));
+    // Waited for, not for 1.3 s: the page polls the index's status, and on a busy machine the poll that finds it done
+    // came later than that (#721).
+    for (const end = Date.now() + 15000; scans() <= before && Date.now() < end;) await flush(ctx.window, 4);
     await flush(ctx.window, 12);
     assert.ok(scans() > before, "the folder was not scanned again when its indexing finished");
     assert.doesNotMatch(ctx.$("status-text").textContent, /let go/);
