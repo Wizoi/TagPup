@@ -1272,8 +1272,16 @@ def faces_from_tags(ctx, apply_):
     counts = result.details["counts"]
     console.print("%d photo(s) have a face to be named and a tagged person no face carries."
                   % counts["photos_with_a_face_and_a_person_to_place"])
-    console.print("  %d photo(s): one face, one person, named by the tag alone"
-                  % counts["named_by_the_tag_alone"])
+    console.print("  %d photo(s): one face, one person; named by the tag alone: %d"
+                  % (counts["one_face_one_person"], counts["named_by_the_tag_alone"]))
+    console.print("      the person has no named face to compare with: %d (named)" % counts["person_has_no_decided_face"])
+    console.print("      the face is like them, at 0.80 or more: %d, from 0.70 to 0.80: %d (named)"
+                  % (counts["like_them_from_0.80"], counts["like_them_from_0.70_to_0.80"]))
+    console.print("      the face is not like them (under 0.70): %d (left for Identify Faces)" % counts["not_like_them"])
+    if counts["face_unreadable"]:
+        console.print("      the face cannot be compared: %d (left)" % counts["face_unreadable"])
+    if counts["background_sized_faces_passed_over"]:
+        console.print("  %d face(s) under 2,000 square pixels passed over" % counts["background_sized_faces_passed_over"])
     console.print("  %d photo(s): named by comparison with the person's named faces"
                   % counts["photos_named_by_comparison"])
     console.print("  %d photo(s) left for Identify Faces" % counts["photos_left_for_identify_faces"])
@@ -1284,6 +1292,8 @@ def faces_from_tags(ctx, apply_):
         return
     console.print("Wrote %d face(s). %s" % (result.changed, maintenance.recorded(result, library.path)),
                   markup=False, soft_wrap=True)
+    # Counted again after the write: the faces just named change which photos have one face left.
+    console.print("Still to be named by the rule now: %d face(s)." % result.details.get("remaining", {"faces": 0})["faces"])
     for line in maintenance.skipped(result):
         console.print(line, markup=False, soft_wrap=True)
 

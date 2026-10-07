@@ -13,6 +13,14 @@ makes it a reference for later guesses (tagpup.services.identify.decided_faces, 
   'manual'): the owner's decisions are never overruled, as automatch's (#643).
 * A keyword person is a photo_people row of source 'keyword' that is a leaf person of the tree
   (tag_id set): a branch tag is never a person, and an ambiguous name is no one.
+* The tag alone is trusted only as far as the face looks like the person (#833). The detector often finds
+  the other person in frame, not the tagged one: on photo_index a third of the faces the tag alone would
+  name were below 0.70 of the person's decided faces. So when the person HAS decided faces, the face must
+  be one a name is offered at (clustering.is_offered, 0.70) against them; otherwise it is left for Identify Faces. A person with NO
+  decided face -- a new person on one photo -- is named by the tag alone: there is nothing to compare, and
+  the face is then the person's first decided face. A face under clustering.BACKGROUND_AREA is never
+  named by the tag. Because of the gate, a face named by this rule is a keyword-confirmed reference only
+  when it passed it or the person had no decided face, so a stranger cannot seed a person.
 * With several faces or several people nothing is guessed from the tag alone. Given
   `references` -- the decided faces as (ids, names, unit vectors), tagpup.services.identify.
   decided_faces -- a face is named only when exactly ONE person's decided face is as alike as
@@ -26,6 +34,7 @@ people are rebuilt (tagpup.store.photos, tagpup.services.faces), inside the writ
 tagpup.store.faces.name_unnamed, whose guards hold at the write, whatever was read.
 """
 import collections
+import json
 
 import numpy as np
 
@@ -49,11 +58,18 @@ class Plan:
 
     counts: `photos`, those with a face to be named and a keyword person no face carries;
     `one_face_one_person`, of them those named by the tag alone; `matched`, those with a face
-    named by comparison; `left`, those with nothing named (for Identify Faces)."""
+    named by comparison; `left`, those with nothing named (for Identify Faces). Of the photos
+    with one face and one person (`tag_alone`): `no_decided_face`, the person has none, so the
+    tag alone names it; `like_them`, `like_them_somewhat` and `not_like_them`, the face's best
+    cosine to their decided faces at or above 0.80, from 0.70 to 0.80, and below 0.70 (those are
+    left); `unreadable_face`, a face with no embedding to compare, left; `background_sized`,
+    faces under clustering.BACKGROUND_AREA that were not counted as faces to be named."""
 
     def __init__(self):
         self.named = []
-        self.counts = collections.Counter(photos=0, one_face_one_person=0, matched=0, left=0)
+        self.counts = collections.Counter(
+            photos=0, one_face_one_person=0, matched=0, left=0, tag_alone=0, no_decided_face=0, like_them=0,
+            like_them_somewhat=0, not_like_them=0, unreadable_face=0, background_sized=0)
 
 
 def _chunks(items):
@@ -83,13 +99,13 @@ def _keyword_people(conn, photo_ids):
 
 
 def _faces_of(conn, photo_ids):
-    """{photo id: [(face id, name, name_source, excluded)]} of those photos' faces, no BLOB."""
+    """{photo id: [(face id, name, name_source, excluded, box)]} of those photos' faces, no BLOB."""
     found = collections.defaultdict(list)
     for chunk in _chunks(photo_ids):
-        for face_id, photo_id, name, source, excluded in conn.execute(
-                "SELECT id, photo_id, name, name_source, excluded FROM faces WHERE photo_id IN (%s) ORDER BY id"
+        for face_id, photo_id, name, source, excluded, box in conn.execute(
+                "SELECT id, photo_id, name, name_source, excluded, box FROM faces WHERE photo_id IN (%s) ORDER BY id"
                 % ",".join("?" * len(chunk)), chunk):
-            found[photo_id].append((face_id, name, source, excluded))
+            found[photo_id].append((face_id, name, source, excluded, box))
     return found
 
 
@@ -104,7 +120,7 @@ def _embeddings(conn, face_ids):
 
 def _free_people(names, faces_here):
     """The keyword people (by key, first spelling) that no named face of the photo carries."""
-    carried = {vocabulary.key(name) for _id, name, _source, excluded in faces_here if name and not excluded}
+    carried = {vocabulary.key(name) for _id, name, _source, excluded, _box in faces_here if name and not excluded}
     free, seen = [], set()
     for name in names:
         key = vocabulary.key(name)
@@ -114,10 +130,75 @@ def _free_people(names, faces_here):
     return free
 
 
+def _small(box_json):
+    """Is a face's stored box (JSON) a speck: under clustering.BACKGROUND_AREA?"""
+    try:
+        return clustering.is_background_sized(json.loads(box_json))
+    except (TypeError, ValueError):
+        return False
+
+
 def _to_be_named(faces_here):
-    """{id: name_source} of the faces nobody has named, ruled out or called nobody."""
-    return {face_id: source for face_id, name, source, excluded in faces_here
-            if not name and not excluded and source != BY_HAND}
+    """({id: name_source} of the faces nobody has named, ruled out or called nobody, specks left out,
+    how many specks that was)."""
+    found, specks = {}, 0
+    for face_id, name, source, excluded, box in faces_here:
+        if name or excluded or source == BY_HAND:
+            continue
+        if _small(box):
+            specks += 1
+        else:
+            found[face_id] = source
+    return found, specks
+
+
+def _decided_of(conn, name):
+    """The unit vectors of the faces a person decided of `name`: named by hand, or on a photo whose
+    keywords name them (the references identify.decided_faces counts), none excluded. By the name's
+    index (idx_faces_name), one person at a time."""
+    rows = conn.execute(
+        "SELECT f.embedding FROM faces f WHERE f.name = ? AND f.excluded = 0 AND f.embedding IS NOT NULL"
+        " AND (f.name_source = 'manual' OR EXISTS (SELECT 1 FROM photo_people pp WHERE pp.photo_id = f.photo_id"
+        " AND pp.source = 'keyword' AND pp.name = f.name))", (name,)).fetchall()
+    vectors = []
+    for (blob,) in rows:
+        vec = np.frombuffer(blob, dtype=np.float32)
+        norm = np.linalg.norm(vec)
+        if norm:
+            vectors.append(vec / norm)
+    return np.stack(vectors) if vectors else None
+
+
+def _gated(conn, singles, result):
+    """The `singles` -- (photo id, face id, person name, name_source), each a photo's one face to be named
+    and one person -- that the tag alone may name (#833), as Choices, counted in `result.counts`.
+    A person with no decided face is named; one with decided faces only if the face's best cosine to them
+    is one a name is offered at (clustering.is_offered). The decided faces are read once per person, not once per photo."""
+    vectors = _embeddings(conn, [face_id for _photo, face_id, _name, _source in singles])
+    by_person = {}
+    for photo_id, face_id, name, source in singles:
+        result.counts["tag_alone"] += 1
+        if name not in by_person:
+            by_person[name] = _decided_of(conn, name)
+        decided = by_person[name]
+        if decided is None:
+            result.counts["no_decided_face"] += 1
+        else:
+            blob = vectors.get(face_id)
+            vec = np.frombuffer(blob, dtype=np.float32) if blob and len(blob) == decided.shape[1] * 4 else None
+            norm = np.linalg.norm(vec) if vec is not None else 0
+            if not norm:
+                result.counts["unreadable_face"] += 1
+                result.counts["left"] += 1
+                continue
+            best = float((decided @ (vec / norm)).max())
+            if not clustering.is_offered(best):
+                result.counts["not_like_them"] += 1
+                result.counts["left"] += 1
+                continue
+            result.counts["like_them" if clustering.names_unasked(best) else "like_them_somewhat"] += 1
+        result.named.append(Choice(face_id, photo_id, name, "tag", source))
+        result.counts["one_face_one_person"] += 1
 
 
 #: How many faces are compared with every decided face at once: a block of faces x the decided
@@ -177,21 +258,24 @@ def plan(conn, photo_ids=None, references=None):
     people_of = _keyword_people(conn, None if photo_ids is None else sorted(set(photo_ids)))
     faces_of = _faces_of(conn, sorted(people_of))
     open_ones = []   # (photo id, unnamed face ids, free people) still to be compared
+    singles = []     # (photo id, face id, person, name_source): one face, one person
     for photo_id in sorted(people_of):
         here = faces_of.get(photo_id, [])
-        unnamed = _to_be_named(here)
+        unnamed, specks = _to_be_named(here)
         free = _free_people(people_of[photo_id], here)
         if not unnamed or not free:
             continue
+        result.counts["background_sized"] += specks
         result.counts["photos"] += 1
         if len(unnamed) == 1 and len(free) == 1:
             (face_id, source), = unnamed.items()
-            result.named.append(Choice(face_id, photo_id, free[0], "tag", source))
-            result.counts["one_face_one_person"] += 1
+            singles.append((photo_id, face_id, free[0], source))
         elif references is not None:
             open_ones.append((photo_id, unnamed, free))
         else:
             result.counts["left"] += 1
+    if singles:
+        _gated(conn, singles, result)
     if open_ones:
         vectors = _embeddings(conn, [face_id for _photo, unnamed, _free in open_ones for face_id in unnamed])
         references = references() if callable(references) else references
@@ -203,12 +287,13 @@ def plan(conn, photo_ids=None, references=None):
     return result
 
 
-def name_photos(conn, photo_ids, references=None):
+def name_photos(conn, photo_ids, references=None, vocabulary=None):
     """Name the faces of `photo_ids` that their keyword people name (`plan`), in the caller's
     write: the people the plan read are read in the same transaction as the write, begun here
     when the caller has none open, so a person renamed by another process meanwhile is not
     written under the old spelling. Returns the ids of the faces named -- those the write
-    changed, a face named or ruled out meanwhile not counted. The caller commits."""
+    changed, a face named or ruled out meanwhile not counted. `vocabulary` is the tree's people when the
+    caller has read them (a batch of photos reads the tree once, #838). The caller commits."""
     photo_ids = sorted(set(photo_ids))
     if not photo_ids:
         return []
@@ -217,7 +302,7 @@ def name_photos(conn, photo_ids, references=None):
     found = plan(conn, photo_ids, references)
     if not found.named:
         return []
-    return faces.name_unnamed(conn, {choice.face_id: choice.name for choice in found.named})
+    return faces.name_unnamed(conn, {choice.face_id: choice.name for choice in found.named}, vocabulary)
 
 
 def photo_ids_of(conn, photo_paths):

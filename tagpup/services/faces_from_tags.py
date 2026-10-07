@@ -37,7 +37,15 @@ def _plan(library):
                 "named_by_the_tag_alone": found.counts["one_face_one_person"],
                 "photos_named_by_comparison": found.counts["matched"],
                 "faces": len(named),
-                "photos_left_for_identify_faces": found.counts["left"]},
+                "photos_left_for_identify_faces": found.counts["left"],
+                # Of the photos with one face and one person (#833), by how the face looks like the person.
+                "one_face_one_person": found.counts["tag_alone"],
+                "person_has_no_decided_face": found.counts["no_decided_face"],
+                "like_them_from_0.80": found.counts["like_them"],
+                "like_them_from_0.70_to_0.80": found.counts["like_them_somewhat"],
+                "not_like_them": found.counts["not_like_them"],
+                "face_unreadable": found.counts["unreadable_face"],
+                "background_sized_faces_passed_over": found.counts["background_sized"]},
         ids={"faces": [choice.face_id for choice in named]},
         reveal={"named": [(choice.face_id, choice.name) for choice in named]},
         work=named)

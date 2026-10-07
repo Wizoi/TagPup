@@ -126,6 +126,20 @@ def looks_wrong(similarity):
 
 # ---- Faces in the background ---------------------------------------------------------
 
+#: A face smaller than this many square pixels is a speck in the background: not named by the tag alone,
+#: and clustering names none of those a tenth of the largest's (background_faces).
+BACKGROUND_AREA = 2000
+
+
+def is_background_sized(box):
+    """Is a face with this box ([x1, y1, x2, y2]) under BACKGROUND_AREA square pixels? A box that is
+    not four numbers is not."""
+    try:
+        return (box[2] - box[0]) * (box[3] - box[1]) < BACKGROUND_AREA
+    except (TypeError, IndexError):
+        return False
+
+
 def background_faces(boxes):
     """Indexes of the faces of one photo, by their boxes ([x1, y1, x2, y2], or None),
     that are noise in the background: under a tenth the area of the largest and under
@@ -133,7 +147,7 @@ def background_faces(boxes):
     name for them; each wrote this rule itself (docs/findings.md, #74)."""
     areas = [(box[2] - box[0]) * (box[3] - box[1]) if box else 0 for box in boxes]
     largest = max(areas, default=0)
-    return {i for i, area in enumerate(areas) if area < 0.10 * largest and area < 2000}
+    return {i for i, area in enumerate(areas) if area < 0.10 * largest and area < BACKGROUND_AREA}
 
 
 # ---- Everyone's faces ----------------------------------------------------------------

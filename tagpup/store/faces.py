@@ -237,14 +237,15 @@ def _photos_of(conn, face_ids):
     return found
 
 
-def _rebuilt(conn, photo_ids, changed):
+def _rebuilt(conn, photo_ids, changed, vocabulary=None):
     """`changed`, after rebuilding the people of `photo_ids` and giving their faces and listed people
     the ids their names give (person_ids), if anything changed. The tree's people are read once for
-    both (docs/findings.md, #659)."""
+    both (docs/findings.md, #659). `vocabulary` is the tree's PeopleVocabulary when the caller has it
+    already (a batch that rebuilds many photos reads the tree once: #838)."""
     if changed and photo_ids:
         known = person_ids.read(conn)
         person_ids.follow_faces(conn, photo_ids, known)
-        people.rebuild(conn, photo_ids, ids=known)
+        people.rebuild(conn, photo_ids, known=vocabulary, ids=known)
     return changed
 
 
@@ -389,13 +390,14 @@ def name_if_unnamed(conn, face_id, person_name):
     return _rebuilt(conn, _photos_of(conn, [face_id]), changed)
 
 
-def name_unnamed(conn, names_by_id):
+def name_unnamed(conn, names_by_id, vocabulary=None):
     """Give each face in {id: name} its name as a guess, as name_if_unnamed does -- only a face still
     unnamed, not excluded and not unmatched by hand -- in one statement per name and chunk, and rebuild
     their photos once: automatch's write (docs/findings.md, #659), which named a folder's faces one by
     one and rebuilt a photo for each. Returns the ids its UPDATE changed (RETURNING), in the order given:
     a face another process named meanwhile is not counted, inside a transaction or not (#665). The
-    caller commits, inside the transaction that read the faces it chose."""
+    caller commits, inside the transaction that read the faces it chose. `vocabulary`: the tree's people
+    when the caller has read them (_rebuilt)."""
     guard = " AND name IS NULL AND excluded = 0 AND " + NOT_DECIDED_NOBODY % ""
     by_name = collections.defaultdict(list)
     for face_id, person_name in names_by_id.items():
@@ -406,7 +408,7 @@ def name_unnamed(conn, names_by_id):
             named.update(face_id for (face_id,) in conn.execute(
                 "UPDATE faces SET name = ? WHERE " + _in(chunk) + guard + " RETURNING id", [person_name] + chunk).fetchall())
     done = [face_id for face_id in names_by_id if face_id in named]
-    _rebuilt(conn, _photos_of(conn, done), len(done))
+    _rebuilt(conn, _photos_of(conn, done), len(done), vocabulary)
     return done
 
 
