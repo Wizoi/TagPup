@@ -5,7 +5,7 @@ import os
 
 from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
-from tagpup.files import images, metadata, names, recycle_bin
+from tagpup.files import images, metadata, names, recycle_bin, shares
 from tagpup.services import file_changes, file_only, libraries, thumbnails
 from tagpup.services import roots as roots_service
 from tagpup.store import db, embeddings, faces, photos, taxonomy
@@ -200,21 +200,32 @@ def page_copy(photo_path, max_size=None, upright=True):
         return f.read(), images.content_type(photo_path)
 
 
+#: How long a look at a photo's header waits on a network share, and how long a share that did not
+#: answer is taken as away (tagpup.files.shares.bounded).
+SHAPE_WAIT = 1.0
+SHAPE_AWAY = 30.0
+
+
 def box_shape(photo_path):
     """What a page needs to draw a face's box over the photo: {"size": [width, height] of the
     pixels the boxes are in (the file as stored; images.shown_size), or None when the file
     cannot be read -- no size, no box, rather than a box on the wrong face (#787) --, "turned":
     does the file declare an Orientation (2 to 8) that the picture is shown by, so that a box
-    drawn over it in the stored pixels is not where the face is. Only the header is read (a
-    TIFF is decoded, and its boxes turn with it: never "turned")."""
-    try:
-        width, height, oriented = images.shown_size(photo_path)
-    except Exception as error:
-        logger.info("No size for %s: %s", photo_path, error)
-        return {"size": None, "turned": False}
+    drawn over it in the stored pixels is not where the face is. Only the header is read, once (a
+    TIFF is decoded, and its boxes turn with it: never "turned"). On a network share the look is
+    bounded (tagpup.files.shares.bounded): a share that does not answer in a second gives no size
+    and no box, and is not asked again for a while, never a request stalled for as long as Windows
+    waits (#836)."""
+    none = {"size": None, "turned": False}
+    state, shape = shares.bounded(photo_path, lambda: images.shown_shape(photo_path), SHAPE_WAIT, SHAPE_AWAY)
+    if state != "ok":
+        if state == "error":
+            logger.info("No size for %s: %s", photo_path, shape)
+        return none
+    width, height, oriented, orientation = shape
     if width <= 0 or height <= 0:
-        return {"size": None, "turned": False}
-    return {"size": [width, height], "turned": images.exif_orientation(photo_path) != 1 and not oriented}
+        return none
+    return {"size": [width, height], "turned": orientation != 1 and not oriented}
 
 
 def face_crop(library, face_id):

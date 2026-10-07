@@ -15,6 +15,7 @@ import math
 import os
 import sys
 import unittest
+import unittest.mock
 
 import numpy as np
 from PIL import Image
@@ -74,7 +75,7 @@ class Case(unittest.TestCase):
             conn, photo_path, {"XMP:Subject": list(keywords)}))
         return photo_path
 
-    def face(self, photo_path, box=(5, 5, 25, 25), degrees=0, **columns):
+    def face(self, photo_path, box=(10, 10, 110, 110), degrees=0, **columns):
         def add(conn):
             face_id = faces.insert(conn, photo_path, list(box), at(degrees))
             for column, value in columns.items():
@@ -139,6 +140,54 @@ class WhatTheBoxesAreDrawnOn(Case):
         photo = self.photo("empty_001.jpg")
         answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
         self.assertEqual([], answer["faces"])
+
+
+class TheFileIsLookedAtOnceAndNotForeverOnAShare(Case):
+    """#836: the size and the orientation come from one open of the file, and a share that is away gives
+    no size and no box, never a stalled request."""
+
+    def test_one_open_for_the_size_and_the_orientation(self):
+        from tagpup.files import images
+        photo = self.photo("regatta_020.jpg")
+        self.face(photo)
+        real = images.shown_shape
+        opened = []
+        with unittest.mock.patch.object(images, "shown_shape", lambda path: opened.append(path) or real(path)), \
+                unittest.mock.patch.object(images, "shown_size", side_effect=AssertionError("a second open")):
+            answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
+        self.assertEqual([photo], opened)
+        self.assertEqual([60, 40], answer["size"])
+
+    def test_a_share_that_is_away_gives_no_size_and_does_not_stall(self):
+        from tagpup.services import photos as photo_service
+        photo = self.photo("regatta_021.jpg")
+        self.face(photo)
+        with unittest.mock.patch.object(photo_service.shares, "bounded", return_value=("away", None)) as asked:
+            answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
+            details = self.tuner().get("/library/api/photo-details", query_string={"path": photo}).get_json()
+        self.assertIsNone(answer["size"])
+        self.assertFalse(answer["turned"])
+        self.assertEqual(1, len(answer["faces"]), "the faces are still there, to be named")
+        self.assertIsNone(details["size"])
+        self.assertTrue(asked.called)
+
+    def test_a_look_that_never_answers_is_given_up_on(self):
+        import threading
+
+        from tagpup.files import images, shares
+        photo = self.photo("regatta_022.jpg")
+        self.face(photo)
+        stuck = threading.Event()
+        self.addCleanup(stuck.set)
+        self.addCleanup(shares._away.clear)
+        started = []
+        import time
+        with unittest.mock.patch.object(images, "shown_shape", lambda path: started.append(1) or stuck.wait(30)), \
+                unittest.mock.patch("tagpup.services.photos.SHAPE_WAIT", 0.2):
+            before = time.monotonic()
+            answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
+        self.assertLess(time.monotonic() - before, 5)
+        self.assertIsNone(answer["size"])
 
 
 class NamingFromABox(Case):

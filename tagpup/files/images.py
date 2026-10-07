@@ -196,17 +196,21 @@ def shown_size(photo_path):
     return width, height, oriented
 
 
-def exif_orientation(photo_path):
-    """The EXIF Orientation (1 to 8) the file declares; 1 when it declares none or the file
-    cannot be read. 2 to 8 turn or flip the picture as it is shown, and a face's box stays in
-    the stored pixels (`shown_size`): the boxes of such a photo do not sit on its faces when
-    drawn over the picture as it is shown (the tabled orientation redesign)."""
-    try:
-        with Image.open(photo_path) as img:
-            value = img.getexif().get(0x0112, 1)
-    except Exception:
-        return 1
-    return value if value in range(1, 9) else 1
+def shown_shape(photo_path):
+    """(width, height, oriented, orientation): `shown_size`, and the EXIF Orientation (1 to 8) the file
+    declares -- 1 when it declares none -- from the same open of the file. 2 to 8 turn or flip the
+    picture as it is shown, and a face's box stays in the stored pixels: the boxes of such a photo do not
+    sit on its faces when drawn over the picture as it is shown (the tabled orientation redesign)."""
+    with Image.open(photo_path) as img:
+        oriented = img.format == "TIFF"
+        if oriented:
+            img.load()
+        width, height = img.size
+        try:
+            orientation = img.getexif().get(0x0112, 1)
+        except Exception:
+            orientation = 1
+    return width, height, oriented, (orientation if orientation in range(1, 9) else 1)
 
 
 def is_photo(path):
