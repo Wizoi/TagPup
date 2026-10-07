@@ -360,6 +360,40 @@ class TheServerBindsFirst(unittest.TestCase):
         self.assertIsNone(launcher.record(ports[0]), "it said where it answers, and it did not")
 
 
+class TheReloadersChild(unittest.TestCase):
+    """#818: --reload binds first too, and a lost bind ends the reloader."""
+
+    def test_a_lost_bind_is_not_the_code_that_restarts_the_reloader(self):
+        import reloader
+        self.assertNotEqual(supervisor.PORTS_TAKEN, reloader.RELOAD_EXIT_CODE)
+
+    def test_the_reloaders_child_binds_first_and_a_lost_bind_begins_nothing(self):
+        home = own_home.for_test(self, prefix="reload_bind_")
+        self.assertTrue(home.root)
+        with mock.patch.dict(os.environ, {tagpup_web.RELOADER + "_CHILD": "1"}), \
+                mock.patch.object(tagpup_web.logs, "to_file", return_value="(no log file)"), \
+                mock.patch.object(tagpup_web.web, "bind_all", side_effect=OSError("in use")), \
+                mock.patch.object(tagpup_web.library_actions, "bring_up_to_date_in_background") as migrating, \
+                mock.patch.object(tagpup_web.runtimes, "background") as background, \
+                mock.patch.object(tagpup_web.web, "serve") as serve:
+            code = tagpup_web.main(["--reload", "--tagpup-port", "7", "--tuner-port", "8"])
+        self.assertEqual(supervisor.PORTS_TAKEN, code)
+        for began in (migrating, background, serve):
+            began.assert_not_called()
+
+    def test_the_reloaders_parent_binds_nothing(self):
+        home = own_home.for_test(self, prefix="reload_parent_")
+        self.assertTrue(home.root)
+        env = {k: v for k, v in os.environ.items() if k != tagpup_web.RELOADER + "_CHILD"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(tagpup_web.logs, "to_file", return_value="(no log file)"), \
+                mock.patch.object(tagpup_web.web, "bind_all") as bound, \
+                mock.patch("reloader.start_reloader_thread", side_effect=SystemExit(0)):
+            with self.assertRaises(SystemExit):
+                tagpup_web.main(["--reload", "--tagpup-port", "7", "--tuner-port", "8"])
+        bound.assert_not_called()
+
+
 class AReplyThatIsNotHttp(unittest.TestCase):
     """The hand-over's test met it: GET /api/server answered by its own request read back
     (http.client.BadStatusLine), which ask() let through and the install stopped on a
@@ -375,6 +409,8 @@ class AReplyThatIsNotHttp(unittest.TestCase):
 class TheInstallsMain(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self, prefix="handover_main_")
+        with open(self.home.library("lib.db"), "wb"):
+            pass
         self.dest = os.path.join(self.home.root, "installed")
 
     def main(self, *more):
@@ -391,6 +427,34 @@ class TheInstallsMain(unittest.TestCase):
             self.assertEqual(0, self.main("--no-restart"))
             hand_over.assert_not_called()
             self.assertFalse(install.call_args.kwargs["hand_over"])
+
+    def test_a_home_with_no_library_installs_nothing_at_all(self):
+        """#816: the launchers all name --home; from a worktree that is a folder with no library."""
+        os.remove(self.home.library("lib.db"))
+        with open(self.home.library("test_leftover.db"), "wb"):   # a test's file is not a library the picker offers (#819)
+            pass
+        with mock.patch("builtins.print") as said:
+            self.assertEqual(1, self.main())
+        self.assertFalse(os.path.exists(self.dest), "something was written")
+        lines = " ".join(str(call.args[0]) for call in said.call_args_list)
+        self.assertIn("Nothing was installed", lines)
+        self.assertIn("--home", lines)
+
+    def test_a_home_with_no_library_is_no_obstacle_to_the_launchers_own_install(self):
+        with mock.patch.object(install_app, "update") as update:
+            self.assertEqual(0, install_app.main(["--apply", "--if-changed", "--to", self.dest, "--home",
+                                                  self.home.root, "--python", sys.executable]))
+        update.assert_called_once()
+
+    def test_the_library_rule_is_the_pickers(self):
+        os.remove(self.home.library("lib.db"))
+        self.assertFalse(launcher.has_libraries(self.home.root))
+        with open(self.home.library("test_x.db"), "wb"):
+            pass
+        self.assertFalse(launcher.has_libraries(self.home.root))
+        with open(self.home.library("x.db"), "wb"):
+            pass
+        self.assertTrue(launcher.has_libraries(self.home.root))
 
     def test_a_hand_over_that_failed_is_a_failed_run(self):
         with mock.patch.object(install_app, "install"), mock.patch.object(launcher, "hand_over", return_value=False):

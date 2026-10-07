@@ -62,6 +62,8 @@ def spawns_without_a_home(source):
         env = [kw.value for kw in node.keywords if kw.arg == "env"]
         if not (env and isinstance(env[0], ast.Call) and getattr(env[0].func, "id", None) == "environment"):
             found.append(node.lineno)
+        elif env[0].args and isinstance(env[0].args[0], ast.Call) and getattr(env[0].args[0].func, "attr", None) == "home":
+            found.append(node.lineno)   # the owner's home is not a sandbox's (#817)
     return found
 
 
@@ -82,6 +84,7 @@ class NoSandboxIsMadeByHand(unittest.TestCase):
         self.assertEqual([2], spawns_without_a_home("x = 1\nprocesses.start(cmd)\n"))
         self.assertEqual([1], spawns_without_a_home("processes.run(cmd, env=dict(os.environ))\n"))
         self.assertEqual([], spawns_without_a_home("processes.start(cmd, env=environment(sandbox))\n"))
+        self.assertEqual([1], spawns_without_a_home("processes.start(cmd, env=environment(tagpup_config.home()))\n"))
 
     def test_a_sandbox_that_loads_models_shares_the_owners_card_line(self):
         from tagpup.ml import gpu

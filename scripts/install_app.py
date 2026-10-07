@@ -409,6 +409,11 @@ def main(argv=None):
     if not args.apply:
         install(destination, home, args.python, shortcuts_in=shortcuts, hand_over=not args.no_restart)
         return 0
+    if not launches.has_libraries(home):
+        # --home defaults to this checkout, a worktree's when an agent runs it: the launchers would
+        # all name it as TAGPUP_HOME. Before anything is written, a server or not (#816).
+        print("Nothing was installed: " + launches.no_library_said(home), flush=True)
+        return 1
     # One install at a time, a launcher's among them; the hand-over after it, which may wait
     # for a long job, holds a lock of its own and lets the launchers install meanwhile.
     lock = supervisor.Lock(os.path.join(destination, INSTALL_LOCK))

@@ -54,6 +54,7 @@ import urllib.request
 
 from tagpup import config
 from tagpup import supervisor
+from tagpup.core import library as libraries
 from tagpup.core import processes
 
 #: Where the records are, when not the user's own folder (a test's home, a sandbox).
@@ -481,11 +482,21 @@ def wait_for(port, version, started, wait=START_WAIT, sleep=time.sleep, clock=ti
 
 
 def has_libraries(home):
-    """Does the data folder of `home` hold a library (a .db file)?"""
+    """Does the data folder of `home` hold a library the picker offers (core.library.picker_names,
+    the one rule: a .db file without the test prefix)? picker_names offers the default name for
+    an empty folder, which is not a library there."""
     try:
-        return any(name.endswith(".db") for name in os.listdir(os.path.join(home, config.DATA)))
+        files = os.listdir(os.path.join(home, config.DATA))
     except OSError:
         return False
+    return any(name + ".db" in files for name in libraries.picker_names(files, False))
+
+
+def no_library_said(home):
+    """What an install says when `home` holds no library, #816."""
+    return ("%s holds no library (no library file in its data folder), so the launchers would start TagPup on "
+            "none. Run the install again with --home naming the folder whose data/ holds the libraries "
+            "(what TAGPUP_HOME is in the launchers)." % os.path.join(home, config.DATA))
 
 
 def hand_over(installed, python, home, say, sleep=time.sleep, clock=time.monotonic):
@@ -504,10 +515,8 @@ def hand_over(installed, python, home, say, sleep=time.sleep, clock=time.monoton
         if replacing and not has_libraries(home):
             # --home defaults to the installer's own folder, a worktree's when an agent runs it:
             # a server started there would show an empty picker where the owner's has libraries.
-            say("TagPup %s was left running: %s holds no library (no .db file in its data folder), so a server "
-                "started there would show none. Run the install again with --home naming the folder whose data/ "
-                "holds the libraries (what TAGPUP_HOME is in the launchers)." % (
-                    ", ".join(_name(found.get("version")) for found in replacing), os.path.join(home, config.DATA)))
+            say("TagPup %s was left running: %s" % (", ".join(_name(found.get("version")) for found in replacing),
+                                                      no_library_said(home)))
             return False
         return all([_hand_over(found, installed, python, home, say, sleep, clock) for found in replacing])
     finally:
