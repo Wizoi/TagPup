@@ -65,7 +65,8 @@ def own_home_environment(root):
       owner's, in %LOCALAPPDATA%\\TagPup\\servers, are what a launch or an install hands
       over; a sandbox's server wrote its own among them and left them there.
     - TAGPUP_GPU_LOCK, the turns on the graphics card (tagpup.ml.gpu): a test never waits
-      for the owner's index, nor holds it up.
+      for the owner's index, nor holds it up. A sandbox that loads models takes it out
+      again (scripts/sandbox.py, #810) and shares the owner's line.
     - TAGPUP_DOWNLOADS, the folder a delete from a share is copied through, and
       TAGPUP_RECYCLE_BIN, the Recycle Bin's size and settings: a large empty Bin's
       (tagpup.files.recycle_bin), so nothing reads or fills the owner's.

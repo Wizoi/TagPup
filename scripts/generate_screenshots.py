@@ -12,7 +12,9 @@ sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 
 import _root  # noqa: E402,F401
+from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
+from sandbox import environment  # noqa: E402
 
 # Import environment prep to seed test DB
 from prepare_test_environment import main as prepare_env
@@ -45,7 +47,7 @@ def run_screenshot_flow():
         server = processes.start(
             [sys.executable, os.path.join(PROJECT_ROOT, "tagpup_web.py"), "--db", "test_photo_index",
              "--tagpup-port", str(gui_port), "--tuner-port", str(tuner_port)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment(tagpup_config.home()),
         )
         for _ in range(60):
             try:

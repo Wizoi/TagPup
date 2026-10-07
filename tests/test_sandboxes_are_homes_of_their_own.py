@@ -36,7 +36,64 @@ from tagpup.core import processes  # noqa: E402
 BY_HAND = re.compile(r"""TAGPUP_HOME\s*=\s*(sandbox|home)\b|environ\[["']TAGPUP_HOME["']\]\s*=""")
 
 
+#: Spawns in scripts/ that need no home of their own, and why: a query or git, and the reloader, which
+#: passes the environment of the process it restarts on unchanged.
+SPAWN_EXCEPTIONS = {"reloader.py": "restarts the process it runs in"}
+
+#: A query of the machine, not a TagPup process: git, powershell.
+QUERIES = ("git", "powershell")
+
+
+def spawns_without_a_home(source):
+    """Each call of processes.start or processes.run in `source` whose env is not a call of
+    `environment(...)`: [line]."""
+    import ast
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("start", "run")
+                and getattr(node.func.value, "id", None) == "processes"):
+            continue
+        command = node.args[0] if node.args else None
+        while isinstance(command, ast.BinOp):   # ["git", ...] + list(args)
+            command = command.left
+        if (isinstance(command, ast.List) and command.elts and isinstance(command.elts[0], ast.Constant)
+                and command.elts[0].value in QUERIES):
+            continue
+        env = [kw.value for kw in node.keywords if kw.arg == "env"]
+        if not (env and isinstance(env[0], ast.Call) and getattr(env[0].func, "id", None) == "environment"):
+            found.append(node.lineno)
+    return found
+
+
 class NoSandboxIsMadeByHand(unittest.TestCase):
+    def test_every_spawn_in_scripts_runs_in_a_home_of_its_own(self):
+        found = []
+        folder = os.path.join(WORKSPACE_DIR, "scripts")
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith(".py"):
+                continue
+            with open(os.path.join(folder, name), encoding="utf-8") as handle:
+                lines = spawns_without_a_home(handle.read())
+            if lines and name not in SPAWN_EXCEPTIONS:
+                found.append("%s:%s" % (name, ", ".join(map(str, lines))))
+        self.assertEqual([], found, "pass env=sandbox.environment(home), or list the script in SPAWN_EXCEPTIONS with why")
+
+    def test_the_guard_sees_a_spawn_without_a_home(self):
+        self.assertEqual([2], spawns_without_a_home("x = 1\nprocesses.start(cmd)\n"))
+        self.assertEqual([1], spawns_without_a_home("processes.run(cmd, env=dict(os.environ))\n"))
+        self.assertEqual([], spawns_without_a_home("processes.start(cmd, env=environment(sandbox))\n"))
+
+    def test_a_sandbox_that_loads_models_shares_the_owners_card_line(self):
+        from tagpup.ml import gpu
+        with mock.patch.dict(os.environ, {gpu.ENV: "elsewhere"}):
+            self.assertNotIn(gpu.ENV, sandbox.environment(r"C:\x"))
+            sandbox.enter(r"C:\x")
+            self.assertNotIn(gpu.ENV, os.environ)
+            os.environ.pop("TAGPUP_SERVERS", None)
+            os.environ.pop("TAGPUP_HOME", None)
+            os.environ.pop("TAGPUP_DOWNLOADS", None)
+            os.environ.pop("TAGPUP_RECYCLE_BIN", None)
+
     def test_every_script_takes_its_sandboxs_environment_from_the_helper(self):
         found = []
         folder = os.path.join(WORKSPACE_DIR, "scripts")

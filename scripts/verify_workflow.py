@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
+from sandbox import environment  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import clustering  # noqa: E402
@@ -110,7 +111,8 @@ def start_servers(work_db):
     the working copy. It builds the runtime, Suggest's models, which the apps served bare lacked."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return processes.start([sys.executable, os.path.join(root, "tagpup_web.py"), "--db", os.path.abspath(work_db),
-                            "--tuner-port", str(TUNER_PORT), "--tagpup-port", str(TAGPUP_PORT)])
+                            "--tuner-port", str(TUNER_PORT), "--tagpup-port", str(TAGPUP_PORT)],
+                           env=environment(tagpup_config.home()))
 
 
 def kill_tree(pid):
