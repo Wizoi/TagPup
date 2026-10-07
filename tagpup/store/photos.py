@@ -17,7 +17,7 @@ import os
 
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import NotHeld
-from tagpup.store import added_folders, damaged_files, db, derived, embeddings, faces, folders, people
+from tagpup.store import added_folders, damaged_files, db, derived, embeddings, face_tags, faces, folders, people
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -320,6 +320,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None)
     if stat is not None:
         embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
     people.rebuild(conn, [photo_id])
+    face_tags.name_photos(conn, [photo_id])
     date_photos(conn, [photo_id])
     derived.refresh_photos(conn, [photo_id], batch)
     return photo_id
@@ -381,6 +382,7 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=
             embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
         changed = cursor.rowcount > 0
         people.rebuild(conn, [photo_id])
+        face_tags.name_photos(conn, [photo_id])
         date_photos(conn, [photo_id])
         derived.refresh_photos(conn, [photo_id])
         return changed
@@ -504,6 +506,7 @@ def record_saved(db_path, photo_path, tags, captions, raw_meta, before=None):
              store_roots.raw_to_row(json.dumps(raw_meta), store_roots.roots_for(conn))) + where_params).rowcount
         if photo_id is not None:
             people.rebuild(conn, [photo_id])
+            face_tags.name_photos(conn, [photo_id])
             date_photos(conn, [photo_id])
             derived.refresh_photos(conn, [photo_id])
         return changed
@@ -636,7 +639,8 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """
     store_roots.begin_write(conn)
     roots = store_roots.roots_for(conn)
-    stored = stored_spelling(conn, photo_path) or paths.stored(photo_path)
+    held = stored_spelling(conn, photo_path)
+    stored = held or paths.stored(photo_path)
     row_path = paths.to_row(stored, roots)
     conn.execute(
         "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata, document_id)"
@@ -651,6 +655,10 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     people.rebuild_photos(conn, [stored], known)
     _dated_paths(conn, [stored])
     photo_id = _row_id(conn, stored)
+    if held:
+        # A photo read again: its faces are there, and its keywords may have changed. A new
+        # photo has none yet; the faces recorded for it name themselves (services.faces).
+        face_tags.name_photos(conn, [photo_id])
     derived.record(conn, photo_id, row_path, row.get("tags", []), row.get("raw_metadata", {}), batch)
     if row.get("embedding") is not None:
         if model is None:

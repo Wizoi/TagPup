@@ -21,7 +21,7 @@ import numpy as np
 from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
 from tagpup.services import thumbnails
-from tagpup.store import db, faces, faces_detected, faces_pending, photos
+from tagpup.store import db, face_tags, faces, faces_detected, faces_pending, photos
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import folders as store_folders
 
@@ -573,6 +573,8 @@ def record_detected(db_path, photo_path, detected, detector=None):
                 continue
             _insert_detected(conn, photo_path, face)
             inserted += 1
+        if inserted:
+            face_tags.name_paths(conn, [photo_path])   # the photo's person tag names its face (#788)
         return inserted
 
     try:
@@ -601,6 +603,8 @@ def replace_detected(conn, photo_path, detected, detector=None):
         faces.remove_for_photo(conn, photo_path)
         for face in detected:
             _insert_detected(conn, photo_path, face, name=face.get("name"))
+        if detected:
+            face_tags.name_paths(conn, [photo_path])   # (#788)
         faces_pending.clear(conn, [photo_path])
         _record_detection(conn, photo_path, detector, detected)
         conn.commit()
@@ -626,6 +630,7 @@ def record_batch(conn, batch, overwrite=False, detector=None):
         return
     try:
         db.begin(conn)
+        recorded = []
         for photo_path, detected in batch.items():
             _record_detection(conn, photo_path, detector, detected)
             if not overwrite and faces.count_for_photo(conn, photo_path) > 0:
@@ -633,6 +638,10 @@ def record_batch(conn, batch, overwrite=False, detector=None):
             faces.remove_for_photo(conn, photo_path)
             for face in detected:
                 _insert_detected(conn, photo_path, face, name=face.get("name"))
+            if detected:
+                recorded.append(photo_path)
+        # The photos' person tags name their faces (#788), once the batch's faces are all there.
+        face_tags.name_paths(conn, recorded)
         # Detection ran on each photo of the batch: none is still to detect (store.faces_pending).
         faces_pending.clear(conn, list(batch))
         conn.commit()

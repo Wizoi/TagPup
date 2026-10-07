@@ -1,0 +1,234 @@
+"""A photo's person tag names its face (docs/findings.md, #788).
+
+Tagging a photo with a person did nothing for its faces: only identity clustering, run on
+demand, named a face from the photo's keywords, so a photo with one face and one person tag
+kept an unnamed face, and the person had no reference for the next automatch.
+
+When a photo has exactly one face still to be named and exactly one keyword person no face of
+it carries, that face is that person. It is written as an automatic name (name_source NULL),
+not a person's decision: clustering may revise it. The photo's own keyword confirms it, which
+makes it a reference for later guesses (tagpup.services.identify.decided_faces, #640).
+
+* A face to be named is unnamed, not excluded, and not marked "nobody" by hand (name_source
+  'manual'): the owner's decisions are never overruled, as automatch's (#643).
+* A keyword person is a photo_people row of source 'keyword' that is a leaf person of the tree
+  (tag_id set): a branch tag is never a person, and an ambiguous name is no one.
+* With several faces or several people nothing is guessed from the tag alone. Given
+  `references` -- the decided faces as (ids, names, unit vectors), tagpup.services.identify.
+  decided_faces -- a face is named only when exactly ONE person's decided face is as alike as
+  naming unasked allows (clustering.names_unasked), that person is one the photo's keywords
+  name and no face of it carries, and no other face of the photo is proposed for them. A face
+  two people reach, or none, is left for Identify Faces. No new threshold: the owner's value.
+
+Called by the writes that change a photo's keywords or record its faces, after the photo's
+people are rebuilt (tagpup.store.photos, tagpup.services.faces), inside the writer's transaction;
+`plan` is the read alone, for the backfill's dry run. Faces are written by
+tagpup.store.faces.name_unnamed, whose guards hold at the write, whatever was read.
+"""
+import collections
+
+import numpy as np
+
+from tagpup.core import clustering, vocabulary
+from tagpup.store import db, faces, person_ids
+from tagpup.store import roots as store_roots
+
+#: How many photos or faces go in one IN (...).
+CHUNK = 500
+
+#: faces.name_source of a face a person decided: a name, or "nobody".
+BY_HAND = "manual"
+
+#: A face to be named, and who names it: how the choice was made, "tag" (one face, one person)
+#: or "match" (alike one person's decided faces).
+Choice = collections.namedtuple("Choice", "face_id photo_id name how source")
+
+
+class Plan:
+    """What `plan` found: the faces to name, and counts of the photos by what became of them.
+
+    counts: `photos`, those with a face to be named and a keyword person no face carries;
+    `one_face_one_person`, of them those named by the tag alone; `matched`, those with a face
+    named by comparison; `left`, those with nothing named (for Identify Faces)."""
+
+    def __init__(self):
+        self.named = []
+        self.counts = collections.Counter(photos=0, one_face_one_person=0, matched=0, left=0)
+
+
+def _chunks(items):
+    items = list(items)
+    for start in range(0, len(items), CHUNK):
+        yield items[start:start + CHUNK]
+
+
+def _keyword_people(conn, photo_ids):
+    """{photo id: [name]} of the keyword people of each photo in `photo_ids` -- every photo
+    with one, without -- that are leaf people, in order."""
+    leaf = " AND tag_id IS NOT NULL" if person_ids.present(conn) else ""
+    found = collections.defaultdict(list)
+    if photo_ids is None:
+        rows = conn.execute("SELECT photo_id, name FROM photo_people WHERE source = 'keyword'" + leaf
+                            + " ORDER BY photo_id, position").fetchall()
+    else:
+        rows = []
+        for chunk in _chunks(photo_ids):
+            rows += conn.execute(
+                "SELECT photo_id, name FROM photo_people WHERE source = 'keyword'" + leaf
+                + " AND photo_id IN (%s) ORDER BY photo_id, position" % ",".join("?" * len(chunk)),
+                chunk).fetchall()
+    for photo_id, name in rows:
+        found[photo_id].append(name)
+    return found
+
+
+def _faces_of(conn, photo_ids):
+    """{photo id: [(face id, name, name_source, excluded)]} of those photos' faces, no BLOB."""
+    found = collections.defaultdict(list)
+    for chunk in _chunks(photo_ids):
+        for face_id, photo_id, name, source, excluded in conn.execute(
+                "SELECT id, photo_id, name, name_source, excluded FROM faces WHERE photo_id IN (%s) ORDER BY id"
+                % ",".join("?" * len(chunk)), chunk):
+            found[photo_id].append((face_id, name, source, excluded))
+    return found
+
+
+def _embeddings(conn, face_ids):
+    found = {}
+    for chunk in _chunks(face_ids):
+        for face_id, blob in conn.execute(
+                "SELECT id, embedding FROM faces WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk):
+            found[face_id] = blob
+    return found
+
+
+def _free_people(names, faces_here):
+    """The keyword people (by key, first spelling) that no named face of the photo carries."""
+    carried = {vocabulary.key(name) for _id, name, _source, excluded in faces_here if name and not excluded}
+    free, seen = [], set()
+    for name in names:
+        key = vocabulary.key(name)
+        if key and key not in carried and key not in seen:
+            seen.add(key)
+            free.append(name)
+    return free
+
+
+def _to_be_named(faces_here):
+    """{id: name_source} of the faces nobody has named, ruled out or called nobody."""
+    return {face_id: source for face_id, name, source, excluded in faces_here
+            if not name and not excluded and source != BY_HAND}
+
+
+#: How many faces are compared with every decided face at once: a block of faces x the decided
+#: faces, 73 MB for 36,000 of them (services.faces.COMPARE_BLOCK).
+BLOCK = 512
+
+
+def _reached(vectors, references):
+    """{face id: {the keys of the people some decided face of whom it is alike enough to}} for the
+    faces of `vectors` {face id: embedding bytes} that can be compared: compared a block at a
+    time, never a face at a time (a library's faces to place are tens of thousands)."""
+    _ids, names, matrix = references
+    if matrix is None or not len(names):
+        return {}
+    width = matrix.shape[1]
+    keys = [vocabulary.key(str(name)) for name in names]
+    order = sorted(set(keys))
+    index = {key: n for n, key in enumerate(order)}
+    code = np.array([index[key] for key in keys])
+    usable = [(face_id, blob) for face_id, blob in vectors.items() if blob and len(blob) == width * 4]
+    reached = {}
+    for start in range(0, len(usable), BLOCK):
+        block = usable[start:start + BLOCK]
+        stacked = np.stack([np.frombuffer(blob, dtype=np.float32) for _face, blob in block])
+        norms = np.linalg.norm(stacked, axis=1)
+        stacked = stacked / np.where(norms == 0, 1, norms)[:, None]
+        rows, columns = np.nonzero(clustering.might_name_unasked(stacked @ matrix.T, 0.0))
+        pairs = np.unique(rows.astype(np.int64) * len(order) + code[columns])
+        for pair in pairs.tolist():
+            row, person = divmod(pair, len(order))
+            if norms[row]:
+                reached.setdefault(block[row][0], set()).add(order[person])
+    return reached
+
+
+def _matched(unnamed, free, reached):
+    """[(face id, name)] among `unnamed` that exactly one person's decided faces are alike enough
+    to name unasked (`reached`), the person being one of `free`, and nobody else's face of the
+    photo is proposed for."""
+    wanted = {vocabulary.key(name): name for name in free}
+    proposed = collections.defaultdict(list)
+    for face_id in unnamed:
+        people = reached.get(face_id, ())
+        if len(people) == 1 and next(iter(people)) in wanted:
+            proposed[next(iter(people))].append(face_id)
+    return [(faces_for[0], wanted[key]) for key, faces_for in proposed.items() if len(faces_for) == 1]
+
+
+def plan(conn, photo_ids=None, references=None):
+    """A Plan: which faces of `photo_ids` -- every photo, without -- a keyword person names.
+    Reads only, on `conn` as it stands; the photos with such a person are found from
+    photo_people and their faces by idx_faces_photo_id, a chunk at a time, never a photo at a
+    time. `references` as the module's docstring says -- or a function that gives them, called
+    only when a photo needs them: without them, only the photos with one face to be named and
+    one person are decided."""
+    result = Plan()
+    people_of = _keyword_people(conn, None if photo_ids is None else sorted(set(photo_ids)))
+    faces_of = _faces_of(conn, sorted(people_of))
+    open_ones = []   # (photo id, unnamed face ids, free people) still to be compared
+    for photo_id in sorted(people_of):
+        here = faces_of.get(photo_id, [])
+        unnamed = _to_be_named(here)
+        free = _free_people(people_of[photo_id], here)
+        if not unnamed or not free:
+            continue
+        result.counts["photos"] += 1
+        if len(unnamed) == 1 and len(free) == 1:
+            (face_id, source), = unnamed.items()
+            result.named.append(Choice(face_id, photo_id, free[0], "tag", source))
+            result.counts["one_face_one_person"] += 1
+        elif references is not None:
+            open_ones.append((photo_id, unnamed, free))
+        else:
+            result.counts["left"] += 1
+    if open_ones:
+        vectors = _embeddings(conn, [face_id for _photo, unnamed, _free in open_ones for face_id in unnamed])
+        references = references() if callable(references) else references
+        reached = _reached(vectors, references)
+        for photo_id, unnamed, free in open_ones:
+            found = _matched(unnamed, free, reached)
+            result.named += [Choice(face_id, photo_id, name, "match", unnamed[face_id]) for face_id, name in found]
+            result.counts["matched" if found else "left"] += 1
+    return result
+
+
+def name_photos(conn, photo_ids, references=None):
+    """Name the faces of `photo_ids` that their keyword people name (`plan`), in the caller's
+    write: the people the plan read are read in the same transaction as the write, begun here
+    when the caller has none open, so a person renamed by another process meanwhile is not
+    written under the old spelling. Returns the ids of the faces named -- those the write
+    changed, a face named or ruled out meanwhile not counted. The caller commits."""
+    photo_ids = sorted(set(photo_ids))
+    if not photo_ids:
+        return []
+    if not conn.in_transaction:
+        db.begin(conn, immediate=True)
+    found = plan(conn, photo_ids, references)
+    if not found.named:
+        return []
+    return faces.name_unnamed(conn, {choice.face_id: choice.name for choice in found.named})
+
+
+def photo_ids_of(conn, photo_paths):
+    """The ids of the rows of the photos at `photo_paths`, however they are spelled."""
+    ids = []
+    for photo_path in photo_paths:
+        where, params = store_roots.sql_equals(conn, "path", photo_path)
+        ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
+    return ids
+
+
+def name_paths(conn, photo_paths, references=None):
+    """name_photos, for the photos at `photo_paths`."""
+    return name_photos(conn, photo_ids_of(conn, photo_paths), references)
