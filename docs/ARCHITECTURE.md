@@ -2635,6 +2635,41 @@ one camera's photos (a camera whose clock was wrong); **lens** (not in `photo_me
 file's metadata as the others are, read from `raw_metadata` by the derived-table rebuild, no file re-read if the
 indexer already keeps the lens tag -- check first). Author is not used and stays out. Not part of 9e.
 
+### The owner's decisions for the three big projects *(2026-10-07; after waves 1-5)*
+**AI pipeline** (reports/TagPup AI pipeline optimization.md):
+- The plumbing changes that need no re-embedding come first (decode once, downscale before MTCNN, batching,
+  prefetch) -- recommended, not contested.
+- **Replace the face models** (insightface detector/recogniser): the non-commercial licence is accepted for this
+  personal library. Re-computing face vectors is accepted **as long as the old vectors are kept** beside the new
+  ones (a model key per face vector, as `embeddings` has per photo), so nothing done is lost and the two can be
+  compared.
+- **Replace CLIP** (SigLIP 2): yes, with the photo embeddings versioned by model in the database (the existing
+  `embeddings.model` key); the old vectors stay until retired on purpose.
+- **Search by what is in the picture**: yes.
+- **Bake the expensive results into the photo** (the owner's 1.e, and the backlog's question 5): yes -- the face
+  regions (MWG) and the embeddings, each tagged with the model that made it, in the file's XMP (a private
+  namespace for vectors), so a photo moved or held by several libraries is read, not recomputed. Size: per model
+  a CLIP vector (1024 floats, float16 about 2.7 KB base64) and about 3.9 face vectors (512 floats each); JPEG's
+  standard XMP holds 64 KB -- keep only the vectors of the models in use, float16.
+**People by id, stage 2:**
+- The 4 names with no person tag: **create the tag**. The name that matches two tags (1 face): **remove the
+  tags** -- to be confirmed with the owner by name before anything is written (the tags also sit on photos'
+  people lists). The 2 names that sit on a group tag (7 faces): **unmatch those faces**.
+- Deleting a person tag that faces still use: **refuse with a message, with a "force" that unnames the faces**.
+- History from before ids: **translate old entries so they stay undoable**.
+- The two rules (a tag used on photos gets no children; a group tag is never put on a photo as a person):
+  **enforced** as refusals with an explanation.
+**Face regions in the photo files:**
+- **The sideways-photo (EXIF orientation 5-8) redesign is un-tabled**: boxes stored as the photo displays.
+- **Rotation done outside TagPup is detected**: beside what depends on the pixels (regions, embeddings), keep a
+  small fingerprint of the picture (the owner suggested a few bytes of the top-left corner; a tiny downscaled
+  thumbnail hash plus the Orientation value catches a rotation and an edit more surely -- decide when built), and
+  treat a mismatch as "re-detect".
+- **Every detected face is written** (not only named ones); an excluded face is removed from the file's regions.
+- **No full dry run**: write a small subset first (one folder of a few dozen photos), the owner checks it in other
+  programs, then the rest.
+- **Write MWG regions; read MWG and Microsoft (WLPG) regions.**
+
 ### Phase 10: Family albums from many sources (idea, after phase 9)
 The owner's idea *(2026-09-25)*: once the local folders, the views and their management
 are right (phases 8 and 9), bring in photos from where the family keeps them --
