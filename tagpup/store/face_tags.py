@@ -177,10 +177,14 @@ def _decided_of(conn, name):
 def _photos_to_be_named(conn, name):
     """How many photos -- 2 at most: it is asked whether there is one or several -- have a face to be named
     (unnamed, not excluded, not called nobody, no speck) and `name` among their keyword people. By the
-    people's name index (idx_photo_people_name), one person at a time."""
+    people's name index (idx_photo_people_name), one person at a time, and from each of their photos to its faces
+    by idx_faces_photo_id: left to itself SQLite drove the join from the library's 190,000 unnamed faces
+    (idx_faces_identify), each probing photo_people, and the count took 134 ms a person (#844; the same join as
+    tagpup.store.faces.UNDER_FROM_PHOTOS, #644)."""
     seen = set()
     for photo_id, box in conn.execute(
-            "SELECT pp.photo_id, f.box FROM photo_people pp JOIN faces f ON f.photo_id = pp.photo_id"
+            "SELECT pp.photo_id, f.box FROM photo_people pp CROSS JOIN faces f INDEXED BY idx_faces_photo_id"
+            " ON f.photo_id = pp.photo_id"
             " WHERE pp.name = ? AND pp.source = 'keyword' AND f.name IS NULL AND f.excluded = 0"
             " AND COALESCE(f.name_source, '') <> 'manual'", (name,)):
         if photo_id not in seen and not _small(box):
