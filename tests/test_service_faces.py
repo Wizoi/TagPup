@@ -111,9 +111,17 @@ class NamingAFace(FacesCase):
             faces.name_face(self.lib.library, face, "Wren Halloway")
 
     def test_the_name_it_has_whatever_its_case_changes_nothing(self):
-        face = self.face(self.photo("a.jpg"), name="Wren Halloway")
+        face = self.face(self.photo("a.jpg"), name="Wren Halloway", source="manual")
         result = faces.name_face(self.lib.library, face, "wren halloway")
         self.assertEqual((result.changed, self.face_row(face)[0]), (0, "Wren Halloway"))
+
+    def test_an_automatic_name_a_person_confirms_becomes_their_decision_in_its_own_spelling(self):
+        """#791: choosing the person a tag or clustering named, from a face's box, is a decision."""
+        face = self.face(self.photo("a.jpg"), name="Wren Halloway")
+        result = faces.name_face(self.lib.library, face, "wren halloway")
+        self.assertEqual((result.changed, self.face_row(face)[0]), (1, "Wren Halloway"))
+        self.assertEqual(self.lib.rows("SELECT name_source FROM faces WHERE id = ?", (face,))[0][0], "manual")
+        self.assertEqual(faces.name_face(self.lib.library, face, "Wren Halloway").changed, 0)
 
     def test_a_face_that_is_not_there_is_not_found(self):
         with self.assertRaises(NotFound):

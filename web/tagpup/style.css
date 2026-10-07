@@ -2842,3 +2842,235 @@ select {
 .thumbnails-grid:focus {
     outline: none;
 }
+
+/* ---- The faces on the open photo (web/tagpup/face-boxes.js) ---------------------------------
+   A layer exactly over the picture. It takes no pointer itself, so a click on the photo still
+   zooms it; only the icon, the boxes and the panel do. */
+
+.image-viewer {
+    position: relative;
+}
+
+.face-layer {
+    position: absolute;
+    pointer-events: none;
+    z-index: 5;
+}
+
+.face-layer.hidden,
+body.just-looking .face-layer {
+    display: none !important;
+}
+
+.face-layer.is-busy {
+    cursor: progress;
+}
+
+.face-boxes-toggle {
+    position: absolute;
+    left: 6px;
+    top: 6px;
+    pointer-events: auto;
+    padding: 3px 9px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(15, 23, 42, 0.78);
+    color: #f3f4f6;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+    cursor: pointer;
+}
+
+.face-boxes-toggle:hover,
+.face-boxes-toggle.is-on {
+    background: rgba(37, 99, 235, 0.85);
+}
+
+.face-boxes-toggle:focus-visible,
+.face-box:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+
+.face-box {
+    position: absolute;
+    box-sizing: border-box;
+    padding: 0;
+    pointer-events: auto;
+    border: 2px solid #f59e0b;
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    overflow: visible;
+}
+
+.face-box.is-named {
+    border-color: #10b981;
+}
+
+.face-box:hover,
+.face-box.is-open {
+    background: rgba(255, 255, 255, 0.14);
+    border-width: 3px;
+}
+
+.face-box-name {
+    position: absolute;
+    left: -2px;
+    right: -2px;
+    bottom: 100%;
+    padding: 1px 4px;
+    border-radius: 3px 3px 0 0;
+    background: rgba(5, 150, 105, 0.9);
+    color: #fff;
+    font-size: 11px;
+    line-height: 1.3;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+}
+
+.face-panel {
+    position: fixed;
+    z-index: 2400;
+    box-sizing: border-box;
+    width: 280px;
+    max-width: calc(100vw - 16px);
+    padding: 10px;
+    pointer-events: auto;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #444);
+    background: var(--bg-secondary, #1f2937);
+    color: var(--text-primary, #f3f4f6);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    font-size: 12px;
+}
+
+.face-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.face-panel-crop {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.face-panel-title {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.face-panel-who {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.face-panel-sub,
+.face-panel-muted {
+    color: var(--text-muted, #9ca3af);
+    font-size: 11px;
+}
+
+.face-panel-close {
+    align-self: flex-start;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.face-panel-note {
+    margin: 8px 0 0;
+    padding: 4px 6px;
+    border-radius: 4px;
+    background: rgba(245, 158, 11, 0.16);
+    font-size: 11px;
+}
+
+.face-panel-section {
+    margin: 10px 0 4px;
+    color: var(--text-muted, #9ca3af);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.face-panel-suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.face-panel-suggestion {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color, #444);
+    background: var(--bg-tertiary, #111827);
+    color: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.face-panel-suggestion:hover,
+.face-panel-suggestion:focus-visible {
+    border-color: #60a5fa;
+}
+
+.face-panel-suggestion.is-likely .face-panel-suggestion-percent {
+    color: #34d399;
+}
+
+.face-panel-suggestion.is-possible .face-panel-suggestion-percent {
+    color: #fbbf24;
+}
+
+.face-panel-suggestion-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.face-panel-row {
+    display: flex;
+    gap: 6px;
+}
+
+.face-panel-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color, #444);
+    background: var(--bg-tertiary, #111827);
+    color: inherit;
+}
+
+.face-panel-message {
+    min-height: 14px;
+    margin-top: 6px;
+    color: #fca5a5;
+    font-size: 11px;
+}
+
+.face-panel-foot {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+}

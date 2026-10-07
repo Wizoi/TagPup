@@ -31,7 +31,7 @@ from flask import Blueprint, Flask, Response, abort, current_app, g, jsonify, re
 
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
-from tagpup.web import (activity_routes, face_routes, history_routes, jobs_routes, libraries, lifecycle as lifecycles,
+from tagpup.web import (activity_routes, face_routes, history_routes, photo_face_routes, jobs_routes, libraries, lifecycle as lifecycles,
                         roots_gate, roots_ingress, rules_routes, security, settings_routes, sync_routes, tagpup_routes,
                         taxonomy_routes, tuner_routes)
 
@@ -116,6 +116,8 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.register_blueprint(face_routes.routes)
     app.register_blueprint(apps)
     app.register_blueprint(ROUTES[kind])
+    if kind == "tagpup":
+        app.register_blueprint(photo_face_routes.routes)
     _page_routes(app)
     # The gate outside the library's middleware: a request turned away while the server
     # drains opens no library.

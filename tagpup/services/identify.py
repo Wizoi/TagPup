@@ -20,8 +20,8 @@ import numpy as np
 from tagpup.core import clustering as face_rules
 from tagpup.core import dates, vocabulary
 from tagpup.core.result import NotFound
-from tagpup.files import images
 from tagpup.ml import grouping
+from tagpup.services import photos as photos_service
 from tagpup.services import roots as roots_service
 from tagpup.store import db, faces, generations, people, photos
 
@@ -247,21 +247,6 @@ def photos_waiting(library, show_matched=False):
     return listed
 
 
-def _box_pixels(photo_path):
-    """[width, height] of the pixels a face's box is in -- the full file's, as stored -- or
-    None when the file cannot be read. Only the header is read (a TIFF is decoded: Pillow
-    turns it as it loads it, and its boxes turn with it, images.shown_size). The pane shows
-    a 512 px copy, so it cannot tell from the copy how large the boxes' picture is (#787);
-    photo_meta holds no size (tagpup.core.photo_meta), and a page that guessed would box
-    the wrong face, so a file that will not open gives no size and no box."""
-    try:
-        width, height, _oriented = images.shown_size(photo_path)
-    except Exception as error:
-        logger.info("No size for %s: %s", photo_path, error)
-        return None
-    return [width, height] if width > 0 and height > 0 else None
-
-
 @roots_service.canonical_args("photo_path")
 def photo_details(library, photo_path, named):
     """One photo for the panel: its people, tags, caption and year, and each face with
@@ -326,7 +311,7 @@ def photo_details(library, photo_path, named):
         "caption": caption,
         "faces": found,
         "year": shown_year(year_taken),
-        "size": _box_pixels(photo_path),
+        "size": photos_service.box_shape(photo_path)["size"],
     }
 
 

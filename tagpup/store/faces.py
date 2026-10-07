@@ -365,6 +365,20 @@ def name(conn, face_ids, person_name):
     return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
 
+def decided_by_hand(conn, face_id):
+    """Did a person decide this face's name -- or that it is nobody (name_source 'manual')?"""
+    row = conn.execute("SELECT name_source FROM faces WHERE id = ?", (face_id,)).fetchone()
+    return bool(row) and row[0] == "manual"
+
+
+def confirm(conn, face_id):
+    """A person confirms the name a face carries (an automatic one: clustering's, or its photo's tag's):
+    name_source 'manual', the name and its spelling left as they are. Not an excluded face, a nameless
+    one or one confirmed already. Returns rows changed. The caller commits."""
+    return conn.execute("UPDATE faces SET name_source = 'manual' WHERE id = ? AND name IS NOT NULL AND excluded = 0"
+                        " AND COALESCE(name_source, '') <> 'manual'", (face_id,)).rowcount
+
+
 def name_if_unnamed(conn, face_id, person_name):
     """Give an unnamed, unexcluded face a name as a guess -- who decided is left alone,
     so re-clustering may revise it. Not a face somebody unmatched by hand: "this is

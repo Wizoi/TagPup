@@ -35,7 +35,7 @@ import { photosWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
 import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
-    carryTagsForward, deleteActivePhoto, openPhotoInDefaultApp, renderTags, rotatePhoto,
+    carryTagsForward, deleteActivePhoto, openPhotoInDefaultApp, renderPhotoFaces, renderTags, rotatePhoto,
     reloadChangedPhoto, saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
     updateCarryForwardState, wireDateTakenModal, wireZoom
 } from './photo.js';
@@ -45,6 +45,7 @@ import {
 } from './grid.js';
 import { recordUndo, undoLastOperation } from './undo.js';
 import { enableSwipeNavigation, wireKeyboard } from './navigation.js';
+import { wireFaceBoxes } from './face-boxes.js';
 import {
     bulkAddPeopleToSelection, bulkAddTagsToSelection, updateSelectedThumbnailsCount
 } from './selection.js';
@@ -63,7 +64,7 @@ Object.assign(upper, {
     addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, choosePane,
     deleteSelection,
     populateCameraModelsDropdown, recordUndo,
-    renderFileList, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
+    renderFileList, renderPhotoFaces, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
     photosDeleted, photosWritten, reloadChangedPhoto, showSortOrder,
@@ -158,6 +159,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnUndo) btnUndo.addEventListener('click', undoLastOperation);
 
     wireZoom();
+    wireFaceBoxes();
 
     wireDateTakenModal();
 

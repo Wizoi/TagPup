@@ -209,8 +209,10 @@
                         <p id="photo-damaged-note" class="photo-damaged-note hidden" role="alert"></p>
                         <!-- This photo's file is gone: it is shown as the library holds it, and cannot be edited (web/tagpup/stale.js). -->
                         <p id="photo-missing-note" class="photo-missing-note hidden" role="alert"></p>
-                        <div class="image-viewer">
+                        <div class="image-viewer" id="image-viewer">
                             <img id="main-image" src="" alt="Selected Photo">
+                            <!-- Over the picture exactly: the face icon, the boxes and the panel of the face clicked (web/tagpup/face-boxes.js). -->
+                            <div id="face-layer" class="face-layer hidden"></div>
                         </div>
                     </div>
 

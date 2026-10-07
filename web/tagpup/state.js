@@ -101,6 +101,16 @@ export const state = {
     // "Error scanning folder" and left the folder unopenable until the cache expired.
     facesRequestToken: 0,
 
+    // The faces boxed on the open photo (face-boxes.js): `path` the photo, `faces` as /api/photo-faces gave them, `size`
+    // the pixels their boxes are in, `turned` the photo is stored turned (its boxes may be off), `shown` the boxes are on
+    // (kept from photo to photo), `open` the face whose panel is open, `matches` {face id: the people it looks like, or
+    // 'loading' | 'failed'}, `busy` a naming is under way, `note` the panel's last sentence, and `typed` the name being typed
+    // in the panel of face `typedFor`.
+    faceBoxes: {
+        path: null, faces: [], size: null, turned: false, shown: false, open: null, matches: {}, busy: false,
+        note: '', typed: '', typedFor: null,
+    },
+
     // The Image Details write in progress, and the "Save changes?" question being
     // asked, if any. Up here for the same reason: restoring a cached folder at startup
     // reaches selectPhoto and showFolderView, which read both.
