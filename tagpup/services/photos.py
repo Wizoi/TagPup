@@ -212,12 +212,20 @@ def box_shape(photo_path):
     cannot be read -- no size, no box, rather than a box on the wrong face (#787) --, "turned":
     does the file declare an Orientation (2 to 8) that the picture is shown by, so that a box
     drawn over it in the stored pixels is not where the face is. Only the header is read, once (a
-    TIFF is decoded, and its boxes turn with it: never "turned"). On a network share the look is
+    TIFF is decoded, and its boxes turn with it: never "turned"). On a network share or drive the look is
     bounded (tagpup.files.shares.bounded): a share that does not answer in a second gives no size
     and no box, and is not asked again for a while, never a request stalled for as long as Windows
     waits (#836)."""
     none = {"size": None, "turned": False}
-    state, shape = shares.bounded(photo_path, lambda: images.shown_shape(photo_path), SHAPE_WAIT, SHAPE_AWAY)
+    if shares.on_a_network_drive(photo_path):
+        state, shape = shares.bounded(photo_path, lambda: images.shown_shape(photo_path), SHAPE_WAIT, SHAPE_AWAY)
+    else:
+        # A local disk is not a share that can stop answering: a slow look (a decoded TIFF, a disk
+        # spinning up) must not mark the drive away for every photo on it (#842).
+        try:
+            state, shape = "ok", images.shown_shape(photo_path)
+        except Exception as error:
+            state, shape = "error", error
     if state != "ok":
         if state == "error":
             logger.info("No size for %s: %s", photo_path, shape)

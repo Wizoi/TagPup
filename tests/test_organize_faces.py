@@ -162,7 +162,8 @@ class TheFileIsLookedAtOnceAndNotForeverOnAShare(Case):
         from tagpup.services import photos as photo_service
         photo = self.photo("regatta_021.jpg")
         self.face(photo)
-        with unittest.mock.patch.object(photo_service.shares, "bounded", return_value=("away", None)) as asked:
+        with unittest.mock.patch.object(photo_service.shares, "on_a_network_drive", return_value=True), \
+                unittest.mock.patch.object(photo_service.shares, "bounded", return_value=("away", None)) as asked:
             answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
             details = self.tuner().get("/library/api/photo-details", query_string={"path": photo}).get_json()
         self.assertIsNone(answer["size"])
@@ -170,6 +171,27 @@ class TheFileIsLookedAtOnceAndNotForeverOnAShare(Case):
         self.assertEqual(1, len(answer["faces"]), "the faces are still there, to be named")
         self.assertIsNone(details["size"])
         self.assertTrue(asked.called)
+
+    def test_a_slow_look_at_a_local_file_does_not_mark_the_drive_away(self):
+        import time
+
+        from tagpup.files import images, shares
+        shares.forget()
+        self.addCleanup(shares.forget)
+        photo = self.photo("regatta_023.jpg")
+        self.face(photo)
+        real = images.shown_shape
+
+        def slow(path):
+            time.sleep(0.3)
+            return real(path)
+
+        with unittest.mock.patch.object(images, "shown_shape", slow), \
+                unittest.mock.patch("tagpup.services.photos.SHAPE_WAIT", 0.05):
+            first = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
+            second = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
+        self.assertEqual(([60, 40], [60, 40]), (first["size"], second["size"]), "a slow local look lost the size")
+        self.assertEqual({}, shares._away, "a local disk was taken as away")
 
     def test_a_look_that_never_answers_is_given_up_on(self):
         import threading
@@ -183,6 +205,7 @@ class TheFileIsLookedAtOnceAndNotForeverOnAShare(Case):
         started = []
         import time
         with unittest.mock.patch.object(images, "shown_shape", lambda path: started.append(1) or stuck.wait(30)), \
+                unittest.mock.patch("tagpup.services.photos.shares.on_a_network_drive", return_value=True), \
                 unittest.mock.patch("tagpup.services.photos.SHAPE_WAIT", 0.2):
             before = time.monotonic()
             answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
