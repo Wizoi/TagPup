@@ -34,6 +34,7 @@ import { damageOf, showPhotoDamage } from './damaged.js';
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale } from './stale.js';
 import { cardDamage, fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
+import { backToView, notePhoto, rememberView } from './view-left.js';
 
 // ---- Detected faces ----------------------------------------------------
 // Face recognition already ran for this photo -- the suggester needs it to propose
@@ -199,6 +200,7 @@ function showLibraryRecord(lib, record) {
     const damage = record.damaged ? cardDamage(record) : null;
     state.damagedPhotos = damage ? { [pathKey(record.path)]: { ...damage, path: record.path, found: 'by an earlier check' } } : {};
     showPhoto(record.path);
+    notePhoto(record.id);
 }
 
 /**
@@ -268,6 +270,9 @@ export function showPhoto(path) {
     if (activeLi) {
         activeLi.classList.add('active');
     }
+
+    // A library view's grid is about to be hidden: keep where it is, and make the photo a place in the history (view-left.js).
+    rememberView();
 
     // Hide folder view, show single details view
     folderViewContent.classList.add('hidden');
@@ -684,7 +689,7 @@ export function deleteActivePhoto() {
             removeFromSelection([path]);
             forgetPhoto(gone.id);
             const nextId = lib.ids[at] !== undefined ? lib.ids[at] : lib.ids[at - 1];
-            if (nextId === undefined) showFolderView();
+            if (nextId === undefined) backToView();
             else openLibraryPhoto(nextId);
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = 'Ready';

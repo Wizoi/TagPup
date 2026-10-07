@@ -199,6 +199,8 @@
                     <!-- Top section: Original Image -->
                     <div class="image-section">
                         <div class="card-header">
+                            <!-- In a library view only: back to the grid as it was left (web/tagpup/view-left.js, #780). Escape and the browser's Back do the same. -->
+                            <button type="button" id="btn-photo-back" class="btn btn-secondary btn-sm hidden" title="Back to the view as you left it (Escape)">&larr; Back to the view</button>
                             <h3>Original Image <span id="photo-position" class="photo-position hidden" title="Where this photo is in the list"></span></h3>
                             <div class="image-rotation-controls" data-writes>
                                 <button id="btn-rotate-left" class="btn btn-secondary btn-sm" title="Rotate 90° Left">🔄 Rotate Left</button>
