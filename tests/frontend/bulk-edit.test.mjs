@@ -169,6 +169,9 @@ describe("Add person", () => {
 describe("only one bulk edit at a time", () => {
   test("a second start while one runs is refused by the page first: the controls are off, with a tooltip", async (t) => {
     const ctx = await view(t, 400);
+    // What the server counts of the selection, from the start: the page asks for it once, TALLY_DELAY_MS after the click,
+    // and on a busy machine that was before a tally set after the start (#721).
+    ctx.bulk.tally = { total: 1, tags: [{ tag: "Trips/Coast", count: 1 }], more_tags: 0, people: [], more_people: 0 };
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
     await addTag(ctx);
     assert.equal(starts(ctx).length, 1);
@@ -176,7 +179,6 @@ describe("only one bulk edit at a time", () => {
       assert.equal(el(ctx, id).disabled, true, id);
       assert.match(el(ctx, id).title, /A bulk edit is running/);
     }
-    ctx.bulk.tally = { total: 1, tags: [{ tag: "Trips/Coast", count: 1 }], more_tags: 0, people: [], more_people: 0 };
     ctx.module("selection.js").updateSelectedThumbnailsCount();
     await ctx.until(() => ctx.document.querySelector(".selection-summary-chip-remove"));
     const pill = ctx.document.querySelector(".selection-summary-chip-remove");

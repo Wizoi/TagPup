@@ -5,21 +5,36 @@
  * stands for the rest, a card that stays is the same element, a picture is asked for only by a
  * card that stays in view, and the place in the list survives a change of data or of size.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { createVGrid } from "../../web/tagpup/vgrid.js";
 
+// The clock is the test's (node:test's mock timers: setTimeout, setInterval -- jsdom's frames -- and Date). What is
+// asserted is how long a card stayed in view, and a busy machine made a "fast scroll" of real frames slow enough for
+// cards flown past to ask (#721). Time passes here only when a test says so.
 const windows = [];
+beforeEach(() => {
+  mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 1_000_000 });
+});
 afterEach(() => {
   while (windows.length) windows.pop().close();
+  mock.timers.reset();
 });
 
-const frame = (win) => new Promise((resolve) => win.requestAnimationFrame(() => resolve()));
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** One frame: jsdom draws every 1000/60 ms. */
+const frame = async (win) => {
+  const drawn = new Promise((resolve) => win.requestAnimationFrame(() => resolve()));
+  mock.timers.tick(17);
+  await drawn;
+};
+const wait = async (ms) => {
+  mock.timers.tick(ms);
+  await Promise.resolve();
+};
 
 /** A scroller and a grid in jsdom, a layout we control, and a vgrid over `records`. */
-function setup({ records, layout = {}, options = {} } = {}) {
+function setup({ records, layout = {}, options = {}, drawTime = 0 } = {}) {
   const dom = new JSDOM('<div id="s"><div id="g"></div></div>', { pretendToBeVisual: true });
   const win = dom.window;
   windows.push(win);
@@ -41,6 +56,7 @@ function setup({ records, layout = {}, options = {} } = {}) {
     measure: () => ({ ...here }),
     buildCard: (record, index) => {
       built.push(record.id);
+      if (drawTime) mock.timers.setTime(Date.now() + drawTime);   // a card that takes this long to build
       const card = win.document.createElement("div");
       card.className = "card";
       card.dataset.id = record.id;
@@ -262,6 +278,18 @@ describe("pictures", () => {
     await wait(80);
     assert.ok(src() > 0, "the cards in view asked");
     assert.ok(src() <= 4 * 5, "and only those in view and a row either side");
+  });
+
+  test("a slow draw is not the view standing still: nothing is asked for until it has stood after the draw", async () => {
+    // 20 cards of 10 ms: the draw takes 200 ms, past the delay (30 ms). Timed from before the draw, the row below the
+    // view asked at once (#721: what failed under load).
+    const t = setup({ records: records(400), drawTime: 10 });
+    t.view.refresh();
+    assert.equal(t.grid.querySelectorAll("img[src]").length, 0, "nothing at once");
+    await wait(29);
+    assert.equal(t.grid.querySelectorAll("img[src]").length, 0, "nor before the delay is up");
+    await wait(1);
+    assert.ok(t.grid.querySelectorAll("img[src]").length > 0, "then they ask");
   });
 
   test("cards flown past never ask; the ones recycled out cancel what they asked", async () => {

@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
+import share_waits  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core.result import NotFound, Refused  # noqa: E402
@@ -267,18 +268,20 @@ class APlaceThatCannotBeReached(VerifyCase):
         roots_verify.forget_away()
         self.addCleanup(roots_verify.forget_away)
         self.addCleanup(release.set)
-        with mock.patch.object(roots_verify, "_probe", hang):
+        waits, counting = share_waits.counted()
+        with mock.patch.object(roots_verify, "_probe", hang), counting:
             started = time.monotonic()
             found = self.verify("\\\\idziserver\\Pictures\\Pictures", seconds=0.3)
             first = time.monotonic() - started
+            looked = list(waits)
             again = self.verify("\\\\idziserver\\Pictures\\Pictures", seconds=0.3)
-            second = time.monotonic() - started - first
         self.assertEqual("away", found["state"])
         self.assertFalse(found["reachable"])
         self.assertEqual(0, found["missing"], "an away share is not 'all missing'")
-        self.assertLess(first, 5)
+        self.assertEqual([0.3], looked, "one wait for the share, of the seconds asked")
+        self.assertLess(first, 5, "a backstop: the look that never comes back hangs for 30 s")
         self.assertEqual("away", again["state"])
-        self.assertLess(second, 0.25, "a share already taken as away is not waited for again")
+        self.assertEqual([0.3], waits, "a share already taken as away is not waited for again")
         self.assertEqual(1, len(calls), "a second thread was started for a share that has not answered")
 
     def test_a_share_that_stops_answering_half_way_says_so_and_counts_nothing_unlooked_at_as_missing(self):

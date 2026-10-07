@@ -28,6 +28,13 @@ from tagpup.core import processes  # noqa: E402
 
 OLD, NEW = "20260926-100000-aaaaaaa", "20260926-110000-bbbbbbb"
 
+# A server's cold start is 5-10 s alone and 36 s measured beside another suite (#721, #811). The hand-over's wait for the
+# new server was 20 s -- shorter than that -- so under load the old version rightly took back and the test saw "no
+# takeover". The wait is now 60 s, 1.7 times the loaded cold start. A new server that fails is waited for the whole of
+# it, which is what the two "leaves the old one answering" tests spend; the test's own ceiling is past it.
+HAND_OVER_WAIT = 60
+CEILING = 180
+
 
 @unittest.skipUnless(os.name == "nt", "the always-on process is Windows'")
 class HandingOver(unittest.TestCase):
@@ -45,7 +52,7 @@ class HandingOver(unittest.TestCase):
         env = dict(os.environ, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1", TAGPUP_WEB_NO_WARMUP="1")
         server_args = "--tagpup-port %d --tuner-port %d --db sandbox" % (self.port, free_port())
         first = processes.start([sys.executable, os.path.join(self.installed, supervisor.BACKGROUND_LAUNCHER),
-                                 "--server-args", server_args, "--update-every", "0.5", "--hand-over-wait", "20",
+                                 "--server-args", server_args, "--update-every", "0.5", "--hand-over-wait", str(HAND_OVER_WAIT),
                                  "--settle", "3"],
                                 env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL)
@@ -59,13 +66,14 @@ class HandingOver(unittest.TestCase):
         except OSError:
             return None
 
-    def wait_until(self, check, seconds=90):
-        deadline = time.time() + seconds
+    def wait_until(self, check, seconds=CEILING):
+        """Poll `check` every 0.2 s until it holds: a ceiling, not an expectation (a quiet machine is 10 s)."""
+        deadline = time.monotonic() + seconds
         while True:
             found = check()
             if found:
                 return found
-            self.assertLess(time.time(), deadline, "timed out")
+            self.assertLess(time.monotonic(), deadline, "timed out")
             time.sleep(0.2)
 
     def test_the_new_versions_supervisor_takes_over_and_its_server_answers(self):

@@ -45,6 +45,14 @@ def handle_count():
     return count.value
 
 
+def lookups_ended():
+    """Wait for every lookup's thread to end. One that timed out on a busy machine is still running, holding its
+    handles, and was counted as a leak (#721)."""
+    for thread in threading.enumerate():
+        if thread.name == "lock-owners":
+            thread.join(30)
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory(prefix="lock_owners_")
@@ -77,18 +85,22 @@ class RestartManagerNamesTheHolder(Base):
 
     def test_a_lookup_leaks_no_handle(self):
         lock_owners.holders(self.path)
+        lookups_ended()
         before = handle_count()
         for _ in range(200):
             lock_owners.holders(self.path)
+        lookups_ended()
         self.assertLessEqual(handle_count() - before, 3)
 
     def test_a_held_file_leaks_no_handle_either(self):
         handle = hold_exclusively(self.path)
         try:
             lock_owners.holders(self.path)
+            lookups_ended()
             before = handle_count()
             for _ in range(50):
                 lock_owners.holders(self.path)
+            lookups_ended()
             self.assertLessEqual(handle_count() - before, 3)
         finally:
             release(handle)
