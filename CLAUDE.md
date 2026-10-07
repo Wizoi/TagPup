@@ -42,9 +42,14 @@ it saved. `tools/affected_tests.py` is for the loop while editing, not for the c
 made by `scripts/install_app.py`), with `TAGPUP_HOME` set to the repository. Saving a
 file here changes nothing they are running, and a merge reaches them only when the
 app is installed again: each launcher installs a newer clean commit, then replaces a
-server of another version still running once it has finished its work
-(`tagpup.launcher`; a server started before that existed has to be closed once by
-hand). Ask before installing; offer to after a merge they want to use. An app started from the repository itself still restarts whenever a `.py` is
+server of another version still running once it has finished its work, and
+`scripts/install_app.py --apply` does the same itself: it waits for the running
+server's work, ends it and starts the new version on the same ports with no window,
+so an open page shows the "updated" banner (`tagpup.launcher.hand_over`;
+`--no-restart` only installs; it refuses a `--home` with no library). A sandbox or
+test is a home of its own (`tagpup.config.own_home_environment`): never start a
+server in the owner's home to measure or test. Ask before installing; offer to after
+a merge they want to use. An app started from the repository itself still restarts whenever a `.py` is
 saved, wiping its in-memory state and orphaning any indexer, so check for one before
 editing. Run long indexes through the CLI (`TagPup CLI.cmd`).
 
