@@ -375,7 +375,7 @@ def kind_of(found, installed, current):
 
 
 def ports_of(found):
-    """The ports a record names, as the owner reads them: "8080, 8090"."""
+    """The ports a record names, as the owner reads them: each once, in order, by commas."""
     return ", ".join(str(port) for port in sorted(set((found.get("ports") or {}).values())))
 
 
@@ -425,6 +425,11 @@ def start_server(python, code, home, ports):
     (tagpup.core.processes), its output in STARTED_LOG -- opening no page. The Popen."""
     log_path = started_log(home)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    try:   # rotated as each starts, as the always-on process's console log is
+        if os.path.getsize(log_path) > supervisor.CONSOLE_LOG_MAX:
+            os.replace(log_path, log_path + ".1")
+    except OSError:
+        pass
     with open(log_path, "ab") as output:
         return processes.start(server_command(python, code, ports), own_group=True, cwd=home, env=_environment(home),
                                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
