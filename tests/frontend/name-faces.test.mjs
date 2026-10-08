@@ -29,7 +29,7 @@ function status(state, extra = {}) {
 const ASKING = status("asking", { plan: PLAN, ask_seconds: 900, can_cancel: true });
 const PLANNING = status("planning", { label: "Comparing faces with the confirmed faces of the people", percent: 40, can_cancel: true });
 
-async function openFrom(appName, t, { start, confirm, cancel, statusAnswer } = {}) {
+async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, current } = {}) {
   const server = new FakeServer()
     .on("/api/apps", { this: appName === "tagtuner" ? "tuner" : "tagpup", apps: {} })
     .on("/api/taxonomy/tree", [])
@@ -38,6 +38,7 @@ async function openFrom(appName, t, { start, confirm, cancel, statusAnswer } = {
     .on("/api/people-with-counts", [])
     .on("/api/people", [])
     .on("/api/photos", [])
+    .on("/api/name-faces/current", () => ({ success: true, status: current || null }))
     .on("/api/name-faces/start", () => start || { success: true, status: ASKING })
     .on("/api/name-faces/confirm", () => (confirm ? confirm() : { success: true, status: status("applying", { phase: "applying", label: "Writing", can_cancel: true }) }))
     .on("/api/name-faces/cancel", () => cancel || { success: true, status: status("cancelled", { message: "Cancelled: nothing was changed." }) })
@@ -108,6 +109,20 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.match(text, /History can no longer be counted on to undo the change that writes those names either/);
     });
 
+    test("a page opened while the job works shows its progress at once, and says what is refused meanwhile", async (t) => {
+      const working = status("applying", { phase: "applying", label: "Writing the names", can_cancel: true });
+      const ctx = await openFrom(appName, t, { current: working, statusAnswer: () => ({ success: true, status: working }) });
+      assert.ok(!ctx.modal().classList.contains("hidden"));
+      assert.match(ctx.text(".name-faces-step"), /Writing the names/);
+      assert.match(ctx.text(".name-faces-body"), /changes to faces, tags and folders in this library are refused/);
+      assert.equal(ctx.posts("/api/name-faces/start").length, 0, "attaching starts nothing");
+    });
+
+    test("a page opened while a question waits does not open it by itself", async (t) => {
+      const ctx = await openFrom(appName, t, { current: ASKING });
+      assert.ok(!ctx.modal() || ctx.modal().classList.contains("hidden"));
+    });
+
     test("the question says History undoes the change, until the grouping is ticked", async (t) => {
       const ctx = await openFrom(appName, t);
       await ctx.open();
@@ -167,7 +182,7 @@ for (const appName of ["tagpup", "tagtuner"]) {
       const again = status("asking", { plan: { ...PLAN, earlier_apply: true, again: "faces-from-tags was applied to this library before." }, ask_seconds: 900 });
       const ctx = await openFrom(appName, t, { start: { success: true, status: again } });
       await ctx.open();
-      assert.match(ctx.text(".name-faces-again"), /^Applied before\. faces-from-tags was applied to this library before\. Yes applies it again\./);
+      assert.match(ctx.text(".name-faces-again"), /^Applied before\. faces-from-tags was applied to this library before\.$/);
     });
 
     test("No changes nothing and says so", async (t) => {

@@ -101,6 +101,11 @@ function nfRenderWorking(status) {
         bar,
         buildElement('p', { className: 'name-faces-elapsed', text: nfElapsed(status.elapsed) + ' so far' }),
     ];
+    if (status.phase === 'applying' || status.phase === 'grouping') {
+        children.push(buildElement('p', { className: 'name-faces-note',
+            text: 'Until it finishes, changes to faces, tags and folders in this library are refused: saving a photo, bulk tags, '
+                + 'adding or indexing folders, a sync, deleting photos, and naming faces in TagTuner. Looking is not refused.' }));
+    }
     if (status.cancelling) {
         children.push(buildElement('p', { className: 'name-faces-note', text: status.phase === 'applying'
             ? 'Cancel was asked. The write cannot be stopped once begun: it finishes whole, and nothing more is run.'
@@ -121,7 +126,7 @@ function nfRenderQuestion(status) {
     const plan = status.plan;
     const children = [buildElement('p', { className: 'name-faces-question', text: questionText(plan) })];
     if (plan.earlier_apply) {
-        children.push(buildElement('p', { className: 'name-faces-again', text: 'Applied before. ' + plan.again + ' Yes applies it again.' }));
+        children.push(buildElement('p', { className: 'name-faces-again', text: 'Applied before. ' + plan.again }));
     }
     nfDialog.undoNote = buildElement('p', { className: 'name-faces-again' });
     if (plan.faces) children.push(nfDialog.undoNote);
@@ -335,6 +340,27 @@ export function openNameFaces({ folder, changed } = {}) {
             () => start());
     }
     return start();
+}
+
+/**
+ * A page opened while the job works (started from another page, tab or before a reload) shows its progress at once: the
+ * dialog opens on the job /api/name-faces/current names. A question waiting for its answer is not opened by itself; the
+ * button shows it. `options` as openNameFaces.
+ */
+export function attachNameFaces({ folder, changed } = {}) {
+    return api.json('/api/name-faces/current').then(answer => {
+        const status = answer && answer.success ? answer.status : null;
+        if (!status || !['planning', 'applying', 'grouping'].includes(status.state)) return null;
+        if (!nfDialog.modal) nfBuild();
+        nfDialog.folder = typeof folder === 'function' ? folder : null;
+        nfDialog.changed = typeof changed === 'function' ? changed : null;
+        nfDialog.opener = document.activeElement;
+        nfDialog.modal.classList.remove('hidden');
+        return nfFollow(status);
+    }).catch(err => {
+        console.error('Could not ask whether naming faces is under way:', err);
+        return null;
+    });
 }
 
 export function closeNameFaces() {

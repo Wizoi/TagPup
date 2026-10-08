@@ -158,7 +158,8 @@ class YesWritesTheChange(Case789):
         second = self.start()
         plan = second.status()["plan"]
         self.assertTrue(plan["earlier_apply"])
-        self.assertEqual(faces_from_tags.AGAIN, plan["again"])
+        self.assertEqual(naming_faces.AGAIN_SAYS, plan["again"])
+        self.assertNotIn("--again", plan["again"], "the dialog speaks of a button, not of a flag")
         naming_faces.confirm(self.library, second.handle)
         found = wait(second)
         self.assertEqual(naming_faces.DONE, found["state"], found["message"])
