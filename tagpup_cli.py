@@ -1260,6 +1260,7 @@ def relink_folders(ctx, old, new, reveal, apply_):
             for candidate in folder["candidates"]:
                 console.print("      -> %s (%d matched)" % (candidate["folder"], candidate["matched"]),
                               markup=False, soft_wrap=True)
+    _say_markers(result.details.get("markers"), apply_, reveal, library)
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
         console.print("Nothing changed. --apply relinks the %d folder(s) marked relink." % counts["relink"])
@@ -1270,6 +1271,106 @@ def relink_folders(ctx, old, new, reveal, apply_):
         maintenance.recorded(result, library.path)), markup=False, soft_wrap=True)
     for line in maintenance.skipped(result) + maintenance.failed(result):
         console.print(line, markup=False, soft_wrap=True)
+    if result.errors:
+        raise SystemExit(1)
+
+
+def _say_markers(markers, apply_, reveal, library):
+    """What following the folders that carry the library's marker came to (`folder-ids`)."""
+    if markers is None or not markers.details.get("counts") or not markers.details["counts"]["gone"]:
+        return
+    counts = markers.details["counts"]
+    console.print("%d marked folder(s) gone from disk: %d %s by their markers (exact), %d not found under the folders "
+                  "looked at, %d ambiguous (a copy stands beside another), %d in conflict, %d left (none of its rows could go: "
+                  "the files there already have rows); %d photo row(s) %s "
+                  "(%d by name, %d by DocumentID or size and Date Taken, %d whose file already has a row, left)."
+                  % (counts["gone"], counts["followed"], "followed" if apply_ else "to follow", counts["not_found"],
+                     counts["ambiguous"], counts["conflicts"], counts["left"], counts["photos_moved"],
+                     "moved" if apply_ else "to move", counts["by_name"], counts["by_evidence"], counts["occupied"]),
+                  markup=False, soft_wrap=True)
+    if reveal:
+        for each in markers.details["reveal"].get("followed", []):
+            console.print("    %s -> %s" % (each["from"], each["to"]), markup=False, soft_wrap=True)
+    if apply_ and markers.details.get("change") is not None:
+        console.print(maintenance.recorded(markers, library.path), markup=False, soft_wrap=True)
+    for line in maintenance.failed(markers):
+        console.print(line, markup=False, soft_wrap=True)
+
+
+@cli.group("folder-ids", invoke_without_command=True)
+@click.pass_context
+def folder_ids_command(ctx):
+    """Hidden `.tagpup` markers in the folders of the library, so a renamed or moved folder is
+    followed exactly (tagpup.services.folder_ids). Opt-in: nothing writes a marker unless
+    `folder-ids mark --apply` is run."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@folder_ids_command.command("mark")
+@click.option("--reveal", is_flag=True, help="Name the folders left alone. They can name people, so counts are the default.")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the markers and record the ids, as one change History lists and undo reverses. Without it, "
+                   "only says what it would do.")
+@click.pass_context
+def folder_ids_mark(ctx, reveal, apply_):
+    """Give each leaf folder of the library (one holding photos directly) a hidden `.tagpup` file
+    holding this library's id for it, beside any other library's line, which is kept byte for byte.
+    Never written: a marker that does not parse (hand-edited), one that is read-only, a place that
+    refuses the write, a copy of a marked folder. The library's own identifier is stamped by the
+    first `--apply`, in the same transaction as the first ids. A dry run unless --apply; counts
+    only unless --reveal. Exit status 1 when refused (a copy of this library file sits in the data
+    folder) or something failed."""
+    library = _existing_library(ctx)
+    result = runtimes.mark_folders(library, apply=apply_)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d folder(s) hold photos directly: %d already marked, %d to mark, %d to write again (the library "
+                  "records an id and the marker lacks it), %d markers to adopt (they hold this library's id and the "
+                  "library has no row), %d gone from disk, %d ignored."
+                  % (counts["leaf_folders"], counts["already"], counts["new"], counts["restore"], counts["adopt"],
+                     counts["gone"], counts["ignored"]), markup=False, soft_wrap=True)
+    console.print("  left alone: %d copy(ies) of a marked folder, %d whose id is recorded for a folder that is gone "
+                  "(the next sync follows it), %d whose marker and library name different ids, %d markers that do not "
+                  "parse (never rewritten), %d that could not be read, %d where nothing can be written."
+                  % (counts["copy"], counts["moved"], counts["disagree"], counts["malformed"], counts["unreadable"],
+                     counts["unwritable"]), markup=False, soft_wrap=True)
+    if counts["shared_with_other_libraries"]:
+        console.print("  %d folder(s) hold a line of an identifier that is not this library's -- another library's, "
+                      "or this one's from before a snapshot restore (see docs/ARCHITECTURE.md, Folder ids); every such "
+                      "line is kept as it is, and this library's own line is added beside it."
+                      % counts["shared_with_other_libraries"], markup=False, soft_wrap=True)
+    if reveal:
+        for what, folders in sorted(result.details["reveal"].items()):
+            for folder in folders:
+                console.print("    %s: %s" % (what, folder), markup=False, soft_wrap=True)
+    if not apply_:
+        if counts.get("would_stamp"):
+            console.print("The first --apply also stamps the library with an identifier of its own, which the "
+                          "markers carry; it cannot be taken back.", markup=False, soft_wrap=True)
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply writes %d marker file(s) and records %d id(s)."
+                      % (counts["new"] + counts["restore"], counts["new"] + counts["adopt"]),
+                      markup=False, soft_wrap=True)
+        return
+    changed = result.details["changed"]
+    console.print("Wrote %d marker file(s); recorded %d id(s). %s" % (
+        changed["markers"], changed["ids"], maintenance.recorded(result, library.path)), markup=False, soft_wrap=True)
+    left = result.details["not_written"]
+    if any(left.values()):
+        console.print("Not written: %d place(s) refused (nothing recorded for those staged and refused; an id recorded "
+                      "for a file that could not be put in place is written by the next run), %d changed by "
+                      "another program meanwhile, %d replaced by another program after the write (the next run puts "
+                      "them back)." % (left["refused"], left["changed_meanwhile"], left["lost"]),
+                      markup=False, soft_wrap=True)
+    for line in maintenance.skipped(result) + maintenance.failed(result):
+        console.print(line, markup=False, soft_wrap=True)
+    if reveal:
+        for what in ("refused", "changed_meanwhile", "lost"):
+            for folder in result.details["reveal"].get(what, []):
+                console.print("    %s: %s" % (what, folder), markup=False, soft_wrap=True)
     if result.errors:
         raise SystemExit(1)
 
@@ -1309,6 +1410,19 @@ def sync(ctx, folder, apply_):
         if counts["folders_gone"]:
             console.print("  A folder renamed in Explorer looks the same: `relink-folders` looks for it beside"
                           " itself (a dry run).")
+            if not result.details.get("folders_marked"):
+                console.print("  `folder-ids mark` (a dry run) gives each folder a hidden marker, so the next one "
+                              "renamed or moved is followed exactly.")
+    markers = result.details.get("folder_markers")
+    if markers:
+        counts_here = markers["counts"]
+        console.print("  %d marked folder(s) gone from disk: %d %s by their markers%s." % (
+            counts_here.get("gone", 0), counts_here.get("followed", 0), "followed" if apply_ else "to follow",
+            "".join([", %d left (the files there already have rows of their own: nothing was moved)" % counts_here["left"]
+                     if counts_here.get("left") else "",
+                     ", %d not found" % counts_here["not_found"] if counts_here.get("not_found") else ""])))
+        if markers["error"]:
+            console.print("  %s" % markers["error"], markup=False, soft_wrap=True)
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
     if counts.get("size_changed"):

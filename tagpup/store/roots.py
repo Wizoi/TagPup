@@ -485,6 +485,8 @@ def row_value(roots, table, column, value, key=None):
             return value if not value or value.startswith(paths.ROOT_MARK) else paths.to_row(value, roots)
         if column == "raw_metadata":
             return raw_to_row(value, roots)
+    elif table == "folder_ids" and column == "path":
+        return value if not value or value.startswith(paths.ROOT_MARK) else paths.to_row(value, roots)
     elif table == "suggestions" and column == "raw":
         return suggested_to_row(value, roots)
     elif table == "settings" and column == "value" and key in FOLDER_SETTINGS:
@@ -501,6 +503,8 @@ def native_value(roots, table, column, value, key=None):
             return paths.from_row(value, roots) if value and value.startswith(paths.ROOT_MARK) else value
         if column == "raw_metadata":
             return raw_to_native(value, roots)
+    elif table == "folder_ids" and column == "path":
+        return paths.from_row(value, roots) if value and value.startswith(paths.ROOT_MARK) else value
     elif table == "suggestions" and column == "raw":
         return suggested_to_native(value, roots)
     elif table == "settings" and column == "value" and key in FOLDER_SETTINGS:

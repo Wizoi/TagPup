@@ -40,6 +40,13 @@ folder scan's rule), and sorts what differs:
   vector (the index makes it again; its faces are not detected again, being on file) and its folder is
   queued. Done before the rows are written: a crash between leaves the rows stale and the next sync
   does it again (idempotent: a photo whose vector already carries the file's stamp is left as it is);
+- folders marked -- when a file is missing or moved, in a sync of any scope (a folder's, the watcher's, included),
+  and the library has marked folders (`folder-ids mark`, tagpup.services.folder_ids), a marked folder among the
+  rows' folders that is gone and found again by its marker in a folder where files were found new or moved to, or
+  beside it, is followed exactly: its rows, its id and the settings and folders added that name it, as a
+  journaled change of its own (`follow_folder_markers`), after the sync's own and before the new files' folders are
+  queued, so the indexer never reads a followed folder's files as new. A dry run only says what it would follow;
+  the report (`details["folder_markers"]`) carries its counts. A library that has marked nothing is not touched;
 - missing files -- a row whose file is gone and was not found elsewhere: reported, never
   removed. A folder on an unplugged drive looks the same as a deleted one, so removing
   rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
@@ -65,6 +72,7 @@ the run is recorded in the library (tagpup.store.sync_runs): what it found and w
 changed, and whether it left the library in step -- nothing new, changed or moved left
 over; missing files do not count against it -- which is the pages' "last in step".
 """
+import logging
 import os
 import threading
 import time
@@ -72,13 +80,15 @@ import time
 from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
 from tagpup.files import images
-from tagpup.services import damaged_photos, maintenance, refresh_rows, relink_photos
+from tagpup.services import damaged_photos, folder_ids, maintenance, refresh_rows, relink_photos
 from tagpup.services import roots as roots_service
 from tagpup.store import damaged_files, db, faces_pending, generations, schema, sync_runs
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
 from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
+
+logger = logging.getLogger(__name__)
 
 #: What the change is recorded as.
 OPERATION = "sync"
@@ -361,6 +371,12 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     new_paths = sorted((path for path, _m, _s in new.values()
                         if paths.key(os.path.dirname(path)) in {paths.key(f) for f in queued}), key=paths.key)
     listed = [{"path": top, "photos": review[top]} for top in sorted(review, key=paths.key)]
+    # What the marked folders that moved are told by (tagpup.services.folder_ids): the folders of the rows missing or
+    # moved, and where files were found new or moved to. Nothing is looked for beyond them.
+    row_folders = {paths.key(os.path.dirname(path)): os.path.dirname(path)
+                   for path in [path for _id, path in missing] + [move["from"] for move in moves]}
+    marker_places = {paths.key(folder): folder for folder in new_folders}
+    marker_places.update({paths.key(os.path.dirname(move["to"])): os.path.dirname(move["to"]) for move in moves})
     return maintenance.Plan(
         size=len(edits) + len(moved_edits),
         counts={"rows": len(by_key), "files": len(on_disk), "folders_walked": len(walked) - len(roots_gone),
@@ -388,7 +404,9 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                               "held_back_folders": sorted(held_back, key=paths.key)},
                 "missing_folders": [{"folder": f, "rows": n, "gone": gone} for f, n, gone in by_folder],
                 "roots_gone": roots_gone, "unreadable_files": sorted(damaged.values(), key=paths.key)},
-        work={"edits": edits + moved_edits, "new_folders": new_folders, "pictures": resized})
+        work={"edits": edits + moved_edits, "new_folders": new_folders, "pictures": resized,
+              "row_folders": list(row_folders.values()), "marker_places": list(marker_places.values()),
+              "marker_trees": sorted(review, key=paths.key)})
 
 
 NO_PICTURES = {"redetect": 0, "decided_kept": 0, "faces_removed": 0, "vectors_removed": 0, "pending": 0}
@@ -563,7 +581,25 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started,
     result = maintenance.run(library, OPERATION, plan, edits, apply=apply, kinds=KINDS)
     planned = held.get("plan")
     counts = result.details["counts"]
+    # The marked folders that moved (folder_ids): only when the walk met a file missing or moved, and only for a
+    # library that has marked a folder; a dry run says what it would follow.
+    result.details["folders_marked"] = folder_ids.marked_count(library) if counts else 0
+    result.details["folder_markers"] = None
+    # Whatever the scope: the watcher syncs the folder a folder was renamed in, and that sync is the one that would
+    # otherwise queue the renamed folder as new.
+    # A folder queued as new that carries a marker of a marked folder recorded elsewhere is the folder moved into a
+    # folder the library holds, where this sync sees nothing missing or moved: followed as well (lost_among).
+    work = dict(planned.work) if planned is not None and planned.work else None
+    if work and result.details["folders_marked"] and work["new_folders"]:
+        try:
+            work["row_folders"] = list(work["row_folders"]) + folder_ids.lost_among(library, work["new_folders"])
+        except Exception as e:
+            logger.warning("Marked folders among the new folders were not looked at (%s: %s)", type(e).__name__, e)
+    follow_markers = bool(counts and work and result.details["folders_marked"]
+                          and (counts.get("missing") or counts.get("moved") or work["row_folders"]))
     if not apply:
+        if follow_markers:
+            result.details["folder_markers"] = _follow_markers(library, exiftool_path, work, False)
         result.details["in_step"] = in_step(counts)
         return result
 
@@ -579,6 +615,13 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started,
         result.details["in_step"] = False
         return result
     new_folders = list(planned.work["new_folders"]) if planned is not None and planned.work else []
+    if follow_markers:
+        # After the sync's own change and before anything is queued: the files of a folder followed are not new.
+        report = result.details["folder_markers"] = _follow_markers(library, exiftool_path, work, True)
+        if report["error"]:
+            result.details["warnings"].append(report["error"])
+        followed_to = [new for _old, new in report["followed"]]
+        new_folders = [each for each in new_folders if not any(paths.same(each, new) for new in followed_to)]
     known = {paths.key(folder) for folder in new_folders}
     new_folders += [folder for folder in dict.fromkeys(held.get("picture_folders", ()))
                     if paths.key(folder) not in known]
@@ -614,6 +657,23 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started,
         result.details["warnings"].append("The sync was not recorded (%s: %s); the next sync records its own."
                                           % (type(e).__name__, e))
     return result
+
+
+def _follow_markers(library, exiftool_path, work, apply):
+    """{"counts", "changed" (rows written), "followed" [(old, new)], "error"} of following the library's marked
+    folders that moved (tagpup.services.folder_ids.follow), over what the sync found (its plan's `work`). A failure
+    is reported in "error" and never stops the sync: its own change is written, and the next sync follows again."""
+    try:
+        followed = folder_ids.follow(library, work["marker_places"], work["marker_trees"], work["row_folders"], apply,
+                                     exiftool_path)
+    except Exception as e:
+        return {"counts": {}, "changed": 0, "followed": [], "error": "Marked folders were not followed (%s: %s)."
+                % (type(e).__name__, e)}
+    error = None
+    if followed.refused or followed.errors:
+        error = "Marked folders were not followed: %s" % followed.message()
+    return {"counts": followed.details.get("counts", {}), "changed": followed.changed,
+            "followed": list(followed.details.get("followed", [])) if apply else [], "error": error}
 
 
 #: {library key: (photos generation, the folders it holds photos in)}: watch_folders is

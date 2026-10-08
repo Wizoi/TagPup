@@ -82,12 +82,13 @@ KEYS = {
     "embeddings": ("photo_id", "model"),
     "suggestions": ("photo_id",),
     "settings": ("key",),
+    "folder_ids": ("id",),
 }
 
 #: Tables keyed by a name, not by an id SQLite hands out: a row put back under its name is
 #: the same thing again -- a setting is "faces.min_face_size" whichever row holds it -- so
 #: a key used again cannot mean another row (tests/test_journal_keys_and_cascades.py).
-NAMED = ("settings",)
+NAMED = ("settings", "folder_ids")
 
 #: Derived tables: never journaled, rebuilt from what a change touched (`_derive`).
 DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta", "search_words", "search_names")
@@ -863,10 +864,16 @@ def record(conn, operation, changes, summary=None, schema_version=None):
     return change_id
 
 
-def apply(db_path, operation, edits, summary=None):
+def apply(db_path, operation, edits, summary=None, also=None):
     """Apply `edits` to the library at `db_path` as one change named `operation`, with
     `summary` (counts, never names) kept with it. Refusal, with nothing written, when a
-    row is not what the plan read. Returns what it wrote (Applied)."""
+    row is not what the plan read. Returns what it wrote (Applied).
+
+    `also(conn)`, when given, is called in the change's own transaction once its rows are
+    written and before the commit, when the change has rows: a write the change cannot be
+    without that is not a row of a table in KEYS (the library's identifier, stamped with the
+    first ids that carry it: tagpup.services.folder_ids). An error it raises rolls the
+    whole change back."""
     schema.ensure(db_path)
     with db.lock_for(db_path):
         conn = db.connect(db_path)
@@ -876,6 +883,8 @@ def apply(db_path, operation, edits, summary=None):
                 try:
                     changes, skipped = _resolve(conn, edits)
                     change_id = _forward(conn, operation, changes, summary) if changes else None
+                    if change_id is not None and also is not None:
+                        also(conn)
                 except sqlite3.IntegrityError as e:
                     raise _integrity(e) from e
                 _reached("forward written")

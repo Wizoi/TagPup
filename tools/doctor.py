@@ -24,6 +24,9 @@ The names faces and photos' people hold that no person node is called, or that t
 by count, and by name with --show: they have no id, and the tree is the owner's to settle. So are the
 names on a branch -- a tag with tags under it, which is not a person -- with the branches' ids.
 
+A library stamped with an identifier (`folder-ids mark --apply`) is checked against the other library files in its
+folder: one that carries the same identifier is a copy, named by file name, and counts as a rule broken.
+
 Exits 1 when a rule is broken, else 0. Missing files do not count against it: a folder
 on an unplugged drive looks the same as a deleted one, and removing either is the
 owner's choice.
@@ -39,6 +42,7 @@ from tagpup import runtime  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import checks, db, derived, embeddings, person_ids, schema, search_index  # noqa: E402
+from tagpup.store import folder_ids  # noqa: E402
 
 
 def report(db_path, show=0, out=print):
@@ -70,6 +74,7 @@ def report(db_path, show=0, out=print):
         empty = checks.empty_folders(conn)
         nameless = checks.names_without_a_person(conn)
         words = search_index.present(conn)
+        identity, marked = folder_ids.identity(conn), folder_ids.count(conn)
     finally:
         conn.close()
 
@@ -83,6 +88,15 @@ def report(db_path, show=0, out=print):
             broken += 1
             for example in check.examples[:show]:
                 out("    %s" % example)
+    if identity:
+        # The library's identifier is in the markers of its folders (`folder-ids mark`): a second library file
+        # carrying it is a copy, and two libraries answering to one line would follow each other's folders.
+        twins = folder_ids.twins(db_path, identity)
+        out("%-48s %s" % ("library identity, %d folder(s) marked" % marked,
+                          "ok" if not twins else "carried by %d other library file(s): %s" % (len(twins), ", ".join(twins))))
+        if twins:
+            broken += 1
+            out("    a copy of this library kept for a trial: `folder-ids mark` refuses both until one is given up")
     out("")
     if words:
         out(search_index.LIMITS + " (#752).")

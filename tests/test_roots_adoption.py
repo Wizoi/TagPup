@@ -271,7 +271,8 @@ class WhatItDoes(AdoptionCase):
         listed = [entry for entry in self.history() if entry["operation"].startswith("roots adopt")]
         self.assertEqual(1, len(listed))
         self.assertEqual(("roots adopt: pictures", "applied"), (listed[0]["operation"], listed[0]["status"]))
-        self.assertEqual({"photos": 42, "suggestions": 0, "damaged_files": 2, "added_folders": 1, "change_files": 0},
+        self.assertEqual({"photos": 42, "suggestions": 0, "damaged_files": 2, "added_folders": 1, "change_files": 0,
+                          "folder_ids": 0},
                          listed[0]["summary"]["converted"])
 
     def test_a_new_backup_is_taken_first_every_time(self):
@@ -489,7 +490,7 @@ class Undoing(AdoptionCase):
         self.assertIsNone(rehearsal.refused, rehearsal.refused)
         self.assertEqual(self.history()[0]["summary"]["converted"], {"photos": 42, "suggestions": 0,
                                                                      "damaged_files": 2, "added_folders": 1,
-                                                                     "change_files": 0})
+                                                                     "change_files": 0, "folder_ids": 0})
         self.assertEqual(45, rehearsal.attempted)
         self.assertEqual(before, self.fingerprint())
 

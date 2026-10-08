@@ -372,6 +372,24 @@ The photos whose faces were detected (`tagpup.store.faces_detected`, migration 2
 | `found` | INTEGER | NOT NULL | How many faces it found. |
 | `at` | TEXT | NOT NULL | Local time it was recorded, `YYYY-MM-DD HH:MM:SS`. |
 
+### 28. `library_identity` Table
+The library's own identifier (`tagpup.store.folder_ids`, migration 26; findings #924, #933; docs/ARCHITECTURE.md, "Folder ids"): at most one row, a random UUID, which the marker files (`.tagpup`) in the library's folders carry beside each folder's id so that a folder in several libraries holds one line for each. **Opening a library never fills it, and neither does indexing, sync or the watcher**: only the first explicit `folder-ids mark --apply` that records an id stamps it, in the same transaction, since an identifier handed out in files cannot be taken back. A snapshot restored keeps it (it is that library); a library file copied for a trial carries the same one, which `folder-ids mark` refuses and `tools/doctor.py` names. Not journaled: stamping is not a change an undo takes back.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `slot` | INTEGER | PRIMARY KEY, CHECK (`slot = 1`) | Always 1: the table holds one row at most. |
+| `id` | TEXT | NOT NULL | The identifier, a lowercase UUID. |
+| `stamped` | TEXT | NOT NULL | Local time it was stamped, `YYYY-MM-DD HH:MM:SS`. |
+
+### 29. `folder_ids` Table
+The folders the library has marked (`tagpup.store.folder_ids`, `tagpup.services.folder_ids`, migration 26): one row for each folder whose `.tagpup` marker holds an id for this library. Empty until the owner runs `folder-ids mark --apply`. Journaled (`tagpup.store.journal.KEYS`; a change inserts rows, `follow_folder_markers` moves them), keyed by the id, which is a name that means the same row whenever it is used. It is the key folder tags come to hang on: the derived `folders` table is rebuilt from the photos and its integer ids change with them. A row whose folder is gone, and a marker elsewhere under a folder the library walks that carries its id, is a renamed or moved folder: the next sync points the photos' rows, this row, the root and ignored-folder settings and the folders added at the new folder.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | TEXT | PRIMARY KEY, NOT NULL | This library's id for the folder: a random lowercase UUID, the one in the folder's marker beside `library_identity.id`. |
+| `path` | TEXT | NOT NULL, UNIQUE, compared as paths are (`NOCASE` on Windows) | The folder as last seen, as `photos.path` holds a path: native (`paths.stored`), or `@<root>/...` in a library with a root (converted by the journal and by `roots adopt`). |
+| `marked` | TEXT | NOT NULL | Local time the id was recorded, `YYYY-MM-DD HH:MM:SS`. |
+
 ---
 
 ## Entity-Relationship (ER) Diagram

@@ -109,7 +109,7 @@ def undo(library, change_id, apply=False, exiftool_path=None):
         result.refuse("Nothing was written: %s" % e)
         return result
     result.changed = undone.rows
-    if journal.operation(library.path, change_id) == folder_moves.OPERATION:
+    if journal.operation(library.path, change_id) in folder_moves.OPERATIONS:
         # The folders added are a record the journal does not hold: they follow the rows back.
         try:
             result.details["added_followed_back"] = folder_moves.undone(library, change_id)

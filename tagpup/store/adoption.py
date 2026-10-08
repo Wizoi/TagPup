@@ -93,6 +93,7 @@ TABLES = (
     ("change_files", "id", ("path", "new_path"), ()),
     ("added_folders", "path", ("path",), ()),
     ("damaged_files", "path", ("path",), ()),
+    ("folder_ids", "id", ("path",), ()),
 )
 
 
@@ -739,6 +740,7 @@ def verify(conn, roots):
 #: The values of a change's recorded rows that hold a path by their structure, and nothing else:
 #: what an undo of the adoption converts back (alias `r` is change_rows).
 _PATH_ROWS = ("(r.table_name = 'photos' AND r.column_name IN ('path', 'raw_metadata'))"
+              " OR (r.table_name = 'folder_ids' AND r.column_name = 'path')"
               " OR (r.table_name = 'suggestions' AND r.column_name = 'raw')"
               " OR (r.table_name = 'settings' AND r.column_name = 'value'"
               " AND r.row_key IN ('[\"library.roots\"]', '[\"library.ignored\"]'))")
@@ -864,7 +866,7 @@ def back_value(table, column, value, roots, name):
     text searched for an "@". RootsError when a row of the root in it cannot be converted."""
     if not isinstance(value, str):
         return value
-    if table == "photos" and column == "path":
+    if table in ("photos", "folder_ids") and column == "path":
         return paths.from_row(value, roots) if store_roots._of_root(value, name) else value
     if table == "settings":
         lines = []

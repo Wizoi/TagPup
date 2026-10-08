@@ -420,8 +420,9 @@ class TheMigration(unittest.TestCase):
         before = {table: [row[1] for row in look(path, "PRAGMA table_info(%s)" % table)] for table in journal.KEYS}
         schema._current.clear()
         schema.ensure(path)
+        # A table the library did not have yet (folder_ids, migration 26) adds no column to a table that was there.
         added = {table: tuple(row[1] for row in look(path, "PRAGMA table_info(%s)" % table) if row[1] not in before[table])
-                 for table in journal.KEYS}
+                 for table in journal.KEYS if before[table]}
         self.assertEqual(schema.ADDS_DERIVED_COLUMNS[21], {t: c for t, c in added.items() if c})
         self.assertIsNone(journal.schema_gap_blocker(20, 21))
 
