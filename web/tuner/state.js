@@ -102,6 +102,12 @@ export const state = {
     reexamining: null,
 
     assignUndoTimer: null,
+    // The server's job behind the last assign / ignore the Undo bar offers ({ job, kind }): its Undo is one undo of the faces AND
+    // the photo files it wrote (/api/faces/job/undo).
+    lastAssignJob: null,
+    // The server's job behind the last assign / ignore the Undo bar offers ({ job, kind }): its Undo is one undo of the faces AND
+    // the photo files it wrote (/api/faces/job/undo).
+    lastAssignJob: null,
 
     allTags: [],
     tagBuckets: {},

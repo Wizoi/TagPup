@@ -17,10 +17,14 @@ rows follow: a file that no longer holds what the change left is refused, named,
 rest are put back. Its rehearsal reads every file and writes none. Undoing one needs the
 library's ExifTool, which the caller names.
 """
+import logging
+
 from tagpup.core.result import NotFound, Result
-from tagpup.services import bulk_edit, file_changes, folder_moves
+from tagpup.services import bulk_edit, face_people, file_changes, folder_moves
 from tagpup.services import settings as library_settings
 from tagpup.store import journal
+
+logger = logging.getLogger(__name__)
 
 #: How long a change stays undoable, in days; then pruning takes its values away.
 RETENTION_DAYS = journal.RETENTION_DAYS
@@ -85,7 +89,10 @@ def undo(library, change_id, apply=False, exiftool_path=None):
     files puts back every file still holding what it left, `changed` counting them, and
     names the rest in its errors (file_changes.undo)."""
     if file_changes.writes_files(library, change_id):
-        return file_changes.undo(library, change_id, exiftool_path, apply=apply)
+        result = file_changes.undo(library, change_id, exiftool_path, apply=apply)
+        if apply and not result.refused and result.changed:
+            _unname_what_was_taken_off(library, change_id, result)
+        return result
     rehearsal = rehearse(library, change_id)
     if not apply or rehearsal.refused:
         return rehearsal
@@ -115,6 +122,27 @@ def undo(library, change_id, apply=False, exiftool_path=None):
         result.fail("the people and dates of the photos it touched",
                     "not rebuilt yet; they are, the next time the library is opened")
     return result
+
+
+def _unname_what_was_taken_off(library, change_id, result):
+    """The persons an undo of a change of photo files took off their photos (an add undone) are off their faces too (#908): the
+    faces are unnamed, one journaled change of their own that History can undo. Said in the Result's details (`unnamed_faces`,
+    `faces_change`); a failure is an error entry, the files are put back all the same."""
+    try:
+        done = face_people.follow_change(library, change_id, undone=True)
+    except Exception:
+        logger.exception("Could not unname the faces of the people change %d took off", change_id)
+        result.fail("the faces of the people taken off", "could not be unnamed; the server's log says why")
+        return
+    for what, why in done.errors:
+        result.fail(what, why)
+    if done.details.get("unnamed"):
+        result.details["unnamed_faces"] = done.details["unnamed"]
+    if done.details.get("renamed"):
+        result.details["renamed_faces"] = done.details["renamed"]
+    result.details["faces_changes"] = done.details.get("faces_changes", [])
+    if done.details.get("faces_problem"):
+        result.details["faces_problem"] = done.details["faces_problem"]
 
 
 #: The line a prune says of the changes it leaves.

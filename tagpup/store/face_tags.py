@@ -43,7 +43,7 @@ import json
 import numpy as np
 
 from tagpup.core import clustering, vocabulary
-from tagpup.store import db, faces, person_ids
+from tagpup.store import db, faces, person_ids, removals
 from tagpup.store import roots as store_roots
 
 #: How many photos or faces go in one IN (...).
@@ -133,6 +133,17 @@ def _free_people(names, faces_here):
             seen.add(key)
             free.append(name)
     return free
+
+
+def _not_taken_off(conn, free, faces_here):
+    """`free` without the people the owner took off THIS photo on purpose (tagpup.store.removals): a face of the photo that a
+    removal of that person unnamed is called nobody, and while that record stands the tag alone does not name ANOTHER face of the
+    photo as them -- the rule only ever blocks on it; the owner names the right face by hand, or undoes the removal in History."""
+    nobody = [face_id for face_id, name, source, excluded, _box in faces_here if not name and not excluded and source == BY_HAND]
+    if not nobody or not free:
+        return free
+    taken = {vocabulary.key(name) for name in removals.removed_names(conn, nobody).values()}
+    return [name for name in free if vocabulary.key(name) not in taken]
 
 
 def _small(box_json):
@@ -326,7 +337,7 @@ def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
     for photo_id in sorted(people_of):
         here = faces_of.get(photo_id, [])
         unnamed, specks = _to_be_named(here)
-        free = _free_people(people_of[photo_id], here)
+        free = _not_taken_off(conn, _free_people(people_of[photo_id], here), here)
         if not unnamed or not free:
             continue
         result.counts["background_sized"] += specks

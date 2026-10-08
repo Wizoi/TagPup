@@ -166,9 +166,40 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         else:
             # The journaled write carried its vectors over the write already.
             photos.record_saved(library.path, new_path, recorded_tags, [title] if title else [], raw_meta)
+            # A person really taken off the photo is off its faces, one really put back is on its face again (#908), once the
+            # index says what the file holds.
+            if written.changed:
+                follow_people(library, result, moved={photo_path: new_path})
     except Exception as e:
         logger.warning("Failed to update SQLite database metadata for %s: %s", new_path, e)
     return result
+
+
+def follow_people(library, result, moved=None):
+    """What the change of photo files `result` made (details["change"]) did to the people on its photos is done to their faces
+    (tagpup.services.face_people.follow_change: the one place that decides it, from the change's own files, so a photo that
+    never held the tag, or whose file was not written, is not touched). Said in `result`'s details: `unnamed_faces` and
+    `renamed_faces` ([{"id", "name"}], for a page that reads its faces again), `faces_changes` (the journal's ids), and
+    `faces_problem` when the faces could not be followed -- the files are written all the same. Never raises."""
+    change = result.details.get("change")
+    if change is None:
+        return
+    from tagpup.services import face_people   # face_people writes through this module
+    try:
+        done = face_people.follow_change(library, change, moved=moved)
+    except Exception as e:
+        logger.warning("Could not follow the people of change %s with their faces: %s", change, e)
+        result.details["faces_problem"] = "The faces of the people taken off or put back could not be followed: %s" % type(e).__name__
+        return
+    if done.errors:
+        logger.warning("Could not follow the people of change %s with their faces: %s", change, done.message())
+        result.details["faces_problem"] = "The faces of the people taken off or put back could not be followed."
+    if done.details.get("unnamed"):
+        result.details["unnamed_faces"] = list(done.details["unnamed"])
+    if done.details.get("renamed"):
+        result.details["renamed_faces"] = list(done.details["renamed"])
+    if done.details.get("faces_changes"):
+        result.details["faces_changes"] = list(done.details["faces_changes"])
 
 
 def _rename_after_caption(library, photo_path, wanted, files_only):
@@ -255,6 +286,8 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
         for path, why in gone:
             result.skip(path, why)
     result.details[SKIPPED_MISSING] = len(gone)
+    if not result.refused:
+        follow_people(library, result)
     return result
 
 

@@ -30,7 +30,8 @@ export function whoseFaces(people) {
 /** What the page asks before naming anybody, from a dry run's answer. */
 export function reexamineQuestion(plan) {
     return `Name ${plural(plan.faces, 'face', 'faces')} in ${plural(plan.photos, 'photo', 'photos')}`
-        + ` in this folder and the folders under it (${whoseFaces(plan.people)})?`;
+        + ` in this folder and the folders under it (${whoseFaces(plan.people)}), and add each person to the photo's tags`
+        + ` (written into the photo files)?`;
 }
 
 async function ask(folderPath, dryRun) {
@@ -145,6 +146,7 @@ export async function reexamineFolder(folderGroup, btn) {
         if (!confirm(reexamineQuestion(plan))) return;
         const done = await ask(folderGroup.name, false);
         showWhatChanged(done);
+        if (done.warning) alert(done.warning);
         const differs = differences(plan, done);
         if (differs) alert(differs);
     } catch (err) {

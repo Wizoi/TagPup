@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import face_rows  # noqa: E402
+import fake_exiftool  # noqa: E402
 import tuner_client  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -442,7 +443,10 @@ class TestMatchBulkListsThePerson(TunerAPITestBase):
     def test_naming_unnamed_faces_lists_the_person_on_their_photo(self):
         """docs/findings.md, #42: the photo's people were written only when the
         assignment also displaced another name."""
+        # Naming writes the person to the photo's file (#907), so the file holds what the row says: Bob.
+        files = fake_exiftool.standing_in(self)
         photo = self.add_photo(self.make_photo_file("a.jpg"), tags=["People/Bob"])
+        files.keep_tags(photo, ["People/Bob"])
         face = self.add_face(photo, unit_vector(80))
         self.rebuild(photo)
         self.assertEqual(["Bob"], self.photo_people(photo))

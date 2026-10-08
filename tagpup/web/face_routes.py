@@ -14,9 +14,10 @@ import os
 
 from flask import Blueprint, abort, jsonify, make_response, request
 
-from tagpup.core.result import Conflict, NotFound
+from tagpup.core.result import Conflict, NotFound, Refused
+from tagpup.jobs import face_assignments
 from tagpup.jobs import identify as identify_jobs
-from tagpup.services import face_people
+from tagpup.services import face_assignment, face_people
 from tagpup.services import identify as identify_service
 from tagpup.web import responses, state, tagpup_routes
 
@@ -135,6 +136,46 @@ def faces_write(library, action):
     return result
 
 
+def _forgetting(library):
+    """What a step of an assignment tells the cached grids: the faces it took out of the pool, and the fingerprints either side."""
+    def forgetting(done):
+        fingerprints = done.details.get("fingerprints")
+        if fingerprints and done.changed:
+            identify_cache.of(library).forget_faces(done.details["face_ids"], *fingerprints)
+    return forgetting
+
+
+def assigned(library, plan):
+    """Run `plan` (tagpup.services.face_assignment) as the job of tagpup.jobs.face_assignments and wait for its end: the Job. The
+    request waits, the job does not depend on it -- a closed tab or a restart leaves a job that can be resumed. 409 while another
+    assignment runs in the library, 400 for a plan refused (it was, before anything was written). The cached grids lose the faces
+    each step took out of the pool as the step is done."""
+    try:
+        face_assignments.refuse_if_running(library)       # before the ExifTool path, which waits for the file lock
+        job = face_assignments.start(library, plan, state.exiftool(library),
+                                     told=lambda done: tagpup_routes.records_written(library, done),
+                                     after_step=_forgetting(library))
+    except Refused as why:
+        refuse(400, str(why))
+    except Conflict as why:
+        refuse(409, str(why))
+    job.finished.wait()
+    return job
+
+
+def trouble(outcome):
+    """The sentence a bulk write adds when it did not all happen: the job stopped (cancelled, failed), or photos could not be
+    written and their faces were left as they were. None when all of it was done."""
+    if outcome["state"] != face_assignments.DONE:
+        return outcome["message"]
+    if outcome["error_count"]:
+        return ("%d photo(s) or face(s) could not be written and were left as they were; the rest was done (see Activity)."
+                % outcome["error_count"])
+    if outcome["warnings"]:
+        return outcome["warnings"][0]
+    return None
+
+
 def _read_face_ids(body):
     """Accept either face_ids (list) or a single face_id, as ints; None when neither."""
     face_ids = body.get("face_ids")
@@ -175,6 +216,97 @@ def tags_reply(result):
     return reply
 
 
+@routes.get("/api/faces/job/current")
+def faces_job_current():
+    """The bulk assignment of faces a page opening the library should show: running, or the latest that stopped part-way and can
+    be resumed (tagpup.jobs.face_assignments.current). `{"job": null}` for none."""
+    library = state.require()
+    return jsonify({"success": True, "job": face_assignments.current(library)})
+
+
+@routes.get("/api/faces/job/status")
+def faces_job_status():
+    """How bulk assignment `job` is getting on (tagpup.jobs.face_assignments.status): counts and sentences, never a name."""
+    library = state.require()
+    handle = int_arg("job", "job")
+    found = face_assignments.status(library, handle)
+    if found is None:
+        abort(404, description="There is no such assignment in this library")
+    return jsonify({"success": True, "job": found})
+
+
+@routes.post("/api/faces/job/cancel")
+def faces_job_cancel():
+    """Stop bulk assignment `job` after the step under way (what is done stays done). With `let_go` true, or for one that is not
+    running, let go of a stopped job instead: its record is removed and it is no longer offered."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    try:
+        handle = int(body.get("job"))
+        if body.get("let_go"):
+            face_assignments.let_go(library, handle)
+            return jsonify({"success": True, "job": None})
+        return jsonify({"success": True, "job": face_assignments.cancel(library, handle)})
+    except (TypeError, ValueError):
+        abort(400, description="Missing or invalid job")
+    except NotFound as missing:
+        abort(404, description=str(missing))
+    except Conflict as why:
+        refuse(409, str(why))
+
+
+@routes.post("/api/faces/job/undo")
+def faces_job_undo():
+    """Undo the whole of assignment `job` (tagpup.jobs.face_assignments.undo): the faces as they were and the photo files this
+    job wrote put back through the journal. TagTuner's Undo after an assign, Ignore cluster or Exclude selected. 404 for none,
+    400 for one undone already or whose record is gone, 409 while it runs."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    try:
+        handle = int(body.get("job"))
+    except (TypeError, ValueError):
+        abort(400, description="Missing or invalid job")
+    try:
+        result = face_assignments.undo(library, handle, state.exiftool(library))
+    except NotFound as missing:
+        abort(404, description=str(missing))
+    except Refused as why:
+        refuse(400, str(why))
+    except Conflict as why:
+        refuse(409, str(why))
+    reply = {"success": True, "faces": result.changed, "files": result.details.get("files", 0),
+             "undone": result.details.get("undone", False), "remaining": result.details.get("remaining", 0)}
+    if result.details.get("remaining"):
+        reply["warning"] = ("%d photo(s) could not be put back (%s): their faces were left as they are, and Undo can be pressed "
+                            "again when they can be." % (result.details["remaining"], result.errors[0][1] if result.errors else "the file"))
+    elif result.errors:
+        reply["warning"] = "%d thing(s) could not be put back: %s" % (len(result.errors), result.errors[0][1])
+    return jsonify(reply)
+
+
+@routes.post("/api/faces/job/resume")
+def faces_job_resume():
+    """Carry on bulk assignment `job` that stopped part-way, from the first step not done. Answers at once with its status; the
+    page follows it (`status`)."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    try:
+        handle = int(body.get("job"))
+    except (TypeError, ValueError):
+        abort(400, description="Missing or invalid job")
+    try:
+        job = face_assignments.resume(library, handle, state.exiftool(library),
+                                      told=lambda done: tagpup_routes.records_written(library, done),
+                                      after_step=_forgetting(library))
+    except NotFound as missing:
+        abort(404, description=str(missing))
+    except Refused as why:
+        refuse(400, str(why))
+    except Conflict as why:
+        refuse(409, str(why))
+    return jsonify({"success": True, "job": job.status()})
+
+
 def face_match():
     """Name one face AND put the person on its photo, the tag first (tagpup.services.face_people.name_face). TagPup's
     page, which wrote the tag itself before it asked (`page_writes_tags`), is told which tags to take off if the face
@@ -211,6 +343,20 @@ def face_unmatch():
     return jsonify({"success": True, "changed": result.changed, **tags_reply(result)})
 
 
+def _exclude_bulk(library, face_ids, reason):
+    """A selection ruled out (Exclude selected, Ignore cluster) as a job: the faces, and the people they were named taken off their
+    photos unless another face carries them (#907)."""
+    try:
+        plan = face_assignment.plan_exclude(library, face_ids, reason)
+    except Refused as why:
+        refuse(400, str(why))
+    outcome = assigned(library, plan).outcome()
+    reply = {"success": True, "excluded": outcome["changed"], "tags_removed": outcome["tags_removed"], "job": outcome["job"]}
+    if trouble(outcome):
+        reply["warning"] = trouble(outcome)
+    return jsonify(reply)
+
+
 def faces_exclude():
     """Take faces out of identity work, and the tags of the people they were named off their photos
     (tagpup.services.face_people.exclude)."""
@@ -220,9 +366,10 @@ def faces_exclude():
     if face_ids is None:
         abort(400, description="Missing or invalid face_ids")
     reason = body.get("reason")   # none: the service's default
+    if body.get("bulk"):
+        return _exclude_bulk(library, face_ids, reason)
     writer = writer_for(library, bool(body.get("page_writes_tags")))
-    leave_tags = bool(body.get("leave_tags"))
-    result = faces_write(library, lambda lib: face_people.exclude(lib, face_ids, reason, writer, leave_tags))
+    result = faces_write(library, lambda lib: face_people.exclude(lib, face_ids, reason, writer))
     # The rows changed, not the ids sent: an id that is not in the table was never
     # excluded, and saying it was is how a write reports success on nothing.
     return jsonify({"success": True, "excluded": result.changed, **tags_reply(result)})

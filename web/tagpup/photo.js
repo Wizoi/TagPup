@@ -566,8 +566,9 @@ export function removePhotoTags(path, tagsToRemove) {
         if (updatedTags.length === current.length) return true;
 
         setStatus('busy', 'Deleting tag...');
+        let data;
         try {
-            await postPhotoMetadata(photo, { tags: updatedTags });
+            data = await postPhotoMetadata(photo, { tags: updatedTags });
         } catch (err) {
             console.error(err);
             setStatus('error', 'Error');
@@ -576,6 +577,11 @@ export function removePhotoTags(path, tagsToRemove) {
         }
         photo.tags = updatedTags;
         redrawIfShowing(photo);
+        // A person taken off the photo is taken off its faces by the server (#908): the boxes and the strip are read again,
+        // which facesFollowTags does not do for a photo with no face left to be named.
+        if (data && Array.isArray(data.unnamed_faces) && data.unnamed_faces.length && samePath(state.activePhotoPath, photo.path)) {
+            renderPhotoFaces(photo.path);
+        }
         updateTagsDatalist();
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();
