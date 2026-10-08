@@ -65,7 +65,7 @@ from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import launcher as launches  # noqa: E402
 from tagpup import supervisor  # noqa: E402
-from tagpup.core import byte_lock, processes  # noqa: E402
+from tagpup.core import byte_lock, paths, processes  # noqa: E402
 
 #: Versions kept: the new one and the two before it.
 KEEP = 3
@@ -285,9 +285,9 @@ def open_by_running_pythons(destination, names, lines):
     """The versions among `names` that a running python has open: the version's folder is in the command line of a
     python process (`lines`, processes.python_command_lines), however it was started. A server that began before
     records existed, or by hand, has none to be found by (docs/findings.md, #756)."""
-    base = os.path.normcase(os.path.join(destination, "versions")).replace("/", os.sep) + os.sep
-    text = [os.path.normcase(line).replace("/", os.sep) for line in lines]
-    return {name for name in names if any(base + os.path.normcase(name) + os.sep in line for line in text)}
+    text = [paths.name_key(line) for line in lines]
+    return {name for name in names
+            if any(paths.key(os.path.join(destination, "versions", name)) + os.sep in line for line in text)}
 
 
 def leave_what_is_open(destination, removing, say):
