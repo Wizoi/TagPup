@@ -852,11 +852,24 @@ def people_groups(conn, counted):
     return group_of, groups, unfiled
 
 
-def date_counts(conn):
-    """{"years": [{"year", "count", "months": [{"month": "YYYY-MM", "count"}], "other"}], "undated": n}: the photos
-    of each year (`photos.year`, the year taken or else the one in its name), and of each month of it by
+#: The first year a photo could be dated in: before it is a number from a file name or a scan's clock (photo_index
+#: holds 1827, 1843, 1874 and 1888). The last is next year (a camera's clock a little ahead). The one place the rule
+#: is, and the Dates navigator groups what falls outside it under "Other years" (docs/findings.md, #510).
+FIRST_PLAUSIBLE_YEAR = 1900
+
+
+def plausible_year(year, this_year=None):
+    """Could a photo have been taken in `year`: FIRST_PLAUSIBLE_YEAR to next year."""
+    this_year = time.localtime().tm_year if this_year is None else this_year
+    return FIRST_PLAUSIBLE_YEAR <= year <= this_year + 1
+
+
+def date_counts(conn, this_year=None):
+    """{"years": [{"year", "count", "months": [{"month": "YYYY-MM", "count"}], "other", "implausible"}], "undated": n}:
+    the photos of each year (`photos.year`, the year taken or else the one in its name), and of each month of it by
     `taken`; `other` is those of the year whose `taken` is no month of it (a date written with dashes, or
-    none). One statement, a scan of idx_photos_year, grouped. Years are in order, months in order."""
+    none); `implausible` is a year before FIRST_PLAUSIBLE_YEAR or after next year (plausible_year). One statement, a
+    scan of idx_photos_year, grouped. Years are in order, months in order."""
     years = {}
     undated = 0
     for year, month, count in conn.execute(
@@ -864,7 +877,8 @@ def date_counts(conn):
         if year is None:
             undated += count
             continue
-        entry = years.setdefault(year, {"year": year, "count": 0, "months": [], "other": 0})
+        entry = years.setdefault(year, {"year": year, "count": 0, "months": [], "other": 0,
+                                        "implausible": not plausible_year(year, this_year)})
         entry["count"] += count
         if month is not None and len(month) == 7 and month[:4] == "%04d" % year and month[4] == ":" and month[5:].isdigit() \
                 and 1 <= int(month[5:]) <= 12:

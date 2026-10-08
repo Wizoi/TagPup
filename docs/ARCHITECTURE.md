@@ -1438,7 +1438,7 @@ The page, and two small routes and a card field under it. Nothing is migrated. T
   *Folders* and *Keywords* are lazy trees from the route's flat list by parent (a branch is drawn only when open; folders in the route's order, keywords
   alphabetical by `compareTagNames`), *People* an alphabetical list, *Dates* the years newest first opening to January..December (and an "Other" row for the
   photos of the year whose date names no month). **At most 1,500 rows of a tree's open branches (5,000 of a flat list: the people, the years and months, what a filter finds) are drawn**, and a line says how many were left out, counted over the whole tree (a parent with 1,000 children shows all of them; all 413 of photo_index's people are on the page; findings #567); a filter box
-  (120 ms after the last key) lists what matches wherever it is filed, with its place. **Years before 1970 or after next year** are one collapsed
+  (120 ms after the last key) lists what matches wherever it is filed, with its place. **Years before 1900 or after next year** (the route marks them `implausible`; the server owns the rule, the page shows what it is told, #510) are one collapsed
   **Other years (N)** entry at the end, still reachable. A folder row shows the photos with its subfolders (the direct count is in its tooltip and its
   label); a click on a row opens the view of it **and** opens the branch; a click on the arrow only opens the branch. A keyword no tree node holds cannot be
   navigated and is not listed: the route does not say how many there are, so nothing says so under the tree (the doctor lists them).

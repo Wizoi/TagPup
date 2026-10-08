@@ -29,8 +29,6 @@ export const NAV_MAX_ROWS = 1500;
  */
 export const NAV_MAX_LIST_ROWS = 5000;
 
-/** Years outside this range (to the current year + 1) are grouped as 'Other years': scanned dates gone wrong. */
-export const NAV_FIRST_YEAR = 1970;
 
 const NAV_MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
     'October', 'November', 'December'];
@@ -210,10 +208,11 @@ export function peopleGroupIds(index) {
 
 /**
  * The years of the route's { years: [{ year, count, months: [{ month, count }], other }], undated }: newest
- * first, and those outside NAV_FIRST_YEAR .. `thisYear` + 1 apart, as 'Other years' (a date a camera's clock got
- * wrong, or a scan's): still reachable, collapsed, at the end.
+ * first, and those the route calls `implausible` (before 1900 or after next year: a date a camera's clock got wrong, or a
+ * number in a file name) apart, as 'Other years': still reachable, collapsed, at the end. The rule is the server's
+ * (tagpup.store.library_view.plausible_year); the page shows what it is told (#510).
  */
-export function indexDates(data, thisYear = new Date().getFullYear()) {
+export function indexDates(data) {
     const years = [];
     for (const each of data && Array.isArray(data.years) ? data.years : []) {
         if (!each || !Number.isFinite(each.year)) continue;
@@ -221,11 +220,12 @@ export function indexDates(data, thisYear = new Date().getFullYear()) {
             .filter(m => m && typeof m.month === 'string' && /^\d{4}-\d{2}$/.test(m.month))
             .map(m => ({ month: m.month, number: Number(m.month.slice(5)), count: Number(m.count) || 0 }))
             .sort((a, b) => a.number - b.number);
-        years.push({ year: each.year, count: Number(each.count) || 0, other: Number(each.other) || 0, months });
+        years.push({ year: each.year, count: Number(each.count) || 0, other: Number(each.other) || 0, months,
+            implausible: each.implausible === true });
     }
     years.sort((a, b) => b.year - a.year);
-    const usual = years.filter(each => each.year >= NAV_FIRST_YEAR && each.year <= thisYear + 1);
-    const odd = years.filter(each => !usual.includes(each));
+    const usual = years.filter(each => !each.implausible);
+    const odd = years.filter(each => each.implausible);
     const byYear = new Map(years.map(each => [each.year, each]));
     return {
         usual, odd, byYear, size: years.length,
@@ -377,7 +377,7 @@ function navDateRows(index, expanded, needle, cap) {
         const open = expanded.has(OTHER_YEARS_ID);
         out.push({
             id: OTHER_YEARS_ID, level: 1, label: `Other years (${index.odd.length.toLocaleString()})`, count: index.oddPhotos,
-            title: `Years before ${NAV_FIRST_YEAR} or after next year, from dates that are probably wrong`,
+            title: 'Years that are probably not when a photo was taken: a camera clock gone wrong, or a number in a file name',
             aria: `Other years, ${navPlural(index.odd.length, 'year', 'years')}, ${navPlural(index.oddPhotos, 'photo', 'photos')}`,
             hint: '', expandable: true, expanded: open, spec: null,
         });
