@@ -207,6 +207,59 @@ class KeepingVersions(InstallCase):
         self.assertEqual(len(install_app.versions(self.dest)), 2)
 
 
+class AVersionARunningPythonHasOpen(InstallCase):
+    """docs/findings.md, #756: the first launch after the hand-over merged removed the version folder the owner's running
+    server served its pages from -- a server started before records existed, so none named it -- and left it empty. An
+    install also asks what python programs run, by their command lines."""
+
+    NAMES = ["20260101-000000-a", "20260102-000000-b", "20260103-000000-c"]
+
+    def installed(self):
+        for name in self.NAMES:
+            self.install(name=name)
+
+    def command_line(self, name):
+        return '"%s" "%s" --port 8765' % (sys.executable, os.path.join(self.dest, "versions", name, "tagpup_web.py"))
+
+    def test_a_version_a_python_without_a_record_runs_from_is_kept(self):
+        self.installed()
+        with mock.patch.object(install_app.processes, "python_command_lines",
+                               return_value=[self.command_line(self.NAMES[0])]):
+            self.install(name="20260104-000000-d")
+            self.install(name="20260105-000000-e")
+        self.assertIn(self.NAMES[0], install_app.versions(self.dest), "a running program's folder was removed")
+        self.assertTrue(any("keeping" in line and self.NAMES[0] in line for line in self.said), self.said)
+
+    def test_the_spelling_of_the_path_does_not_matter(self):
+        lines = ['python "%s"' % os.path.join(self.dest, "versions", "20260101-000000-A", "x.py").replace("\\", "/")]
+        self.assertEqual({"20260101-000000-a"}, install_app.open_by_running_pythons(
+            self.dest, ["20260101-000000-a", "20260102-000000-b"], lines))
+
+    def test_a_version_whose_name_only_starts_alike_is_not_kept(self):
+        lines = [self.command_line("20260101-000000-a+")]
+        self.assertEqual(set(), install_app.open_by_running_pythons(self.dest, ["20260101-000000-a"], lines))
+
+    def test_when_the_running_programs_cannot_be_listed_nothing_is_removed(self):
+        self.installed()
+        with mock.patch.object(install_app.processes, "python_command_lines", return_value=None):
+            self.install(name="20260104-000000-d")
+            self.install(name="20260105-000000-e")
+        self.assertEqual(5, len(install_app.versions(self.dest)))
+        self.assertTrue(any("could not be listed" in line for line in self.said), self.said)
+
+    def test_what_nothing_has_open_is_removed_as_before(self):
+        self.installed()
+        with mock.patch.object(install_app.processes, "python_command_lines", return_value=["python other.py"]):
+            self.install(name="20260104-000000-d")
+        self.assertNotIn(self.NAMES[0], install_app.versions(self.dest))
+
+    def test_the_listing_finds_this_python(self):
+        lines = processes.python_command_lines()
+        self.assertIsNotNone(lines)
+        self.assertTrue(any(os.path.basename(sys.argv[0]) in line or "unittest" in line or "python" in line.lower()
+                            for line in lines))
+
+
 class AServerOfAnotherVersionRunning(InstallCase):
     """An install never stops a server; it says the next launch replaces it (tagpup.launcher)."""
 

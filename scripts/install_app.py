@@ -281,6 +281,32 @@ def to_remove(existing, new, previous, in_use=()):
     return [name for name in ordered[:-KEEP] if name not in (new, previous) and name not in set(in_use)]
 
 
+def open_by_running_pythons(destination, names, lines):
+    """The versions among `names` that a running python has open: the version's folder is in the command line of a
+    python process (`lines`, processes.python_command_lines), however it was started. A server that began before
+    records existed, or by hand, has none to be found by (docs/findings.md, #756)."""
+    base = os.path.normcase(os.path.join(destination, "versions")).replace("/", os.sep) + os.sep
+    text = [os.path.normcase(line).replace("/", os.sep) for line in lines]
+    return {name for name in names if any(base + os.path.normcase(name) + os.sep in line for line in text)}
+
+
+def leave_what_is_open(destination, removing, say):
+    """`removing` without the versions a running python has open. When the running programs cannot be
+    listed nothing can be shown not to be open, and no old version is removed this time."""
+    if not removing:
+        return removing
+    lines = processes.python_command_lines()
+    if lines is None:
+        say("keeping      %s (the running programs could not be listed to see whether one has them open)"
+            % ", ".join(removing))
+        return []
+    held = open_by_running_pythons(destination, removing, lines)
+    for name in removing:
+        if name in held:
+            say("keeping      %s (a running program has it open)" % os.path.join(destination, "versions", name))
+    return [name for name in removing if name not in held]
+
+
 def install(destination, home, python, name=None, apply=False, say=print, shortcuts_in=(), hand_over=False):
     """Install a new version, and make shortcuts to the apps in each folder of
     `shortcuts_in`. Returns (the version's name, the versions removed). `hand_over`: what
@@ -295,6 +321,9 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
     # a server started by a launcher runs from its version until the next launch replaces it.
     removing = to_remove(versions(destination), name, previous,
                          supervisor.versions_in_use(home) | launches.versions_running())
+    # And by what is running, whatever the records say: a server of before they existed left a version's
+    # folder empty under it (#756).
+    removing = leave_what_is_open(destination, removing, say)
 
     say("install      %s" % folder)
     say("home         %s  (data/)" % home)
