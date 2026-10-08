@@ -1179,6 +1179,9 @@ def undo(ctx, change_id, apply_):
         return
     console.print("Undid change %d: %d %s written back." % (
         change_id, result.changed, "file(s)" if result.details.get("files") else "row(s)"))
+    if "added_followed_back" in result.details:
+        back = result.details["added_followed_back"]
+        console.print("Added folder(s) pointed back: %s." % ("none (left as they are)" if back is None else back))
     for what, error in result.errors:
         console.print("[yellow]%s: %s[/yellow]" % (what, error))
 
@@ -1237,12 +1240,17 @@ def relink_folders(ctx, old, new, reveal, apply_):
                   % (counts["rows_matched"], counts["by_document_id"], counts["by_content"],
                      counts["ambiguous_rows"], counts["ambiguous_files"], counts["occupied"],
                      counts["files_with_rows"]))
-    console.print("  %d added folder(s) with no photo under them follow (%d renamed, %d merged into one added "
-                  "already); %d more are on a drive or share that is not there. A folder with no photo under "
-                  "it is a record History does not hold."
-                  % (counts["added_ghosts"], counts["added_renamed"], counts["added_merged"],
-                     counts["added_unreachable"]))
-    console.print("  %d face(s) go with them, %d named." % (counts["moved_faces"], counts["moved_named"]))
+    console.print("  %d added folder(s) are gone from disk with no photo under them (their rows moved already): "
+                  "reported only, nothing is changed for them; %d more are on a drive or share that is not there. "
+                  "%d added folder record(s) follow the folder their rows moved to; %d are left (the new name is added "
+                  "already, or two folders go into one)." % (counts["added_ghosts"], counts["added_unreachable"],
+                                                              counts["added_renamed"], counts["added_left"]))
+    if reveal:
+        for ghost in result.details["reveal"]["added_ghosts"]:
+            console.print("    added folder gone: %s" % ghost, markup=False, soft_wrap=True)
+        for left in result.details["reveal"]["added_left"]:
+            console.print("    added folder left (%s): %s" % (left["why"], left["from"]), markup=False, soft_wrap=True)
+
     for number, folder in enumerate(result.details["reveal"]["folders"], 1):
         line = "  folder %d: %s -- %d photo(s), %d matched. %s" % (number, folder["verdict"], folder["rows"],
                                                                  folder["matched"], folder["why"])

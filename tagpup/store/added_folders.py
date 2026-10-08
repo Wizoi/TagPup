@@ -68,13 +68,12 @@ def covers(conn, folder):
 
 def follow(conn, old, new):
     """Point what was added at `old`, or under it, at `new` instead: the folder was renamed
-    (tagpup.services.folder_moves). An entry whose new place was added already is merged into
-    it: that one keeps its subfolders if either had them, and this one goes. Returns the records
-    changed. The caller commits."""
+    (tagpup.services.folder_moves). An entry whose new place was added already is left as it
+    is; nothing is merged. Returns the records changed. The caller commits."""
     if not _there(conn):
         return 0
     changed = 0
-    for path, subfolders in every(conn):
+    for path, _subfolders in every(conn):
         if paths.same(path, old):
             target = paths.stored(new)
         elif paths.is_under(path, old):
@@ -83,13 +82,7 @@ def follow(conn, old, new):
             continue
         where, params = store_roots.sql_equals(conn, "path", path)
         taken, taken_params = store_roots.sql_equals(conn, "path", target)
-        if paths.same(path, target):
-            continue
-        if conn.execute("SELECT 1 FROM added_folders WHERE " + taken, taken_params).fetchone() is not None:
-            if subfolders:
-                conn.execute("UPDATE added_folders SET subfolders = 1 WHERE " + taken, taken_params)
-            changed += conn.execute("DELETE FROM added_folders WHERE " + where, params).rowcount
-        else:
+        if conn.execute("SELECT 1 FROM added_folders WHERE " + taken, taken_params).fetchone() is None:
             changed += conn.execute("UPDATE added_folders SET path = ? WHERE " + where,
                                     (store_roots.to_row(conn, target),) + params).rowcount
     return changed

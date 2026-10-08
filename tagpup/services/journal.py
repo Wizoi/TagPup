@@ -104,7 +104,13 @@ def undo(library, change_id, apply=False, exiftool_path=None):
     result.changed = undone.rows
     if journal.operation(library.path, change_id) == folder_moves.OPERATION:
         # The folders added are a record the journal does not hold: they follow the rows back.
-        result.details["added_followed_back"] = folder_moves.undone(library, change_id)
+        try:
+            result.details["added_followed_back"] = folder_moves.undone(library, change_id)
+        except Exception as e:
+            # The undo is written; only the record of the folders added was not pointed back.
+            result.details["added_followed_back"] = None
+            result.fail("the folders added", "%s: %s (the rows and settings are back; the added folders were not "
+                        "pointed back)" % (type(e).__name__, e))
     if not undone.settled:
         result.fail("the people and dates of the photos it touched",
                     "not rebuilt yet; they are, the next time the library is opened")

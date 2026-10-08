@@ -28,6 +28,11 @@ THEN = 1_700_000_000
 DATE = "2026:01:31 08:%02d:00"
 
 
+def journal_service_undo(library, change_id):
+    from tagpup.services import journal as journal_service
+    return journal_service.undo(library, change_id, apply=True)
+
+
 class Case(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self, prefix="folder_moves_")
@@ -333,7 +338,8 @@ class RenamedFolders(Case):
 
 class GoneAddedFolders(Case):
     """An added folder whose rows moved already -- by hand, or by a sync -- is a ghost: sync reports it
-    gone at every run and the watcher polls it. relink-folders repairs it."""
+    gone at every run and the watcher polls it. relink-folders reports it and changes nothing for it
+    (owner, 2026-10-08); the owner repairs it."""
 
     def add(self, folder, subfolders=True):
         conn = db.connect(self.db_path)
@@ -362,32 +368,92 @@ class GoneAddedFolders(Case):
             self.index(*self.meet(name + " Harbour", count=2, dated=False))
         return 8
 
-    def check_the_ghosts_follow(self):
+    def check_the_ghosts_are_only_reported(self):
+        before = self.added()
         dry = self.relink()
-        self.assertEqual((8, 8), (dry.details["counts"]["added_ghosts"], dry.details["counts"]["relink"]))
-        self.assertTrue(all(name.endswith("#%d" % (300 + n)) for n, (name, _f) in enumerate(self.added(), 1)),
-                        "a dry run wrote")
+        self.assertEqual((8, 0), (dry.details["counts"]["added_ghosts"], dry.details["counts"]["relink"]))
+        self.assertEqual(8, len(dry.details["reveal"]["added_ghosts"]))
         done = self.relink(apply=True)
-        self.assertEqual(8, done.details["added_followed"])
-        self.assertTrue(all(name.endswith("Harbour") and flag == 1 for name, flag in self.added()))
-        self.assertEqual(0, self.relink().details["counts"]["added_ghosts"], "the ghosts are still there")
+        self.assertEqual((0, 0), (done.changed, done.details["added_followed"]))
+        self.assertEqual(before, self.added(), "a ghost was followed, merged or dropped")
+        self.assertEqual(8, self.relink().details["counts"]["added_ghosts"])
+        self.assertEqual([], self.query("SELECT id FROM changes WHERE operation = 'relink_folders'"))
 
-    def test_added_folders_with_no_row_under_them_follow_where_their_rows_went(self):
+    def test_added_folders_with_no_row_under_them_are_reported_and_left(self):
         self.eight_ghosts()
-        self.check_the_ghosts_follow()
+        self.check_the_ghosts_are_only_reported()
 
     def test_the_same_in_a_library_that_holds_a_root(self):
         self.eight_ghosts()
         self.adopt()
-        self.check_the_ghosts_follow()
+        self.check_the_ghosts_are_only_reported()
 
-    def test_a_ghost_with_two_dated_folders_holding_photos_is_left(self):
-        self.add(os.path.join(self.pictures, "2026-06-06 - Parkrun"))
-        self.index(*self.meet("2026-06-06 - Parkrun A", count=2))
-        self.index(*self.meet("2026-06-06 - Parkrun B", count=2))
+    def test_the_command_names_the_ghosts_only_on_request(self):
+        from click.testing import CliRunner
+
+        from tagpup_cli import cli
+        self.eight_ghosts()
+        plain = CliRunner().invoke(cli, ["--db", self.db_path, "relink-folders"])
+        self.assertEqual(0, plain.exit_code, plain.output)
+        self.assertIn("8 added folder(s) are gone", plain.output)
+        self.assertNotIn("Parkrun", plain.output)
+        self.assertIn("added folder gone:", CliRunner().invoke(cli, ["--db", self.db_path, "relink-folders",
+                                                                     "--reveal"]).output)
+
+    def test_a_ghost_below_a_gone_folder_is_only_reported(self):
+        top = os.path.join(self.pictures, "2026-08-01 - Trip")
+        self.add(os.path.join(top, "2026-08-01 - Heat"))
+        self.index(*self.meet("2026-08-01 - Trip Renamed", count=2))
+        before = self.added()
         done = self.relink(apply=True)
-        self.assertEqual((0, 1), (done.details["counts"]["added_ghosts"], done.details["counts"]["propose"]))
-        self.assertEqual("2026-06-06 - Parkrun", self.added()[0][0])
+        self.assertEqual((1, 0, 0), (done.details["counts"]["added_ghosts"], done.details["counts"]["relink"],
+                                     done.details["added_followed"]))
+        self.assertEqual(before, self.added())
+
+    def test_a_ghost_beside_a_folder_of_its_date_holding_photos_is_only_reported(self):
+        self.add(os.path.join(self.pictures, "2026-08-08 - Parkrun"))
+        self.index(*self.meet("2026-08-08 - Fun Run", count=2))
+        before = self.added()
+        done = self.relink(apply=True)
+        self.assertEqual((1, 0), (done.details["counts"]["added_ghosts"], done.details["counts"]["relink"]))
+        self.assertEqual(before, self.added(), "an unrelated folder of one date was taken for it")
+
+    def test_two_folders_into_one_leave_their_added_folders_and_say_so(self):
+        first = [self.photo(os.path.join(self.pictures, "2026-09-05 - Parkrun A"), "IMG_%04d.jpg" % n, n)
+                 for n in (1, 2, 3)]
+        second = [self.photo(os.path.join(self.pictures, "2026-09-05 - Parkrun B"), "IMG_%04d.jpg" % n, n)
+                  for n in (4, 5, 6)]
+        self.index(*first, *second)
+        self.add(os.path.join(self.pictures, "2026-09-05 - Parkrun A"))
+        self.add(os.path.join(self.pictures, "2026-09-05 - Parkrun B"))
+        both = os.path.join(self.pictures, "2026-09-05 - Parkrun Both")
+        os.makedirs(both)
+        for path in first + second:
+            shutil.move(path, os.path.join(both, os.path.basename(path)))
+        shutil.rmtree(os.path.join(self.pictures, "2026-09-05 - Parkrun A"))
+        shutil.rmtree(os.path.join(self.pictures, "2026-09-05 - Parkrun B"))
+        before = self.added()
+        done = self.relink(apply=True)
+        counts = done.details["counts"]
+        self.assertEqual((6, 0, 2), (done.changed - counts["settings_followed"], counts["added_renamed"],
+                                     counts["added_left"]))
+        self.assertEqual(before, self.added())
+        self.assertEqual(2, len(done.details["reveal"]["added_left"]))
+        undone = journal_service_undo(self.library, done.details["change"])
+        self.assertIsNone(undone.details["added_followed_back"], "an undo pointed back what was never followed")
+        self.assertEqual(before, self.added())
+
+    def test_an_error_pointing_the_added_folders_back_does_not_turn_a_committed_undo_into_an_exception(self):
+        old = self.meet("2026-09-12 - Parkrun", count=3)
+        self.index(*old)
+        self.add(os.path.join(self.pictures, "2026-09-12 - Parkrun"))
+        self.rename("2026-09-12 - Parkrun", "2026-09-12 - Parkrun Pond")
+        done = self.relink(apply=True)
+        with mock.patch("tagpup.services.folder_moves.undone", side_effect=RuntimeError("boom")):
+            undone = journal_service_undo(self.library, done.details["change"])
+        self.assertEqual(["the folders added"], [what for what, _error in undone.errors])
+        self.assertIsNone(undone.details["added_followed_back"])
+        self.assertEqual(set(old), set(self.paths_by_id().values()), "the undo was not kept")
 
     def test_a_ghost_on_a_drive_that_is_not_there_is_left(self):
         free = [letter for letter in "QRSTUVWXYZ" if not os.path.exists(letter + ":" + os.sep)]
@@ -404,13 +470,17 @@ class GoneAddedFolders(Case):
         self.assertEqual((0, 1), (done.details["counts"]["added_ghosts"], done.details["counts"]["added_unreachable"]))
         self.assertEqual(1, len(self.added()))
 
-    def test_a_ghost_merges_into_an_added_folder_there_already_and_keeps_its_subfolders(self):
+    def test_an_added_folder_is_never_merged_into_one_there_already(self):
+        self.index(*self.meet("2026-06-13 - Parkrun", count=3))
         self.add(os.path.join(self.pictures, "2026-06-13 - Parkrun"), subfolders=True)
         self.add(os.path.join(self.pictures, "2026-06-13 - Parkrun Lake"), subfolders=False)
-        self.index(*self.meet("2026-06-13 - Parkrun Lake", count=2))
-        self.assertEqual(1, self.relink().details["counts"]["added_merged"])
-        self.relink(apply=True)
-        self.assertEqual([("2026-06-13 - Parkrun Lake", 1)], self.added())
+        self.rename("2026-06-13 - Parkrun", "2026-06-13 - Parkrun Lake")
+        before = self.added()
+        counts = self.relink().details["counts"]
+        self.assertEqual((0, 1), (counts["added_renamed"], counts["added_left"]))
+        done = self.relink(apply=True)
+        self.assertEqual(3, done.changed)
+        self.assertEqual(before, self.added(), "an added folder was merged or renamed over another")
 
     def test_undoing_the_change_points_the_added_folders_back_with_the_rows(self):
         from tagpup.services import journal as journal_service

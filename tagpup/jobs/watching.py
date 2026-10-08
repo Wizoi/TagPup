@@ -153,6 +153,7 @@ class Watcher:
         #: parent key -> {"path", "watch"}: the parent of each folder watched, watched without its
         #: subfolders, since a watch on a folder sees nothing of the folder's own rename.
         self._parents = {}
+        self._parents_limited = False
         #: library key -> {"library", "folders": {key: [folder, last noticed]}, "whole": time or None,
         #: "files": {key: photo written}}.
         self._pending = {}
@@ -531,7 +532,10 @@ class Watcher:
                 self._note_whole(children.get(key, []))
         for key, folder in missing:
             if budget <= 0:
-                logger.debug("Not watching %s for a rename of a folder in it: the watches are at their limit.", folder)
+                if not self._parents_limited:
+                    self._parents_limited = True
+                    logger.info("Not watching %s, nor the parents of other watched folders, for a rename of a folder in "
+                                "them: the watches are at their limit (%d).", folder, self.max_watches)
                 break
             try:
                 watch = observer.schedule(_ParentHandler(self, key), folder, recursive=False)
