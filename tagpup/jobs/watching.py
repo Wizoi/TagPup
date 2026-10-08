@@ -460,19 +460,24 @@ class Watcher:
                     self._note_whole([library])
 
         with self._lock:
-            for key in [key for key in self._roots if key not in wanted]:
-                self._unwatch(observer, self._roots.pop(key))
+            let_go = [self._detach(self._roots.pop(key)) for key in [key for key in self._roots if key not in wanted]]
             for key, (folder, libraries) in wanted.items():
                 root = self._roots.setdefault(key, {"path": folder, "libraries": {}, "watch": None, "absent": False})
                 root["libraries"] = libraries
             roots = list(self._roots.items())
+        # Unscheduled outside the lock: watchdog dispatches a notification with its own lock held and
+        # that calls notice(), which takes this one; unscheduling takes its lock while holding this
+        # one is the other order, and each waits for the other.
+        for watch in let_go:
+            self._unschedule(observer, watch)
 
         for key, root in roots:
             there = os.path.isdir(root["path"])
             watch = root["watch"]
             if watch is not None and (not there or not _emitter_alive(observer, watch)):
                 with self._lock:
-                    self._unwatch(observer, root)
+                    dead = self._detach(root)
+                self._unschedule(observer, dead)
                 if there:
                     logger.warning("The watch on %s failed; watching it again and syncing its libraries whole.",
                                    root["path"])
@@ -497,30 +502,56 @@ class Watcher:
 
     def _watch_parents(self, observer):
         """Watch the parent of each watched folder, without its subfolders, and let go of
-        those no folder needs."""
+        those no folder needs. They count toward max_watches with the folders: none is made
+        beyond it. A parent whose watch died is watched again, and the libraries of the folders
+        in it synced whole, as for a folder."""
         with self._lock:
-            wanted = {}
+            wanted, children = {}, {}
             for root in self._roots.values():
                 parent = os.path.dirname(root["path"])
                 if root["watch"] is not None and parent and not paths.same(parent, root["path"]):
                     wanted.setdefault(paths.key(parent), paths.stored(parent))
-            for key in [key for key in self._parents if key not in wanted]:
-                self._unwatch(observer, self._parents.pop(key))
+                    children.setdefault(paths.key(parent), []).extend(root["libraries"].values())
+            let_go = [self._detach(self._parents.pop(key)) for key in [key for key in self._parents if key not in wanted]]
+            held = [(key, parent["watch"]) for key, parent in self._parents.items() if parent["watch"] is not None]
+        for watch in let_go:
+            self._unschedule(observer, watch)
+        died = [key for key, watch in held if not _emitter_alive(observer, watch)]
+        with self._lock:
+            dead_watches = [self._detach(self._parents[key]) for key in died if key in self._parents]
             missing = [(key, folder) for key, folder in wanted.items()
                        if key not in self._parents or self._parents[key]["watch"] is None]
+            budget = self.max_watches - sum(1 for root in self._roots.values() if root["watch"] is not None) \
+                - sum(1 for parent in self._parents.values() if parent["watch"] is not None)
+        for watch in dead_watches:
+            self._unschedule(observer, watch)
+        for key in died:
+            if os.path.isdir(wanted.get(key, "")):
+                logger.warning("The watch on %s failed; watching it again and syncing its libraries whole.", wanted[key])
+                self._note_whole(children.get(key, []))
         for key, folder in missing:
+            if budget <= 0:
+                logger.debug("Not watching %s for a rename of a folder in it: the watches are at their limit.", folder)
+                break
             try:
                 watch = observer.schedule(_ParentHandler(self, key), folder, recursive=False)
             except Exception as e:
                 logger.error("Could not watch %s for a rename of a folder in it: %s", folder, e)
                 continue
+            budget -= 1
             with self._lock:
                 self._parents[key] = {"path": folder, "watch": watch}
 
     @staticmethod
-    def _unwatch(observer, root):
-        """Under the lock."""
+    def _detach(root):
+        """Take the watch off `root` (a watched folder, or a parent), and give it back to be
+        unscheduled. Under the lock; the unscheduling is not (_unschedule)."""
         watch, root["watch"] = root["watch"], None
+        return watch
+
+    @staticmethod
+    def _unschedule(observer, watch):
+        """Stop a watch _detach gave back. Never under the lock."""
         if watch is not None:
             try:
                 observer.unschedule(watch)

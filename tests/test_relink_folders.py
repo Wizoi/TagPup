@@ -28,7 +28,7 @@ THEN = 1_700_000_000
 DATE = "2026:01:31 08:%02d:00"
 
 
-class RenamedFolders(unittest.TestCase):
+class Case(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self, prefix="folder_moves_")
         self.pictures = os.path.join(self.home.root, "Pictures")
@@ -114,7 +114,9 @@ class RenamedFolders(unittest.TestCase):
     def paths_by_id(self):
         return dict(self.query("SELECT id, path FROM photos"))
 
-    # ---- the cases --------------------------------------------------------------------
+
+
+class RenamedFolders(Case):
 
     def test_a_folder_renamed_by_adding_to_its_name_follows_with_its_faces(self):
         old = self.meet("2026-01-31 - Parkrun #347", dated=False)
@@ -327,6 +329,138 @@ class RenamedFolders(unittest.TestCase):
         self.assertEqual(0, applied.exit_code, applied.output)
         self.assertIn("Wrote 3 row(s)", applied.output)
         self.assertTrue(all(os.path.exists(p) for p in self.paths_by_id().values()))
+
+
+class GoneAddedFolders(Case):
+    """An added folder whose rows moved already -- by hand, or by a sync -- is a ghost: sync reports it
+    gone at every run and the watcher polls it. relink-folders repairs it."""
+
+    def add(self, folder, subfolders=True):
+        conn = db.connect(self.db_path)
+        try:
+            added_folders.record(conn, folder, subfolders=subfolders)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def added(self):
+        return [(os.path.basename(path), flag) for path, flag in
+                self.query("SELECT path, subfolders FROM added_folders ORDER BY path")]
+
+    def adopt(self):
+        from tagpup.services import roots as roots_service
+        import roots_library
+        done = roots_service.adopt(self.library, "pictures", "\\\\fileserver\\Pictures", self.pictures,
+                                   roots_library.machine(), apply=True)
+        self.assertTrue(done.ok and not done.refused, done.refused)
+
+    def eight_ghosts(self):
+        """The real shape: 8 added folders, their rows already under the new names."""
+        for n in range(1, 9):
+            name = "2026-05-%02d - Parkrun #%d" % (n, 300 + n)
+            self.add(os.path.join(self.pictures, name))
+            self.index(*self.meet(name + " Harbour", count=2, dated=False))
+        return 8
+
+    def check_the_ghosts_follow(self):
+        dry = self.relink()
+        self.assertEqual((8, 8), (dry.details["counts"]["added_ghosts"], dry.details["counts"]["relink"]))
+        self.assertTrue(all(name.endswith("#%d" % (300 + n)) for n, (name, _f) in enumerate(self.added(), 1)),
+                        "a dry run wrote")
+        done = self.relink(apply=True)
+        self.assertEqual(8, done.details["added_followed"])
+        self.assertTrue(all(name.endswith("Harbour") and flag == 1 for name, flag in self.added()))
+        self.assertEqual(0, self.relink().details["counts"]["added_ghosts"], "the ghosts are still there")
+
+    def test_added_folders_with_no_row_under_them_follow_where_their_rows_went(self):
+        self.eight_ghosts()
+        self.check_the_ghosts_follow()
+
+    def test_the_same_in_a_library_that_holds_a_root(self):
+        self.eight_ghosts()
+        self.adopt()
+        self.check_the_ghosts_follow()
+
+    def test_a_ghost_with_two_dated_folders_holding_photos_is_left(self):
+        self.add(os.path.join(self.pictures, "2026-06-06 - Parkrun"))
+        self.index(*self.meet("2026-06-06 - Parkrun A", count=2))
+        self.index(*self.meet("2026-06-06 - Parkrun B", count=2))
+        done = self.relink(apply=True)
+        self.assertEqual((0, 1), (done.details["counts"]["added_ghosts"], done.details["counts"]["propose"]))
+        self.assertEqual("2026-06-06 - Parkrun", self.added()[0][0])
+
+    def test_a_ghost_on_a_drive_that_is_not_there_is_left(self):
+        free = [letter for letter in "QRSTUVWXYZ" if not os.path.exists(letter + ":" + os.sep)]
+        if not free:
+            self.skipTest("every drive letter in Q to Z is in use")
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("INSERT INTO added_folders (path, subfolders, added) VALUES (?, 1, 'then')",
+                         (free[0] + ":" + os.sep + "Pictures",))
+            conn.commit()
+        finally:
+            conn.close()
+        done = self.relink(apply=True)
+        self.assertEqual((0, 1), (done.details["counts"]["added_ghosts"], done.details["counts"]["added_unreachable"]))
+        self.assertEqual(1, len(self.added()))
+
+    def test_a_ghost_merges_into_an_added_folder_there_already_and_keeps_its_subfolders(self):
+        self.add(os.path.join(self.pictures, "2026-06-13 - Parkrun"), subfolders=True)
+        self.add(os.path.join(self.pictures, "2026-06-13 - Parkrun Lake"), subfolders=False)
+        self.index(*self.meet("2026-06-13 - Parkrun Lake", count=2))
+        self.assertEqual(1, self.relink().details["counts"]["added_merged"])
+        self.relink(apply=True)
+        self.assertEqual([("2026-06-13 - Parkrun Lake", 1)], self.added())
+
+    def test_undoing_the_change_points_the_added_folders_back_with_the_rows(self):
+        from tagpup.services import journal as journal_service
+        old = self.meet("2026-06-20 - Parkrun", count=4)
+        self.index(*old)
+        self.add(os.path.join(self.pictures, "2026-06-20 - Parkrun"))
+        self.rename("2026-06-20 - Parkrun", "2026-06-20 - Parkrun Dam")
+        done = self.relink(apply=True)
+        self.assertEqual("2026-06-20 - Parkrun Dam", self.added()[0][0])
+        undone = journal_service.undo(self.library, done.details["change"], apply=True)
+        self.assertTrue(undone.ok and not undone.refused, undone.refused)
+        self.assertEqual(set(old), set(self.paths_by_id().values()), "the rows are not back")
+        self.assertEqual("2026-06-20 - Parkrun", self.added()[0][0], "the added folder was left at the new name")
+
+    def test_a_candidate_whose_photos_all_have_rows_says_so(self):
+        old = self.meet("2026-06-27 - Parkrun", count=3)
+        self.index(*old)
+        self.rename("2026-06-27 - Parkrun", "2026-06-27 - Parkrun Rec")
+        new = [os.path.join(self.pictures, "2026-06-27 - Parkrun Rec", os.path.basename(p)) for p in old]
+        self.index(*new)
+        done = self.relink()
+        folder = done.details["reveal"]["folders"][0]
+        self.assertEqual("none", folder["verdict"])
+        self.assertIn("3 photo(s) in the candidate already have rows", folder["why"])
+        self.assertEqual(3, done.details["counts"]["files_with_rows"])
+
+    def test_from_and_to_are_spelled_by_the_first_place_of_their_root(self):
+        old = self.meet("2026-07-04 - Parkrun", count=10)
+        self.index(*old)
+        self.rename("2026-07-04 - Parkrun", "2026-07-04 - Parkrun Hills")
+        folder = os.path.join(self.pictures, "2026-07-04 - Parkrun Hills")
+        for n in range(1, 8):
+            os.remove(os.path.join(folder, "IMG_%04d.jpg" % n))
+        alias = os.path.join(self.home.root, "Alias")
+
+        def canonical(_library, path):
+            return path.replace(alias, self.pictures)
+        with mock.patch("tagpup.services.roots.canonical", side_effect=canonical):
+            done = self.relink(apply=True, only=(os.path.join(alias, "2026-07-04 - Parkrun"),
+                                                 os.path.join(alias, "2026-07-04 - Parkrun Hills")))
+        self.assertEqual(3, done.changed)
+
+    def test_a_to_that_is_not_there_and_a_from_that_is_have_their_own_sentences(self):
+        self.meet("2026-07-11 - Parkrun", count=2)
+        missing = self.relink(only=(os.path.join(self.pictures, "2026-07-11 - Gone"),
+                                    os.path.join(self.pictures, "2026-07-11 - Nowhere")))
+        self.assertIn("--to is not there", missing.refused.replace("named by ", ""))
+        there = self.relink(only=(os.path.join(self.pictures, "2026-07-11 - Parkrun"),
+                                  os.path.join(self.pictures, "2026-07-11 - Parkrun")))
+        self.assertIn("--from is still there", there.refused.replace("named by ", ""))
 
 
 if __name__ == "__main__":

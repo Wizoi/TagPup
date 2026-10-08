@@ -458,5 +458,77 @@ class TagPupsOwnWrites(unittest.TestCase):
         self.assertEqual([], reads, "the sync of TagPup's own write read a file")
 
 
+class FakeObserver:
+    """An observer that records what is scheduled, and lets a test run something when a watch is unscheduled."""
+
+    class Emitter:
+        def __init__(self, watch):
+            self.watch, self.alive = watch, True
+
+        def is_alive(self):
+            return self.alive
+
+    def __init__(self):
+        self.scheduled, self.emitters, self.on_unschedule = [], [], None
+
+    def schedule(self, handler, path, recursive=False):
+        watch = ("watch", path, recursive, len(self.scheduled))
+        self.scheduled.append((path, recursive))
+        self.emitters.append(self.Emitter(watch))
+        return watch
+
+    def unschedule(self, watch):
+        self.emitters = [e for e in self.emitters if e.watch != watch]
+        if self.on_unschedule:
+            self.on_unschedule(watch)
+
+
+class TheWatchesThemselves(Base):
+    def watcher_over(self, folders, **options):
+        self.folders = folders
+        return watching.Watcher(lambda: [self.library], lambda library: list(self.folders), self.sync,
+                                images.is_photo, **options)
+
+    def test_a_watch_is_unscheduled_outside_the_lock_watchdog_dispatches_into(self):
+        # watchdog calls notice() with the observer's lock held; unscheduling holds that lock too. If the watcher
+        # unschedules while holding its own, each waits for the other.
+        watcher, observer = self.watcher_over([self.root]), FakeObserver()
+        watcher._look(observer)
+        stuck = []
+
+        def a_notification_arrives(_watch):
+            from watchdog.events import FileCreatedEvent
+            thread = threading.Thread(target=watcher.notice, args=(
+                paths.key(self.root), FileCreatedEvent(os.path.join(self.root, "Regatta", "A.jpg"))), daemon=True)
+            thread.start()
+            thread.join(3)
+            stuck.append(thread.is_alive())
+
+        observer.on_unschedule = a_notification_arrives
+        self.folders = []
+        watcher._look(observer)
+        self.assertTrue(stuck, "nothing was unscheduled")
+        self.assertEqual([False] * len(stuck), stuck, "a notification waited on the lock unschedule was holding")
+
+    def test_the_parents_count_toward_the_limit_of_watches(self):
+        observer = FakeObserver()
+        self.watcher_over([self.root], max_watches=1)._look(observer)
+        self.assertEqual([(paths.stored(self.root), True)], observer.scheduled)
+        observer = FakeObserver()
+        self.watcher_over([self.root], max_watches=2)._look(observer)
+        self.assertEqual([(paths.stored(self.root), True), (paths.stored(self.home.root), False)],
+                         observer.scheduled)
+
+    def test_a_parent_whose_watch_died_is_watched_again_and_its_libraries_synced_whole(self):
+        watcher, observer = self.watcher_over([self.root]), FakeObserver()
+        watcher._look(observer)
+        parent = [e for e in observer.emitters if e.watch[1] == paths.stored(self.home.root)][0]
+        parent.alive = False
+        before = len(observer.scheduled)
+        watcher._look(observer)
+        self.assertEqual((paths.stored(self.home.root), False), observer.scheduled[before])
+        self.assertIsNotNone(watcher._pending[self.library.key]["whole"])
+
+
 if __name__ == "__main__":
     unittest.main()

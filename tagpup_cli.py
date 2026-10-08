@@ -1232,9 +1232,16 @@ def relink_folders(ctx, old, new, reveal, apply_):
     console.print("  %d folder(s) to relink, %d proposed (you confirm: --from/--to), %d with no candidate or match."
                   % (counts["relink"], counts["propose"], counts["none"]))
     console.print("  %d photo(s) matched (%d by DocumentID, %d by size and Date Taken); %d row(s) and %d file(s) "
-                  "ambiguous, left; %d already had a row at the new name, left."
+                  "ambiguous, left; %d already had a row at the new name, left; %d file(s) "
+                  "in the candidates already have a row."
                   % (counts["rows_matched"], counts["by_document_id"], counts["by_content"],
-                     counts["ambiguous_rows"], counts["ambiguous_files"], counts["occupied"]))
+                     counts["ambiguous_rows"], counts["ambiguous_files"], counts["occupied"],
+                     counts["files_with_rows"]))
+    console.print("  %d added folder(s) with no photo under them follow (%d renamed, %d merged into one added "
+                  "already); %d more are on a drive or share that is not there. A folder with no photo under "
+                  "it is a record History does not hold."
+                  % (counts["added_ghosts"], counts["added_renamed"], counts["added_merged"],
+                     counts["added_unreachable"]))
     console.print("  %d face(s) go with them, %d named." % (counts["moved_faces"], counts["moved_named"]))
     for number, folder in enumerate(result.details["reveal"]["folders"], 1):
         line = "  folder %d: %s -- %d photo(s), %d matched. %s" % (number, folder["verdict"], folder["rows"],

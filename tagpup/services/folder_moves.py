@@ -46,6 +46,7 @@ from tagpup.files import images
 from tagpup.services import maintenance, relink_photos
 from tagpup.services import roots as roots_service
 from tagpup.store import added_folders, db, journal
+from tagpup.store import journal as journal_store
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 from tagpup.store import settings as store_settings
@@ -181,6 +182,48 @@ def _followed(held, key, moved):
     return validation.FOLDER_SEPARATOR.join(lines), changed
 
 
+def folder_pairs(moved):
+    """[(old folder, new folder)] the photos `moved` [(old path, new path)] show a folder to have
+    followed: each pair's folders with the names they share at the end taken off (`A/sub/x` to
+    `B/sub/y` is A to B), the distinct ones, none where a photo stayed in its folder."""
+    found = {}
+    for old, new in moved:
+        a, b = os.path.dirname(paths.stored(old)), os.path.dirname(paths.stored(new))
+        while True:
+            (a_up, a_name), (b_up, b_name) = os.path.split(a), os.path.split(b)
+            if not a_name or not b_name or paths.name_key(a_name) != paths.name_key(b_name) or a_up == a or b_up == b:
+                break
+            a, b = a_up, b_up
+        if not paths.same(a, b):
+            found.setdefault((paths.key(a), paths.key(b)), (a, b))
+    return sorted(found.values(), key=lambda pair: paths.key(pair[0]))
+
+
+def undone(library, change_id):
+    """After an undo of a `relink_folders` change: the folders added point back at the folders the
+    rows are back in, derived from the change's own photo rows (no path is kept in its summary).
+    Not when the change merged an added folder into one already there (its summary counts it): that
+    cannot be told apart again. Returns the records changed, or None when it left them."""
+    entries = journal_store.history(library.path, change_id=change_id, values=True)
+    if not entries or entries[0]["operation"] != OPERATION:
+        return None
+    if (entries[0]["summary"].get("counts") or {}).get("added_merged"):
+        return None
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        moved = [(store_roots.from_row(conn, change["old"]["path"]), store_roots.from_row(conn, change["new"]["path"]))
+                 for change in entries[0].get("values", ())
+                 if change["table"] == "photos" and change["action"] == "update"
+                 and change["old"] and change["new"] and "path" in change["old"] and "path" in change["new"]]
+    finally:
+        conn.close()
+    pairs = folder_pairs(moved)
+
+    def back(conn):
+        return sum(added_folders.follow(conn, new, old) for old, new in pairs)
+    return db.write_with_connection(library.path, back) if pairs else 0
+
+
 def look(library, exiftool_path=None, only=None):
     """A Plan: what the folders renamed outside the apps would do. `only` is (old folder,
     new folder) the owner confirmed. Reads the rows, lists the folders beside each gone one,
@@ -190,8 +233,19 @@ def look(library, exiftool_path=None, only=None):
     try:
         evidence = store_photos.evidence(conn)
         known = {paths.key(path) for _id, path, _s, _t, _d in evidence}
+        added = added_folders.every(conn)
     finally:
         conn.close()
+    # Every folder a row is in, and every folder above one: where the library holds photos.
+    held_dirs = set()
+    for _id, path, _s, _t, _d in evidence:
+        current = os.path.dirname(path)
+        while paths.key(current) not in held_dirs:
+            held_dirs.add(paths.key(current))
+            above = os.path.dirname(current)
+            if above == current:
+                break
+            current = above
     gone = _Gone()
     units, unreachable = {}, 0
     for row in evidence:
@@ -209,7 +263,7 @@ def look(library, exiftool_path=None, only=None):
         units = {key: unit for key, unit in units.items() if paths.same(unit[0], asked_from)}
 
     # The folders to look in, and the files in them without a row.
-    found, files, held, home = {}, {}, 0, {}
+    found, files, held, home, held_in = {}, {}, 0, {}, {}
     for key, (top, _rows) in units.items():
         candidates = [paths.stored(asked_to)] if only else _candidates(top)
         found[key] = []
@@ -223,6 +277,7 @@ def look(library, exiftool_path=None, only=None):
             for file_key, stamp in seen.items():
                 if file_key in known:
                     held += 1
+                    held_in[key] = held_in.get(key, 0) + 1
                 else:
                     files[file_key] = stamp
                     home[(key, file_key)] = candidate
@@ -272,6 +327,9 @@ def look(library, exiftool_path=None, only=None):
                    else "no folder beside it begins with its date")
         elif not mine:
             verdict, why = "none", "no photo of a candidate matches"
+            if held_in.get(key):
+                why += ("; %d photo(s) in the candidate already have rows, and a file with a row is no destination"
+                        % held_in[key])
         elif only:
             verdict, why, target = "relink", "confirmed by the owner", found[key][0]
         elif len(by_candidate) == 1 and len(mine) >= SHARE * len(rows) and not ambiguous:
@@ -281,6 +339,8 @@ def look(library, exiftool_path=None, only=None):
             verdict = "propose"
             why = "%d candidate(s) hold matches (%d of %d photos), %d ambiguous" % (
                 len(by_candidate), len(mine), len(rows), ambiguous)
+            if held_in.get(key):
+                why += "; %d photo(s) there already have rows" % held_in[key]
         tally[verdict] += 1
         if verdict == "relink":
             pairs += [(row[1], info[file_key][0]) for row, (file_key, _how) in mine]
@@ -291,6 +351,48 @@ def look(library, exiftool_path=None, only=None):
                         "matched": len(mine), "ambiguous": ambiguous,
                         "candidates": [{"folder": c[0], "matched": c[1], "by_id": c[2]}
                                        for c in by_candidate.values()]})
+
+    # An added folder gone from disk with no row under it -- its rows moved already, by hand or by a sync --
+    # is a ghost: reported gone by every sync, and watched. It follows the one folder beside it whose name
+    # begins with its date and which holds the library's photos, or is dropped into it if that was added.
+    ghosts = unreachable_added = 0
+    if not only:
+        tops = [unit[0] for unit in units.values()]
+        for path, _subfolders in added:
+            if gone.there(path):
+                continue
+            top = gone.unit(path)
+            if top is None:
+                unreachable_added += 1
+                continue
+            if any(paths.same(top, t) or paths.same(path, t) or paths.is_under(path, t) for t in tops):
+                continue
+            options = [c for c in _candidates(top) if paths.key(c) in held_dirs]
+            target, candidates = None, [{"folder": c, "matched": 0, "by_id": 0} for c in options]
+            if len(options) == 1:
+                verdict, target = "relink", options[0]
+                why = ("an added folder with no photo under it: it follows the one folder beside it that begins with "
+                       "its date and holds the library's photos")
+            elif options:
+                verdict, why = "propose", "%d folders beside it begin with its date and hold the library's photos" % len(options)
+            else:
+                verdict = "none"
+                why = ("no date in the name" if not leading_date(os.path.basename(top))
+                       else "no folder beside it begins with its date and holds the library's photos")
+            tally[verdict] += 1
+            if target:
+                written.append((path, target))
+                ghosts += 1
+            reports.append({"from": path, "verdict": verdict, "why": why, "to": target, "rows": 0, "matched": 0,
+                            "ambiguous": 0, "candidates": candidates, "kind": "added"})
+    added_keys = {paths.key(path) for path, _s in added}
+    renamed = merged = 0
+    for old, new in written:
+        for path, _s in added:
+            target = _mapped(path, old, new)
+            if target is not None:
+                merged += paths.key(target) in added_keys
+                renamed += paths.key(target) not in added_keys
 
     edits, occupied = [], []
     if pairs:
@@ -322,7 +424,9 @@ def look(library, exiftool_path=None, only=None):
                 "ambiguous_rows": len(ambiguous_rows), "ambiguous_files": len(ambiguous_files),
                 "occupied": len(occupied), "moved_faces": sum(m["faces"] for m in moves),
                 "moved_named": sum(m["named"] for m in moves), "files_read": len(files),
-                "files_with_rows": held, "settings_followed": len(followed)},
+                "files_with_rows": held, "settings_followed": len(followed),
+                "added_ghosts": ghosts, "added_unreachable": unreachable_added,
+                "added_renamed": renamed, "added_merged": merged},
         reveal={"folders": reports, "occupied": occupied},
         work={"edits": edits, "followed": written})
 
@@ -331,7 +435,22 @@ def relink(library, exiftool_path=None, apply=False, only=None):
     """Follow the folders renamed outside the apps (see the module): a dry run unless
     `apply`. A Result on the maintenance scaffold; details["counts"] what was found,
     ["reveal"]["folders"] each unit's verdict. Applied, `changed` is the rows and settings
-    written, and the folders added follow after (details["added_followed"])."""
+    written, and the folders added follow after (details["added_followed"]). `only` is (old,
+    new), the owner's word for a proposal: a path in any place of its root is spelled by the first
+    (roots_service.canonical); refused when the old folder is still there or the new one is not."""
+    if only:
+        only = (roots_service.canonical(library, paths.stored(only[0])),
+                roots_service.canonical(library, paths.stored(only[1])))
+        why = None
+        if os.path.isdir(only[0]):
+            why = "The folder named by --from is still there: there is nothing to follow."
+        elif not os.path.isdir(only[1]):
+            why = "The folder named by --to is not there, or is not a folder."
+        if why:
+            result = Result()
+            result.refuse(why)
+            result.details.update(counts={}, changed={kind: 0 for kind in KINDS}, dry_run=not apply)
+            return result
     try:
         with roots_service.pinned(library):
             return _relink(library, exiftool_path, apply, only)
@@ -352,7 +471,8 @@ def _relink(library, exiftool_path, apply, only):
     result = maintenance.run(library, OPERATION, plan, lambda planned: planned.work["edits"], apply=apply, kinds=KINDS)
     result.details["added_followed"] = 0
     planned = held.get("plan")
-    if apply and result.ok and result.changed and planned is not None and planned.work["followed"]:
+    if (apply and result.ok and planned is not None and planned.work["followed"]
+            and (result.changed or not planned.size)):
         followed = planned.work["followed"]
 
         def follow(conn):
