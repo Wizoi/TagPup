@@ -184,6 +184,22 @@ class TakingANameOffTakesThePersonOff(InStep):
         self.assertEqual(1, reply.get_json()["tags_removed"])
         self.assertEqual([], self.tags(photo))
 
+    def test_tagpups_page_is_told_which_tags_go_when_it_rules_a_face_out_too(self):
+        photo = self.held("off_010.jpg", [PEOPLE + WREN, "Regatta"])
+        face = self.face(photo, name=WREN, name_source="manual")
+        reply = self.post("faces/exclude", {"face_ids": [face], "page_writes_tags": True})
+        self.assertEqual({photo: [PEOPLE + WREN]}, reply.get_json()["untag"])
+        self.assertEqual(0, self.files.writes)
+        self.assertEqual(1, reply.get_json()["excluded"])
+
+    def test_ruling_out_nameless_faces_reads_and_writes_no_photo(self):
+        photo = self.held("off_011.jpg", [PEOPLE + WREN])
+        faces_here = [self.face(photo, box=(10 + 40 * n, 10, 40 + 40 * n, 40)) for n in range(3)]
+        reply = self.tuner_post("faces/exclude", {"face_ids": faces_here, "reason": "ignored cluster"})
+        self.assertEqual(3, reply.get_json()["excluded"])
+        self.assertEqual({}, reply.get_json().get("untag", {}))
+        self.assertEqual((0, 0), (self.files.writes, self.files.read_calls), "a photo was read for faces that carried no name")
+
     def test_unmatch_all_takes_off_every_person_the_names_gave(self):
         photo = self.held("off_008.jpg", [PEOPLE + WREN, PEOPLE + ODA, "Regatta"])
         self.face(photo, name=WREN, name_source="manual")
