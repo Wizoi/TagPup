@@ -63,6 +63,13 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
+    /* The header is one row: its left part gives way (the library's name is cut short with an ellipsis) before the page
+       scrolls sideways in a narrow window (#720). */
+    min-width: 0;
+}
+
+.logo-container h1 {
+    white-space: nowrap;
 }
 
 .logo-icon {
@@ -91,6 +98,7 @@ body {
     letter-spacing: 0.2px;
     white-space: nowrap;
     max-width: 280px;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
 }
@@ -104,6 +112,7 @@ body {
 
 .header-status {
     display: flex;
+    flex-shrink: 0;
     align-items: center;
     gap: 8px;
     font-size: 13px;
@@ -767,6 +776,7 @@ body {
 
 /* Folder View Content */
 .folder-view-content {
+    position: relative;   /* the opened details panel lies over it in a narrow window (#720) */
     display: flex;
     flex-direction: row;
     height: 100%;
@@ -776,6 +786,9 @@ body {
 
 .folder-view-main {
     flex: 1;
+    /* A flex item is as wide as its widest content unless told it may shrink: the header's buttons made the grid's
+       scroller scroll sideways in a narrow window (#720). */
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -1067,6 +1080,37 @@ body {
     display: flex;
     gap: 6px;
     align-items: center;
+}
+
+/* The Selection Details panel in a narrow window (#720): the sidebar (360 px) and the panel (340 px) kept their widths and
+   left the grid 296 px at 1,000 and 40 at 720. Under 1,100 px (below it the grid cannot hold two cards beside both: 360 +
+   340 + 2 x 150 + the gap and the padding) the panel is out of the row, behind this button (aria-expanded, aria-controls),
+   and opened lies over the grid's right edge: the grid keeps the width, and nothing scrolls sideways either way.
+   details-panel.js sets .details-open and the button's aria-expanded; a wide window ignores both. */
+.details-toggle,
+.details-close {
+    display: none;
+}
+
+@media (max-width: 1099px) {
+    .details-toggle,
+    .folder-view-sidebar.details-open .details-close {
+        display: inline-flex;
+    }
+
+    .folder-view-sidebar {
+        display: none;
+    }
+
+    .folder-view-sidebar.details-open {
+        display: flex;
+        position: absolute;
+        top: 0;
+        right: 0;
+        z-index: 20;
+        max-width: 100%;
+        box-shadow: -8px 0 24px rgba(0, 0, 0, 0.45);
+    }
 }
 
 .selected-count-label {
