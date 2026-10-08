@@ -467,11 +467,14 @@ class TagSuggester:
                                 # in the one form the keywords must not hold.
                                 # A name filed twice is not resolved to either
                                 # path, and not offered at all: a guess names the
-                                # wrong person (docs/findings.md, #27).
+                                # wrong person (docs/findings.md, #27). One filed
+                                # nowhere is not offered either: a person is a leaf
+                                # and a tag is a path, and a bare leaf is the form
+                                # the keywords must not hold (#296).
                                 filed = self.taxonomy.person_paths(best_name)
-                                if len(filed) > 1:
+                                if len(filed) != 1:
                                     continue
-                                resolved_path = filed[0] if filed else best_name
+                                resolved_path = filed[0]
 
                                 # Boost or insert tag
                                 found = False
