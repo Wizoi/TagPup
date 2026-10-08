@@ -20,7 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_organize_faces import Case, ODA, WREN  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
-from tagpup.store import db, faces, people, taxonomy  # noqa: E402
+from tagpup.services import journal as journal_service  # noqa: E402
+from tagpup.store import checks, db, faces, people, taxonomy  # noqa: E402
 
 PEOPLE = "People/"
 
@@ -145,6 +146,21 @@ class NamingAddsThePersonToThePhoto(InStep):
         photo = self.held("strip_006.jpg")
         self.tuner_post("face/match", {"face_id": self.face(photo), "person_name": WREN})
         self.assertEqual(["person added for a named face"], self.journal_operations())
+
+    def test_undoing_the_tag_in_history_leaves_the_face_named_and_the_doctor_counts_it(self):
+        # Decided, as every Undo of a tag write: it takes the tag off and nothing unnames a face (#834). The drift it leaves is
+        # the one `tags-from-faces` mends and the doctor counts.
+        photo = self.held("strip_012.jpg")
+        face = self.face(photo)
+        self.tuner_post("face/match", {"face_id": face, "person_name": WREN})
+        change = self.look("SELECT id FROM changes WHERE operation = 'person added for a named face'")[0][0]
+        undone = journal_service.undo(self.library, change, apply=True, exiftool_path="exiftool")
+        self.assertEqual([], undone.errors)
+        self.assertEqual([], self.tags(photo))
+        self.assertEqual(WREN, self.row(face)[0])
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        self.addCleanup(conn.close)
+        self.assertEqual((1, 1), checks.people_on_faces_alone(conn))
 
     def test_a_named_face_whose_photo_lacks_the_tag_is_mended_by_choosing_the_name_again(self):
         # The state the owner found: named by the strip before this, the photo without the person.
