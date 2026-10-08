@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="common/roots-banner.css">
     <link rel="stylesheet" href="common/image-zoom.css">
     <link rel="stylesheet" href="common/person-faces.css">
+    <link rel="stylesheet" href="common/dark-select.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -102,8 +103,8 @@
                 <div class="sidebar-header-row">
                     <div class="list-stats" id="list-stats">Loading...</div>
                     <select id="people-sort" class="people-sort" title="How to order the list">
+                        <option value="name" selected>Name (A-Z)</option>
                         <option value="count">Most photos first</option>
-                        <option value="name">Name (A-Z)</option>
                     </select>
                     <button id="btn-refresh-list" class="btn btn-secondary btn-sm" title="Refresh photo list">🔄 Refresh List</button>
                 </div>

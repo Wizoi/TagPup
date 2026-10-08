@@ -610,6 +610,8 @@ export function openFolderView() {
     upper.renderThumbnails();
     upper.updateSelectedThumbnailsCount();
     updatePhotoPosition();
-    // A move from a library view lands on the photo it was made from (library-moves.js).
+    // The view of the library as it was left when a photo was opened over it (view-left.js), then a move from a view lands
+    // on the photo it was made from (library-moves.js).
+    upper.restoreViewAsLeft();
     upper.landOnAnchor();
 }

@@ -2631,17 +2631,40 @@ Analysis, in the order it would be decided:
   program (MP and MWG) is read; regions edited in another program after TagPup wrote them; a
   folder in two libraries; a photo whose file is replaced by an older copy.
 
-### Backlog: the library view's selection details navigate, not edit *(owner, 2026-10-04; after 9e)*
-In a library view, the right pane's tags and people should stop working the way Organize's do (chips that change
-what photos hold). Clicking a person opens the People tab on that person's photos; clicking a tag opens the
-Keywords tab on that tag's photos -- a view change, the navigator showing it selected, as a sidebar click does.
-Suggest's auto-apply of AI suggestions does not belong in a library view and leaves its pane. *Owner,
-2026-10-04 (scheduled Thursday 2026-10-08):* the pane splits in two. **Navigation** on top: Folders to Organize (as
-now), **People jump** (each person of the selection a link to the People view of that person) and **Keyword jump**
-(each keyword a link to the Keywords view of that tag, leaving out the tags of people already under People).
-**Tagging** below, collapsible and collapsed at first, holding the people and tag editing tools (9d-2's bulk add
-and take-off stay, here). Also: the magnifying glass's photo page needs a way back to the view exactly as it was
-left -- scroll, selection, view -- since a library view's sidebar is not one-to-one with its photos.
+### The library view's selection details navigate, and a photo has a way back *(owner, 2026-10-04; built in wave 3A, #780, #781)*
+The right pane of a library view is two halves (`web/tagpup/selection-panel.js`). **Navigation**, above: Folders to Organize (as
+before), **People jump** and **Keyword jump** -- each person, and each keyword, the selected photos carry (the server's tally, so the
+whole selection and not the cards the page holds) a link that opens the People view of that person or the Keywords view of that tag
+(the tag and everything under it), as a click on the navigator's row does: the address names the view, the navigator shows it
+selected, Back returns, and the selection is left behind as it is whenever a view opens. Keyword jump leaves out the tags that are
+the people already listed and a folder offered to Organize; a list shows 12 and "and N more". A link has an address (`viewSearch`), so
+a Ctrl-click opens a new tab. **Tagging**, below, is a collapsible section that starts closed -- the choice is kept in this
+browser, `tagpup.selectionTagging` -- holding the people and tags with their arrows and x, and the bulk add of 9d-2, as they
+were; Suggest's auto-apply is not in a library view. Organize's panel is not split. *Decision:* the person's link is the tally's
+`people` (the server's own list: a person is a leaf name, a branch is never one); a tag is a person's tag when its leaf is a listed
+person's name; no query was added and no route changed.
+
+A photo opened over a view (the magnifying glass, Enter, the arrow keys with no photo open) is shown in the details panel, over a grid
+the browser hides and so forgets the scroll of. `web/tagpup/view-left.js` is the one owner of **the view as left**: when the photo is
+shown it keeps the grid's place (`state.viewLeft`: the scroll offset and the photo at the top of the view, which holds the place if
+the order changes) and makes the photo **one place in the history** (a state with `photo`, however many photos are stepped through;
+`history-entries.js` is the owner of the places the page makes, moved out of `library-view.js`), so the page's **Back** button,
+**Escape** and the browser's **Back** all return to the grid as it was left and Forward opens the photo again. The selection (ids, or a
+whole source less the ones left out), the order, the address, the navigator's open rows and the search box are not copied: they are
+the page's and are not touched while a photo is open. The grid comes back through `openFolderView`, which asks `restoreViewAsLeft`,
+whichever way the photo was closed (a delete of the open photo, a bulk delete that took it). Another view opened over the photo
+forgets the place (it was the first view's); a search's `searchBack` goes with the photo's place, one place further
+(`searchPlacesBack`). After a reload the view comes from its address and a Back finds the place the view's own history entry kept,
+best-effort; the selection is not kept.
+
+The grid keeps *a place*, not an offset (`vgrid.js`: `placeOfView`, `showPlace`; `relayout` reads the row at the top from the cards where
+they are). A real browser showed why: a card's height is measured when the grid is laid out and can differ by a pixel or two when it is
+shown again (the width moved), and an offset 1,669 rows down is then 3,300 pixels -- 16 rows -- from where it was; the row was read from
+the offset and the stride of a layout that was no longer the rows' own. Measured in headless Chromium on a copy of photo_index (a search
+of 20,995 photos, Select all less one, scrolled to row 1,677; `scripts/measure_photo_back.py`): before, no Back button, Escape left the
+photo open and the browser's Back left the page; after, the button 43 ms, Escape 31 ms, the browser's Back 28 ms (medians of 3) to the
+painted grid, the same row at the top, the same selection and address in 3 of 3. A People jump, click to the People view painted: 130 to
+171 ms.
 
 ### Backlog: which photo fields are searchable *(owner, 2026-10-04; after phase 9)*
 A later review of which metadata fields search offers, as members (all of / any of / none of) and as words. Named

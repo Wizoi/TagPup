@@ -1142,6 +1142,87 @@ body {
     font-size: 12px;
 }
 
+/* The selection's details in a library view, in two halves (#781): navigation (Folders to Organize, People jump, Keyword jump:
+   links that open a view) above, and below it Tagging, a section that starts closed. */
+.selection-navigation,
+.selection-tagging-body {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.selection-navigation.hidden,
+.selection-tagging-body.hidden {
+    display: none;
+}
+
+.selection-jump-list {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.selection-jump-link,
+.selection-jump-more {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 13px;
+    color: var(--accent);
+    cursor: pointer;
+    text-align: left;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+}
+
+.selection-jump-link:hover,
+.selection-jump-link:focus-visible,
+.selection-jump-more:hover,
+.selection-jump-more:focus-visible {
+    text-decoration: underline;
+}
+
+.selection-jump-more {
+    color: var(--text-secondary);
+}
+
+.selection-tagging-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 0;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border-color);
+    color: #a5b4fc;
+    font-family: var(--font-heading);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+
+.selection-tagging-toggle.hidden {
+    display: none;
+}
+
+.selection-tagging-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.selection-tagging-arrow {
+    display: inline-block;
+    transition: transform 0.15s;
+}
+
+.selection-tagging-toggle.open .selection-tagging-arrow {
+    transform: rotate(90deg);
+}
+
 .selection-summary-group {
     display: flex;
     flex-direction: column;
@@ -1870,31 +1951,7 @@ body.just-looking #faces-strip {
     font-weight: 600;
 }
 
-/* The page is dark; without this Windows draws a select's drop-down list light,
-   and the list shows a white strip below the options styled dark. */
-select {
-    color-scheme: dark;
-}
-
-#db-select {
-    background-color: var(--bg-tertiary) !important;
-    color: var(--text-primary) !important;
-    border: 1px solid var(--border-color) !important;
-    font-family: var(--font-body) !important;
-    font-size: 13px !important;
-    height: 32px !important;
-    border-radius: 6px !important;
-    outline: none !important;
-    cursor: pointer !important;
-}
-
-#db-select option {
-    background-color: var(--bg-secondary) !important;
-    color: var(--text-primary) !important;
-    font-family: var(--font-body) !important;
-}
-
-
+/* The drop-down lists are dark, in web/common/dark-select.css (#782). */
 
 /* ---- Grid context menu ------------------------------------------------- */
 .context-menu {

@@ -1432,30 +1432,7 @@ body {
     gap: 12px;
 }
 
-/* The page is dark; without this Windows draws a select's drop-down list light,
-   and the list shows a white strip below the options styled dark. */
-select {
-    color-scheme: dark;
-}
-
-#db-select {
-    background-color: var(--bg-tertiary) !important;
-    color: var(--text-primary) !important;
-    border: 1px solid var(--border-color) !important;
-    font-family: var(--font-body) !important;
-    font-size: 13px !important;
-    height: 32px !important;
-    border-radius: 6px !important;
-    outline: none !important;
-    cursor: pointer !important;
-}
-
-#db-select option {
-    background-color: var(--bg-secondary) !important;
-    color: var(--text-primary) !important;
-    font-family: var(--font-body) !important;
-}
-
+/* The drop-down lists are dark, in web/common/dark-select.css (#782). */
 
 /* ---- Folder indexing progress ------------------------------------------ */
 .index-progress-container {

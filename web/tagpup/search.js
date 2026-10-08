@@ -30,6 +30,7 @@ import {
     librarySearchWithinName, librarySearchWithinRow, librarySearchWords
 } from './elements.js';
 import { closeViewAsNewPlace, openLibraryView } from './library-view.js';
+import { searchPlacesBack } from './view-left.js';
 import {
     MAX_MEMBERS, MAX_WORDS, SEARCH_LISTS, addressTooLong, searchAsksSomething, searchValue, searchWords, termSaysSomething,
     viewLabel
@@ -301,7 +302,7 @@ export function clearSearch() {
         paintWithin();
         return;
     }
-    const back = Number(window.history.state && window.history.state.searchBack);
+    const back = searchPlacesBack();
     if (back > 0) window.history.go(-back);
     else closeViewAsNewPlace();
 }

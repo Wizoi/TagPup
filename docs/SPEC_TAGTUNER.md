@@ -306,8 +306,8 @@ an assignment is undone by unmatching, an exclusion by restoring.
 
 ### 0.4 Ordering the people list
 
-The sidebar orders people by how many photos are waiting, which puts the most work
-first. **Name (A-Z)** is offered alongside, because finding one person among twenty-two
+The sidebar starts on **Name (A-Z)** the first time and then on whichever order was last chosen (#793); **Most photos first** puts the most work
+first and is offered alongside, because finding one person among twenty-two
 ordered by count means reading all of them, and you usually already know the name. The
 comparison is the shared one for tags and people -- alphabetical, case and accents ignored, numbers in order ("Trip 3" before "Trip 10"), a path one level at a time (`compareTagNames` / `sortedTags`, `web/common/vocabulary.js`; the server's `tag_sort_key`, `tagpup.core.vocabulary`, is the same order, and `tests/fixtures/tag_order.json` holds the two to one table) -- so a lower-case name does not sort after every capitalised one. By count, people with the same count are in that order too.
 The choice is remembered across sessions.

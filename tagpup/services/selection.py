@@ -80,14 +80,15 @@ MAX_FOLDERS_LISTED = 10
 
 def tally(library, selection):
     """What the photos of `selection` hold: {"total" (the photos that exist), "tags": [{"tag", "count"}], "people":
-    [{"name", "count"}], "more_tags", "more_people", "folders": {"count", "listed": [{"path", "name", "photos"}]}} -- the
+    [{"name", "count", "has_node"}], "more_tags", "more_people", "folders": {"count", "listed": [{"path", "name", "photos"}]}} -- the
     folders the selection is in, counted, and named (native path, the folder's own name, its photos selected) only when
     there are MAX_FOLDERS_LISTED or fewer, by name (#675: what the panel offers to open in Organize; 68,000 photos are
     one grouped read of photo_folder, never 68,000 paths); and the tags and people the selection carries, each with the number of
     its photos, tags alphabetically by the shared order (vocabulary.tag_sort_key) and people by it too, at most MAX_TALLIED
     of each (the rest are counted in `more_*`, the most used kept). From photo_tags and photo_people, one grouped read over
     the selection: a source is joined in SQL and its excluded ids taken out there, so 68,000 photos are no list in
-    Python and no request of that size. A tag no node of the tree holds is not in photo_tags and so not in it (the
+    Python and no request of that size. A tag that is a person's node is a person and is left out of "tags" before they are cut
+    (#865); a person's `has_node` says whether the tree has one node of that name (no: a branch, two nodes, none; #866). A tag no node of the tree holds is not in photo_tags and so not in it (the
     navigator's counts leave it out too). Refused as `resolve` refuses a selection, but NOT for being larger than a job
     takes: the panel may tally a whole library."""
     conn = library_view.opened(library)
@@ -99,9 +100,11 @@ def tally(library, selection):
         conn.close()
     tags = _kept([(tag, count) for tag, count in found["tags"]])
     people = _kept(found["people"])
+    nameless = set(found["nameless"])
     return {"total": found["total"],
             "tags": [{"tag": tag, "count": count} for tag, count in tags[0]], "more_tags": tags[1],
-            "people": [{"name": name, "count": count} for name, count in people[0]], "more_people": people[1],
+            "people": [{"name": name, "count": count, "has_node": name not in nameless} for name, count in people[0]],
+            "more_people": people[1],
             "folders": folders}
 
 

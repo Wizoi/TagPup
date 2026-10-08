@@ -69,6 +69,7 @@ class People:
 
     def __init__(self, nodes, parents=()):
         self.by_key, self.branches = {}, {}
+        self.nodes = set()   # every person node's id, those two nodes are called alike too
         parents = set(parents)
         for node_id, tag, name in sorted(nodes):
             if not tag or vocabulary.SEPARATOR not in tag:
@@ -79,6 +80,7 @@ class People:
             if node_id in parents:
                 self.branches.setdefault(leaf, []).append(node_id)   # a branch tag is not a person
                 continue
+            self.nodes.add(node_id)
             self.by_key[leaf] = People.AMBIGUOUS if leaf in self.by_key else node_id
 
     @classmethod

@@ -16,13 +16,15 @@ import {
 import { fetchKnownTagsAndPeople } from './tags.js';
 import { leavePhotoThen, wireUnsavedEdits } from './edits.js';
 import {
-    browseFolder, filterFileList, renderFileList, scanFolder, showFolderView,
+    browseFolder, filterFileList, renderFileList, scanFolder,
     wireChangeDogPark, wireFolderPathInput, wireSidebarResizer
 } from './folder.js';
 import { wireTagPupGear } from './gear.js';
 import {
-    leaveLibraryView, libraryChanged, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
+    leaveLibraryView, libraryChanged, openLibraryView, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
 } from './library-view.js';
+import { wireSelectionPanel } from './selection-panel.js';
+import { restoreViewAsLeft, showGrid, wireViewLeft } from './view-left.js';
 import { deleteSelection } from './bulk-edit.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
 import { choosePane, navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
@@ -35,7 +37,7 @@ import { photosWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
 import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
-    carryTagsForward, deleteActivePhoto, openPhotoInDefaultApp, renderPhotoFaces, renderTags, rotatePhoto,
+    carryTagsForward, deleteActivePhoto, openLibraryPhoto, openPhotoInDefaultApp, renderPhotoFaces, renderTags, rotatePhoto,
     reloadChangedPhoto, saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
     updateCarryForwardState, wireDateTakenModal, wireZoom
 } from './photo.js';
@@ -67,6 +69,7 @@ Object.assign(upper, {
     renderFileList, renderPhotoFaces, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
+    openLibraryPhoto, openLibraryView, restoreViewAsLeft,
     photosDeleted, photosWritten, reloadChangedPhoto, showSortOrder,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
@@ -100,7 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnRefreshList.addEventListener('click', refreshFolderOrView);
     
     photoSearch.addEventListener('input', filterFileList);
-    folderViewHeader.addEventListener('click', showFolderView);
+    folderViewHeader.addEventListener('click', showGrid);
     
     btnSelectAllThumbnails.addEventListener('click', selectAllThumbnails);
     btnSelectNoneThumbnails.addEventListener('click', selectNoneThumbnails);
@@ -149,6 +152,12 @@ document.addEventListener('DOMContentLoaded', () => {
     wireSortMenu();
     wireMoves();
     wireBanner();
+
+    // The selection details: the Tagging section's button, and what this browser remembers of it.
+    wireSelectionPanel();
+
+    // The photo panel's Back, to the grid of a library view as it was left.
+    wireViewLeft();
 
     // The strip of a bulk edit of the library's photos: Cancel, Resume, Start again.
     wireBulk();

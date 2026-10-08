@@ -55,6 +55,11 @@ export const state = {
     // position, and `at` is the position of the place the page shows (null: not known -- a place another load made, or one a
     // folder's address replaced). A Back or Forward cancelled for unsaved edits goes back to `at`.
     entries: { load: Math.random().toString(36).slice(2), at: null },
+    // The library view as it was left when a photo was opened over it (view-left.js, #780): { token, scrollTop, anchorId, anchorIndex },
+    // or null while the grid is what is shown.
+    viewLeft: null,
+    // A Back out of the photo was asked of the browser and has not arrived (view-left.js backToView): a second asks nothing.
+    backUnderway: false,
     // The Sort by menu of a view's header (sort-menu.js, #714): whether it is open, and the token of the view it was drawn for.
     sortMenu: { open: false, token: 0 },
     // The search box of the Library pane (search.js, phase 9e-2). `lists` the chips of All of, Any of and None of -- each a source
@@ -70,6 +75,9 @@ export const state = {
         note: '', problem: false, filtersOpen: false,
         picker: { list: null, options: [], active: -1, more: 0, asked: 0, names: [], from: null, message: '', reading: false, enterWaits: false },
     },
+    // The selection details of a library view (selection-panel.js, #781): whether the Tagging section is open (this browser remembers it),
+    // and which jump lists were opened past their first few links ("and N more").
+    selectionPanel: { taggingOpen: false, expanded: { people: false, keywords: false } },
     // When the library was last in step with its folders, for the view's strip (sync-state.js).
     // `lastRunInStep`: whether the newest sync, of the whole library or a folder, left it in step (null: none, or not known).
     syncInfo: { status: 'idle', lastInStep: null, lastRunInStep: null, syncing: false, known: false, asked: 0, controller: null },

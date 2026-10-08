@@ -412,6 +412,52 @@ describe("a change of layout", () => {
   });
 });
 
+describe("a place outlives a change of the cards' height (#780)", () => {
+  // In a real browser a card's height can differ by a pixel or two between the time the grid was laid out and the time it is shown
+  // again (the width moved by a few pixels), and an offset 1,500 rows down is then 3,000 pixels from the row it was. A place is the
+  // row at the top and how far into it the view is; it is shown again from the height read now.
+  test("a place read from the view, shown again after the cards grew by 2 px, is the same row", async () => {
+    const t = setup({ records: records(8000) });
+    t.view.refresh();
+    await t.scrollTo(100 + 216 * 1500 + 54);                       // row 1500 of 4 columns, a quarter of the way into it
+    const place = t.view.placeOfView();
+    assert.deepEqual(place, { index: 6000, fraction: 0.25 });
+    Object.assign(t.here, { cardHeight: 202 });                    // the cards, read again, are taller
+    t.here.scrollTop = 0;                                          // and the browser forgot the offset
+    assert.equal(t.view.showPlace(place), true);
+    assert.ok(Math.abs(t.here.scrollTop - (100 + 1500.25 * 218)) < 1e-6, String(t.here.scrollTop));
+    assert.ok(t.ids().includes("p6000"));
+  });
+
+  test("no place to show is no move", () => {
+    const t = setup({ records: records(100) });
+    t.view.refresh();
+    assert.equal(t.view.showPlace(null), false);
+    assert.equal(t.view.showPlace({ index: NaN, fraction: 0 }), false);
+  });
+
+  test("a relayout keeps the row the cards show, not the row the last layout's stride makes of the offset", async () => {
+    // The cards on screen are two rows further on than the offset and the stride say (a layout measured before the width moved):
+    // what the person sees at the top is row 1488, and that is the row kept.
+    const t = setup({ records: records(8000) });
+    t.view.refresh();
+    const real = t.win.Element.prototype.getBoundingClientRect;
+    t.win.Element.prototype.getBoundingClientRect = function box() {
+      if (this.id === "s") return { top: 0, bottom: 600, height: 600, left: 0, right: 600, width: 600 };
+      if (this.dataset && this.dataset.id) {
+        const row = Math.floor(Number(this.dataset.id.slice(1)) / 4);
+        const top = 100 + (row - 2) * 216 - t.here.scrollTop;
+        return { top, bottom: top + 200, height: 200, left: 0, right: 150, width: 150 };
+      }
+      return real.call(this);
+    };
+    await t.scrollTo(100 + 216 * 1486 + 36);
+    Object.assign(t.here, { cardHeight: 202 });
+    t.view.relayout();
+    assert.ok(Math.abs(t.here.scrollTop - (100 + (1488 + 36 / 216) * 218)) < 1e-6, String(t.here.scrollTop));
+  });
+});
+
 describe("hidden, then shown again", () => {
   test("the grid comes back at the place it was left", async () => {
     const t = setup({ records: records(2000) });
