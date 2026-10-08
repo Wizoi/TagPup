@@ -119,7 +119,7 @@ def expand_tag_fields(tags):
 def keyword_fields(flat, hierarchical):
     """Every field a keyword write sets, and what it sets it to.
 
-    The one list of them. write_keywords writes exactly these, and
+    The one list of them. The journaled write (tagpup.services.tagging) writes exactly these, and
     record_keyword_fields records exactly these, so the file and its index row cannot
     drift apart one field at a time. They did: the index recorded the two XMP fields
     and not IPTC:Keywords, which vocabulary.extract_tags also reads, so a tag removed

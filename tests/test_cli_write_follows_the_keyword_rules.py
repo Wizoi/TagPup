@@ -3,7 +3,7 @@
 It had its own ExifTool code: every hierarchical tag was also split into its parts, so
 "Activity/Rowing" wrote loose "Activity" and "Rowing" keywords beside it; a person named
 by a bare leaf was written bare; and the index was never told, so its rows described
-what the photos used to hold. It now writes through tagpup.files.keywords.write_keywords,
+what the photos used to hold. It now writes through the journaled keyword write (tagpup.services.tagging),
 people resolved first, and tagpup.store.photos.record_tags, like every other keyword write.
 """
 import json
