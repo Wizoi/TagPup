@@ -152,6 +152,26 @@ describe("cluster buttons act on the faces still in the cluster", () => {
     );
   });
 
+  test("a selection ruled out in bulk is ruled out as faces only: no photo's keywords are written (#901)", async (t) => {
+    const { window, document, server } = await openGrid(t, { clusterSize: 6 });
+    await excludeByHand(window, document, [5, 6]);
+    assert.equal(server.lastBody("/api/faces/exclude").leave_tags, true);
+    const section = clusterSection(document, "Cluster 5");
+    await pressIgnoreCluster(window, document, section);
+    assert.equal(server.lastBody("/api/faces/exclude").leave_tags, true);
+  });
+
+  test("the server's warning on a bulk exclusion is shown, not thrown away", async (t) => {
+    const { window, document, server } = await openGrid(t, {
+      clusterSize: 6, excludeReply: { success: true, excluded: 2, warning: "A sentence from the server." },
+    });
+    const said = [];
+    window.alert = (text) => said.push(text);
+    await excludeByHand(window, document, [5, 6]);
+    assert.deepEqual(said, ["A sentence from the server."]);
+    assert.ok(server.lastBody("/api/faces/exclude"));
+  });
+
   test("Assign N after excluding one does not name the excluded face", async (t) => {
     const { window, document, server } = await openGrid(t, { clusterSize: 6 });
     const section = clusterSection(document, "Cluster 5");

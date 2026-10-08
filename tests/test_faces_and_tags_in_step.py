@@ -275,6 +275,35 @@ class TakingANameOffTakesThePersonOff(InStep):
         self.assertEqual({}, reply.get_json().get("untag", {}))
         self.assertEqual((0, 0), (self.files.writes, self.files.read_calls), "a photo was read for faces that carried no name")
 
+    def test_a_tag_the_owner_typed_by_hand_goes_too(self):
+        # The owner's rule (#900): a face that is not them is not a person of the photo, whoever wrote the tag. Naming found
+        # the tag there and wrote nothing, so the journal has no change for it; Unmatch takes it off all the same.
+        photo = self.held("off_012.jpg", [PEOPLE + WREN])
+        face = self.face(photo)
+        self.face(photo, box=(70, 10, 110, 60))
+        self.tuner_post("face/match", {"face_id": face, "person_name": WREN})
+        self.assertEqual([], self.journal_operations(), "the tag was there already: nothing was written for it")
+        reply = self.tuner_post("face/unmatch", {"face_id": face})
+        self.assertEqual(1, reply.get_json()["tags_removed"])
+        self.assertEqual([], self.tags(photo))
+
+    def test_excluding_a_selection_of_named_faces_in_bulk_writes_no_photo(self):
+        # TagTuner's Exclude selected and Ignore cluster send `leave_tags`: faces only, as the docs say (#901).
+        ids = []
+        for n in range(20):
+            photo = self.held("bulk_%02d.jpg" % n, [PEOPLE + WREN])
+            ids += [self.face(photo, box=(10 + 20 * m, 10, 25 + 20 * m, 25), name=WREN, name_source="manual" if m == 0 else None)
+                    for m in range(10)]
+        self.assertEqual(200, len(ids))
+        reply = self.tuner_post("faces/exclude", {"face_ids": ids, "reason": "ignored cluster", "leave_tags": True})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(200, reply.get_json()["excluded"])
+        self.assertEqual((0, 0), (self.files.writes, self.files.read_calls), "a photo file was read or written")
+        self.assertNotIn("untag", reply.get_json())
+        self.assertNotIn("warning", reply.get_json())
+        self.assertEqual([], self.look("SELECT 1 FROM changes WHERE operation = 'person taken off for an unnamed face'"))
+        self.assertEqual([PEOPLE + WREN], self.tags(self.look("SELECT path FROM photos ORDER BY id")[0][0]))
+
     def test_unmatch_all_takes_off_every_person_the_names_gave(self):
         photo = self.held("off_008.jpg", [PEOPLE + WREN, PEOPLE + ODA, "Regatta"])
         self.face(photo, name=WREN, name_source="manual")

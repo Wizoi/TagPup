@@ -120,6 +120,16 @@ function askWith(reasons, count, modal, choices) {
     });
 }
 
+/** The server's own words for a refused exclusion, else a plain sentence. */
+async function exclusionWhy(res) {
+    try {
+        const body = await res.json();
+        return (body && (body.error || body.message)) || 'Exclude failed';
+    } catch (error) {
+        return 'Exclude failed';
+    }
+}
+
 /** Resolves true once the server has excluded the faces, false otherwise. */
 export function postExcludeBulk(faceIds, presetReason) {
     if (!faceIds.length) return Promise.resolve(false);
@@ -140,13 +150,17 @@ export function postExcludeBulk(faceIds, presetReason) {
     return api.fetch('/api/faces/exclude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim() })
+        // A selection is ruled out as faces only: writing a keyword out of hundreds of photo files from one click is not
+        // this button's job (the single "Not important" in a photo's panel takes the person's tag off).
+        body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim(), leave_tags: true })
     })
-    .then(res => {
-        if (!res.ok) throw new Error('Exclude failed');
+    .then(async res => {
+        if (!res.ok) throw new Error(await exclusionWhy(res));
         return res.json();
     })
-    .then(() => {
+    .then(data => {
+        // Said, not thrown: the faces are ruled out all the same.
+        if (data && data.warning) alert(data.warning);
         const excluded = new Set(faceIds);
         state.activePersonFaces = state.activePersonFaces.filter(f => !excluded.has(f.id));
         // In place. Rebuilding the grid to account for a handful of cards leaving

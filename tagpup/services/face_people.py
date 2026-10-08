@@ -323,9 +323,12 @@ def unname_photo(library, photo_path, writer=None):
     return result
 
 
-def exclude(library, face_ids, reason=None, writer=None):
+def exclude(library, face_ids, reason=None, writer=None, leave_tags=False):
     """Rule faces out ("not important"), then take the tags of the people they were named off their photos, as unnaming
-    does."""
+    does. With `leave_tags` (a selection ruled out in bulk: Exclude selected, Ignore cluster) the faces only: no photo is
+    read or written, and the people stay on their photos' keywords, the state the app allows."""
+    if leave_tags:
+        return faces_service.exclude(library, face_ids, reason)
     named = _names_of(library, face_ids)
     result = faces_service.exclude(library, face_ids, reason)
     if result.changed and named:

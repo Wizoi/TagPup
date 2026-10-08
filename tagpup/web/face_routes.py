@@ -221,7 +221,8 @@ def faces_exclude():
         abort(400, description="Missing or invalid face_ids")
     reason = body.get("reason")   # none: the service's default
     writer = writer_for(library, bool(body.get("page_writes_tags")))
-    result = faces_write(library, lambda lib: face_people.exclude(lib, face_ids, reason, writer))
+    leave_tags = bool(body.get("leave_tags"))
+    result = faces_write(library, lambda lib: face_people.exclude(lib, face_ids, reason, writer, leave_tags))
     # The rows changed, not the ids sent: an id that is not in the table was never
     # excluded, and saying it was is how a write reports success on nothing.
     return jsonify({"success": True, "excluded": result.changed, **tags_reply(result)})
