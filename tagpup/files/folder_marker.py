@@ -19,9 +19,10 @@ service's (tagpup.services.folder_ids).
   entry kept byte for byte, and ours appended (`with_entry`). Nothing makes a file writable: a
   marker with the read-only attribute is left (the rename is refused, Windows' Access is
   denied) and counted by the caller.
-- **Finding.** `find` walks the folders it is given, listing each once, and reads the markers
-  it meets for one library's entries. A junction or link is not walked into
-  (tagpup.files.images.walks_into). It decides nothing; it reports what it saw.
+- **Finding.** `read_in` reads the markers of the folders it is given and nothing else; `subfolders` lists the
+  folders directly in one (one listing); `find` walks the folders it is given, listing each once, and reads the
+  markers it meets for one library's entries. A junction or link is not walked into
+  (tagpup.files.images.walks_into). They decide nothing; they report what they saw.
 """
 import ctypes
 import os
@@ -214,6 +215,47 @@ def clear_stale(folder, now=None):
     except OSError:
         pass
     return gone
+
+
+def subfolders(parent):
+    """The folders directly in `parent`, as stored; [] for one that cannot be listed (one listing, no recursion)."""
+    try:
+        with os.scandir(paths.stored(parent)) as listing:
+            return [entry.path for entry in listing if images.walks_into(entry)]
+    except OSError:
+        return []
+
+
+def read_in(folders, library_id):
+    """({folder id: [the folders among `folders` holding an entry of `library_id` for it]}, stats): the marker of
+    each folder given, read and nothing listed. stats counts the markers read, malformed and unreadable."""
+    found, stats = {}, {"folders": 0, "markers": 0, "malformed": 0, "unreadable": 0}
+    seen = set()
+    for folder in folders:
+        key = paths.key(folder)
+        if key in seen:
+            continue
+        seen.add(key)
+        marker = read(folder)
+        if marker.state == ABSENT:
+            continue
+        stats["markers"] += 1
+        if marker.state == MALFORMED:
+            stats["malformed"] += 1
+        elif marker.state == UNREADABLE:
+            stats["unreadable"] += 1
+        elif marker.state == OK and marker.entry_of(library_id):
+            found.setdefault(marker.entry_of(library_id), []).append(paths.stored(folder))
+    return found, stats
+
+
+def merge(into, found):
+    """Add the places `found` to `into` ({folder id: [folders]}), each folder once."""
+    for folder_id, places in found.items():
+        have = into.setdefault(folder_id, [])
+        for place in places:
+            if not any(paths.same(place, each) for each in have):
+                have.append(place)
 
 
 def find(tops, library_id):

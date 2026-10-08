@@ -39,19 +39,26 @@ id recorded for it is written by the next run. Two libraries marking one folder 
 instant could still replace each other's entry (a rename cannot compare first); the read-back
 after the rename counts it (`lost`) and the next run puts the entry back.
 
-**follow** (a sync's, the watcher's and `relink-folders`'): a row of `folder_ids` whose folder is
-gone, and a marker carrying that id for this library in a folder under the folders the library
-walks or beside the folder that is gone, points the rows directly in the old folder at the new, the `folder_ids` row, and the
-library's root and ignored-folder settings and the folders added (as folder_moves does) at it,
-as one journaled change, `follow_folder_markers`, with no evidence needed beyond the id. Per
-photo: the file of the same name in the new folder when it has no row; else a file with the
-same DocumentID, or the same size and Date Taken (folder_moves.pair_by_evidence), for a folder
-renamed and its photos renamed. A file that already has a row is never a destination
-(relink_photos.edits_for). The copy rule, per library: of the folders carrying an id the one
-whose recorded folder is gone takes the link; a copy beside a recorded folder that is there is
-reported and nothing follows it; two places for one lost id are ambiguous and nothing follows; a
-shared id never moves a row. Only positive evidence moves anything: a folder not found, a share
-not reachable, a folder that cannot be listed move nothing.
+**follow** (a sync's, the watcher's -- any scope, a folder's sync included -- and `relink-folders`'): the one
+step that decides "this new folder is a marked folder that was lost" before anything is queued. When the sync
+found a file missing or moved and the library has marked folders, a row of `folder_ids` whose folder is among
+those of the missing or moved rows and is gone, and a marker carrying that id for this library in a folder the
+sync found new files or moved files in, or beside the folder that is gone (the same path under each folder in
+its parent's listing, one listing and no walk), points the rows directly in the old folder at the new, the
+`folder_ids` row, and the library's root and ignored-folder settings and the folders added at it, as one
+journaled change, `follow_folder_markers`, with no evidence needed beyond the id. It runs after the sync's own
+change and before the folders of new files are queued, so a followed folder is never queued as new. Per photo:
+the file of the same name in the new folder when it has no row; else a file with the same DocumentID, or the same
+size and Date Taken (folder_moves.pair_by_evidence), for a folder renamed and its photos renamed. A file that
+already has a row is never a destination (relink_photos.edits_for). **A folder none of whose rows can go -- its
+files already have rows of their own, because they were indexed as new before anything followed, or none of its
+files is there -- is left, as it was, and reported (`left`): its id is not moved and it is not said to be followed,
+since the rows and the faces named on them would stay missing with nothing to say so.** The copy rule, per
+library: of the folders carrying an id the one whose recorded folder is gone takes the link; a copy beside a
+recorded folder that is there is reported and nothing follows it; two places for one lost id are ambiguous and
+nothing follows; a shared id never moves a row. Only positive evidence moves anything: a folder not found, a
+share not reachable, a folder that cannot be listed move nothing. A folder moved to another parent is found when
+the sync found its files new there or moved there; `relink-folders` looks beside the folder only.
 """
 import collections
 import os
@@ -132,7 +139,7 @@ def look(library):
         "leaf_folders", "already", "new", "restore", "adopt", "copy", "moved", "disagree", "malformed", "unreadable",
         "unwritable", "gone", "ignored", "shared_with_other_libraries", "recorded"))
     counts["recorded"] = len(recorded)
-    items, reveal = [], collections.defaultdict(list)
+    items, tidy, reveal = [], [], collections.defaultdict(list)
     for folder, _photos in sorted(folders, key=lambda each: paths.key(each[0])):
         counts["leaf_folders"] += 1
         if store_folders.is_ignored(folder, ignored):
@@ -151,10 +158,12 @@ def look(library):
             counts["shared_with_other_libraries"] += 1
         if kind in ("new", "restore", "adopt"):
             items.append(_Item(kind, folder, folder_id, marker.data))
+        elif kind == "already":
+            tidy.append(folder)
     edits = [store.insert_edit(item.folder, item.folder_id) for item in items if item.kind in ("new", "adopt")]
     counts["would_stamp"] = int(library_id is None and any(item.kind == "new" for item in items))
     return maintenance.Plan(size=len(edits), counts=dict(counts), reveal=dict(reveal),
-                            work={"identity": library_id, "items": items, "edits": edits})
+                            work={"identity": library_id, "items": items, "edits": edits, "tidy": tidy})
 
 
 def mark(library, apply=False):
@@ -191,6 +200,8 @@ def _apply(library):
         result.refuse(planned.refused)
         return result
     items = planned.work["items"]
+    for folder in planned.work["tidy"]:
+        folder_marker.clear_stale(folder)      # a crashed run's leftovers, also where nothing is written now
     if not items:
         return result
     library_id = planned.work["identity"] or folder_marker.new_id()
@@ -199,10 +210,10 @@ def _apply(library):
     # 1. Stage every file under a temporary name: a place that refuses is counted here, before anything is recorded.
     staged = []
     for item in items:
+        folder_marker.clear_stale(item.folder)
         if item.kind == "adopt":
             staged.append((item, None))
             continue
-        folder_marker.clear_stale(item.folder)
         try:
             temp = folder_marker.stage(item.folder, folder_marker.with_entry(item.data, library_id, item.folder_id))
         except OSError as e:
@@ -292,11 +303,13 @@ def _direct_photos(folder):
     return found
 
 
-def _pairs_for(rows, new, known, exiftool_path):
+def _pairs_for(conn, rows, new, exiftool_path):
     """([(row path, file path)], how many by name, how many by evidence, how many rows whose file of
-    that name already has a row) for `rows` (the photos directly in a folder that was moved) and the
-    photos now directly in `new`. A file with a row is no destination."""
+    that name already has a row, how many files in `new` have a row) for `rows` (the photos directly in a folder that was moved) and the
+    photos now directly in `new`. A file with a row is no destination: whether it has one is asked of the
+    files in `new` alone, a point lookup each."""
     files = _direct_photos(new)
+    known = set(store_photos.rows_of(conn, [path for path, _m, _s in files.values()]))
     by_name = {}
     for key, (path, _m, _s) in files.items():
         by_name.setdefault(paths.name_key(os.path.basename(path)), []).append(key)
@@ -314,92 +327,125 @@ def _pairs_for(rows, new, known, exiftool_path):
         left.append(row)
     free = {key: stamp for key, stamp in files.items() if key not in known and key not in taken}
     matched = folder_moves.pair_by_evidence(left, free, exiftool_path) if left and free else []
-    return pairs + matched, len(pairs), len(matched), occupied
+    return pairs + matched, len(pairs), len(matched), occupied, len(known)
 
 
-def look_follow(library, tops, exiftool_path=None):
+def _near(lost, gone):
+    """The folders a folder that is gone may be at, beside it: for each (id, path) of `lost`, the same path
+    under each folder directly in the parent of the topmost folder gone (a renamed folder, and one holding it
+    renamed: `Trips` to `Trips 2026` puts `Trips/Harbour` at `Trips 2026/Harbour`). One listing of that parent
+    and no walk; the same as folder_moves looks beside a folder."""
+    near, listed = [], {}
+    for _folder_id, path in lost:
+        top = gone.unit(path)
+        parent = os.path.dirname(top)
+        if paths.key(parent) not in listed:
+            listed[paths.key(parent)] = folder_marker.subfolders(parent)
+        relative = os.path.relpath(paths.stored(path), paths.stored(top))
+        for sibling in listed[paths.key(parent)]:
+            near.append(sibling if relative == "." else os.path.join(sibling, relative))
+    return near
+
+
+def look_follow(library, places=(), trees=(), row_folders=None, exiftool_path=None):
     """A Plan: which folders the library has marked are gone and found again by their markers, and
-    what following them would write. Reads the rows, lists the folders under `tops`, reads ExifTool
-    only for the files of a folder renamed with its photos renamed. Writes nothing.
+    what following them would write. Reads the rows; writes nothing.
+
+    Which folders are looked at is bounded (docs/ARCHITECTURE.md, "Folder ids"): the marked folders asked
+    about are those of `row_folders` (the folders of the rows a sync found missing or moved; every marked folder
+    when None, for the explicit command), each stat'ed once; the markers are read in `places` (the folders a
+    sync found new files in or moved files to) and under `trees` (the folders it would only review), and, for
+    an id still not found, beside the folder that is gone (_near: one listing of its parent). Never a walk of
+    a root. Reads ExifTool only for the files of a folder renamed with its photos renamed.
     work = {"edits", "followed": [(old, new)], "added_follow"}."""
     counts = collections.OrderedDict((name, 0) for name in (
-        "marked", "gone", "followed", "not_found", "ambiguous", "conflicts", "copies", "photos_moved", "by_name",
-        "by_evidence", "occupied", "folders_listed", "unreadable", "malformed", "settings_followed",
+        "marked", "gone", "followed", "not_found", "ambiguous", "conflicts", "copies", "left", "photos_moved",
+        "by_name", "by_evidence", "occupied", "folders_listed", "unreadable", "malformed", "settings_followed",
         "added_renamed", "added_left"))
+    reveal = {"followed": [], "not_found": [], "ambiguous": [], "conflicts": [], "left": [], "occupied": []}
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         library_id = store.identity(conn)
         recorded = store.rows(conn)
         counts["marked"] = len(recorded)
+        asked = recorded if row_folders is None else [
+            each for each in recorded if paths.key(each[1]) in {paths.key(folder) for folder in row_folders}]
         gone = folder_moves.Gone()
-        lost = [(folder_id, path) for folder_id, path, _marked in recorded
+        lost = [(folder_id, path) for folder_id, path, _marked in asked
                 if not gone.there(path) and gone.unit(path) is not None] if library_id else []
         counts["gone"] = len(lost)
         if not lost:
             return maintenance.Plan(counts=dict(counts), work={"edits": [], "followed": [], "added_follow": []})
-        # Under the folders the library walks, and beside each folder that is gone: a library with no root set
-        # walks only the folders it holds, and a renamed folder is under none of them (as folder_moves looks).
-        beside = [os.path.dirname(gone.unit(path)) for _folder_id, path in lost]
-        found, stats = folder_marker.find(list(tops) + beside, library_id)
-        counts.update(folders_listed=stats["folders"], unreadable=stats["unreadable"], malformed=stats["malformed"])
-        evidence = store_photos.evidence(conn)
+
+        def look_at(found_here, stats_here):
+            folder_marker.merge(found, found_here)
+            for name in ("unreadable", "malformed"):
+                counts[name] += stats_here[name]
+            counts["folders_listed"] += stats_here["folders"]
+
+        found = {}
+        look_at(*folder_marker.read_in(places, library_id))
+        if trees:
+            look_at(*folder_marker.find(trees, library_id))
+        lost_ids = {folder_id for folder_id, _path in lost}
+        wanting = [each for each in lost if each[0] not in found]
+        if wanting:
+            look_at(*folder_marker.read_in(_near(wanting, gone), library_id))
         added = added_folders.every(conn)
         # A root kept in two places on this machine (the server's master and a local mirror) holds the same
         # marker at the same place under the root: one folder, not a copy. Places are told apart as the
         # library holds them, and spelled as this machine's first place for the root spells them.
-        for folder_id, places in list(found.items()):
+        for folder_id, here in list(found.items()):
             distinct = {}
-            for place in places:
+            for place in here:
                 row_form = store_roots.to_row(conn, place)
                 distinct.setdefault(paths.key(row_form), store_roots.from_row(conn, row_form))
             found[folder_id] = list(distinct.values())
+        recorded_paths = {paths.key(path): folder_id for folder_id, path, _marked in recorded}
+        # A copy: an id found in a folder other than the one recorded for it, whose recorded folder is there.
+        for folder_id, here in found.items():
+            if folder_id not in lost_ids:
+                counts["copies"] += sum(1 for place in here if recorded_paths.get(paths.key(place)) != folder_id)
+        pairs, written, folder_edits = [], [], []
+        for folder_id, old in sorted(lost, key=lambda each: paths.key(each[1])):
+            here = found.get(folder_id, [])
+            if not here:
+                counts["not_found"] += 1
+                reveal["not_found"].append(old)
+                continue
+            if len(here) > 1:
+                counts["ambiguous"] += 1
+                reveal["ambiguous"].append({"id_of": old, "places": here})
+                continue
+            new = here[0]
+            other = recorded_paths.get(paths.key(new))
+            if other is not None and other != folder_id:
+                counts["conflicts"] += 1
+                reveal["conflicts"].append(new)
+                continue
+            rows = [row for row in store_photos.evidence_under(conn, old) if paths.same(os.path.dirname(row[1]), old)]
+            got, by_name, by_evidence, occupied, held = _pairs_for(conn, rows, new, exiftool_path)
+            if rows and not got:
+                # Nothing of it can go to the folder: its files already have rows of their own (indexed as new
+                # before anything followed), or none of them is there. Following would move the folder's id and
+                # leave every row, and the faces named on them, missing for good, and say it was followed.
+                counts["left"] += 1
+                counts["occupied"] += occupied
+                reveal["left"].append({"from": old, "to": new, "rows": len(rows), "files_with_rows": held})
+                continue
+            counts["followed"] += 1
+            counts["by_name"] += by_name
+            counts["by_evidence"] += by_evidence
+            counts["occupied"] += occupied
+            pairs += got
+            written.append((old, new))
+            reveal["followed"].append({"from": old, "to": new, "photos": len(got)})
+            folder_edits.append(store.move_edit(folder_id, old, paths.stored(new)))
+        moves = relink_photos.moves_with_faces(conn, pairs) if pairs else []
     finally:
         conn.close()
-    recorded_paths = {paths.key(path): folder_id for folder_id, path, _marked in recorded}
-    lost_ids = {folder_id for folder_id, _path in lost}
-    # A copy: an id found in a folder other than the one recorded for it, whose recorded folder is there.
-    for folder_id, places in found.items():
-        if folder_id not in lost_ids:
-            counts["copies"] += sum(1 for place in places if recorded_paths.get(paths.key(place)) != folder_id)
-    known = {paths.key(row[1]) for row in evidence}
-    by_dir = collections.defaultdict(list)
-    for row in evidence:
-        by_dir[paths.key(os.path.dirname(row[1]))].append(row)
-    moves, pairs, written, folder_edits = [], [], [], []
-    reveal = {"followed": [], "not_found": [], "ambiguous": [], "conflicts": [], "occupied": []}
-    for folder_id, old in sorted(lost, key=lambda each: paths.key(each[1])):
-        places = found.get(folder_id, [])
-        if not places:
-            counts["not_found"] += 1
-            reveal["not_found"].append(old)
-            continue
-        if len(places) > 1:
-            counts["ambiguous"] += 1
-            reveal["ambiguous"].append({"id_of": old, "places": places})
-            continue
-        new = places[0]
-        other = recorded_paths.get(paths.key(new))
-        if other is not None and other != folder_id:
-            counts["conflicts"] += 1
-            reveal["conflicts"].append(new)
-            continue
-        rows = by_dir.get(paths.key(old), [])
-        here, by_name, by_evidence, occupied = _pairs_for(rows, new, known, exiftool_path)
-        counts["followed"] += 1
-        counts["by_name"] += by_name
-        counts["by_evidence"] += by_evidence
-        counts["occupied"] += occupied
-        pairs += here
-        written.append((old, new))
-        reveal["followed"].append({"from": old, "to": new, "photos": len(here)})
-        folder_edits.append(store.move_edit(folder_id, old, paths.stored(new)))
-    edits, moves = [], []
+    edits = []
     if pairs:
-        conn = db.connect(db.readonly_uri(library.path), uri=True)
-        try:
-            moves = relink_photos.moves_with_faces(conn, pairs)
-        finally:
-            conn.close()
         edits, occupied = relink_photos.edits_for(library, moves)
         counts["occupied"] += len(occupied)
         reveal["occupied"] = occupied
@@ -413,15 +459,17 @@ def look_follow(library, tops, exiftool_path=None):
                             work={"edits": edits, "followed": written, "added_follow": added_follow})
 
 
-def follow(library, tops, apply=False, exiftool_path=None, rehearse=False):
+def follow(library, places=(), trees=(), row_folders=None, apply=False, exiftool_path=None, rehearse=False):
     """Follow the marked folders that moved (see the module): a dry run unless `apply`, which
     only reads unless `rehearse`. A Result on the maintenance scaffold; details["counts"] what was
     found, ["changed"] the rows written by kind (applied), ["added_followed"] the folders added
-    pointed at the new folders. `tops` are the folders the library walks."""
+    pointed at the new folders. `places`, `trees` and `row_folders` bound what is looked at
+    (look_follow). Even a dry run reads files through ExifTool, for a folder whose photos were renamed too:
+    that is how it says which photos would follow."""
     held = {}
 
     def plan(found):
-        held["plan"] = look_follow(found, tops, exiftool_path)
+        held["plan"] = look_follow(found, places, trees, row_folders, exiftool_path)
         return held["plan"]
 
     try:

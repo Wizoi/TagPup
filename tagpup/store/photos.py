@@ -877,6 +877,14 @@ def evidence(conn):
         conn, conn.execute("SELECT id, path, size, taken, document_id FROM photos").fetchall(), 1)
 
 
+def evidence_under(conn, folder):
+    """evidence, of the photos under `folder` only (one range of the path index): what the folders a marker
+    follows are told by (tagpup.services.folder_ids)."""
+    where, params = store_roots.sql_under(conn, "path", folder)
+    return store_roots.natives(
+        conn, conn.execute("SELECT id, path, size, taken, document_id FROM photos WHERE " + where, params).fetchall(), 1)
+
+
 def tags_by_photo(conn):
     """(id, path as stored, tags) of each photo; a row whose tags cannot be read is left
     out."""

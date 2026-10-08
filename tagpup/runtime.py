@@ -330,8 +330,7 @@ def relink_folders(library, apply=False, only=None):
     settings = library_settings(library) if apply else peek_settings(library)
     markers = None
     if not only:
-        markers = folder_ids.follow(library, sync_service.watch_folders(library, settings.roots), apply,
-                                    exiftool(library, settings))
+        markers = folder_ids.follow(library, apply=apply, exiftool_path=exiftool(library, settings))
     result = folder_moves.relink(library, exiftool(library, settings), apply, only)
     result.details["markers"] = markers
     return result
@@ -346,10 +345,9 @@ def mark_folders(library, apply=False):
 
 def follow_folder_markers(library, apply=False, rehearse=False):
     """Follow the marked folders that moved (tagpup.services.folder_ids.follow): a dry run
-    unless `apply`, over the folders the library walks."""
+    unless `apply`, looking beside each folder that is gone (a sync also looks where it found files)."""
     settings = library_settings(library) if apply else peek_settings(library)
-    return folder_ids.follow(library, sync_service.watch_folders(library, settings.roots), apply,
-                             exiftool(library, settings), rehearse)
+    return folder_ids.follow(library, apply=apply, exiftool_path=exiftool(library, settings), rehearse=rehearse)
 
 
 def check_damaged(library, photo_paths=None):

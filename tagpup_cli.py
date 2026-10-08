@@ -1281,10 +1281,11 @@ def _say_markers(markers, apply_, reveal, library):
         return
     counts = markers.details["counts"]
     console.print("%d marked folder(s) gone from disk: %d %s by their markers (exact), %d not found under the folders "
-                  "walked, %d ambiguous (a copy stands beside another), %d in conflict; %d photo row(s) %s "
+                  "looked at, %d ambiguous (a copy stands beside another), %d in conflict, %d left (none of its rows could go: "
+                  "the files there already have rows); %d photo row(s) %s "
                   "(%d by name, %d by DocumentID or size and Date Taken, %d whose file already has a row, left)."
                   % (counts["gone"], counts["followed"], "followed" if apply_ else "to follow", counts["not_found"],
-                     counts["ambiguous"], counts["conflicts"], counts["photos_moved"],
+                     counts["ambiguous"], counts["conflicts"], counts["left"], counts["photos_moved"],
                      "moved" if apply_ else "to move", counts["by_name"], counts["by_evidence"], counts["occupied"]),
                   markup=False, soft_wrap=True)
     if reveal:
@@ -1337,7 +1338,9 @@ def folder_ids_mark(ctx, reveal, apply_):
                   % (counts["copy"], counts["moved"], counts["disagree"], counts["malformed"], counts["unreadable"],
                      counts["unwritable"]), markup=False, soft_wrap=True)
     if counts["shared_with_other_libraries"]:
-        console.print("  %d folder(s) hold another library's line as well; it is kept as it is."
+        console.print("  %d folder(s) hold a line of an identifier that is not this library's -- another library's, "
+                      "or this one's from before a snapshot restore (see docs/ARCHITECTURE.md, Folder ids); every such "
+                      "line is kept as it is, and this library's own line is added beside it."
                       % counts["shared_with_other_libraries"], markup=False, soft_wrap=True)
     if reveal:
         for what, folders in sorted(result.details["reveal"].items()):
