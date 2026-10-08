@@ -165,7 +165,7 @@ Each change ships as a migration with a dry run and a backup, and `tools/doctor.
 
 - `web/common/` holds ES modules shared by both pages:
   - `api.js`: library-aware URLs and JSON. It replaced the monkeypatched `fetch` and image `src`.
-  - `paths.js`, `vocabulary.js` and `library.js` (the picker and the library the browser remembers). Only what both pages really share lives here: they have no unsaved-edit handling or status line in common.
+  - `paths.js`, `vocabulary.js` and `library.js` (the picker and the library the browser remembers) with `library-picker.js` and `.css` (the picker's listbox, #909). Only what both pages really share lives here: they have no unsaved-edit handling or status line in common.
   - `validate.js` (what may be set, by the rules `/api/rules` publishes), `dom.js` (elements built from text) and `dialog.js` (`dialogOpen()`, which the pages' shortcuts ask before they act).
 - `web/activity/` is the Activity page (phase 8.5): the background work of every library, at `/activity/` under no library, asking through `api.site`, `web/common/api.js`'s form for what covers every library.
 - `web/tagpup/` and `web/tuner/` each have a `main.js` plus one module per feature: folder list, photo details, faces strip, Identify grid, tag tree. Each page keeps its state in one store object, not in 130 to 150 variables at the top of one closure.

@@ -318,7 +318,8 @@ export function askBeforeIgnoring(faceCount, photoCount, proceed) {
     ignoreConfirmText.textContent =
         `${faceCount} face${faceCount !== 1 ? 's' : ''} from `
         + `${photoCount} photo${photoCount !== 1 ? 's' : ''} will stop being offered `
-        + `as a match for anyone.`;
+        + `as a match for anyone. A face that is named also loses its name, and its person is taken off the photo`
+        + `'s tags (written into the file) unless another face of the photo is them.`;
     if (ignoreConfirmDontAsk) ignoreConfirmDontAsk.checked = false;
     ignoreConfirmModal.classList.remove('hidden');
 }

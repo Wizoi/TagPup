@@ -11,7 +11,10 @@
    the window's height up, and no style of the page reaches it (measured with a taller line-height and a
    min-height on the options: the window did not change). A page that adds a select needs nothing; one that links
    this file has every select dark. tests/test_dark_selects.py holds both pages
-   and the activity page to it; scripts/measure_select_list.py looks at the open list in a real browser. */
+   and the activity page to it; scripts/measure_select_list.py looks at the open list in a real browser.
+
+   The library picker is no longer a native list at all (#909: Chrome drew ~45 px of blank under its last option, which
+   no style reaches): web/common/library-picker.js and .css. Its select stays, hidden, for the page's own code. */
 select {
     color-scheme: dark;
 }
