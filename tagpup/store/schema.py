@@ -669,6 +669,27 @@ def _faces_detected(conn):
                  " at TEXT NOT NULL)")
 
 
+def _folder_ids(conn):
+    """The ids folders carry (tagpup.store.folder_ids; docs/ARCHITECTURE.md, "Folder ids"): `library_identity`,
+    at most one row, the library's own identifier, which opening a library never fills -- only the first explicit
+    `folder-ids mark --apply` stamps it, in the transaction that records the first ids, since an identifier handed
+    out in marker files cannot be taken back -- and `folder_ids`, one row for each folder the library has marked:
+    the id the folder's `.tagpup` marker holds for this library (a random UUID, the key), the folder as last seen
+    (the path as `photos.path` holds one, unique as paths are compared) and when it was marked. Folder_ids is
+    journaled (tagpup.store.journal.KEYS), keyed by a name that means the same row whenever it is used. Only adds
+    two tables, empty, so it needs no backup; folder_ids is not among the migration's `touches` because no change
+    of the journal can have recorded a row of a table that did not exist (the schema-gap rule reads `touches`).
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS library_identity ("
+                 " slot INTEGER PRIMARY KEY CHECK (slot = 1),"
+                 " id TEXT NOT NULL,"
+                 " stamped TEXT NOT NULL)")
+    conn.execute("CREATE TABLE IF NOT EXISTS folder_ids ("
+                 " id TEXT PRIMARY KEY NOT NULL,"
+                 " path TEXT NOT NULL UNIQUE COLLATE %s,"
+                 " marked TEXT NOT NULL)" % paths.COLLATE)
+
+
 def _roots(conn):
     """The library's roots: `roots`, one row for each, its name (`pictures`), the share's own
     address and when it was added (tagpup.store.roots; docs/ARCHITECTURE.md, "Roots and
@@ -1352,6 +1373,11 @@ MIGRATIONS = (
               "adds the faces_detected table, empty: a photo indexed before it has its faces detected once more by "
               "the next Suggest that looks at it",
               ("faces_detected",),
+              (RowsKept(),) + STANDARD),
+    Migration(26, "the ids folders carry", _folder_ids, ADDITIVE,
+              "adds library_identity and folder_ids, both empty: opening a library stamps nothing, and no folder is "
+              "marked until the owner runs folder-ids mark --apply",
+              ("library_identity",),
               (RowsKept(),) + STANDARD),
 )
 
