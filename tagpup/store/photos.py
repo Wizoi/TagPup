@@ -869,6 +869,14 @@ def identities(conn):
         "SELECT path, document_id FROM photos WHERE document_id IS NOT NULL") if path and doc_id}
 
 
+def evidence(conn):
+    """(id, path as stored, size, taken, document_id) of every photo: what a folder that was
+    renamed is told from the folders beside it by (tagpup.services.folder_moves). Nothing
+    large is read: no raw metadata, no vector."""
+    return store_roots.natives(
+        conn, conn.execute("SELECT id, path, size, taken, document_id FROM photos").fetchall(), 1)
+
+
 def tags_by_photo(conn):
     """(id, path as stored, tags) of each photo; a row whose tags cannot be read is left
     out."""

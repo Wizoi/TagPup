@@ -18,7 +18,7 @@ rest are put back. Its rehearsal reads every file and writes none. Undoing one n
 library's ExifTool, which the caller names.
 """
 from tagpup.core.result import NotFound, Result
-from tagpup.services import bulk_edit, file_changes
+from tagpup.services import bulk_edit, file_changes, folder_moves
 from tagpup.services import settings as library_settings
 from tagpup.store import journal
 
@@ -102,6 +102,15 @@ def undo(library, change_id, apply=False, exiftool_path=None):
         result.refuse("Nothing was written: %s" % e)
         return result
     result.changed = undone.rows
+    if journal.operation(library.path, change_id) == folder_moves.OPERATION:
+        # The folders added are a record the journal does not hold: they follow the rows back.
+        try:
+            result.details["added_followed_back"] = folder_moves.undone(library, change_id)
+        except Exception as e:
+            # The undo is written; only the record of the folders added was not pointed back.
+            result.details["added_followed_back"] = None
+            result.fail("the folders added", "%s: %s (the rows and settings are back; the added folders were not "
+                        "pointed back)" % (type(e).__name__, e))
     if not undone.settled:
         result.fail("the people and dates of the photos it touched",
                     "not rebuilt yet; they are, the next time the library is opened")
