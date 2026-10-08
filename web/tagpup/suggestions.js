@@ -530,17 +530,14 @@ export function applyFolderSuggestionsLevel() {
             })
         })
         .then(data => {
-            if (!data.success) throw new Error(data.error);
-            // Each photo as the server says it holds it now: undo takes back the
-            // difference (undo.js).
-            const written = Object.entries(data.written || {});
-            recordUndo({
-                label: `auto-apply to ${before.length} photo(s)`,
-                photos: before.map(photo => {
-                    const now = written.find(([path]) => samePath(path, photo.path));
-                    return { ...photo, after: now ? now[1] : photo.before };
-                }),
-            });
+            if (!data.success) {
+                // Stopped part-way: the reply names the photos it wrote, and undo is of those (findings #391).
+                // One that wrote none leaves the operation before it to Ctrl+Z.
+                const wrote = recordAutoApplyUndo(before, data.written, false);
+                entry.error = wrote ? `${data.error} (${wrote} written: Ctrl+Z takes them back)` : data.error;
+                throw new Error(data.error);
+            }
+            recordAutoApplyUndo(before, data.written, true);
             // A photo found damaged was skipped, nothing written to it (write-queue.js).
             const skipped = data.skipped_damaged || 0;
             noteSkipped(entry, skipped);
@@ -563,11 +560,29 @@ export function applyFolderSuggestionsLevel() {
             scanFolder(true);
             // A failure that would otherwise pass unnoticed still earns a modal.
             setStatus('error', 'Applying suggestions failed', { transient: false });
-            entry.error = err.message;
+            entry.error = entry.error || err.message;
             alert("Error applying suggestions: " + err.message);
             return false;
         });
     }, `Apply All suggestions (${targets.length} photos)`);
+}
+
+/**
+ * Undo's record of an Apply All, built from the REPLY's `written` (path -> the tags the file holds now), never
+ * from what was attempted: undo takes back the difference (undo.js). `all`: a finished write, which records
+ * every photo it was asked for (those it left alone differ by nothing); else only the photos named. Returns how
+ * many photos the record holds, 0 if it recorded nothing.
+ */
+function recordAutoApplyUndo(before, writtenByPath, all) {
+    const written = Object.entries(writtenByPath || {});
+    const named = before.filter(photo => written.some(([path]) => samePath(path, photo.path)));
+    const photos = (all ? before : named).map(photo => {
+        const now = written.find(([path]) => samePath(path, photo.path));
+        return { ...photo, after: now ? now[1] : photo.before };
+    });
+    if (!photos.length) return 0;
+    recordUndo({ label: `auto-apply to ${photos.length} photo(s)`, photos });
+    return photos.length;
 }
 
 export function updateFolderAutoApplyState() {
