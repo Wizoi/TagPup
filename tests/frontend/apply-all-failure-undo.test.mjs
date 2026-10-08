@@ -85,6 +85,41 @@ function ctrlZ(ctx) {
 
 afterEach(() => closeAllApps());
 
+describe("a Retry of an Apply All that failed part-way", () => {
+  test("keeps the way back to the photo the first attempt wrote (#879)", async (t) => {
+    const ctx = await loadSelected(t);
+    const [first, second] = PHOTOS;
+    // The first attempt wrote the first photo; the rescan after it shows the file as written.
+    ctx.server.first("/api/folder/scan", () => [
+      { ...first, tags: ["Cross Country"], people: [] },
+      { ...second, tags: [], people: [] },
+    ]);
+    applyAll(ctx).click();
+    await flush(ctx.window, 8);
+    await answer(ctx, {
+      success: false, error: "The share went away.", written: { [first.path]: ["Cross Country"] },
+    });
+    await flush(ctx.window, 10);
+    const retry = ctx.document.querySelector(".write-queue-retry");
+    assert.ok(retry, "no Retry offered");
+
+    click(ctx.window, retry);
+    await flush(ctx.window, 10);
+    await answer(ctx, {
+      success: true,
+      written: { [first.path]: ["Cross Country"], [second.path]: ["Cross Country"] },
+    });
+    await flush(ctx.window, 10);
+
+    ctrlZ(ctx);
+    await flush(ctx.window, 10);
+    const reached = bulk(ctx).flatMap((call) => call.body.paths).sort();
+    assert.deepEqual(reached, [first.path, second.path].sort(),
+      "Ctrl+Z after the retry did not take back the photo the first attempt wrote");
+    await answer(ctx, { success: true, written: {} });
+  });
+});
+
 describe("an Apply All that fails part-way", () => {
   test("is what Ctrl+Z takes back, for the photos its reply says it wrote", async (t) => {
     const ctx = await loadSelected(t);
