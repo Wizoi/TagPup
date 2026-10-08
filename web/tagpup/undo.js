@@ -90,9 +90,16 @@ async function undoEntry(entry, queued) {
             restored += 1;
             const photo = state.folderPhotos.find(p => samePath(p.path, path));
             if (!photo) continue;
-            const kept = (photo.tags || []).filter(t => !group.added.includes(t));
-            photo.tags = kept.concat(group.removed.filter(t => !kept.includes(t)));
-            takeWritten(photo, stamps.get(pathKey(path)), heldTags.get(pathKey(path)));
+            // What the file holds is what the server says it wrote (a bare person name it resolved is
+            // the path it filed); only a reply that names the photo falls back to the difference (findings #390).
+            const held = heldTags.get(pathKey(path));
+            if (Array.isArray(held)) {
+                photo.tags = held.slice();
+            } else {
+                const kept = (photo.tags || []).filter(t => !group.added.includes(t));
+                photo.tags = kept.concat(group.removed.filter(t => !kept.includes(t)));
+            }
+            takeWritten(photo, stamps.get(pathKey(path)), held);
         }
         if (!data.success) {
             console.error('Undo:', data.error);
