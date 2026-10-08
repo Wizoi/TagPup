@@ -41,6 +41,13 @@ class Case(unittest.TestCase):
     def write(self, work):
         return db.write_with_connection(self.db_path, work)
 
+    def sql(self, sql):
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            return conn.execute(sql).fetchall()
+        finally:
+            conn.close()
+
     def recorded(self):
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         try:
@@ -62,6 +69,16 @@ class Case(unittest.TestCase):
     def test_a_removal_that_removed_nothing_forgets_nothing(self):
         self.write(lambda conn: faces.delete(conn, []))
         self.assertTrue(self.recorded())
+
+    def test_a_journaled_delete_of_the_last_face_forgets_it_too(self):
+        # The journal writes face rows of its own (a duplicate face removed, a photo's rows merged): same rule.
+        from tagpup.store import journal
+        journal.apply(self.db_path, "delete faces", [journal.delete("faces", (face,), {}) for face in self.faces[:1]])
+        self.assertTrue(self.recorded(), "a photo that keeps a face keeps its record")
+        applied = journal.apply(self.db_path, "delete faces", [journal.delete("faces", (face,), {}) for face in self.faces[1:]])
+        self.assertFalse(self.recorded())
+        journal.undo(self.db_path, applied.change_id)
+        self.assertEqual(1, len(self.sql("SELECT id FROM faces")), "the undo puts the face back")
 
     def test_a_detection_that_replaces_the_faces_is_recorded(self):
         found = [{"box": [0, 0, 10, 10], "embedding": [0.0, 1.0], "prob": 0.99}]

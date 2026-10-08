@@ -65,7 +65,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from tagpup.core import paths
-from tagpup.store import db, derived, file_journal, people, person_ids, schema
+from tagpup.store import db, derived, faces_detected, file_journal, people, person_ids, schema
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
@@ -754,6 +754,23 @@ def _touched(conn, changes):
     return photo_ids, dated, nodes, listed, node_ids
 
 
+def _face_photos(conn, changes):
+    """The photos whose face rows `changes` wrote: inserted, updated, deleted -- or put back or taken away by an
+    undo, which is the same changes the other way."""
+    found = set()
+    for change in changes:
+        if change.table != "faces":
+            continue
+        values = [d for d in (change.old, change.new) if d]
+        here = {d["photo_id"] for d in values if "photo_id" in d}
+        if not here and change.key is not None:
+            row = _read(conn, "faces", change.key, ["photo_id"])
+            if row:
+                here.add(row["photo_id"])
+        found |= here
+    return found
+
+
 def _derive(conn, changes):
     """Rebuild what `changes` touched of the derived data: the people of each photo whose
     keywords or faces changed or whose keywords a changed node names, the dates of each photo
@@ -764,6 +781,9 @@ def _derive(conn, changes):
     The generations move by their triggers. Returns how many photos' people changed."""
     photo_ids, dated, nodes, listed, _node_ids = _touched(conn, changes)
     changed = 0
+    # A photo left with no face row is no longer one whose faces were detected: Suggest detects it again
+    # (docs/findings.md, #779; the one owner is tagpup.store.faces_detected, as for tagpup.store.faces).
+    faces_detected.forget_faceless(conn, sorted(_face_photos(conn, changes)))
     if nodes:
         changed += people.follow_nodes(conn, nodes)
     if photo_ids:
