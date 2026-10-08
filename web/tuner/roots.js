@@ -348,6 +348,32 @@ function confirmMove(entry, ask, button, check, panel) {
 
 // ---- The dialog -------------------------------------------------------------------------------
 
+/** Does the sentence of where files are written already name the place the root is kept at? */
+function writesToKeptPlace(entry) {
+    return !entry.writes_to || String(entry.writes_to).toLowerCase().includes(String(entry.active).toLowerCase());
+}
+
+/**
+ * What is said of a root besides where it is kept, folded away: where tags and renames are written
+ * and the place it was before. Open only when the writes go somewhere other than the place above,
+ * which is the one thing worth seeing without asking. Null when there is nothing to say.
+ */
+function moreAbout(entry) {
+    const parts = [];
+    const different = !writesToKeptPlace(entry);
+    if (entry.writes_to) parts.push(buildElement('p', { className: 'roots-writes', text: entry.writes_to }));
+    if (entry.previous) {
+        parts.push(buildElement('p', { className: 'roots-previous',
+            text: `Before that: ${entry.previous}. It is a separate copy: nothing written now goes there. `
+                + 'Moving again forgets it.' }));
+    }
+    if (!parts.length) return null;
+    return buildElement('details', { className: 'roots-more', attrs: different ? { open: '' } : {} }, [
+        buildElement('summary', { text: different ? 'Files are written elsewhere' : 'Where files are written' }),
+        ...parts,
+    ]);
+}
+
 function rootRow(entry) {
     const verify = buildElement('button', { className: 'btn btn-secondary btn-sm roots-verify', text: 'Verify',
         title: 'Look at a sample of the photos: are they there, and as they were when indexed?',
@@ -367,12 +393,8 @@ function rootRow(entry) {
     const facts = [];
     if (entry.mapped) {
         facts.push(buildElement('p', { className: 'roots-place', text: `Kept at ${entry.active}` }));
-        facts.push(buildElement('p', { className: 'roots-writes', text: entry.writes_to }));
-        if (entry.previous) {
-            facts.push(buildElement('p', { className: 'roots-previous',
-                text: `Before that: ${entry.previous}. It is a separate copy: nothing written now goes there. `
-                    + 'Moving again forgets it.' }));
-        }
+        const more = moreAbout(entry);
+        if (more) facts.push(more);
         if (entry.shared_with && entry.shared_with.length) {
             facts.push(buildElement('p', { className: 'roots-shared',
                 text: `${entry.shared_with.join(', ')} also uses this root: moving it moves it for them too.` }));

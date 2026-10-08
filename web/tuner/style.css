@@ -2137,12 +2137,24 @@ body {
 .roots-address { opacity: 0.6; overflow-wrap: anywhere; flex: 1; }
 .roots-rows { opacity: 0.7; white-space: nowrap; }
 .roots-root p { margin: 0.25rem 0; overflow-wrap: anywhere; }
+.roots-more { margin: 0.25rem 0; opacity: 0.85; }
+.roots-more summary { cursor: pointer; color: var(--text-secondary); }
+.roots-last { margin: 0.5rem 0 0.25rem; opacity: 0.8; }
+.roots-result:not(:empty) { margin: 0.6rem 0 0.2rem; padding-top: 0.5rem; border-top: 1px dashed var(--border-color); }
+.roots-about a, .file-access-note a { color: #a5b4fc; text-decoration: underline; }
+.roots-about a:hover, .file-access-note a:hover { color: #c7d2fe; }
 .roots-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.4rem 0; }
 .roots-location { flex: 1; min-width: 14rem; }
 .roots-command { display: block; padding: 0.5rem; overflow-wrap: anywhere; background: rgba(255, 255, 255, 0.06); }
 .roots-wait { opacity: 0.7; }
 .roots-override { display: block; margin: 0.4rem 0; }
 .roots-footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+@media (max-width: 600px) {
+    .roots-title { flex-wrap: wrap; }
+    .roots-address { flex-basis: 100%; order: 3; }
+    .roots-list { max-height: none; }
+    .roots-location { min-width: 0; flex-basis: 100%; }
+}
 
 /* Show matched: a photo whose faces are all named stays listed, quieter. */
 .photo-item.all-matched { opacity: 0.6; }

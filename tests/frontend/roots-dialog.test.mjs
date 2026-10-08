@@ -9,6 +9,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { loadApp, FakeServer, flush, click, closeAllApps } from "./harness.mjs";
 import { OPEN_DIALOG } from "../../web/common/dialog.js";
 
@@ -92,6 +93,46 @@ describe("the Roots dialog", () => {
     assert.equal(text(note), "Other programs may be scanning these files: see Activity > File access");
     assert.equal(note.querySelector("a").getAttribute("href"), "/activity/#file-access");
     assert.equal(ctx.server.calls.filter((c) => c.url.includes("file-access")).length, 0);
+  });
+
+  test("a root names its place once in the open; the rest is folded into a details line (#915)", async (t) => {
+    const ctx = await tuner(t, { roots: [entry({ places: [NEW, OLD], active: NEW, previous: OLD,
+      writes_to: `Tags and renames are written to files at ${NEW}.` })] });
+    const row = (await openFromGear(ctx)).querySelector(".roots-root");
+    const more = row.querySelector("details.roots-more");
+    assert.ok(more, "where files are written and the earlier place are folded away");
+    assert.equal(more.hasAttribute("open"), false, "closed while the writes go where the root is kept");
+    assert.ok(more.querySelector(".roots-writes") && more.querySelector(".roots-previous"));
+    const open = [...row.children].filter((child) => child !== more).map(text).join(" ");
+    assert.equal(open.split(NEW).length - 1, 1, "the place is named once outside the fold");
+    assert.equal(open.includes(OLD), false, "the earlier place is not in the open");
+    assert.equal(open.includes("Tags and renames"), false);
+  });
+
+  test("the fold opens by itself when files are written somewhere other than where the root is kept", async (t) => {
+    const ctx = await tuner(t, { roots: [entry({ writes_to: `Tags and renames are written to files at ${NEW}.` })] });
+    const more = (await openFromGear(ctx)).querySelector(".roots-root details.roots-more");
+    assert.equal(more.hasAttribute("open"), true);
+    assert.match(text(more.querySelector("summary")), /elsewhere/);
+  });
+
+  test("the status and the result sentence are blocks of their own, and the stylesheet spaces them", async (t) => {
+    const ctx = await tuner(t);
+    const row = (await openFromGear(ctx)).querySelector(".roots-root");
+    const last = row.querySelector(".roots-last");
+    const result = row.querySelector(".roots-result");
+    assert.equal(last.tagName, "P");
+    assert.equal(result.tagName, "DIV");
+    assert.notEqual(last.nextElementSibling, result, "the buttons stand between the status and the result");
+    const css = readFileSync(new URL("../../web/tuner/style.css", import.meta.url), "utf8");
+    assert.match(css, /\.roots-last \{[^}]*margin:/);
+    assert.match(css, /\.roots-result:not\(:empty\) \{[^}]*margin:/);
+  });
+
+  test("the File access link is in a colour readable on the dark page, and the dialog gives way on a narrow window", async () => {
+    const css = readFileSync(new URL("../../web/tuner/style.css", import.meta.url), "utf8");
+    assert.match(css, /\.file-access-note a \{[^}]*color: #a5b4fc/);
+    assert.match(css, /@media \(max-width: 600px\) \{[^@]*\.roots-title \{ flex-wrap: wrap/);
   });
 
   test("a root with an earlier place says it is a separate copy, and Change back is there", async (t) => {
