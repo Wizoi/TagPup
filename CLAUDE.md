@@ -33,10 +33,14 @@ this codebase, add it there with a comment saying why rather than working around
 No `pip.exe`, no `Activate.ps1`, no pytest — invoke the interpreter by path. Use the
 glob for the frontend suite; `node --test tests/frontend/` fails on `harness.mjs`.
 
-**The whole Python suite is `tools/run_tests.py`: 3,930 tests, about 4.5 minutes (200-600 s
-under load, counted 2026-10-04).** Run all of it
+**The whole Python suite is `tools/run_tests.py`: 4,431 tests, about 6 minutes (350-700 s
+under load, counted 2026-10-08).** Run all of it
 before a commit that touches Python; choosing which files to run cost more turns than
 it saved. `tools/affected_tests.py` is for the loop while editing, not for the commit.
+**Run the whole suite once per round, at the end, and never beside another suite run**
+(two or three at once on one machine tripped load-sensitive tests, and each worker ran
+it several times a round). While editing, run the affected files and the one file you
+are changing; the main session runs the whole suite once on the merged trunk.
 
 **The owner runs the apps from an installed copy** (`%LOCALAPPDATA%\TagPup\*.cmd`,
 made by `scripts/install_app.py`), with `TAGPUP_HOME` set to the repository. Saving a

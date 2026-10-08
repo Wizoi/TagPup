@@ -71,8 +71,11 @@ docs/findings.md. A bug you fix gets a test that fails on the old code first
 (`git archive HEAD | tar -x -C <folder outside the worktree>`); say in the row that it did.
 
 ## Before you report
-Run `python -m ruff check .` and `python tools/run_tests.py` (the whole suite, about a
-minute). Report: your commits, the decisions you made, the exact result of both
+While you work, run only the tests you touched and `python tools/affected_tests.py`.
+Before you report, run `python -m ruff check .` and `python tools/run_tests.py` (the
+whole suite, about 6 minutes) ONCE, after your last code change, and never while another
+worker's suite is running if you can tell (two at once trip load-sensitive tests); a
+docs-only commit after the run needs no second run. Report: your commits, the decisions you made, the exact result of both
 runs, anything left undone and why. Every number you report about the live libraries is
 one you counted yourself this task. Keep it to what the main session needs to review
 and commit.
