@@ -60,10 +60,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     updateMatchedToggleVisibility();
 
-    fetchPhotos();
-    fetchKnownPeople();
-    restoreIndexingState();
-
     // Each feature's listeners, in the order the page first added them.
     wireSidebar();
     wireFacesStrip();
@@ -86,4 +82,12 @@ document.addEventListener('DOMContentLoaded', () => {
     wireRootsBanner();
     // How many of the library's photos were found damaged, in the header.
     showDamagedCount(document.getElementById('damaged-badge'));
+
+    // ---- Start ------------------------------------------------------------
+    // Last, deliberately: these read the library and pick up an index already running, which calls into
+    // most of the page, through the listeners wired above and the calls up the page (hooks.js).
+    // tests/frontend/tuner-starts-last.test.mjs keeps it so.
+    fetchPhotos();
+    fetchKnownPeople();
+    restoreIndexingState();
 });
