@@ -2231,7 +2231,7 @@ Server and store only; the page's search box and picker are 9e-2's, and this is 
   `people.rebuild` of the photos whose people it wrote (a face named or unnamed, a tree edit that changes who is a person, a rename
   of a person); `derived.rebuild_all` and the adoption's `rebuild_folders` rebuild them whole. Captions joined the columns the
   derived data comes from: `tests/test_derived_writers.py` now fails a writer of `photos.captions` that does not go through
-  `derived` (`set_captions`, which nothing calls, does now), and the journal's undo of a caption refreshes the photo
+  `derived`, and the journal's undo of a caption refreshes the photo
   (`_touched`). A tree rename changes no word: the words are the keyword as the file holds it, which TagTuner rewrites one
   transaction after the tree's -- until then the old words find the photo and the new do not (a test), as its keyword rows name no
   node meanwhile.

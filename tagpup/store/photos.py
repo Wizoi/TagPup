@@ -809,15 +809,6 @@ def rows_under(conn, folder):
         " p.raw_metadata FROM photos p WHERE " + where, params).fetchall(), 0, raw=(6,))
 
 
-def set_captions(conn, photo_path, captions):
-    """Record a photo's captions, and its words for a search (derived). Returns rows changed. The caller commits."""
-    where, params = store_roots.sql_equals(conn, "path", photo_path)
-    changed = conn.execute("UPDATE photos SET captions = ? WHERE " + where,
-                           (json.dumps(captions),) + params).rowcount
-    derived.refresh_photos(conn, [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)])
-    return changed
-
-
 # ---- What refresh_rows_from_files reads and writes --------------------------------------
 
 def rows_to_check(conn, folder=None):
