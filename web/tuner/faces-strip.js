@@ -411,6 +411,19 @@ function deselectAllFaceCards() {
     });
 }
 
+/**
+ * Say why a write of a face was refused, in the server's own words: a name is also the person on the photo (#861), so a refusal
+ * can be about the photo's file ("was not added to the photo, so the face is not named: ...").
+ */
+async function whyRefused(res, fallback) {
+    try {
+        const body = await res.json();
+        return (body && (body.error || body.message)) || fallback;
+    } catch (error) {
+        return fallback;
+    }
+}
+
 // POST face match update
 function postMatch(faceId, personName) {
     const problem = nameProblem(personName);
@@ -470,8 +483,8 @@ function postUnmatch(faceId) {
         },
         body: JSON.stringify({ face_id: faceId })
     })
-    .then(res => {
-        if (!res.ok) throw new Error('Unmatch operation failed');
+    .then(async res => {
+        if (!res.ok) throw new Error(await whyRefused(res, 'Unmatch operation failed'));
         return res.json();
     })
     .then(data => {
@@ -480,6 +493,8 @@ function postUnmatch(faceId) {
             if (state.activePhotoPath) {
                 selectPhoto(state.activePhotoPath);
             }
+            // The person comes off the photo with the name; when that could not be done the face is unnamed all the same.
+            if (data.warning) alert(data.warning);
         } else {
             alert('Failed to unmatch face');
         }
@@ -503,8 +518,8 @@ function postAutoMatchAll(photoPath) {
         },
         body: JSON.stringify({ photo_path: photoPath })
     })
-    .then(res => {
-        if (!res.ok) throw new Error('AutoMatch operation failed');
+    .then(async res => {
+        if (!res.ok) throw new Error(await whyRefused(res, 'AutoMatch operation failed'));
         return res.json();
     })
     .then(data => {
@@ -537,13 +552,14 @@ function postUnmatchAll(photoPath) {
         },
         body: JSON.stringify({ photo_path: photoPath })
     })
-    .then(res => {
-        if (!res.ok) throw new Error('Unmatch-all operation failed');
+    .then(async res => {
+        if (!res.ok) throw new Error(await whyRefused(res, 'Unmatch-all operation failed'));
         return res.json();
     })
     .then(data => {
         if (data.success) {
             selectPhoto(photoPath);
+            if (data.warning) alert(data.warning);
         } else {
             alert('Failed to unmatch all faces.');
         }

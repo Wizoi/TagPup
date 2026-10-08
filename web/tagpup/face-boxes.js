@@ -13,9 +13,15 @@
 // "no"), the face is not named. If the face cannot be named afterwards, the panel says so and keeps the
 // choice: the tag is already there, and the same click names the face.
 //
-// Taking a name off a face leaves the person's tag alone: "this face is not them" is not "they are not in
-// the photo", and the person's pill is the way to take the tag off. Excluding a face ("not important")
-// hides its box; Restore is TagTuner's.
+// Taking a name off a face, or ruling it out ("not important"), takes the person's tag off the photo too,
+// unless another face of the photo still carries the person (#861): a face that is not them is not a person
+// of the photo, and a tag no face bears out is the drift this module exists to stop. The face goes first and
+// the tag second -- the other way round, a failed tag would leave the face named and the photo without the
+// person, the very state the owner saw -- through the page's own save of the keywords (the server says which
+// tags, `untag`: the one owner of the rule is tagpup.services.face_people). Restore is TagTuner's.
+//
+// The strip under the photo names a face through the same function as a box does (nameFaceAs), and every
+// write here draws the strip and the boxes again from one answer (upper.renderPhotoFaces).
 //
 // The boxes are in the stored pixels of the file and are placed by the one geometry both pages share
 // (boxInContainedImage). A photo stored turned (EXIF Orientation 2 to 8) is shown turned, and its boxes
@@ -305,14 +311,15 @@ function facePanel(face) {
     if (face.name) {
         const off = buildElement('button', {
             className: 'btn btn-secondary btn-sm', text: 'Not this person', attrs: { type: 'button' },
-            title: 'Take the name off this face. The person stays tagged on the photo.',
+            title: 'Take the name off this face, and the person off the photo unless another face is them.',
         });
         off.addEventListener('click', () => unnameFace(face));
         foot.append(off);
     }
     const exclude = buildElement('button', {
         className: 'btn btn-secondary btn-sm', text: 'Not important', attrs: { type: 'button' },
-        title: 'Leave this face out of naming: a passer-by, or not a face. TagTuner can bring it back.',
+        title: 'Leave this face out of naming: a passer-by, or not a face. If it was named, the person comes off the photo '
+            + 'unless another face is them. TagTuner can bring it back.',
     });
     exclude.addEventListener('click', () => excludeFace(face));
     foot.append(exclude);
@@ -418,6 +425,8 @@ function say(text) {
     state.faceBoxes.note = text;
     const where = faceLayer ? faceLayer.querySelector('.face-panel-message') : null;
     if (where) where.textContent = text;
+    // A face named from the strip has no panel to say it in.
+    else setStatus('error', text, { transient: false });
 }
 
 /** Is the person among the photo's KEYWORDS? Not photo.people, which also lists a person only a face names (#835). */
@@ -468,8 +477,8 @@ export async function nameFaceAs(face, rawName) {
         if (!photoHasPerson(photo, rawName)) {
             await upper.applySuggestedTagDirect(rawName, true, path);
             if (!photoHasPerson(photo, rawName)) {
-                say(`${name} was not added to the photo, so the face is not named.`);
                 setStatus('ready', 'Ready');
+                say(`${name} was not added to the photo, so the face is not named.`);
                 return false;
             }
         }
@@ -506,20 +515,36 @@ export async function nameFaceAs(face, rawName) {
     }
 }
 
-/** Take the name off a face. The person's tag stays on the photo (see the top of this file). */
+/**
+ * The tags the server says to take off `path` (`untag`, by the photo's path as it spells it), off the photo through
+ * the page's own save. True when there was nothing to take off or it was taken off.
+ */
+async function takeTagsOff(path, answer) {
+    const entry = Object.entries(answer.untag || {}).find(([where]) => samePath(where, path));
+    if (!entry || !entry[1].length) return true;
+    return Boolean(await upper.removePhotoTags(path, entry[1]));
+}
+
+/** What was done with the person's tag, in a sentence for the status line. */
+function untagged(done, what) {
+    return done ? what : `${what}, but the person's tag could not be taken off the photo: take it off with its pill`;
+}
+
+/** Take the name off a face, and the person's tag off the photo unless another face is them (see the top of this file). */
 async function unnameFace(face) {
     const box = state.faceBoxes;
     if (box.busy) return;
     const path = box.path;
     box.busy = true;
     try {
-        const res = await post('/api/face/unmatch', { face_id: face.id });
+        const res = await post('/api/face/unmatch', { face_id: face.id, page_writes_tags: true });
         if (!res.ok) {
             say(`The name was not taken off: ${await whyRefused(res)}`);
             return;
         }
+        const done = await takeTagsOff(path, await res.json());
         forgetPersonFaces();
-        setStatus('ready', 'Name taken off the face');
+        setStatus(done ? 'ready' : 'error', untagged(done, 'Name taken off the face'), { transient: done });
         if (box.path && samePath(box.path, path)) {
             const mine = faceById(face.id);
             if (mine) mine.name = null;
@@ -541,13 +566,14 @@ async function excludeFace(face) {
     const path = box.path;
     box.busy = true;
     try {
-        const res = await post('/api/faces/exclude', { face_ids: [face.id] });
+        const res = await post('/api/faces/exclude', { face_ids: [face.id], page_writes_tags: true });
         if (!res.ok) {
             say(`The face was not left out: ${await whyRefused(res)}`);
             return;
         }
+        const done = await takeTagsOff(path, await res.json());
         forgetPersonFaces();
-        setStatus('ready', 'Face left out');
+        setStatus(done ? 'ready' : 'error', untagged(done, 'Face left out'), { transient: done });
         if (box.path && samePath(box.path, path)) {
             const mine = faceById(face.id);
             if (mine) {

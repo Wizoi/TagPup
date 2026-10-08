@@ -6,7 +6,7 @@ import { btnUndo } from './elements.js';
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { renderFileList } from './folder.js';
-import { renderTags } from './photo.js';
+import { facesFollowTags, renderTags } from './photo.js';
 import { renderThumbnails } from './grid.js';
 import { queuePhotoWrite, takeWritten } from './edits.js';
 
@@ -110,7 +110,10 @@ async function undoEntry(entry, queued) {
     renderThumbnails();
     if (state.activePhotoPath) {
         const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
-        if (photo) renderTags(photo.tags || []);
+        if (photo) {
+            renderTags(photo.tags || []);
+            facesFollowTags(photo.path);
+        }
     }
     saveToLocalStorageCache();
 

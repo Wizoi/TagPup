@@ -281,6 +281,7 @@ export function redrawIfShowing(photo) {
     upper.renderTags(photo.tags);
     upper.renderSuggestionsPanel(photo.path);
     upper.updateCarryForwardState();
+    upper.facesFollowTags(photo.path);
 }
 
 /**
@@ -433,7 +434,10 @@ export function refreshAfterDetailSave(photo, path, newTitle, added) {
         state.activePhotoPath = photo.path;
         upper.selectPhoto(photo.path);
     }
-    if (samePath(state.activePhotoPath, photo.path)) upper.renderTags(photo.tags);
+    if (samePath(state.activePhotoPath, photo.path)) {
+        upper.renderTags(photo.tags);
+        upper.facesFollowTags(photo.path);
+    }
     if (newTitle !== null) {
         upper.renderFileList();
         upper.renderThumbnails();
