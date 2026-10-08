@@ -114,7 +114,13 @@ export function saveDetailEdits(fields = { title: true, tags: true, people: true
     const path = state.activePhotoPath;
     // The fields belong to the photo they were typed on. Leaving waits for the
     // queue, so this should always hold; if it does not, the text is not ours.
-    return queueWriteOf(path, () => (samePath(state.activePhotoPath, path) ? writeDetailEdits(fields) : true));
+    return queueWriteOf(path, (entry) => {
+        if (samePath(state.activePhotoPath, path)) return writeDetailEdits(fields);
+        // A retry of a save whose photo was left since: the text was typed on a photo that is not
+        // open, and nothing here writes it. That is a failed save, not a done one (findings #389).
+        entry.error = 'The photo is no longer open, so the text typed on it is gone';
+        return false;
+    });
 }
 
 /**
@@ -124,7 +130,8 @@ export function saveDetailEdits(fields = { title: true, tags: true, people: true
  */
 export function queueWriteOf(path, job, label = `Save photo ${baseName(path)}`) {
     const key = pathKey(path);
-    const run = queuePhotoWrite(job, label).finally(() => {
+    // A failed save's Retry is a write of this photo too: the one leaving the photo waits for.
+    const run = queuePhotoWrite(job, label, () => queueWriteOf(path, job, label)).finally(() => {
         if (state.photoWrites[key] === run) delete state.photoWrites[key];
         updateSaveButton();
     });
@@ -162,12 +169,12 @@ export function openPhotoWrite() {
  * folder the library does not hold is written to its file only, which the server decides per
  * photo (tagpup.services.file_only); the queue does not ask.
  */
-export function queuePhotoWrite(job, label = 'Save a photo') {
+export function queuePhotoWrite(job, label = 'Save a photo', again = () => queuePhotoWrite(job, label)) {
     // An entry of the queue's status (write-queue.js): `label` says what it does, and
     // the job is given it, to put a failure's reason in `error`. A job that resolves
-    // false failed; Retry queues it again.
+    // false failed; Retry queues it again, as `again` says (a write of one photo is queued again as that photo's).
     const entry = queueEntry(label);
-    entry.retry = () => queuePhotoWrite(job, label);
+    entry.retry = again;
     const before = state.detailSaveInFlight || Promise.resolve();
     const run = before.then(() => {
         markEntry(entry, 'writing');
