@@ -26,6 +26,9 @@ import os
 from tagpup.core import paths
 from tagpup.services import maintenance
 from tagpup.store import db, journal
+from tagpup.store import embeddings as store_embeddings
+from tagpup.store import faces as store_faces
+from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
 OPERATION = "dedupe_spelled_rows"
@@ -40,7 +43,7 @@ def identity_of(native):
         return None
     if stat.st_ino:
         return ("file", stat.st_dev, stat.st_ino)
-    return ("path", os.path.normcase(os.path.realpath(native)))
+    return ("path", paths.key(os.path.realpath(native)))
 
 
 def _decided(face):
@@ -50,16 +53,13 @@ def _decided(face):
 
 def _knows(conn, photo_id):
     """How much a person told the library of a photo: faces they named or excluded."""
-    return conn.execute("SELECT COUNT(*) FROM faces WHERE photo_id = ? AND (name_source = 'manual' OR excluded = 1)",
-                        (photo_id,)).fetchone()[0]
+    return store_faces.decided_count(conn, photo_id)
 
 
 def _faces(conn, photo_id):
     """[(id, box as a list, name, name_source, excluded, excluded_reason)] of a photo's faces: no embedding, no crop."""
     return [(face_id, json.loads(box) if box else None, name, source, excluded, reason)
-            for face_id, box, name, source, excluded, reason in conn.execute(
-                "SELECT id, box, name, name_source, excluded, excluded_reason FROM faces WHERE photo_id = ? ORDER BY id",
-                (photo_id,))]
+            for face_id, box, name, source, excluded, reason in store_faces.for_merging(conn, photo_id)]
 
 
 def _same_decision(a, b):
@@ -71,7 +71,7 @@ def find(conn):
     file held more than once: `keep` and `drop`, (photo id, the row's path as stored, native path) each, `edits`
     the work to do (kind, the arguments of a journal edit) and `moves`, the counts of it. `left` counts what was
     looked at and left alone: copies, missing, disputed, differ."""
-    rows = conn.execute("SELECT id, path, size, tags, captions FROM photos WHERE size IS NOT NULL").fetchall()
+    rows = store_photos.sized_rows(conn)
     native = store_roots.natives(conn, [(r[1],) for r in rows], 0)
     by_name = collections.defaultdict(list)
     for (photo_id, stored, size, tags, captions), (found,) in zip(rows, native):
@@ -111,7 +111,7 @@ def _plan_set(conn, group):
     keep, drop = ordered[0], ordered[1:]
     kept_faces = _faces(conn, keep[0])
     edits, moves = [], collections.Counter()
-    models = {model for (model,) in conn.execute("SELECT model FROM embeddings WHERE photo_id = ?", (keep[0],))}
+    models = store_embeddings.models_of(conn, keep[0])
     for each in drop:
         for face in _faces(conn, each[0]):
             twin = next((kept for kept in kept_faces if kept[1] == face[1]), None)
@@ -129,8 +129,7 @@ def _plan_set(conn, group):
                 moves["decisions_carried"] += 1
             elif _decided(face) and _decided(twin) and not _same_decision(face, twin):
                 return "disputed"
-        for model, mtime, size, vector in conn.execute(
-                "SELECT model, mtime, size, vector FROM embeddings WHERE photo_id = ?", (each[0],)).fetchall():
+        for model, mtime, size, vector in store_embeddings.lacking(conn, each[0], models):
             if model not in models:
                 models.add(model)
                 edits.append(journal.insert("embeddings", {"photo_id": keep[0], "model": model, "mtime": mtime,

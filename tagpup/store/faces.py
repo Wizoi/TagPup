@@ -228,6 +228,19 @@ def decided_for_photo(conn, photo_path):
                         + " AND (name_source = 'manual' OR excluded = 1)", params).fetchone()[0]
 
 
+def decided_count(conn, photo_id):
+    """How many of one photo's faces carry a decision somebody made (decided_for_photo's rule), by photo id."""
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE photo_id = ? AND (name_source = 'manual' OR excluded = 1)",
+                        (photo_id,)).fetchone()[0]
+
+
+def for_merging(conn, photo_id):
+    """[(id, box JSON, name, name_source, excluded, excluded_reason)] of one photo's faces, by id: what was
+    decided about each, without its embedding or crop (tagpup.services.duplicate_rows)."""
+    return conn.execute("SELECT id, box, name, name_source, excluded, excluded_reason FROM faces WHERE photo_id = ?"
+                        " ORDER BY id", (photo_id,)).fetchall()
+
+
 def decided_photo_ids(conn, photo_ids):
     """The ids among `photo_ids` of photos with a face somebody decided (decided_for_photo's rule): a name or a
     "nobody" given by hand, or an exclusion. One lookup a chunk, by photo id (idx_faces_photo_id)."""

@@ -99,6 +99,20 @@ def forget(conn, photo_path):
     return conn.execute("DELETE FROM embeddings WHERE " + where, params).rowcount
 
 
+def models_of(conn, photo_id):
+    """The models a photo has a vector under, by photo id."""
+    return {model for (model,) in conn.execute("SELECT model FROM embeddings WHERE photo_id = ?", (photo_id,))}
+
+
+def lacking(conn, photo_id, held):
+    """[(model, mtime, size, vector)] of a photo's vectors under a model not in `held`, by photo id: the vectors
+    another photo of the same file has none of. Only those are read."""
+    held = sorted(held)
+    where = " AND model NOT IN (%s)" % ",".join("?" * len(held)) if held else ""
+    return conn.execute("SELECT model, mtime, size, vector FROM embeddings WHERE photo_id = ?" + where,
+                        (photo_id,) + tuple(held)).fetchall()
+
+
 def stale_or_missing(conn, photo_id, stamp):
     """Is the photo with no vector, or one made from the file as it was before `stamp`, (mtime, size) -- one under
     any model? A vector stamped with the file's stamp now was made from it: the picture is not to be read again."""
