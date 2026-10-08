@@ -332,7 +332,15 @@ function closeIgnoreConfirm() {
 }
 
 /** Undo a whole job on the server (POST /api/faces/job/undo), then put its faces back in the grid they left. */
-function undoJob(faceIds, job) {
+function undoJob(faceIds, job, kind) {
+    // Synchronous on the server (a file a few photos at a time): the bar says so, stays until it ends, and cannot be pressed twice.
+    if (state.assignUndoTimer) {
+        clearTimeout(state.assignUndoTimer);
+        state.assignUndoTimer = null;
+    }
+    const was = assignUndoText ? assignUndoText.textContent : '';
+    if (assignUndoText) assignUndoText.textContent = 'Undoing...';
+    if (btnAssignUndo) btnAssignUndo.disabled = true;
     api.fetch('/api/faces/job/undo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -340,12 +348,21 @@ function undoJob(faceIds, job) {
     })
     .then(async res => {
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || 'Undo failed');
+        if (!res.ok) throw new Error(data.error || data.description || 'Undo failed');
         return data;
     })
     .then(data => {
         if (data.warning) alert(data.warning);
-        putFacesBack(faceIds);
+        if (data.undone === false) {
+            // Some photos could not be put back: what was done stays done, and Undo can be pressed again when they can be.
+            state.lastAssignJob = { job, kind };
+            if (assignUndoText) assignUndoText.textContent = `Undo incomplete: ${data.remaining} photo(s) remain. Press Undo to try again.`;
+            if (btnAssignUndo) btnAssignUndo.disabled = false;
+        } else {
+            hideAssignUndo();
+            if (btnAssignUndo) btnAssignUndo.disabled = false;
+            putFacesBack(faceIds);
+        }
         clearFaceDetails();
         upper.fetchPeopleWithCounts(true, true);
         updateMatchingSelectionUI();
@@ -353,6 +370,9 @@ function undoJob(faceIds, job) {
     .catch(err => {
         console.error(err);
         alert('Could not undo: ' + err.message);
+        state.lastAssignJob = { job, kind };
+        if (assignUndoText) assignUndoText.textContent = was;
+        if (btnAssignUndo) btnAssignUndo.disabled = false;
     });
 }
 
@@ -767,15 +787,15 @@ ${summary}${note}`)) {
                 ids = JSON.parse(assignUndoBar.dataset.faceIds || '[]');
             } catch (e) { /* nothing to undo */ }
             const kind = assignUndoBar.dataset.undoKind || 'assign';
-            hideAssignUndo();
-            if (!ids.length) return;
+            if (!ids.length) return hideAssignUndo();
             // The server's job is undone as one: the faces as they were AND the photo files it wrote.
             const last = state.lastAssignJob;
             if (last && last.kind === kind) {
                 state.lastAssignJob = null;
-                undoJob(ids, last.job);
+                undoJob(ids, last.job, kind);
                 return;
             }
+            hideAssignUndo();
             // Each action has its own way back: an assignment is unmatched, an
             // exclusion is restored. Getting this wrong would quietly do nothing.
             if (kind === 'ignore') postRestoreBulk(ids, { undo: true });

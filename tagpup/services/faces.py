@@ -22,7 +22,7 @@ from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
 from tagpup.services import photos as photo_files
 from tagpup.services import thumbnails
-from tagpup.store import db, face_tags, faces, faces_detected, faces_pending, photos
+from tagpup.store import db, face_tags, faces, faces_detected, faces_pending, photos, removals
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import folders as store_folders
 
@@ -443,9 +443,11 @@ def _decide_guesses(conn, proposed):
         # named face under the folder scanned the whole table inside the write lock,
         # and every other face action waited (docs/findings.md, #45).
         taken = faces.names_in_photo(conn, face_photo)
+        # A person the owner took off this photo on purpose is not guessed onto another face of it (tagpup.store.removals).
+        taken_off = {vocabulary.key(each) for each in removals.removed_names(conn, faces.nobody_in_photo(conn, face_photo)).values()}
         proposed_names = [name for _fid, name in faces_proposed]
         for face_id, name in faces_proposed:
-            if proposed_names.count(name) > 1 or name in taken:
+            if proposed_names.count(name) > 1 or name in taken or vocabulary.key(name) in taken_off:
                 continue
             if name not in given:
                 gone += 1

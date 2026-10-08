@@ -21,13 +21,16 @@ write, so it is not one request's work: this module makes the PLAN, and the job 
   is not written again, a person the photo no longer holds is not taken off again.
 """
 import logging
+import os
 
 from tagpup.core import validation
-from tagpup.core.result import Refused
+from tagpup.core import paths
+from tagpup.core.result import Refused, Result
 from tagpup.files import job_files
 from tagpup.services import face_people
+from tagpup.services import journal as journal_service
 from tagpup.services import faces as faces_service
-from tagpup.store import db, faces, person_ids
+from tagpup.store import db, faces, file_journal, person_ids
 
 logger = logging.getLogger(__name__)
 
@@ -152,14 +155,107 @@ def unname(library, face_ids):
     return faces_service.unname_faces(library, face_ids, undo=True).changed if face_ids else 0
 
 
-def put_back(library, plan):
+def _photo_of_faces(library, face_ids):
+    """{face id: photo path} of the faces that exist."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return {face_id: row[0] for face_id, row in faces.rows(conn, list(face_ids)).items()}
+    finally:
+        conn.close()
+
+
+def put_back(library, plan, blocked=()):
     """The faces a removal (unname, exclude) took the names of, as they were: ruled out ones restored, then each named again by the
-    name and the decider it had (a face named or ruled out since is left). The faces put back."""
-    if plan["op"] == EXCLUDE:
-        faces_service.restore(library, [face_id for step in plan["steps"] for face_id in step])
+    name and the decider it had (a face named or ruled out since is left) -- except the faces of the photos in `blocked` (path
+    keys: their tag could not be put back, so the person is not on the photo yet). The faces put back."""
+    blocked = set(blocked)
     prior = prior_of(plan)
+    where = _photo_of_faces(library, set(prior) | {face_id for step in plan["steps"] for face_id in step})
+    free = {face_id for face_id, photo in where.items() if paths.key(photo) not in blocked}
+    if plan["op"] == EXCLUDE:
+        faces_service.restore(library, [face_id for step in plan["steps"] for face_id in step if face_id in free])
+    prior = {face_id: each for face_id, each in prior.items() if face_id in free}
     return len(db.write_with_connection(library.path, lambda conn: faces.reinstate(conn, prior),
                                         label="put back the names a job took off"))
+
+
+def _applied(library, change_ids):
+    """The changes among `change_ids` the journal still has applied (not undone yet)."""
+    found = []
+    for change_id in change_ids:
+        change = file_journal.change(library.path, change_id)
+        if change is not None and change.status == "applied":
+            found.append(change_id)
+    return found
+
+
+def _photos_of_changes(library, change_ids):
+    """{path key: path} of the photos whose files the changes wrote (every file of them, whatever it is now)."""
+    found = {}
+    for change_id in change_ids:
+        for row in file_journal.files_of(library.path, change_id):
+            if not row.is_rename:
+                found[paths.key(row.path)] = row.path
+    return found
+
+
+def undo(library, plan, state, exiftool_path):
+    """Undo a finished or stopped job as one, whatever has been done of its undo before (every step reads the state and does what is
+    left, so a retry when a share is back finishes it): a Result, `changed` the faces put back, details `files` (the files put
+    back through the journal), `remaining` (the photos whose file could not be put back: their faces are left as they are, and
+    the job stays undoable) and errors saying why.
+
+    The order is the rule of its direction. An assignment's faces are unnamed first, then the tags it wrote taken off; a removal's
+    tags are put back first, then its faces named again -- only the faces of the photos whose file really went back. The files
+    go back through the journal's own undo of the changes THIS job wrote; a file the journal refuses (changed since) or a change
+    already undone with files left is finished by the same machinery a single face uses (add_people, remove_people), which merges
+    into the file and never overwrites it."""
+    result = Result(details={"files": 0, "remaining": 0})
+    writer = face_people.Writer(exiftool_path)
+    op = plan["op"]
+    changes = list(state.get("changes") or [])
+    photos = _photos_of_changes(library, changes)
+    ids = [int(face_id) for face_id in state.get("matched_ids") or []]
+    items = []
+    if op in (NAME, GUESS):
+        # Faces first (the faces a person named since are theirs), then the tags this job wrote.
+        named = named_still(library, plan, ids)
+        wanted = {face_id: name for step in plan["steps"] for face_id, name in (
+            [(face_id, plan["person_name"]) for face_id in step] if op == NAME else step)}
+        # The people to take off are those the job named, whether or not their faces are still named (an earlier try of this undo
+        # may have unnamed them): untag_plan keeps a person who is on a face of the photo now.
+        where = _photo_of_faces(library, ids)
+        items = [(where[face_id], wanted[face_id]) for face_id in ids if face_id in where and face_id in wanted]
+        result.changed = unname(library, named)
+    for change_id in reversed(_applied(library, changes)):
+        try:
+            undone = journal_service.undo(library, change_id, apply=True, exiftool_path=exiftool_path)
+            result.details["files"] += undone.changed
+        except Exception:
+            logger.exception("Could not undo change %s", change_id)
+    blocked = set()
+    if op in (NAME, GUESS):
+        plan_off = {path: tags for path, tags in face_people.untag_plan(library, items).items() if paths.key(path) in photos}
+        if plan_off:
+            removed = face_people.remove_people(library, plan_off, writer)
+            if removed.refused:
+                blocked |= {paths.key(path) for path in plan_off}
+            blocked |= {paths.key(what) for what, _why in removed.errors + removed.skipped}
+            for what, why in removed.errors:
+                result.fail(os.path.basename(str(what)), why)
+    else:
+        prior_items = [(photo, name) for face_id, (name, _s) in prior_of(plan).items()
+                       for photo in [_photo_of_faces(library, [face_id]).get(face_id)] if photo and paths.key(photo) in photos]
+        if prior_items:
+            tagged = face_people.add_people(library, prior_items, writer, stop_at_first_error=False)
+            if tagged.refused:
+                blocked |= {paths.key(photo) for photo, _name in prior_items}
+            blocked |= {paths.key(what) for what, _why in tagged.errors + tagged.skipped}
+            for what, why in tagged.errors:
+                result.fail(os.path.basename(str(what)), why)
+        result.changed = put_back(library, plan, blocked)
+    result.details["remaining"] = len(blocked)
+    return result
 
 
 def prior_of(plan):

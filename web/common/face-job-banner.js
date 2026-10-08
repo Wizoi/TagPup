@@ -17,6 +17,7 @@ function remaining(job) {
 
 function sentence(job) {
     const left = remaining(job);
+    if (job.undone) return 'An assignment that stopped part-way was undone: what was left of it is not carried on.';
     if (job.state === 'running') return `An assignment of faces is running: ${job.done} of ${job.total} faces done.`;
     return `${left} of ${job.total} faces of an assignment remain: it stopped (${job.state}) before it was finished.`;
 }
@@ -53,7 +54,7 @@ function show(job, options) {
     text.textContent = sentence(job);
     banner.appendChild(text);
     if (job.state === 'running') return;
-    banner.appendChild(button('Resume', () => resume(job, options)));
+    if (!job.undone && job.resumable !== false) banner.appendChild(button('Resume', () => resume(job, options)));
     banner.appendChild(button('Let go', () => letGo(job)));
 }
 

@@ -1257,28 +1257,6 @@ def operation(db_path, change_id):
         conn.close()
 
 
-def last_applied(db_path, operation, table, key, columns):
-    """What the newest APPLIED change named `operation` wrote to row `key` of `table`: ({column: (old, new)} of those of
-    `columns` it wrote, the change's id), or None when no applied change of that name wrote it (an undone one does not count).
-    One indexed read (idx_change_rows_row). Values can name people: for the caller's use, never for a report."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        if not has_journal(conn):
-            return None
-        found = conn.execute(
-            "SELECT c.id FROM change_rows r JOIN changes c ON c.id = r.change_id WHERE r.table_name = ? AND r.row_key = ?"
-            " AND c.operation = ? AND c.status = 'applied' ORDER BY c.id DESC LIMIT 1",
-            (table, _key_text(key), operation)).fetchone()
-        if found is None:
-            return None
-        wrote = {column: (old, new) for column, old, new in conn.execute(
-            "SELECT column_name, old, new FROM change_rows WHERE change_id = ? AND table_name = ? AND row_key = ?",
-            (found[0], table, _key_text(key))) if column in columns}
-        return wrote, found[0]
-    finally:
-        conn.close()
-
-
 def history(db_path, limit=20, change_id=None, values=False):
     """The library's changes, newest first (or change `change_id` alone): id, operation,
     status, schema version, when made, applied and undone, its summary, how many rows

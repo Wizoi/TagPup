@@ -132,6 +132,8 @@ def _unname_what_was_taken_off(library, change_id, result):
     if done.details.get("renamed"):
         result.details["renamed_faces"] = done.details["renamed"]
     result.details["faces_changes"] = done.details.get("faces_changes", [])
+    if done.details.get("faces_problem"):
+        result.details["faces_problem"] = done.details["faces_problem"]
 
 
 #: The line a prune says of the changes it leaves.

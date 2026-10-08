@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_faces_and_tags_in_step import PEOPLE, InStep  # noqa: E402
 from test_organize_faces import ODA, WREN  # noqa: E402
 
+from tagpup.core import paths  # noqa: E402
 from tagpup.files import job_files  # noqa: E402
 from tagpup.jobs import face_assignments  # noqa: E402
 from tagpup.services import bulk_edit, face_assignment  # noqa: E402
@@ -64,52 +65,78 @@ class OnlyWhatReallyChangedIsFollowed(Case):
         self.assertEqual((WREN, "manual"), self.row(on_lacks)[:2])
 
 
-class AFaceIsNamedAgainWhereItWasUnnamed(Case):
+class APersonPutBackNamesNoFaceByItself(Case):
+    """Round two: a decision made since is not in the journal, so a tag put back by hand never names a face from an old record;
+    History's Undo of the removal is the one exact inverse, and the rules that name faces only block on the record."""
+
     def two_faces(self):
         photo = self.held("back_001.jpg", [PEOPLE + WREN, "Regatta"])
         return photo, self.face(photo, name=WREN, name_source="manual"), self.face(photo, box=(70, 10, 110, 60))
 
-    def test_the_pill_off_and_on_names_the_same_face_not_the_other(self):
+    def test_the_pill_off_and_on_names_no_face_and_the_rule_does_not_name_the_other(self):
         photo, wren, other = self.two_faces()
         self.save(photo, ["Regatta"])
         self.assertEqual((None, "manual"), self.row(wren)[:2])
         reply = self.save(photo, ["Regatta", PEOPLE + WREN])
-        self.assertEqual((WREN, "manual"), self.row(wren)[:2], "the face the removal unnamed")
+        self.assertEqual((None, "manual"), self.row(wren)[:2], "a face was named from an old record")
         self.assertEqual((None, None), self.row(other)[:2], "the tag alone named the face that was never anybody's")
-        self.assertEqual([{"id": wren, "name": WREN}], reply["renamed_faces"])
+        self.assertNotIn("renamed_faces", reply)
 
-    def test_control_z_in_tagpup_puts_the_face_back_too(self):
+    def test_control_z_in_tagpup_names_no_face_either(self):
         photo, wren, other = self.two_faces()
         self.bulk_tags([photo], remove=[PEOPLE + WREN])
         self.bulk_tags([photo], add=[PEOPLE + WREN])          # web/tagpup/undo.js: the undo re-adds through bulk-tags
-        self.assertEqual((WREN, "manual"), self.row(wren)[:2])
+        self.assertEqual([(None, "manual"), (None, None)], [self.row(wren)[:2], self.row(other)[:2]])
+
+    def test_tagpups_order_save_then_match_ends_with_the_other_face_the_person(self):
+        photo, wren, other = self.two_faces()
+        self.save(photo, ["Regatta"])
+        self.save(photo, ["Regatta", PEOPLE + WREN])           # the page writes the tag first ...
+        reply = self.post("face/match", {"face_id": other, "person_name": WREN, "page_writes_tags": True})   # ... then names
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual([(None, "manual"), (WREN, "manual")], [self.row(wren)[:2], self.row(other)[:2]])
+
+    def test_tagtuners_order_the_server_writes_the_tag_then_names_the_face(self):
+        photo, wren, other = self.two_faces()
+        self.save(photo, ["Regatta"])
+        reply = self.tuner_post("face/match", {"face_id": other, "person_name": WREN})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual([(None, "manual"), (WREN, "manual")], [self.row(wren)[:2], self.row(other)[:2]])
+
+    def test_naming_jobs_only_block_on_the_record(self):
+        from tagpup.services import faces as faces_service
+        from tagpup.services import faces_from_tags, identify
+        reference = self.held("ref.jpg", [PEOPLE + WREN])
+        self.face(reference, degrees=0, name=WREN, name_source="manual")
+        photo, wren, other = self.two_faces()
+        self.save(photo, ["Regatta"])
+        self.save(photo, ["Regatta", PEOPLE + WREN])
+        self.assertNotIn(other, faces_from_tags.plan(self.library).ids["faces"])
+        proposed = faces_service.automatch_folder(self.library, self.folder, lambda: identify.decided_faces(self.library)[1])
+        self.assertEqual(0, proposed.details["faces"], "Re-examine named a face as the person the owner took off this photo")
         self.assertEqual((None, None), self.row(other)[:2])
 
-    def test_historys_undo_of_the_removal_names_the_face_and_the_order_of_undos_holds(self):
+    def test_historys_undo_of_the_removal_is_the_exact_inverse_and_names_the_face(self):
         photo, wren, other = self.two_faces()
         self.save(photo, ["Regatta"])
         removal = self.change_ids("save photo")[-1]
         unnamed = self.change_ids(UNNAMED)[-1]
         undone = journal_service.undo(self.library, removal, apply=True, exiftool_path="exiftool")
         self.assertEqual([], undone.errors, undone.errors)
-        self.assertEqual([PEOPLE + WREN, "Regatta"], sorted(self.tags(photo), key=lambda t: t != PEOPLE + WREN))
-        self.assertEqual((WREN, "manual"), self.row(wren)[:2])
-        self.assertEqual((None, None), self.row(other)[:2])
-        renamed = self.change_ids(RENAMED)[-1]
-        # The unnaming cannot be undone under the naming again that came after it; the newer first, then the older.
-        refused = journal_service.undo(self.library, unnamed, apply=True)
-        self.assertTrue(refused.refused, "an older change was undone from under a newer one")
-        self.assertEqual([], journal_service.undo(self.library, renamed, apply=True).errors)
-        self.assertEqual((None, "manual"), self.row(wren)[:2])
-        self.assertFalse(journal_service.undo(self.library, unnamed, apply=True).refused)
-        self.assertEqual((WREN, "manual"), self.row(wren)[:2])
+        self.assertEqual({PEOPLE + WREN, "Regatta"}, set(self.tags(photo)))
+        self.assertEqual([(WREN, "manual"), (None, None)], [self.row(wren)[:2], self.row(other)[:2]])
+        self.assertEqual([{"id": wren, "name": WREN}], undone.details["renamed_faces"])
+        self.assertTrue(journal_service.undo(self.library, unnamed, apply=True).refused, "undone twice")
 
-    def test_a_face_renamed_since_the_removal_is_not_taken_back(self):
-        photo, wren, _other = self.two_faces()
+    def test_a_decision_made_since_stops_the_inverse(self):
+        photo, wren, other = self.two_faces()
         self.save(photo, ["Regatta"])
-        db.write_with_connection(self.path, lambda conn: faces.name(conn, [wren], ODA))
-        self.save(photo, ["Regatta", PEOPLE + WREN])
-        self.assertEqual(ODA, self.row(wren)[0])
+        removal = self.change_ids("save photo")[-1]
+        db.write_with_connection(self.path, lambda conn: faces.name(conn, [wren], ODA))       # by hand, not journaled
+        undone = journal_service.undo(self.library, removal, apply=True, exiftool_path="exiftool")
+        self.assertEqual(ODA, self.row(wren)[0], "the owner's newer decision was overwritten")
+        self.assertEqual({PEOPLE + WREN, "Regatta"}, set(self.tags(photo)), "the tag itself went back")
+        self.assertIn("changed since", undone.details["faces_problem"])
 
 
 class UndoOfTheWholeJob(Case):
@@ -159,9 +186,97 @@ class UndoOfTheWholeJob(Case):
         reply = self.tuner_post("faces/exclude", {"face_ids": [f for _p, f in made], "bulk": True}).get_json()
         self.files.keep_tags(made[0][0], ["Added elsewhere since"])
         undone = self.tuner_post("faces/job/undo", {"job": reply["job"]}).get_json()
-        self.assertIn("warning", undone)
         self.assertEqual([PEOPLE + WREN], self.tags(made[1][0]))
-        self.assertEqual(["Added elsewhere since"], self.tags(made[0][0]), "never overwritten")
+        # The journal refuses to overwrite a file changed since; the person is put back by adding, which keeps what is there.
+        self.assertEqual({"Added elsewhere since", PEOPLE + WREN}, set(self.tags(made[0][0])))
+        self.assertTrue(undone["undone"])
+
+
+class UndoOfAJobRoundTwo(Case):
+    def removal(self, count=3):
+        made = []
+        for n in range(count):
+            photo = self.held("r2_%02d.jpg" % n, [PEOPLE + WREN, "Regatta"])
+            made.append((photo, self.face(photo, name=WREN, name_source="manual")))
+        reply = self.tuner_post("faces/exclude", {"face_ids": [f for _p, f in made], "bulk": True}).get_json()
+        return made, reply["job"]
+
+    def test_an_undone_job_is_not_resumable_and_is_not_carried_on(self):
+        photos_ = [self.held("u_%d.jpg" % n) for n in range(30)]
+        ids = [self.face(photo) for photo in photos_]
+        job = face_assignments.start(self.library, face_assignment.plan_name(self.library, ids, WREN), "exiftool",
+                                     after_step=lambda done: job.cancel.set())
+        job.finished.wait(30)
+        self.assertEqual(200, self.tuner_post("faces/job/undo", {"job": job.handle}).status_code)
+        offered = self.tuner_client.get("/library/api/faces/job/current").get_json()["job"]
+        self.assertEqual((True, False), (offered["undone"], offered["resumable"]))
+        writes = self.files.writes
+        self.assertEqual(400, self.tuner_post("faces/job/resume", {"job": job.handle}).status_code)
+        self.assertEqual(writes, self.files.writes, "the second half of an undone job was written")
+
+    def test_a_file_that_cannot_be_put_back_keeps_its_face_and_the_job_undoable_until_it_can(self):
+        made, job = self.removal()
+        self.files.fails.add(paths.key(made[0][0]))
+        first = self.tuner_post("faces/job/undo", {"job": job}).get_json()
+        self.assertEqual((False, 1), (first["undone"], first["remaining"]))
+        self.assertIn("warning", first)
+        self.assertEqual([], self.tags(made[0][0]) and [x for x in self.tags(made[0][0]) if x == PEOPLE + WREN])
+        self.assertEqual((None, "manual", 1), self.row(made[0][1])[:3], "a face was named again with no person on its photo")
+        self.assertEqual((WREN, "manual", 0), self.row(made[1][1])[:3], "the photos that went back have their faces back")
+        self.files.fails.clear()                                      # the share is back
+        second = self.tuner_post("faces/job/undo", {"job": job}).get_json()
+        self.assertEqual((True, 0), (second["undone"], second["remaining"]))
+        self.assertEqual({PEOPLE + WREN, "Regatta"}, set(self.tags(made[0][0])))
+        self.assertEqual((WREN, "manual", 0), self.row(made[0][1])[:3])
+        self.assertEqual(400, self.tuner_post("faces/job/undo", {"job": job}).status_code, "undone twice")
+
+    def test_the_name_direction_takes_the_same_care(self):
+        made = [(self.held("n_%d.jpg" % n, ["Regatta"]), None) for n in range(3)]
+        ids = [self.face(photo) for photo, _x in made]
+        reply = self.tuner_post("faces/match-bulk", {"face_ids": ids, "person_name": WREN}).get_json()
+        self.files.fails.add(paths.key(made[0][0]))
+        first = self.tuner_post("faces/job/undo", {"job": reply["job"]}).get_json()
+        self.assertEqual((False, 1), (first["undone"], first["remaining"]))
+        self.files.fails.clear()
+        second = self.tuner_post("faces/job/undo", {"job": reply["job"]}).get_json()
+        self.assertTrue(second["undone"])
+        self.assertEqual([["Regatta"]] * 3, [self.tags(photo) for photo, _x in made])
+
+    def test_an_undo_is_held_like_a_running_job(self):
+        made, job = self.removal(2)
+        gate, entered = threading.Event(), threading.Event()
+        self.files.on_write = lambda path, n: (entered.set(), gate.wait(10))
+        worker = threading.Thread(target=lambda: face_assignments.undo(self.library, job, "exiftool"))
+        worker.start()
+        try:
+            entered.wait(10)
+            self.assertTrue(any("assignment" in each for each in lifecycle.long_work()), lifecycle.long_work())
+            with self.assertRaises(face_assignments.Conflict):
+                face_assignments.refuse_if_running(self.library)
+            other = self.held("late.jpg")
+            late = self.face(other)
+            self.assertEqual(409, self.tuner_post("faces/match-bulk", {"face_ids": [late], "person_name": ODA}).status_code)
+        finally:
+            gate.set()
+            worker.join(30)
+        self.assertFalse(any("assignment" in each for each in lifecycle.long_work()))
+
+    def test_a_job_running_in_another_process_is_not_let_go(self):
+        photo = self.held("lg.jpg")
+        face = self.face(photo)
+        gate, entered = threading.Event(), threading.Event()
+        self.files.on_write = lambda path, n: (entered.set(), gate.wait(10))
+        job = face_assignments.start(self.library, face_assignment.plan_name(self.library, [face], WREN), "exiftool")
+        entered.wait(10)
+        try:
+            face_assignments.forget(self.library)             # this process knows nothing of it ...
+            with unittest.mock.patch.object(bulk_edit, "process_alive", return_value=True):      # ... its owner is alive
+                with self.assertRaises(face_assignments.Conflict):
+                    face_assignments.let_go(self.library, job.handle)
+            self.assertIsNotNone(face_assignment.read_plan(self.library, job.handle), "a running job's record was removed")
+        finally:
+            gate.set()
+            job.finished.wait(30)
 
 
 class TheQueryIsFast(Case):

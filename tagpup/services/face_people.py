@@ -38,7 +38,7 @@ from tagpup.core.result import Conflict, Result
 from tagpup.files import exiftool_session
 from tagpup.services import faces as faces_service
 from tagpup.services import file_changes, tagging
-from tagpup.store import db, faces, file_journal, journal, person_ids, photos, taxonomy
+from tagpup.store import db, faces, file_journal, journal, person_ids, photos, removals, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +46,8 @@ logger = logging.getLogger(__name__)
 ADDED = "person added for a named face"
 REMOVED = "person taken off for an unnamed face"
 
-#: ... and the change that named a face again when its person was put back on the photo (#908).
-RENAMED = "face named again for a person put back on the photo"
-
-#: ... and the change that unnamed the faces of a person whose tag was taken off a photo (History's `operation`).
-UNNAMED = "face unnamed for a person taken off the photo"
+#: The change that unnamed the faces of a person taken off a photo (History's `operation`).
+UNNAMED = removals.OPERATION
 
 #: How long one ExifTool command of these writes may take, in seconds (the bulk edits' chunk's is the same).
 TIMEOUT = 60
@@ -511,7 +508,7 @@ def _faces_to_unname(library, removed):
     return found
 
 
-def unname_for_removed_tags(library, removed):
+def unname_for_removed_tags(library, removed, files_change=None):
     """A person's tag taken off a photo takes the person's name off the photo's faces (owner, 2026-10-08, #908): the pill in the
     pages, a tag taken off a selection, History's Undo of an add. `removed` is {photo path: [the tags that were taken off it]},
     of the photos whose file a change REALLY changed from holding the tag to not holding it (follow_change reads that from the
@@ -535,7 +532,8 @@ def unname_for_removed_tags(library, removed):
                             {"name": None, "name_source": "manual"}, kind="face unnamed", skippable=True)
              for face_id, name, source in found]
     try:
-        applied = journal.apply(library.path, UNNAMED, edits, summary={"faces": len(edits)})
+        # `files_change`: the change of photo files this follows, so that undoing THAT change can undo this one (undo_unnaming).
+        applied = journal.apply(library.path, UNNAMED, edits, summary={"faces": len(edits), "files_change": files_change})
     except journal.Refusal as why:
         result.fail("the faces of the photos a tag was taken off", why)
         return result
@@ -556,83 +554,60 @@ def follow_change(library, change_id, undone=False, moved=None):
     """THE place that decides what a change of photo files did to the people on its photos (#908; the one owner of "this
     photo's tag was really taken off / put on by this change"): it reads the journaled change's own files -- only those the
     change really wrote and left done (or, `undone`, that its Undo really put back), and from what each held before to what it
-    holds after -- and from that, for the photos where a person's tag really went: the faces that carried them are unnamed
-    (unname_for_removed_tags), and for those where one really came: the face a removal of that person unnamed is named again,
-    as it was (rename_for_put_back). A photo whose file already read the same is not in the change, so it is never touched. The
-    pill's save, a selection's tag write and History's Undo all end here. `moved` ({old path: new path}) says where a photo went
-    when the same save renamed it. A Result: details `unnamed` and `renamed` ([{"id", "name"}]), `faces_changes` (the journal's
-    ids)."""
+    holds after. For the photos where a person's tag really went, the faces that carried them are unnamed
+    (unname_for_removed_tags). A person's tag put back is NOT followed by naming a face -- not by the pill, Ctrl+Z or a
+    selection: a decision made since is not in the journal, so a face is never named from an old record. The one exception is
+    exact: History's Undo of a removal undoes the unnaming that removal made (undo_unnaming), the journaled inverse, refused if
+    anything wrote those faces since. `moved` ({old path: new path}) says where a photo went when the same save renamed it. A
+    Result: details `unnamed` and `renamed` ([{"id", "name"}]), `faces_changes` (the journal's ids), `faces_problem`."""
     moved = {paths.key(old): new for old, new in (moved or {}).items()}
-    removed, added = {}, {}
+    removed, put_back, left = {}, False, False
     for row in file_journal.files_of(library.path, change_id):
-        if row.state != ("undone" if undone else "done") or row.is_rename:
+        if row.is_rename:
+            continue
+        if row.state != ("undone" if undone else "done"):
+            left = left or (undone and row.state == "done")
             continue
         was, now = (row.after, row.before) if undone else (row.before, row.after)
         was_tags, now_tags = _tags_of(was), _tags_of(now)
-        path = moved.get(paths.key(row.path), row.path)
         taken = [tag for tag in was_tags if tag not in set(now_tags)]
-        put = [tag for tag in now_tags if tag not in set(was_tags)]
+        put_back = put_back or any(tag not in set(was_tags) for tag in now_tags)
         if taken:
-            removed[path] = taken
-        if put:
-            added[path] = put
-    result = unname_for_removed_tags(library, removed)
-    again = rename_for_put_back(library, added)
-    for what, why in again.errors:
-        result.fail(what, why)
-    result.details["renamed"] = again.details["renamed"]
-    result.details["faces_changes"] = [each for each in (result.details.get("change"), again.details.get("change")) if each]
-    result.changed += again.changed
+            removed[moved.get(paths.key(row.path), row.path)] = taken
+    result = unname_for_removed_tags(library, removed, files_change=None if undone else change_id)
+    result.details["renamed"] = []
+    result.details["faces_changes"] = [each for each in [result.details.get("change")] if each]
+    if undone and put_back:
+        if left:
+            result.details["faces_problem"] = ("Some files were not put back, so the faces of this removal were not named again: "
+                                               "undo it again in History when they can be.")
+        else:
+            undo_unnaming(library, change_id, result)
     return result
 
 
-def rename_for_put_back(library, added):
-    """A person's tag put back on a photo (the pill again, Ctrl+Z, History's Undo of the removal) names the face the removal
-    unnamed AGAIN, as it was (#908): `added` is {photo path: [the tags put on]}. The face is found in the removal's own journaled
-    change (UNNAMED: tagpup.store.journal.last_applied -- name and who decided it), among the photo's faces a person called nobody;
-    one renamed or ruled out since is not one. The one-face rule of the save that put the tag back may have named ANOTHER face
-    of the photo as a guess (the tag alone names the one face still unnamed): that guess is taken back, the person was one face's.
-    One journaled change (RENAMED). Returns a Result: `changed`, details `renamed` ([{"id", "name"}]) and `change`."""
-    result = Result(attempted=len(added))
-    result.details.update(renamed=[], change=None)
-    if not added:
-        return result
+def undo_unnaming(library, files_change, result):
+    """History's Undo of a removal (`files_change`, now undone) names the faces it unnamed again by undoing that unnaming: the
+    journal's own inverse, which refuses (and the faces stay as they are, said in `result.details["faces_problem"]`) if anything
+    wrote those faces since -- a name given by hand included, since the journal compares the rows with what the change left."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        known = taxonomy.read_people_vocabulary(conn)
-        nobody = {photo_path: faces.nobody_in_photo(conn, photo_path) for photo_path in added}
+        change = removals.unnaming_of(conn, files_change)
+        was = removals.faces_of(conn, change) if change is not None else []
     finally:
         conn.close()
-    edits, chosen = [], []
-    for photo_path, put in added.items():
-        for face_id in nobody[photo_path]:
-            record = journal.last_applied(library.path, UNNAMED, "faces", (face_id,), ("name", "name_source"))
-            if record is None:
-                continue
-            wrote, _change = record
-            # A column the change left as it was (name_source already "manual") is not in its rows: it was "manual" before, too.
-            name = wrote.get("name", (None, None))[0]
-            source = wrote["name_source"][0] if "name_source" in wrote else "manual"
-            if name and _person_tags(put, name, known):
-                edits.append(journal.update("faces", (face_id,), {"name": None, "name_source": "manual", "excluded": 0},
-                                            {"name": name, "name_source": source}, kind="face named again", skippable=True))
-                chosen.append((photo_path, face_id, name))
-    if not edits:
-        return result
+    if change is None:
+        return
     try:
-        applied = journal.apply(library.path, RENAMED, edits, summary={"faces": len(edits)})
+        journal.undo(library.path, change)
     except journal.Refusal as why:
-        result.fail("the faces of the photos a tag was put back on", why)
-        return result
-    named = _names_now(library, [face_id for _p, face_id, _n in chosen])
-    for photo_path, face_id, name in chosen:
-        if face_id not in named:
-            continue
-        result.details["renamed"].append({"id": face_id, "name": name})
-        _give_back_guesses(library, photo_path, face_id, name)
-    result.details["change"] = applied.change_id
-    result.changed = len(result.details["renamed"])
-    return result
+        logger.warning("Could not name the faces of change %s again: %s", files_change, why)
+        result.details["faces_problem"] = ("The faces of this removal were not named again because they changed since: %s" % why)
+        return
+    named = _names_now(library, [face_id for face_id, _name in was])
+    result.details["renamed"] = [{"id": face_id, "name": name} for face_id, name in was if face_id in named]
+    result.details["faces_changes"].append(change)
+    result.changed += len(result.details["renamed"])
 
 
 def _names_now(library, face_ids):

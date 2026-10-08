@@ -274,8 +274,12 @@ def faces_job_undo():
         refuse(400, str(why))
     except Conflict as why:
         refuse(409, str(why))
-    reply = {"success": True, "faces": result.changed, "files": result.details.get("files", 0)}
-    if result.errors:
+    reply = {"success": True, "faces": result.changed, "files": result.details.get("files", 0),
+             "undone": result.details.get("undone", False), "remaining": result.details.get("remaining", 0)}
+    if result.details.get("remaining"):
+        reply["warning"] = ("%d photo(s) could not be put back (%s): their faces were left as they are, and Undo can be pressed "
+                            "again when they can be." % (result.details["remaining"], result.errors[0][1] if result.errors else "the file"))
+    elif result.errors:
         reply["warning"] = "%d thing(s) could not be put back: %s" % (len(result.errors), result.errors[0][1])
     return jsonify(reply)
 

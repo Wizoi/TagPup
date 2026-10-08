@@ -39,7 +39,6 @@ from tagpup.core import runs
 from tagpup.core.result import Conflict, NotFound, Refused, Result
 from tagpup.services import bulk_edit, face_assignment, face_people, file_changes
 from tagpup.services import job_runs as runs_service
-from tagpup.services import journal as journal_service
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +54,7 @@ MOST_WAIT = 5.0
 KEPT = 10
 
 _jobs = {}            # {library.key: {handle: Job}}
+_undoing = {}         # {library.key: handle}: a job being undone is held like a running one
 _lock = threading.Lock()
 
 
@@ -141,7 +141,8 @@ class Job:
                     "errors": list(self.errors[:MOST_ERRORS]), "error_count": self.error_count,
                     "warnings": list(self.warnings[:MOST_ERRORS]), "message": self.message,
                     "started": self.started, "finished": self.ended, "cancelling": self.state == RUNNING and self.cancel.is_set(),
-                    "resumable": self.state in (CANCELLED, FAILED, ABANDONED), "what": self._what()}
+                    "resumable": self.state in (CANCELLED, FAILED, ABANDONED) and not self.undone, "undone": self.undone,
+                    "what": self._what()}
 
     def outcome(self):
         """What the request that waited answers: the faces done, the faces not, the sentence."""
@@ -272,6 +273,8 @@ def _register(library, job):
 
 
 def _refuse_if_running(library):
+    if library.key in _undoing:
+        raise Conflict("Assignment %s is being undone in %s. Wait for it to finish." % (_undoing[library.key], library.name))
     job = _running_one(library)
     if job is not None:
         raise Conflict("Faces are already being assigned in %s (%s of %s done). Wait for it to finish, or cancel it."
@@ -346,7 +349,8 @@ def status(library, handle):
             "message": state.get("message") or ("TagPup was closed before this finished: %s of %s faces were done; resume it to "
                                                 "carry on from there." % (sum(len(s) for s in plan["steps"][:done]), plan["faces"])),
             "started": state.get("started"), "finished": state.get("finished"), "cancelling": False,
-            "resumable": shown in (CANCELLED, FAILED, ABANDONED), "what": None}
+            "resumable": shown in (CANCELLED, FAILED, ABANDONED) and not state.get("undone"),
+            "undone": bool(state.get("undone")), "what": None}
 
 
 def current(library):
@@ -366,7 +370,7 @@ def current(library):
         return None
     handle = (found[0].changed or {}).get("job") or found[0].id
     seen = status(library, handle)
-    if seen is None or seen["state"] in (DONE,) or not (seen["resumable"] or seen["state"] == RUNNING):
+    if seen is None or seen["state"] in (DONE,) or not (seen["resumable"] or seen["state"] == RUNNING or seen.get("undone")):
         return None
     return seen
 
@@ -393,6 +397,8 @@ def resume(library, handle, exiftool_path, told=None, after_step=None):
     found = status(library, handle)
     if found is None:
         raise NotFound("There is no assignment %s in this library." % handle)
+    if found.get("undone"):
+        raise Refused("Assignment %s was undone: what is left of it is not carried on." % handle)
     if not found["resumable"] or found["state"] == DONE:
         raise Refused("Assignment %s is %s: only one that was cancelled, stopped or abandoned is resumed." % (handle, found["state"]))
     plan, state = _stored(library, handle)
@@ -426,19 +432,23 @@ def resume(library, handle, exiftool_path, told=None, after_step=None):
 
 
 def let_go(library, handle):
-    """Let go of a job that stopped part-way: its plan and state are removed, so it is no longer offered. Refused for one running."""
+    """Let go of a job that stopped part-way: its plan and state are removed, so it is no longer offered. Refused for one running --
+    in this process, or in another (the state's run says whether its process is alive, as `status` does)."""
+    found = status(library, handle)
+    if found is not None and found["state"] == RUNNING:
+        raise Conflict("Assignment %s is running: cancel it first." % handle)
     with _lock:
-        job = _held(library).get(handle)
-        if job is not None and job.state == RUNNING:
-            raise Conflict("Assignment %s is running: cancel it first." % handle)
+        if library.key in _undoing:
+            raise Conflict("Assignment %s is being undone." % _undoing[library.key])
         _held(library).pop(handle, None)
     face_assignment.forget(library, handle)
 
 
 def undo(library, handle, exiftool_path):
-    """Undo the whole of a finished or stopped job (see the module's docstring). A Result: `changed` the faces put back,
-    details `files` (the files restored), errors for what could not be (a file changed since, a face renamed since is left).
-    Refused for a job that is running, was undone, or whose record is gone."""
+    """Undo the whole of a finished or stopped job (tagpup.services.face_assignment.undo, and the module's docstring), synchronously
+    and holding the library like a running job while it does (a new assignment, a resume and an update wait). A Result: `changed`
+    the faces put back, details `files` and `remaining` -- the photos whose file could not be put back; then the job is NOT marked
+    undone and can be undone again when they can be. Refused for a job that is running, was undone, or whose record is gone."""
     found = status(library, handle)
     if found is None:
         raise NotFound("There is no assignment %s in this library." % handle)
@@ -449,46 +459,38 @@ def undo(library, handle, exiftool_path):
         raise Refused("The record of assignment %s is gone, so it cannot be undone as one (History lists its changes)." % handle)
     if state.get("undone"):
         raise Refused("Assignment %s was undone already." % handle)
-    result = Result(details={"files": 0})
-    op = plan["op"]
-
-    def undo_files():
-        for change in reversed(state.get("changes") or []):
-            try:
-                undone = journal_service.undo(library, change, apply=True, exiftool_path=exiftool_path)
-            except Exception as problem:
-                logger.exception("Could not undo change %s of assignment %s", change, handle)
-                result.fail("a change of photo files", "could not be undone (%s)" % type(problem).__name__)
-                continue
-            if undone.refused:
-                result.fail("a change of photo files", undone.refused)
-            result.details["files"] += undone.changed
-            for what, why in undone.errors:
-                result.fail(what, why)
-
-    ids = [int(face_id) for face_id in state.get("matched_ids") or []]
-    if op in (face_assignment.NAME, face_assignment.GUESS):
-        # Faces first (the faces a person named since are theirs), then the tags this job wrote.
-        result.changed = face_assignment.unname(library, face_assignment.named_still(library, plan, ids))
-        undo_files()
-    else:
-        # Tags first, then the faces: the person is on the photo again before a face says so.
-        undo_files()
-        result.changed = face_assignment.put_back(library, plan)
-    state["undone"] = True
-    face_assignment.write_state(library, handle, state)
     with _lock:
-        job = _held(library).get(handle)
-        if job is not None:
-            job.undone = True
-    return result
+        _refuse_if_running(library)
+        _undoing[library.key] = handle
+    claim = None
+    try:
+        claim = _claim(library)
+        result = face_assignment.undo(library, plan, state, exiftool_path)
+        if not result.details["remaining"]:
+            state["undone"] = True
+            face_assignment.write_state(library, handle, state)
+            with _lock:
+                job = _held(library).get(handle)
+                if job is not None:
+                    job.undone = True
+        result.details["undone"] = not result.details["remaining"]
+        return result
+    finally:
+        with _lock:
+            _undoing.pop(library.key, None)
+        if claim is not None:
+            try:
+                runs_service.end(library, claim.run_id, time.time(), {"what": "undo of an assignment of faces", "job": handle})
+            except Exception as problem:
+                logger.warning("Could not record the end of the undo of assignment %s: %s", handle, problem)
 
 
 def running(library=None):
     """How many assignments are running in this process: what an update waits for."""
     with _lock:
         every = [_jobs.get(library.key, {})] if library is not None else list(_jobs.values())
-        return sum(1 for jobs in every for job in jobs.values() if job.state == RUNNING)
+        held = sum(1 for jobs in every for job in jobs.values() if job.state == RUNNING)
+        return held + ((1 if library.key in _undoing else 0) if library is not None else len(_undoing))
 
 
 def forget(library):

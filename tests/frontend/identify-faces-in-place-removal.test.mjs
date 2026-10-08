@@ -220,6 +220,23 @@ describe("ignoring a cluster leaves the rest of the grid alone", () => {
     assert.equal(cards(document).length, 7, "the faces did not come back to the grid");
   });
 
+  test("Undo says Undoing... and stays until it ends; photos that could not be put back keep it for a retry (#907)", async (t) => {
+    const { window, document, server } = await openGrid(t);
+    server.first("/api/faces/exclude", { success: true, excluded: 3, job: 9 });
+    server.first("/api/faces/job/undo", { success: true, undone: false, remaining: 2, faces: 1, warning: "2 photo(s) could not be put back" });
+    window.alert = () => {};
+    await ignoreCluster(window, document, "Cluster 5");
+    const button = document.getElementById("btn-assign-undo");
+    button.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    assert.equal(document.getElementById("assign-undo-text").textContent, "Undoing...");
+    assert.equal(button.disabled, true, "pressed twice while it runs");
+    await new Promise((r) => window.setTimeout(r, 200));
+    assert.match(document.getElementById("assign-undo-text").textContent, /Undo incomplete: 2 photo/);
+    assert.equal(document.getElementById("assign-undo-bar").classList.contains("hidden"), false, "the bar went with a job left to undo");
+    assert.equal(button.disabled, false);
+    assert.equal(cards(document).length, 4, "faces not put back were shown in the grid");
+  });
+
   test("the panel's face count follows the cards", async (t) => {
     const { window, document } = await openGrid(t);
     const count = document.getElementById("matching-person-count");

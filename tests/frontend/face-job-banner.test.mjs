@@ -51,6 +51,14 @@ describe("a stopped assignment of faces", () => {
     assert.equal(banner(document), null);
   });
 
+  test("an undone one is not resumable: the banner says so and offers only Let go", async (t) => {
+    const server = serverWith({ ...STOPPED, undone: true, resumable: false });
+    const { window, document } = await loadApp("tagtuner", { server, url: "http://localhost:8080/photo_index/", t });
+    await wait(window, 150);
+    assert.match(banner(document).textContent, /was undone/);
+    assert.deepEqual([...banner(document).querySelectorAll("button")].map((b) => b.textContent), ["Let go"]);
+  });
+
   test("nothing is shown when there is none", async (t) => {
     const { window, document } = await loadApp("tagtuner", { server: serverWith(null), url: "http://localhost:8080/photo_index/", t });
     await wait(window, 150);
