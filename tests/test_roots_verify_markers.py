@@ -90,7 +90,7 @@ class WhatItCounts(MarkedCase):
                                                            marks["differs"], marks["unmarked"]))
         self.assertEqual("%d of %d marked folders match; 0 differ; 0 not marked" % (LEAVES, LEAVES), marks["line"])
         self.assertFalse(found["poor"], found["poor_why"])
-        self.assertIn(marks["line"], found["summary"])
+        self.assertNotIn("marked folders", found["summary"], "the line is its own, shown beside the summary")
 
     def test_a_copy_keeps_the_markers_and_matches(self):
         copy = self.copy_of_pictures()
@@ -291,6 +291,8 @@ class ChangingTheLocation(MarkedCase):
         answer = roots_location.run_verify(self.library, "pictures", copy, self.machine)
         last = roots_location.last_verify(self.library, "pictures")
         self.assertEqual((answer["markers"]["checked"], LEAVES, 0), (last["marked"], last["marks_match"], last["marks_differ"]))
+        run = roots_location.job_runs.runs(self.side.db_path, roots_location.VERIFY_JOB % "pictures", 1)[0]
+        self.assertIn(answer["markers"]["line"], run.changed["what"])
 
 
 class NothingMarked(MarkedCase):

@@ -50,12 +50,21 @@ export function lastVerifyText(last) {
         `${count(last.missing)} missing`];
     if (last.unread) found.push(`${count(last.unread)} never read by the index`);
     if (last.unreadable) found.push(`${count(last.unreadable)} could not be read`);
-    return `Last checked ${last.when}, ${what}: ${found.join(', ')}.`;
+    const marks = last.marked ? ` ${count(last.marks_match)} of ${count(last.marked)} marked folders match; `
+        + `${count(last.marks_differ)} differ.` : '';
+    return `Last checked ${last.when}, ${what}: ${found.join(', ')}.${marks}`;
+}
+
+/** The folder markers of a Verify, one line in the server's own words ("N of M marked folders match; K differ; L
+ *  not marked."), or '' for a library that has marked no folder of the root. */
+export function markerLine(verify) {
+    return verify && verify.markers && verify.markers.line ? `${verify.markers.line}.` : '';
 }
 
 /** What a Verify answered, as lines for a person: its summary, and what is wrong with the place. */
 export function verifyLines(verify) {
     const lines = [verify.summary];
+    if (markerLine(verify)) lines.push(markerLine(verify));
     for (const why of verify.poor_why || []) {
         if (why !== verify.message) lines.push(why);
     }
@@ -282,7 +291,7 @@ function openPanel(entry, element, mode) {
             }
             const found = answer.verify ? verifyLines(answer.verify) : [];
             if (!answer.success) {
-                lines(check, [answer.error, ...found.slice(0, 1)], 'validation-error');
+                lines(check, [answer.error, found[0], markerLine(answer.verify)], 'validation-error');
                 // A poor result may be accepted, by someone who says so; nothing else may.
                 if (answer.would_refuse) overrideLabel.classList.remove('hidden');
                 checked = answer.would_refuse ? { poor: true } : null;

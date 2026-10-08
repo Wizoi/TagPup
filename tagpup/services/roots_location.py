@@ -198,7 +198,8 @@ def run_verify(library, name, location, machine, full=False, cancel=None, progre
                       marks_unmarked=marks["unmarked"])
     counts.update(mode=answer["mode"], location=answer["location"], partial=int(answer["partial"]),
                   what="verified root %s at %s (%s): %s" % (name, answer["location"],
-                                                            "all" if full else "sample", answer["summary"]))
+                                                            "all" if full else "sample", answer["summary"]
+                                                            + (" " + answer["markers"]["line"] + "." if answer.get("markers") else "")))
     failed = answer["stopped"] in ("unreachable", "time")
     job_runs.finish(library.path, claim.run_id, job_runs.FAILED if failed else job_runs.DONE, now(), counts,
                     answer["message"] or answer["summary"] if failed else None)

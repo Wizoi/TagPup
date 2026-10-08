@@ -587,8 +587,6 @@ def _summary(answer, total):
         text += " " + SYNC_REPLACES
     if answer["not_in_library"]:
         text += " %d photo(s) at the location have no row." % answer["not_in_library"]
-    if answer.get("markers"):
-        text += " " + answer["markers"]["line"] + "."
     if answer["stopped"] == "cancelled":
         text += " Cancelled before it finished."
     elif answer["stopped"] == "time":
