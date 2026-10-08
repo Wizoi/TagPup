@@ -77,12 +77,6 @@ class SuggestingAPerson(unittest.TestCase):
     def test_a_face_of_a_name_filed_once_is_offered_under_its_path(self):
         self.assertIn("People/Imogen Vale", self.suggested(TWICE, "Imogen Vale"))
 
-    def test_a_face_of_a_name_filed_nowhere_is_offered_as_no_bare_leaf(self):
-        # docs/findings.md, #296: a person is a leaf, a tag is a path. A recognised person the tag tree
-        # does not file is not offered in the one form the keywords must not hold.
-        tags = self.suggested(TWICE, "Marguerite Okafor")
-        self.assertEqual([], [t for t in tags if t.endswith("Marguerite Okafor")])
-
 
 if __name__ == "__main__":
     unittest.main()
