@@ -9,8 +9,11 @@ The likeness of the faces of one photo is stood in for (0.75, between OFFER_A_NA
 vectors of the other clustering tests a face of a person's cluster is always far above it. The rest is the real rule.
 """
 import os
+import sqlite3
 import sys
 import unittest
+
+import numpy as np
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -73,6 +76,71 @@ class GroupingAndTheTagsOfAPhoto(FaceClusteringTestBase):
         with mock.patch.object(clustering.KnownFaces, "likeness", like_by(0.75, "crowd.jpg")):
             self.resolve()
         self.assertEqual("Jane Doe", self.name_of(by_hand))
+
+
+def like(reference, cosine, seed):
+    """A unit vector whose cosine with `reference` is `cosine`."""
+    other = identity_vector(seed)
+    other = other - np.dot(other, reference) * reference
+    other /= np.linalg.norm(other)
+    out = cosine * reference + float(np.sqrt(1 - cosine ** 2)) * other
+    return (out / np.linalg.norm(out)).astype(np.float32)
+
+
+class TheFinalMatchingPass(FaceClusteringTestBase):
+    """docs/findings.md, #902: a face whose cluster has no anchor is not named by the loop and reaches the final matching pass
+    unnamed. That pass named it only from 0.80 (names_unasked) even when its photo's keywords name the person; confirmed on a
+    copy of kr-track, which lost names at 0.7331 and 0.7784. Nothing is stood in for: the vectors are real, the likeness is the
+    store's own, and the rule is the real final pass."""
+
+    def a_face_like_jane(self, cosine):
+        jane = identity_vector(1)
+        self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
+        # Its cluster is three photos, one tagged with Jane: Jane is on a third of them, short of the majority vote, and
+        # a photo of two faces is no anchor. So nothing names it before the final pass.
+        wanted = like(jane, cosine, 5)
+        crowd = self.add_photo("crowd.jpg", people=["Jane Doe"])
+        face = self.add_face(crowd, wanted, box=(0, 0, 400, 400))
+        stranger = identity_vector(9)       # the other face's cluster is as short of a majority
+        self.add_face(crowd, stranger, box=(0, 0, 400, 400))
+        for number in range(1, 3):
+            self.add_face(self.add_photo("plain_%d.jpg" % number), near(wanted, 10 + number, 0.03))
+            self.add_face(self.add_photo("other_%d.jpg" % number), near(stranger, 20 + number, 0.03))
+        return face
+
+    def test_a_face_at_0_73_of_a_person_its_photos_keywords_name_is_named(self):
+        face = self.a_face_like_jane(0.7331)
+        self.resolve()
+        self.assertEqual("Jane Doe", self.name_of(face))
+        self.assertIn("final_matching_tagged_photo", self.traces()[face]["resolution_method"])
+
+    def test_and_at_0_78(self):
+        face = self.a_face_like_jane(0.7784)
+        self.resolve()
+        self.assertEqual("Jane Doe", self.name_of(face))
+
+    def test_below_0_70_it_is_not_offered_and_stays_unnamed(self):
+        face = self.a_face_like_jane(0.60)
+        self.resolve()
+        self.assertIsNone(self.name_of(face))
+
+    def test_a_person_the_photos_keywords_do_not_name_is_not_given(self):
+        jane = identity_vector(1)
+        self.add_face(self.add_photo("jane.jpg", people=["Jane Doe"]), jane)
+        photo = self.add_photo("other.jpg", people=["Bob Roe"])
+        face = self.add_face(photo, like(jane, 0.75, 5), box=(0, 0, 400, 400))
+        self.add_face(photo, identity_vector(9), box=(0, 0, 400, 400))
+        self.resolve()
+        self.assertNotEqual("Jane Doe", self.name_of(face))
+
+    def test_a_name_given_by_hand_is_not_changed_by_it(self):
+        face = self.a_face_like_jane(0.7331)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE faces SET name = 'Ada Marchetti', name_source = 'manual' WHERE id = ?", (face,))
+        conn.commit()
+        conn.close()
+        self.resolve()
+        self.assertEqual("Ada Marchetti", self.name_of(face))
 
 
 if __name__ == "__main__":

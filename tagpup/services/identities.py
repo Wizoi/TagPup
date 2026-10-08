@@ -634,10 +634,13 @@ def resolve(photo_index, max_iterations=5, on_step=None):
 
             if photo_tags:
                 # Photo is tagged with people. We only match if the best matching name is in those tags.
-                # Since we have confirmation via tags, we name without asking at the
-                # value for that (tagpup.core.clustering), to prevent false
-                # assignments in multi-face photos
-                if best_name in photo_tags and clustering.names_unasked(best_sim):
+                # The tag bears the name out, so the face is named from where it is worth offering
+                # (tagpup.core.clustering.is_offered), not only from where it is named with no one
+                # looking: the loop above keeps a tag-confirmed name whatever the likeness (#855), and a
+                # face that reaches this pass unnamed -- its cluster has no anchor -- was left unnamed at
+                # 0.73 and 0.78 (docs/findings.md, #902). A name already taken by another face of the photo
+                # is skipped (`skip`), to prevent false assignments in multi-face photos.
+                if best_name in photo_tags and clustering.is_offered(best_sim):
                     final_name = best_name
                     names_taken_here.add(final_name)
                     traces[face["id"]] = {
