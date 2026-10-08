@@ -1196,6 +1196,64 @@ def prune_journal(ctx, days, apply_):
         console.print(result.details["note"])
 
 
+@cli.command("relink-folders")
+@click.option("--from", "old", default=None, type=click.Path(file_okay=False),
+              help="With --to: the folder, gone from disk, whose rows follow (as the dry run with --reveal names it).")
+@click.option("--to", "new", default=None, type=click.Path(file_okay=False),
+              help="With --from: the folder it was renamed to. Your word that it is the one: matching photos "
+                   "(same DocumentID, or same size and Date Taken) follow, however few.")
+@click.option("--reveal", is_flag=True, help="Name the folders. They can name people, so counts are the default.")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the rows, as one change History lists and undo reverses. Without it, only says what it would do.")
+@click.pass_context
+def relink_folders(ctx, old, new, reveal, apply_):
+    """Follow folders renamed outside the apps. A folder whose rows' folder is gone is
+    looked for beside itself, among folders beginning with the same date; its photos are
+    matched by DocumentID, else size and Date Taken; one candidate holding nearly all of
+    them is relinked, rows with their faces and names, and several or a thin match is
+    only proposed. A dry run unless --apply. Missing rows are never removed."""
+    if bool(old) != bool(new):
+        console.print("Give --from and --to together.")
+        raise SystemExit(2)
+    library = _existing_library(ctx)
+    result = runtimes.relink_folders(library, apply=apply_, only=(old, new) if old else None)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d row(s) in %d folder(s) gone from disk; %d more under a drive or share that is not there"
+                  " (left as they are)." % (counts["rows_in_gone_folders"], counts["gone_folders"],
+                                            counts["rows_unreachable"]))
+    console.print("  %d folder(s) to relink, %d proposed (you confirm: --from/--to), %d with no candidate or match."
+                  % (counts["relink"], counts["propose"], counts["none"]))
+    console.print("  %d photo(s) matched (%d by DocumentID, %d by size and Date Taken); %d row(s) and %d file(s) "
+                  "ambiguous, left; %d already had a row at the new name, left."
+                  % (counts["rows_matched"], counts["by_document_id"], counts["by_content"],
+                     counts["ambiguous_rows"], counts["ambiguous_files"], counts["occupied"]))
+    console.print("  %d face(s) go with them, %d named." % (counts["moved_faces"], counts["moved_named"]))
+    for number, folder in enumerate(result.details["reveal"]["folders"], 1):
+        line = "  folder %d: %s -- %d photo(s), %d matched. %s" % (number, folder["verdict"], folder["rows"],
+                                                                 folder["matched"], folder["why"])
+        console.print(line, markup=False, soft_wrap=True)
+        if reveal:
+            console.print("    %s" % folder["from"], markup=False, soft_wrap=True)
+            for candidate in folder["candidates"]:
+                console.print("      -> %s (%d matched)" % (candidate["folder"], candidate["matched"]),
+                              markup=False, soft_wrap=True)
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply relinks the %d folder(s) marked relink." % counts["relink"])
+        return
+    changed = result.details["changed"]
+    console.print("Wrote %d row(s): %d relinked, %d setting(s) followed; %d added folder(s) followed. %s" % (
+        result.changed, changed["relinked"], changed["settings"], result.details["added_followed"],
+        maintenance.recorded(result, library.path)), markup=False, soft_wrap=True)
+    for line in maintenance.skipped(result) + maintenance.failed(result):
+        console.print(line, markup=False, soft_wrap=True)
+    if result.errors:
+        raise SystemExit(1)
+
+
 #: What `sync` says of each thing it counts.
 SYNC_FOUND = (("new", "new file(s), in %d folder(s)", "new_folders"), ("changed", "changed file(s)", None),
               ("moved", "moved file(s)", None), ("missing", "missing file(s), in %d folder(s)", "missing_folders"))
@@ -1228,6 +1286,9 @@ def sync(ctx, folder, apply_):
     if counts["missing"]:
         console.print("  %d folder(s) wholly gone, %d of them a whole root (an unplugged drive looks the same);"
                       " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))
+        if counts["folders_gone"]:
+            console.print("  A folder renamed in Explorer looks the same: `relink-folders` looks for it beside"
+                          " itself (a dry run).")
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
     if counts.get("unreadable_files"):

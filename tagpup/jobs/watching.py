@@ -116,6 +116,19 @@ class _Handler(FileSystemEventHandler):
             logger.exception("A notification could not be noted")
 
 
+class _ParentHandler(FileSystemEventHandler):
+    """The watch on a watched folder's parent, which is told of the folder's own rename."""
+
+    def __init__(self, watcher, parent_key):
+        self.watcher, self.parent_key = watcher, parent_key
+
+    def dispatch(self, event):
+        try:
+            self.watcher.notice_parent(self.parent_key, event)
+        except Exception:
+            logger.exception("A notification could not be noted")
+
+
 class Watcher:
     """Watches the folders of `libraries()` -- `folders(library)` for each, the topmost
     folders to watch -- and calls `sync(library, folder)` for a folder whose notifications
@@ -137,6 +150,9 @@ class Watcher:
         self._lock = threading.Lock()
         #: root key -> {"path", "libraries": {library key: Library}, "watch", "absent"}.
         self._roots = {}
+        #: parent key -> {"path", "watch"}: the parent of each folder watched, watched without its
+        #: subfolders, since a watch on a folder sees nothing of the folder's own rename.
+        self._parents = {}
         #: library key -> {"library", "folders": {key: [folder, last noticed]}, "whole": time or None,
         #: "files": {key: photo written}}.
         self._pending = {}
@@ -165,6 +181,8 @@ class Watcher:
         with self._lock:
             for root in self._roots.values():
                 root["watch"] = None
+            for parent in self._parents.values():
+                parent["watch"] = None
         catch_up, self._started_before = not self._started_before, True
         self._thread = threading.Thread(target=self._loop, args=(stop, observer, catch_up),
                                         name="FolderWatcherThread", daemon=True)
@@ -219,7 +237,29 @@ class Watcher:
             return sorted((root["path"] for root in self._roots.values() if root["watch"] is not None),
                           key=paths.key)
 
+    def watched_parents(self):
+        """The parents of the watched folders, watched for a rename of one: for a test."""
+        with self._lock:
+            return sorted((parent["path"] for parent in self._parents.values() if parent["watch"] is not None),
+                          key=paths.key)
+
     # ---- Notifications, noted -----------------------------------------------------------
+
+    def notice_parent(self, parent_key, event):
+        """Note what `event`, from the watch on the parent `parent_key` of watched folders, says:
+        only a watched folder renamed, moved or deleted matters, and its libraries are synced
+        whole -- its rows name a folder that is not there, and what follows is the owner's
+        (tagpup.services.folder_moves). Windows reports a folder gone as a file gone, so
+        is_directory is not asked."""
+        if event.event_type not in ("moved", "deleted"):
+            return
+        gone = paths.key(event.src_path)
+        with self._lock:
+            root = self._roots.get(gone)
+            libraries = list(root["libraries"].values()) if root else []
+        if libraries:
+            logger.info("%s was renamed or removed; syncing its libraries whole.", event.src_path)
+            self._note_whole(libraries)
 
     def notice(self, root_key, event):
         """Note what `event`, from the watch on the folder `root_key`, says changed."""
@@ -453,6 +493,29 @@ class Watcher:
                 logger.info("%s is not there (a drive unplugged?); watching it when it is back.", root["path"])
                 with self._lock:
                     root["absent"] = True
+        self._watch_parents(observer)
+
+    def _watch_parents(self, observer):
+        """Watch the parent of each watched folder, without its subfolders, and let go of
+        those no folder needs."""
+        with self._lock:
+            wanted = {}
+            for root in self._roots.values():
+                parent = os.path.dirname(root["path"])
+                if root["watch"] is not None and parent and not paths.same(parent, root["path"]):
+                    wanted.setdefault(paths.key(parent), paths.stored(parent))
+            for key in [key for key in self._parents if key not in wanted]:
+                self._unwatch(observer, self._parents.pop(key))
+            missing = [(key, folder) for key, folder in wanted.items()
+                       if key not in self._parents or self._parents[key]["watch"] is None]
+        for key, folder in missing:
+            try:
+                watch = observer.schedule(_ParentHandler(self, key), folder, recursive=False)
+            except Exception as e:
+                logger.error("Could not watch %s for a rename of a folder in it: %s", folder, e)
+                continue
+            with self._lock:
+                self._parents[key] = {"path": folder, "watch": watch}
 
     @staticmethod
     def _unwatch(observer, root):

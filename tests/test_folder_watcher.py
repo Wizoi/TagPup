@@ -239,6 +239,21 @@ class WhenNotificationsMayHaveBeenMissed(Base):
         self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
         self.wait_until(lambda: ("harbour", None) in self.synced)
 
+    def test_a_watched_folder_renamed_is_noticed_from_its_parent_and_its_library_synced_whole(self):
+        # The 30 s look at the folders is not what finds it: its watch sees nothing of its own rename.
+        watcher = self.started(self.make(recheck=30.0))
+        self.wait_until(lambda: watcher.watched_parents() == [paths.stored(self.home.root)])
+        os.rename(self.root, self.root + " 2026")
+        self.wait_until(lambda: ("harbour", None) in self.synced, 10)
+
+    def test_a_folder_beside_a_watched_one_renamed_is_no_sync(self):
+        watcher = self.started(self.make(recheck=30.0))
+        self.wait_until(lambda: watcher.watched_parents() == [paths.stored(self.home.root)])
+        os.makedirs(os.path.join(self.home.root, "Other"))
+        os.rename(os.path.join(self.home.root, "Other"), os.path.join(self.home.root, "Other 2"))
+        time.sleep(1.5)
+        self.assertEqual([], self.synced)
+
     def test_a_library_in_too_many_separate_folders_is_not_watched_and_is_told_why(self):
         folders = [tempfile.mkdtemp(dir=self.home.root) for _ in range(3)]
         watcher = watching.Watcher(lambda: [self.library], lambda library: folders, self.sync,

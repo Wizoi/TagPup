@@ -11,6 +11,7 @@ recorded here, and a row is made as a photo is used -- by Suggest, as the indexe
 A record of what was asked, not a change of the library's photos: not journaled, as
 indexing is not. Removing a folder from the library forgets what was added at or under it.
 """
+import os
 import time
 
 from tagpup.core import paths
@@ -63,6 +64,30 @@ def covers(conn, folder):
         if paths.same(folder, path) or (subfolders and paths.is_under(folder, path)):
             return True
     return False
+
+
+def follow(conn, old, new):
+    """Point what was added at `old`, or under it, at `new` instead: the folder was renamed
+    (tagpup.services.folder_moves). An entry whose new place was added already is dropped,
+    it said the same. Returns the records changed. The caller commits."""
+    if not _there(conn):
+        return 0
+    changed = 0
+    for path, subfolders in every(conn):
+        if paths.same(path, old):
+            target = paths.stored(new)
+        elif paths.is_under(path, old):
+            target = paths.stored(os.path.join(new, os.path.relpath(paths.stored(path), paths.stored(old))))
+        else:
+            continue
+        where, params = store_roots.sql_equals(conn, "path", path)
+        taken, taken_params = store_roots.sql_equals(conn, "path", target)
+        if conn.execute("SELECT 1 FROM added_folders WHERE " + taken, taken_params).fetchone() is not None:
+            changed += conn.execute("DELETE FROM added_folders WHERE " + where, params).rowcount
+        else:
+            changed += conn.execute("UPDATE added_folders SET path = ? WHERE " + where,
+                                    (store_roots.to_row(conn, target),) + params).rowcount
+    return changed
 
 
 def forget_under(conn, folder):
