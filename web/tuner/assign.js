@@ -1,6 +1,7 @@
 // What is done to a selection of faces: assign, unmatch, exclude, restore, ignore,
 // undo, rename.
 import { api } from './common/api.js';
+import { choicesOf, loadRules } from './common/validate.js';
 import { nameProblem } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
@@ -42,11 +43,16 @@ function besidePerson(name) {
 // a person's centroid around. Excluding keeps the row and the crop but takes the
 // face out of identity work entirely; it is reversible from the Excluded bucket.
 //
-// The reasons, as tagpup.services.faces.EXCLUSION_REASONS gives them
-// (tests/test_rules_have_one_owner.py holds this copy to it): the four offered, the
-// first of them the default, and the one given when a cluster is ignored.
-const EXCLUDE_REASONS = ['not a person', 'stranger', 'bad crop', 'duplicate'];
+// The reasons are the server's: /api/rules publishes them as the "exclusion reason" kind's
+// choices (web/common/validate.js), the first of them the default, which the server gives a
+// reason left empty. The page offers every one but the reason it gives when a cluster is
+// ignored, which it names (tests/test_rules_have_one_owner.py holds it to the service's).
 export const EXCLUDE_IGNORED_CLUSTER = 'ignored cluster';
+
+/** The reasons to ask the person about: the published choices, less the one an ignored cluster is given. */
+function offeredReasons() {
+    return (choicesOf('exclusion reason') || []).filter(reason => reason !== EXCLUDE_IGNORED_CLUSTER);
+}
 
 /**
  * Ask why, with buttons rather than a text box.
@@ -62,12 +68,23 @@ export const EXCLUDE_IGNORED_CLUSTER = 'ignored cluster';
 function askExcludeReason(count) {
     const modal = document.getElementById('exclude-reason-modal');
     const choices = document.getElementById('exclude-reason-choices');
-    const title = document.getElementById('exclude-reason-title');
     if (!modal || !choices) {
-        // Nothing to ask with; fall back rather than block the exclusion.
-        return Promise.resolve(EXCLUDE_REASONS[0]);
+        // Nothing to ask with; fall back rather than block the exclusion: the server gives its default.
+        return Promise.resolve('');
     }
+    // The choices are the server's: wait for them if they have not arrived. With none, nothing is decided here.
+    return loadRules().then(() => {
+        const reasons = offeredReasons();
+        if (!reasons.length) {
+            alert('The reasons to exclude a face could not be loaded from the server: try again in a moment.');
+            return null;
+        }
+        return askWith(reasons, count, modal, choices);
+    });
+}
 
+function askWith(reasons, count, modal, choices) {
+    const title = document.getElementById('exclude-reason-title');
     if (title) {
         title.textContent = count === 1
             ? 'Why exclude this face?'
@@ -84,7 +101,7 @@ function askExcludeReason(count) {
         };
 
         choices.innerHTML = '';
-        EXCLUDE_REASONS.forEach(reason => {
+        reasons.forEach(reason => {
             const button = document.createElement('button');
             button.className = 'exclude-reason-choice';
             button.dataset.reason = reason;
@@ -123,7 +140,7 @@ export function postExcludeBulk(faceIds, presetReason) {
     return api.fetch('/api/faces/exclude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim() || EXCLUDE_REASONS[0] })
+        body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim() })
     })
     .then(res => {
         if (!res.ok) throw new Error('Exclude failed');
