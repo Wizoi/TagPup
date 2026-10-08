@@ -113,8 +113,9 @@ def sharing(library, name, others):
 
 def overview(library, machine, others=()):
     """Each root of the library with where this machine keeps it: {"roots": [{"name", "address",
-    "added", "places", "active", "previous", "writes_to", "mapped", "rows", "last_verify",
-    "shared_with"}], "map", "adopt_hint", "problem"}. `shared_with` is the names of the libraries among
+    "added", "places", "active", "previous", "writes_to", "writes_to_place", "mapped", "rows",
+    "last_verify", "shared_with"}], "map", "adopt_hint", "problem"}. `writes_to_place` is the folder files are written to (the page
+    compares it with `active` as paths; the server owns which it is). `shared_with` is the names of the libraries among
     `others` that hold a root of that name (the map is one for them all). `problem` is the sentence
     when the map cannot be read; the roots are then listed without places. Reads only."""
     found = _library_roots(library)
@@ -133,7 +134,7 @@ def overview(library, machine, others=()):
         answer["roots"].append({
             "name": name, "address": entry["address"], "added": entry["added"], "places": places,
             "active": places[0] if places else None, "previous": places[1] if len(places) > 1 else None,
-            "writes_to": _writes_to(places), "mapped": bool(places), "rows": rows,
+            "writes_to": _writes_to(places), "writes_to_place": places[0] if places else None, "mapped": bool(places), "rows": rows,
             "last_verify": last_verify(library, name),
             "shared_with": [other.name for other in sharing(library, name, others)]})
     return answer

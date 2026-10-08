@@ -47,6 +47,7 @@ dry run says how long to expect.
 Every step is `_reached`, which the tests stop the process at: a crash anywhere before the commit
 leaves the library exactly as it was, since it is one transaction.
 """
+import hashlib
 import json
 import logging
 import math
@@ -497,6 +498,16 @@ def _clean(location):
 
 # ---- The dry run -----------------------------------------------------------------------------
 
+def _address_kept(address):
+    """RootsError for an address that lost a leading backslash on the way in: it would be stored
+    as given and never match a path (#914)."""
+    if paths.lost_unc_slash(address or ""):
+        raise paths.RootsError(
+            "the address %r starts with one separator; a share's address starts with two (\\\\server\\share). "
+            "Git Bash turns a leading \\\\ in an argument into one: double each, or run this from "
+            "PowerShell or the command prompt" % address)
+
+
 def rehearse(db_path, name, address, locations):
     """What adopting root `name` at `locations` -- the first is where this machine puts its
     paths, all are equivalent -- would do to the library at `db_path`, and why it would be
@@ -506,6 +517,7 @@ def rehearse(db_path, name, address, locations):
     nothing; a library behind this version's schema is not migrated, and has no roots (its
     tables are counted as they are)."""
     name = paths.root_name(name)
+    _address_kept(address)
     locations = [_clean(each) for each in locations]
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
@@ -580,6 +592,7 @@ def adopt(db_path, name, address, locations):
     and two adoptions at once do not both copy it; another process's write meanwhile is told why
     (`db.busy_note`). The caller has written the machine's map."""
     name = paths.root_name(name)
+    _address_kept(address)
     locations = [_clean(each) for each in locations]
     schema.ensure(db_path)
     with db.lock_for(db_path):
@@ -729,6 +742,104 @@ _PATH_ROWS = ("(r.table_name = 'photos' AND r.column_name IN ('path', 'raw_metad
               " OR (r.table_name = 'suggestions' AND r.column_name = 'raw')"
               " OR (r.table_name = 'settings' AND r.column_name = 'value'"
               " AND r.row_key IN ('[\"library.roots\"]', '[\"library.ignored\"]'))")
+
+
+#: What the journal's change for restoring a root's two leading backslashes begins with.
+ADDRESS_REPAIR = journal.ADDRESS_REPAIR
+
+
+def address_repairs(db_path):
+    """[(name, stored address, repaired address)] of the library's roots whose address lost a
+    leading backslash (paths.lost_unc_slash), by name. Reads only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return _repairs(conn)
+    finally:
+        conn.close()
+
+
+def _repairs(conn):
+    return [(name, address, paths.restore_unc_slash(address))
+            for name, address in store_roots._rows(conn) if paths.lost_unc_slash(address)]
+
+
+def repair_addresses(db_path):
+    """Give every root whose address lost a leading backslash its two, in one transaction under the
+    write lock, recorded as ONE change that `undo` reverses (a change that holds no rows: its
+    summary says the roots, the separator each had and a hash of the address it was left with, never an
+    address). Running apps that hold the library's roots (an index run, a sync) stop with RootsChanged
+    when it commits: run it with them stopped. The roots must still make
+    a Roots once repaired, or nothing is written (RootsError). Returns [(name, was, now)] of what it
+    wrote, [] when nothing needed it. Refused when another process holds the write lock."""
+    schema.ensure(db_path)
+    with db.lock_for(db_path):
+        conn = db.connect(db_path)
+        try:
+            conn.execute("PRAGMA busy_timeout=%d" % LOCK_WAIT_MS)
+            try:
+                db.begin(conn, immediate=True)
+            except sqlite3.OperationalError as problem:
+                raise Refused("another process holds the library's write lock (%s); nothing was written"
+                              % problem) from None
+            try:
+                store_roots._forget(conn)
+                todo = _repairs(conn)
+                if not todo:
+                    conn.rollback()
+                    return []
+                for name, _was, now in todo:
+                    conn.execute("UPDATE roots SET address = ? WHERE name = ?", (now, name))
+                store_roots._forget(conn)
+                machine.roots_of(dict(store_roots._rows(conn)))   # RootsError: the repaired addresses nest
+                summary = {"roots": {name: {"first": was[:1], "fingerprint": _fingerprint(now)}
+                                     for name, was, now in todo}}
+                journal.record(conn, "%s: %s" % (ADDRESS_REPAIR, ", ".join(name for name, _w, _n in todo)),
+                               [], summary)
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                store_roots._forget(conn)
+                raise
+            store_roots._forget(conn)
+            return todo
+        finally:
+            conn.close()
+
+
+def _fingerprint(address):
+    """A short hash of an address: what a change keeps to know the address is still the one it left,
+    without keeping the address (a summary is read without reveal)."""
+    return hashlib.sha256(address.encode("utf-8")).hexdigest()[:16]
+
+
+def address_undo_refusals(conn, change_id):
+    """Why the address repair `change_id` cannot be undone now, [] when it can: a root it repaired is
+    gone, or its address is no longer as the repair left it."""
+    row = conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()
+    summary = json.loads(row[0] or "{}") if row else {}
+    held = dict(store_roots._rows(conn))
+    reasons = []
+    for name, left in sorted((summary.get("roots") or {}).items()):
+        if name not in held:
+            reasons.append("the library has no root %r any more" % name)
+        elif _fingerprint(held[name]) != left.get("fingerprint"):
+            reasons.append("the address of root %r is not the one the repair left (it was changed or the root "
+                           "adopted again since)" % name)
+    return reasons or ([] if summary.get("roots") else ["change %d does not say which roots it repaired" % change_id])
+
+
+def undo_address_repair(conn, change_id):
+    """Undo the address repair `change_id` on `conn`, in the caller's transaction: each root's address
+    back to one leading separator, the one it had."""
+    reasons = address_undo_refusals(conn, change_id)
+    if reasons:
+        raise journal.Refusal(reasons)
+    summary = json.loads(conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()[0])
+    held = dict(store_roots._rows(conn))
+    for name, left in summary["roots"].items():
+        conn.execute("UPDATE roots SET address = ? WHERE name = ?", (left["first"] + held[name][2:], name))
+    store_roots._forget(conn)
+    return len(summary["roots"])
 
 
 def undo_refusals(conn, change_id):

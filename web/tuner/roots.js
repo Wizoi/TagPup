@@ -9,6 +9,7 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { fileAccessNote } from './common/file-access-note.js';
+import { samePath } from './common/paths.js';
 import { state } from './state.js';
 
 const TIMES = String.fromCharCode(0xd7);
@@ -348,6 +349,35 @@ function confirmMove(entry, ask, button, check, panel) {
 
 // ---- The dialog -------------------------------------------------------------------------------
 
+/** Are files written to the place the root is kept at? The server says where; the page compares paths. */
+function writesToKeptPlace(entry) {
+    return !entry.writes_to_place || samePath(entry.writes_to_place, entry.active);
+}
+
+/**
+ * What is said of a root besides where it is kept. The earlier place is always in the open: it is
+ * a separate copy that nothing written now reaches. Where files are written is folded away while it
+ * is the place above (redundant), and open, with its sentence, when it is somewhere else.
+ */
+function moreAbout(entry) {
+    const nodes = [];
+    if (entry.writes_to) {
+        const redundant = writesToKeptPlace(entry);
+        const writes = buildElement('p', { className: 'roots-writes', text: entry.writes_to });
+        nodes.push(redundant
+            ? buildElement('details', { className: 'roots-more' },
+                [buildElement('summary', { text: 'Where files are written' }), writes])
+            : buildElement('details', { className: 'roots-more', attrs: { open: '' } },
+                [buildElement('summary', { text: 'Files are written elsewhere' }), writes]));
+    }
+    if (entry.previous) {
+        nodes.push(buildElement('p', { className: 'roots-previous',
+            text: `Before that: ${entry.previous}. It is a separate copy: nothing written now goes there. `
+                + 'Moving again forgets it.' }));
+    }
+    return nodes;
+}
+
 function rootRow(entry) {
     const verify = buildElement('button', { className: 'btn btn-secondary btn-sm roots-verify', text: 'Verify',
         title: 'Look at a sample of the photos: are they there, and as they were when indexed?',
@@ -367,12 +397,7 @@ function rootRow(entry) {
     const facts = [];
     if (entry.mapped) {
         facts.push(buildElement('p', { className: 'roots-place', text: `Kept at ${entry.active}` }));
-        facts.push(buildElement('p', { className: 'roots-writes', text: entry.writes_to }));
-        if (entry.previous) {
-            facts.push(buildElement('p', { className: 'roots-previous',
-                text: `Before that: ${entry.previous}. It is a separate copy: nothing written now goes there. `
-                    + 'Moving again forgets it.' }));
-        }
+        facts.push(...moreAbout(entry));
         if (entry.shared_with && entry.shared_with.length) {
             facts.push(buildElement('p', { className: 'roots-shared',
                 text: `${entry.shared_with.join(', ')} also uses this root: moving it moves it for them too.` }));

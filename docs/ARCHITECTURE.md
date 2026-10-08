@@ -157,7 +157,7 @@ nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
 | `jobs` | infrastructure | id, kind, arguments, status, progress, message, created, finished. |
 | `changes`, `change_rows` | infrastructure | The journal (phase 7.5): each bulk edit, and what it found and left of each row, one row per changed column. |
 | `settings` | decision | The library's settings (phase 7.6): `key`, `value`, written only through the journal. |
-| `roots` | decision | The library's roots (migration 18; "Roots and machines"): `name`, the share's `address`, `added`. Empty until the owner runs `roots adopt`; opening a library only ever makes the empty table. Written by that one change only, in the transaction that converts the rows under the root. |
+| `roots` | decision | The library's roots (migration 18; "Roots and machines"): `name`, the share's `address`, `added`. Empty until the owner runs `roots adopt`; opening a library only ever makes the empty table. Written by two changes only: `roots adopt`, in the transaction that converts the rows under the root, and `roots repair-address`, which restores a share address that lost a leading backslash (#914). |
 
 Each change ships as a migration with a dry run and a backup, and `tools/doctor.py` checks the library's invariants before and after. Migrations 1 to 19 are listed in `tagpup.store.schema.MIGRATIONS`, each with its kind (additive, data-changing or destructive) and why; 18, `roots`, is additive and empty, and converts nothing; 19, the derived tables of phase 9a, is additive and fills them from the photos' rows, which it checks before it commits.
 
@@ -668,6 +668,13 @@ the design assumes a GPU and more memory later and does not wait for them.
     the adoption (native) is converted as it is read, so undoing it writes the rooted form for a rooted photo, never
     a native row beside the rooted one. `history` shows what was recorded. The folder settings are shown native
     (`store.settings`), and their old and new values in the journal hold the row form.
+  - **`roots repair-address`** (`tagpup.services.roots.repair_addresses`, `tagpup.store.adoption`; the CLI's `roots`
+    group; no MCP tool): a share address starts with two backslashes, and Git Bash turns a leading pair in an argument
+    into one, so `roots adopt` refuses an address that starts with a single separator (#914) and this command gives a
+    root already stored so its two back. A dry run unless `--apply`; one journaled change (`roots repair-address:
+    <names>`) that `undo` reverses, refused once the address is no longer the one the repair left (a hash of it is kept,
+    never the address). It takes no backup (one text column, the journal is the way back) and, like any change of the
+    library's roots, stops runs in other processes that hold them (`RootsChanged`): run it with TagPup and TagTuner stopped.
   - **`roots adopt --name pictures --address <share> --location <folder here>`** (`tagpup.services.roots`,
     `tagpup.store.adoption`, the CLI's `roots` group; no MCP tool: a one-way step on the owner's data is theirs, not
     a tool's): a dry run unless `--apply`. The dry run counts, for each table, the rows it would convert, the rows under
