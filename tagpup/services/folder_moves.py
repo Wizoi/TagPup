@@ -48,6 +48,7 @@ from tagpup.files import images
 from tagpup.services import maintenance, relink_photos
 from tagpup.services import roots as roots_service
 from tagpup.store import added_folders, db, journal
+from tagpup.store import folder_ids as store_folder_ids
 from tagpup.store import journal as journal_store
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
@@ -55,6 +56,11 @@ from tagpup.store import settings as store_settings
 
 OPERATION = "relink_folders"
 KINDS = ("relinked", "settings")
+
+#: What the change is recorded as when the folders followed are told by their markers (tagpup.services.folder_ids): its
+#: undo points the folders added back the same way.
+MARKER_OPERATION = store_folder_ids.FOLLOW_OPERATION
+OPERATIONS = (OPERATION, MARKER_OPERATION)
 
 #: The least share of a unit's rows a candidate must hold for the relink to be written
 #: unasked; a folder that lost a few photos still follows, one that matches a handful does
@@ -73,7 +79,7 @@ def leading_date(name):
     return "-".join(found.groups()) if found else None
 
 
-class _Gone:
+class Gone:
     """Which folders are there, asked once each."""
 
     def __init__(self):
@@ -160,7 +166,7 @@ def _read(files, exiftool_path):
     return read
 
 
-def _mapped(entry, old, new):
+def mapped(entry, old, new):
     """`entry`, a folder, once `old` is `new`: the entry itself or one under it; None when
     it is neither."""
     if paths.same(entry, old):
@@ -170,13 +176,13 @@ def _mapped(entry, old, new):
     return None
 
 
-def _followed(held, key, moved):
+def followed_settings(held, key, moved):
     """(the setting's text once the folders in `moved` [(old, new)] are followed, whether it
     differs) for the folder-list setting `key` of `held` (native)."""
     lines, changed = [], False
     for line in validation.folder_list(held.get(key, "")):
         for old, new in moved:
-            target = _mapped(line, old, new)
+            target = mapped(line, old, new)
             if target is not None:
                 line, changed = target, True
                 break
@@ -201,13 +207,80 @@ def folder_pairs(moved):
     return sorted(found.values(), key=lambda pair: paths.key(pair[0]))
 
 
+def settings_edits_for(library, written):
+    """([journal edits], [setting keys]) that follow the folders `written` [(old, new)] in the
+    library's two folder settings (roots and ignored folders): an entry at or under an old folder
+    goes to the new. Reads the settings; writes nothing."""
+    edits, followed = [], []
+    if written:
+        held_settings = store_settings.read_only(library.path)
+        for key in store_roots.FOLDER_SETTINGS:
+            if key not in held_settings:
+                continue
+            text, changed = followed_settings(held_settings, key, written)
+            if changed:
+                edits.append(journal.update(store_settings.TABLE, (key,), {"value": held_settings[key]},
+                                            {"value": text}, kind="settings"))
+                followed.append(key)
+    return edits, followed
+
+
+def plan_added(added, written):
+    """([(old, new)] the folders added follow, [{from, to, why}] left) for the folders `written`
+    [(old, new)] followed. The folders added follow a unit only on a clean one-to-one rename: the new
+    name not added already, and no other unit going into it. Otherwise the record is left and
+    reported; no added folder is merged. `added` is added_folders.every."""
+    targets = {}
+    for _old, new in written:
+        targets[paths.key(new)] = targets.get(paths.key(new), 0) + 1
+    added_keys = {paths.key(path) for path, _s in added}
+    follow, left = [], []
+    for old, new in written:
+        into = [mapped(path, old, new) for path, _s in added]
+        into = [target for target in into if target is not None]
+        if not into:
+            continue
+        if targets[paths.key(new)] > 1:
+            left.append({"from": old, "to": new, "why": "two folders into one"})
+        elif any(paths.key(target) in added_keys for target in into):
+            left.append({"from": old, "to": new, "why": "target already added"})
+        else:
+            follow.append((old, new))
+    return follow, left
+
+
+def pair_by_evidence(rows, files, exiftool_path):
+    """[(row path, file path)] of the rows (id, path, size, taken, document_id) and the files
+    ({key: (path, mtime, size)}) that show one photo each, by the evidence of a folder that was
+    renamed (see the module): the DocumentID, else size and Date Taken. One to one: a row with
+    two matching files, or a file two rows match, is left. A file name is never enough alone.
+    Reads the files with ExifTool."""
+    if not rows or not files:
+        return []
+    info = _read(files, exiftool_path)
+    by_size, by_doc = {}, {}
+    for file_key, (_path, size, doc, _taken) in info.items():
+        by_size.setdefault(size, []).append(file_key)
+        if doc:
+            by_doc.setdefault(doc, []).append(file_key)
+    matches, claimed = {}, {}
+    for row in rows:
+        options = set(by_doc.get((row[4] or "").strip(), ())) | set(by_size.get(row[2], ()))
+        for file_key in sorted(options):
+            if _matches(row, info[file_key]):
+                matches.setdefault(row[0], []).append(file_key)
+                claimed.setdefault(file_key, set()).add(row[0])
+    return [(row[1], info[matches[row[0]][0]][0]) for row in rows
+            if len(matches.get(row[0], ())) == 1 and len(claimed[matches[row[0]][0]]) == 1]
+
+
 def undone(library, change_id):
     """After an undo of a `relink_folders` change: the folders added point back at the folders the
     rows are back in, derived from the change's own photo rows (no path is kept in its summary).
     Not when the change left any added folder where it was (its summary counts them): which were
     pointed cannot be told apart again. Returns the records changed, or None when it left them."""
     entries = journal_store.history(library.path, change_id=change_id, values=True)
-    if not entries or entries[0]["operation"] != OPERATION:
+    if not entries or entries[0]["operation"] not in OPERATIONS:
         return None
     if (entries[0]["summary"].get("counts") or {}).get("added_left"):
         return None
@@ -217,9 +290,17 @@ def undone(library, change_id):
                  for change in entries[0].get("values", ())
                  if change["table"] == "photos" and change["action"] == "update"
                  and change["old"] and change["new"] and "path" in change["old"] and "path" in change["new"]]
+        # A change that followed folders by their markers moved folder_ids rows too, a folder whose photos
+        # moved earlier among them: those are the folders themselves.
+        marked = [(store_roots.from_row(conn, change["old"]["path"]), store_roots.from_row(conn, change["new"]["path"]))
+                  for change in entries[0].get("values", ())
+                  if change["table"] == "folder_ids" and change["action"] == "update"
+                  and change["old"] and change["new"] and "path" in change["old"] and "path" in change["new"]]
     finally:
         conn.close()
     pairs = folder_pairs(moved)
+    known = {(paths.key(a), paths.key(b)) for a, b in pairs}
+    pairs += [(a, b) for a, b in marked if (paths.key(a), paths.key(b)) not in known]
 
     def back(conn):
         return sum(added_folders.follow(conn, new, old) for old, new in pairs)
@@ -238,7 +319,7 @@ def look(library, exiftool_path=None, only=None):
         added = added_folders.every(conn)
     finally:
         conn.close()
-    gone = _Gone()
+    gone = Gone()
     units, unreachable = {}, 0
     for row in evidence:
         folder = os.path.dirname(row[1])
@@ -357,24 +438,7 @@ def look(library, exiftool_path=None, only=None):
                 unreachable_added += 1
             elif not any(paths.same(path, t) or paths.is_under(path, t) for t in tops):
                 ghosts.append(path)
-    # The added folders follow a unit only on a clean one-to-one rename: the new name not added already, and no
-    # other unit of this run going into it. Otherwise the record is left and reported; no added folder is merged.
-    targets = {}
-    for _old, new in written:
-        targets[paths.key(new)] = targets.get(paths.key(new), 0) + 1
-    added_keys = {paths.key(path) for path, _s in added}
-    added_follow, added_left = [], []
-    for old, new in written:
-        mapped = [_mapped(path, old, new) for path, _s in added]
-        mapped = [target for target in mapped if target is not None]
-        if not mapped:
-            continue
-        if targets[paths.key(new)] > 1:
-            added_left.append({"from": old, "to": new, "why": "two folders into one"})
-        elif any(paths.key(target) in added_keys for target in mapped):
-            added_left.append({"from": old, "to": new, "why": "target already added"})
-        else:
-            added_follow.append((old, new))
+    added_follow, added_left = plan_added(added, written)
 
     edits, occupied = [], []
     if pairs:
@@ -386,17 +450,8 @@ def look(library, exiftool_path=None, only=None):
         edits, occupied = relink_photos.edits_for(library, moves)
     else:
         moves = []
-    followed = []
-    if written:
-        held_settings = store_settings.read_only(library.path)
-        for key in store_roots.FOLDER_SETTINGS:
-            if key not in held_settings:
-                continue
-            text, changed = _followed(held_settings, key, written)
-            if changed:
-                edits.append(journal.update(store_settings.TABLE, (key,), {"value": held_settings[key]},
-                                            {"value": text}, kind="settings"))
-                followed.append(key)
+    setting_edits, followed = settings_edits_for(library, written)
+    edits += setting_edits
     return maintenance.Plan(
         size=len(edits),
         counts={"rows_in_gone_folders": sum(len(unit[1]) for unit in units.values()),

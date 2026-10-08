@@ -52,7 +52,7 @@ from tagpup.files import images
 from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring, watching
-from tagpup.services import damaged_photos, file_changes, folder_moves, indexing, search
+from tagpup.services import damaged_photos, file_changes, folder_ids, folder_moves, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
 from tagpup.services import sync as sync_service
@@ -325,9 +325,31 @@ def sync(library, folder=None, apply=False, index_new=True):
 def relink_folders(library, apply=False, only=None):
     """Follow the folders renamed outside the apps (tagpup.services.folder_moves): a dry run
     unless `apply`, with the ExifTool the library names, read without stamping the library
-    for a dry run."""
+    for a dry run. The folders that carry a marker of the library's own are followed first,
+    exactly (follow_folder_markers); the Result of that is details["markers"]."""
     settings = library_settings(library) if apply else peek_settings(library)
-    return folder_moves.relink(library, exiftool(library, settings), apply, only)
+    markers = None
+    if not only:
+        markers = folder_ids.follow(library, sync_service.watch_folders(library, settings.roots), apply,
+                                    exiftool(library, settings))
+    result = folder_moves.relink(library, exiftool(library, settings), apply, only)
+    result.details["markers"] = markers
+    return result
+
+
+def mark_folders(library, apply=False):
+    """Write a `.tagpup` marker in each leaf folder of `library` and record the ids
+    (tagpup.services.folder_ids.mark): a dry run unless `apply`. Needs no setting of the library's,
+    so it stamps none."""
+    return folder_ids.mark(library, apply)
+
+
+def follow_folder_markers(library, apply=False, rehearse=False):
+    """Follow the marked folders that moved (tagpup.services.folder_ids.follow): a dry run
+    unless `apply`, over the folders the library walks."""
+    settings = library_settings(library) if apply else peek_settings(library)
+    return folder_ids.follow(library, sync_service.watch_folders(library, settings.roots), apply,
+                             exiftool(library, settings), rehearse)
 
 
 def check_damaged(library, photo_paths=None):
