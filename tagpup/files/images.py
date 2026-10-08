@@ -222,7 +222,7 @@ def is_photo(path):
 is_servable = is_photo
 
 
-def _walk_into(entry):
+def walks_into(entry):
     """Is a folder's entry a folder to walk into? Not a link to one, and not a junction:
     os.scandir's is_symlink() is False for a junction on Python 3.11, and a junction back
     up the tree was walked round and round, finding the same photos under ever longer
@@ -249,7 +249,7 @@ def photo_entries(folder):
         subfolders = []
         with listing:
             for entry in listing:
-                if _walk_into(entry):
+                if walks_into(entry):
                     subfolders.append(entry.path)
                 elif is_photo(entry.name):
                     try:
@@ -264,16 +264,16 @@ def photos_under(folder):
     """The photos under `folder`, at any depth, in the form the index stores: walked from
     paths.stored(folder), as os.walk joins onto whatever it is given, and a folder typed
     D:/Photos gave D:/Photos\\a.jpg. Five walks each had a copy of this, two walking the
-    folder as typed. No link or junction to a folder is walked into (_walk_into)."""
+    folder as typed. No link or junction to a folder is walked into (walks_into)."""
     return [entry.path for entry in photo_entries(folder)]
 
 
 def has_subfolders(folder):
-    """Does `folder` hold a folder the walk would go into (_walk_into): not a link or a
+    """Does `folder` hold a folder the walk would go into (walks_into): not a link or a
     junction? False for one that cannot be listed."""
     try:
         with os.scandir(paths.stored(folder)) as listing:
-            return any(_walk_into(entry) for entry in listing)
+            return any(walks_into(entry) for entry in listing)
     except OSError:
         return False
 
@@ -284,7 +284,7 @@ def photos_in(folder):
     folder = paths.stored(folder)
     try:
         with os.scandir(folder) as listing:
-            return [entry.path for entry in listing if is_photo(entry.name) and not _walk_into(entry)
+            return [entry.path for entry in listing if is_photo(entry.name) and not walks_into(entry)
                     and not entry.is_dir()]
     except OSError:
         return []
