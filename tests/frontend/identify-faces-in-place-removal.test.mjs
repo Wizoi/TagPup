@@ -207,6 +207,19 @@ describe("ignoring a cluster leaves the rest of the grid alone", () => {
     assert.deepEqual(cards(document).map((c) => Number(c.dataset.faceId)).sort((a, b) => a - b), [10, 11, 12, 13]);
   });
 
+  test("Undo after it is one undo of the server's job: the faces with their names and the tags in the files (#907)", async (t) => {
+    const { window, document, server } = await openGrid(t);
+    server.first("/api/faces/exclude", { success: true, excluded: 3, job: 9 });
+    server.on("/api/faces/job/undo", { success: true, faces: 3, files: 3 });
+    await ignoreCluster(window, document, "Cluster 5");
+    assert.match(document.getElementById("ignore-confirm-text").textContent, /Undo.*names.*tags/s);
+    document.getElementById("btn-assign-undo").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => window.setTimeout(r, 150));
+    assert.deepEqual(server.lastBody("/api/faces/job/undo"), { job: 9 });
+    assert.equal(server.lastBody("/api/faces/restore"), undefined, "the faces alone were restored");
+    assert.equal(cards(document).length, 7, "the faces did not come back to the grid");
+  });
+
   test("the panel's face count follows the cards", async (t) => {
     const { window, document } = await openGrid(t);
     const count = document.getElementById("matching-person-count");

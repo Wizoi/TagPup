@@ -161,6 +161,7 @@ export function postExcludeBulk(faceIds, presetReason) {
     .then(data => {
         // Said, not thrown: the faces are ruled out all the same.
         if (data && data.warning) alert(data.warning);
+        state.lastAssignJob = data && data.job ? { job: data.job, kind: 'ignore' } : null;
         const excluded = new Set(faceIds);
         state.activePersonFaces = state.activePersonFaces.filter(f => !excluded.has(f.id));
         // In place. Rebuilding the grid to account for a handful of cards leaving
@@ -319,7 +320,8 @@ export function askBeforeIgnoring(faceCount, photoCount, proceed) {
         `${faceCount} face${faceCount !== 1 ? 's' : ''} from `
         + `${photoCount} photo${photoCount !== 1 ? 's' : ''} will stop being offered `
         + `as a match for anyone. A face that is named also loses its name, and its person is taken off the photo`
-        + `'s tags (written into the file) unless another face of the photo is them.`;
+        + `'s tags (written into the file) unless another face of the photo is them. Undo, offered for 20 seconds, `
+        + `puts the faces back with their names and the tags back in the files.`;
     if (ignoreConfirmDontAsk) ignoreConfirmDontAsk.checked = false;
     ignoreConfirmModal.classList.remove('hidden');
 }
@@ -329,13 +331,38 @@ function closeIgnoreConfirm() {
     state.pendingIgnore = null;
 }
 
+/** Undo a whole job on the server (POST /api/faces/job/undo), then put its faces back in the grid they left. */
+function undoJob(faceIds, job) {
+    api.fetch('/api/faces/job/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job })
+    })
+    .then(async res => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Undo failed');
+        return data;
+    })
+    .then(data => {
+        if (data.warning) alert(data.warning);
+        putFacesBack(faceIds);
+        clearFaceDetails();
+        upper.fetchPeopleWithCounts(true, true);
+        updateMatchingSelectionUI();
+    })
+    .catch(err => {
+        console.error(err);
+        alert('Could not undo: ' + err.message);
+    });
+}
+
 export function offerAssignUndo(faceIds, name, kind) {
     if (!assignUndoBar) return;
     if (state.assignUndoTimer) clearTimeout(state.assignUndoTimer);
 
     const n = faceIds.length;
     assignUndoText.textContent = kind === 'ignore'
-        ? `Ignored ${n} face${n !== 1 ? 's' : ''}`
+        ? `Ignored ${n} face${n !== 1 ? 's' : ''} (Undo puts back their names and tags)`
         : `Assigned ${n} face${n !== 1 ? 's' : ''} to ${name}`;
     assignUndoBar.classList.remove('hidden');
     assignUndoBar.dataset.faceIds = JSON.stringify(faceIds);
@@ -400,6 +427,7 @@ export function postMatchBulk(faceIds, name) {
             const notNamed = new Set(Array.isArray(data.not_named) ? data.not_named.map(Number) : []);
             const leavingIds = faceIds.filter(id => !skippedIds.has(id) && !notNamed.has(id));
             if (data.warning) alert(data.warning);
+            state.lastAssignJob = data.job ? { job: data.job, kind: 'assign' } : null;
             const skipped = skippedIds.size;
             if (skipped) {
                 alert(`${skipped} of these face${skipped !== 1 ? 's were' : ' was'} `
@@ -741,6 +769,13 @@ ${summary}${note}`)) {
             const kind = assignUndoBar.dataset.undoKind || 'assign';
             hideAssignUndo();
             if (!ids.length) return;
+            // The server's job is undone as one: the faces as they were AND the photo files it wrote.
+            const last = state.lastAssignJob;
+            if (last && last.kind === kind) {
+                state.lastAssignJob = null;
+                undoJob(ids, last.job);
+                return;
+            }
             // Each action has its own way back: an assignment is unmatched, an
             // exclusion is restored. Getting this wrong would quietly do nothing.
             if (kind === 'ignore') postRestoreBulk(ids, { undo: true });

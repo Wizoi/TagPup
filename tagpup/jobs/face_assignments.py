@@ -20,7 +20,15 @@ click is a Conflict naming it. Writes of other faces go on; each step decides ag
 
 **What is counted** is what happened: faces named, unnamed or ruled out, tag files written or taken off, and an error entry for every
 photo whose file could not be written (its face is left as it was). A step that raises is the job's failure, with a fixed sentence.
-Counts only in the library's record; never a name or a path.
+Counts only in the library's record (`job_runs`) and the status; never a name or a path. The PLAN and the STATE kept in the
+library's cache folder (`<job>.plan.json`, `<job>.state.json`) do hold names -- the person, the names a removal's faces had, the
+faces and the journal changes of the files written -- for 30 days (tagpup.files.job_files.sweep), as a bulk edit's state names
+its people; they are what a resume and the job's Undo read.
+
+**Undo** (`undo`): one undo for the whole job. The faces go back as they were -- an assignment's faces unreviewed, a removal's
+named again by who and what they were (and un-ruled-out) -- and the photo files go back through the journal's own undo of the
+changes THIS job wrote (`changes` in the state: an assignment's tags that were already on a photo were never written, so are
+never taken off). A file changed since is refused by the journal and said.
 """
 import logging
 import os
@@ -29,9 +37,9 @@ import time
 
 from tagpup.core import runs
 from tagpup.core.result import Conflict, NotFound, Refused, Result
-from tagpup.services import bulk_edit, face_assignment, file_changes
-from tagpup.services import face_people
+from tagpup.services import bulk_edit, face_assignment, face_people, file_changes
 from tagpup.services import job_runs as runs_service
+from tagpup.services import journal as journal_service
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +77,13 @@ class Job:
         self.errors, self.error_count = [], 0
         self.warnings = []
         self.matched_ids, self.photos = [], []
+        #: The journal's ids of the changes of photo files this job wrote, in order: what its Undo undoes.
+        self.changes = []
+        self.undone = False
         self.seq = 0
         if state:
+            self.changes = list(state.get("changes") or [])
+            self.undone = bool(state.get("undone"))
             self.started = state.get("started", self.started)
             self.done = int(state.get("done", 0))
             self.changed, self.tags_written = int(state.get("changed", 0)), int(state.get("tags_written", 0))
@@ -103,6 +116,7 @@ class Job:
                     "changed": self.changed, "tags_written": self.tags_written, "tags_removed": self.tags_removed,
                     "errors": self.errors, "error_count": self.error_count, "warnings": self.warnings,
                     "matched_ids": self.matched_ids, "photos": self.photos, "message": self.message,
+                    "changes": self.changes, "undone": self.undone,
                     "started": self.started, "finished": self.ended, "run_id": self.run_id, "run_ids": self.run_ids}
 
     def _persist(self):
@@ -152,6 +166,7 @@ class Job:
             named = details.get("named_ids") or {}
             if named:
                 self.matched_ids.extend(named)
+            self.changes.extend(change for change in details.get("changes") or [] if change not in self.changes)
             if details.get("tag_problem"):
                 self.warnings.append(str(details["tag_problem"])[:200])
             problems = list(result.errors) + ([("the people", result.refused)] if result.refused else [])
@@ -164,9 +179,7 @@ class Job:
     def _end(self, state, message=None):
         with self.lock:
             self.state, self.message, self.ended = state, message, time.time()
-        self._persist()
-        if state == DONE:
-            face_assignment.forget(self.library, self.handle)
+        self._persist()       # kept (30 days) after it is done, for its Undo
         try:
             runs_service.end(self.library, self.run_id, time.time(), self.counts(), failed=state == FAILED,
                              note=message if state == FAILED else None)
@@ -380,7 +393,7 @@ def resume(library, handle, exiftool_path, told=None, after_step=None):
     found = status(library, handle)
     if found is None:
         raise NotFound("There is no assignment %s in this library." % handle)
-    if not found["resumable"]:
+    if not found["resumable"] or found["state"] == DONE:
         raise Refused("Assignment %s is %s: only one that was cancelled, stopped or abandoned is resumed." % (handle, found["state"]))
     plan, state = _stored(library, handle)
     if plan is None or state is None:
@@ -410,6 +423,65 @@ def resume(library, handle, exiftool_path, told=None, after_step=None):
             raise Conflict("The assignment could not be resumed (%s). Try again in a moment." % type(problem).__name__) from None
         raise
     return job
+
+
+def let_go(library, handle):
+    """Let go of a job that stopped part-way: its plan and state are removed, so it is no longer offered. Refused for one running."""
+    with _lock:
+        job = _held(library).get(handle)
+        if job is not None and job.state == RUNNING:
+            raise Conflict("Assignment %s is running: cancel it first." % handle)
+        _held(library).pop(handle, None)
+    face_assignment.forget(library, handle)
+
+
+def undo(library, handle, exiftool_path):
+    """Undo the whole of a finished or stopped job (see the module's docstring). A Result: `changed` the faces put back,
+    details `files` (the files restored), errors for what could not be (a file changed since, a face renamed since is left).
+    Refused for a job that is running, was undone, or whose record is gone."""
+    found = status(library, handle)
+    if found is None:
+        raise NotFound("There is no assignment %s in this library." % handle)
+    if found["state"] == RUNNING:
+        raise Conflict("Assignment %s is running: cancel it, then undo it." % handle)
+    plan, state = _stored(library, handle)
+    if plan is None or state is None:
+        raise Refused("The record of assignment %s is gone, so it cannot be undone as one (History lists its changes)." % handle)
+    if state.get("undone"):
+        raise Refused("Assignment %s was undone already." % handle)
+    result = Result(details={"files": 0})
+    op = plan["op"]
+
+    def undo_files():
+        for change in reversed(state.get("changes") or []):
+            try:
+                undone = journal_service.undo(library, change, apply=True, exiftool_path=exiftool_path)
+            except Exception as problem:
+                logger.exception("Could not undo change %s of assignment %s", change, handle)
+                result.fail("a change of photo files", "could not be undone (%s)" % type(problem).__name__)
+                continue
+            if undone.refused:
+                result.fail("a change of photo files", undone.refused)
+            result.details["files"] += undone.changed
+            for what, why in undone.errors:
+                result.fail(what, why)
+
+    ids = [int(face_id) for face_id in state.get("matched_ids") or []]
+    if op in (face_assignment.NAME, face_assignment.GUESS):
+        # Faces first (the faces a person named since are theirs), then the tags this job wrote.
+        result.changed = face_assignment.unname(library, face_assignment.named_still(library, plan, ids))
+        undo_files()
+    else:
+        # Tags first, then the faces: the person is on the photo again before a face says so.
+        undo_files()
+        result.changed = face_assignment.put_back(library, plan)
+    state["undone"] = True
+    face_assignment.write_state(library, handle, state)
+    with _lock:
+        job = _held(library).get(handle)
+        if job is not None:
+            job.undone = True
+    return result
 
 
 def running(library=None):

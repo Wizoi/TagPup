@@ -120,7 +120,7 @@ def _unname_what_was_taken_off(library, change_id, result):
     faces are unnamed, one journaled change of their own that History can undo. Said in the Result's details (`unnamed_faces`,
     `faces_change`); a failure is an error entry, the files are put back all the same."""
     try:
-        done = face_people.unname_after_undo(library, change_id)
+        done = face_people.follow_change(library, change_id, undone=True)
     except Exception:
         logger.exception("Could not unname the faces of the people change %d took off", change_id)
         result.fail("the faces of the people taken off", "could not be unnamed; the server's log says why")
@@ -129,7 +129,9 @@ def _unname_what_was_taken_off(library, change_id, result):
         result.fail(what, why)
     if done.details.get("unnamed"):
         result.details["unnamed_faces"] = done.details["unnamed"]
-        result.details["faces_change"] = done.details.get("change")
+    if done.details.get("renamed"):
+        result.details["renamed_faces"] = done.details["renamed"]
+    result.details["faces_changes"] = done.details.get("faces_changes", [])
 
 
 #: The line a prune says of the changes it leaves.

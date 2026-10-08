@@ -136,20 +136,25 @@ def faces_write(library, action):
     return result
 
 
+def _forgetting(library):
+    """What a step of an assignment tells the cached grids: the faces it took out of the pool, and the fingerprints either side."""
+    def forgetting(done):
+        fingerprints = done.details.get("fingerprints")
+        if fingerprints and done.changed:
+            identify_cache.of(library).forget_faces(done.details["face_ids"], *fingerprints)
+    return forgetting
+
+
 def assigned(library, plan):
     """Run `plan` (tagpup.services.face_assignment) as the job of tagpup.jobs.face_assignments and wait for its end: the Job. The
     request waits, the job does not depend on it -- a closed tab or a restart leaves a job that can be resumed. 409 while another
     assignment runs in the library, 400 for a plan refused (it was, before anything was written). The cached grids lose the faces
     each step took out of the pool as the step is done."""
-    def forgetting(done):
-        fingerprints = done.details.get("fingerprints")
-        if fingerprints and done.changed:
-            identify_cache.of(library).forget_faces(done.details["face_ids"], *fingerprints)
-
     try:
         face_assignments.refuse_if_running(library)       # before the ExifTool path, which waits for the file lock
         job = face_assignments.start(library, plan, state.exiftool(library),
-                                     told=lambda done: tagpup_routes.records_written(library, done), after_step=forgetting)
+                                     told=lambda done: tagpup_routes.records_written(library, done),
+                                     after_step=_forgetting(library))
     except Refused as why:
         refuse(400, str(why))
     except Conflict as why:
@@ -232,15 +237,47 @@ def faces_job_status():
 
 @routes.post("/api/faces/job/cancel")
 def faces_job_cancel():
-    """Stop bulk assignment `job` after the step under way (what is done stays done)."""
+    """Stop bulk assignment `job` after the step under way (what is done stays done). With `let_go` true, or for one that is not
+    running, let go of a stopped job instead: its record is removed and it is no longer offered."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     try:
-        return jsonify({"success": True, "job": face_assignments.cancel(library, int(body.get("job")))})
+        handle = int(body.get("job"))
+        if body.get("let_go"):
+            face_assignments.let_go(library, handle)
+            return jsonify({"success": True, "job": None})
+        return jsonify({"success": True, "job": face_assignments.cancel(library, handle)})
     except (TypeError, ValueError):
         abort(400, description="Missing or invalid job")
     except NotFound as missing:
         abort(404, description=str(missing))
+    except Conflict as why:
+        refuse(409, str(why))
+
+
+@routes.post("/api/faces/job/undo")
+def faces_job_undo():
+    """Undo the whole of assignment `job` (tagpup.jobs.face_assignments.undo): the faces as they were and the photo files this
+    job wrote put back through the journal. TagTuner's Undo after an assign, Ignore cluster or Exclude selected. 404 for none,
+    400 for one undone already or whose record is gone, 409 while it runs."""
+    library = state.require()
+    body = request.get_json(silent=True) or {}
+    try:
+        handle = int(body.get("job"))
+    except (TypeError, ValueError):
+        abort(400, description="Missing or invalid job")
+    try:
+        result = face_assignments.undo(library, handle, state.exiftool(library))
+    except NotFound as missing:
+        abort(404, description=str(missing))
+    except Refused as why:
+        refuse(400, str(why))
+    except Conflict as why:
+        refuse(409, str(why))
+    reply = {"success": True, "faces": result.changed, "files": result.details.get("files", 0)}
+    if result.errors:
+        reply["warning"] = "%d thing(s) could not be put back: %s" % (len(result.errors), result.errors[0][1])
+    return jsonify(reply)
 
 
 @routes.post("/api/faces/job/resume")
@@ -255,7 +292,8 @@ def faces_job_resume():
         abort(400, description="Missing or invalid job")
     try:
         job = face_assignments.resume(library, handle, state.exiftool(library),
-                                      told=lambda done: tagpup_routes.records_written(library, done))
+                                      told=lambda done: tagpup_routes.records_written(library, done),
+                                      after_step=_forgetting(library))
     except NotFound as missing:
         abort(404, description=str(missing))
     except Refused as why:
@@ -309,7 +347,7 @@ def _exclude_bulk(library, face_ids, reason):
     except Refused as why:
         refuse(400, str(why))
     outcome = assigned(library, plan).outcome()
-    reply = {"success": True, "excluded": outcome["changed"], "tags_removed": outcome["tags_removed"]}
+    reply = {"success": True, "excluded": outcome["changed"], "tags_removed": outcome["tags_removed"], "job": outcome["job"]}
     if trouble(outcome):
         reply["warning"] = trouble(outcome)
     return jsonify(reply)

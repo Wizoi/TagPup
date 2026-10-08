@@ -407,7 +407,7 @@ def faces_match_bulk():
     named = set(outcome["matched_ids"])
     reply = {"success": True, "matched": len(named), "matched_ids": outcome["matched_ids"],
              "skipped_excluded": plan["skipped_excluded"], "tags_written": outcome["tags_written"],
-             "not_named": [face_id for face_id in outcome["planned_ids"] if face_id not in named]}
+             "not_named": [face_id for face_id in outcome["planned_ids"] if face_id not in named], "job": outcome["job"]}
     if face_routes.trouble(outcome):
         reply["warning"] = face_routes.trouble(outcome)
     return jsonify(reply)
@@ -427,7 +427,7 @@ def faces_unmatch_bulk():
         abort(400, description="Invalid face_ids format")
     plan = face_assignment.plan_unname(library, face_ids, undo=bool(body.get("undo")))
     outcome = face_routes.assigned(library, plan).outcome()
-    reply = {"success": True, "changed": outcome["changed"], "tags_removed": outcome["tags_removed"]}
+    reply = {"success": True, "changed": outcome["changed"], "tags_removed": outcome["tags_removed"], "job": outcome["job"]}
     if face_routes.trouble(outcome):
         reply["warning"] = face_routes.trouble(outcome)
     return jsonify(reply)
@@ -489,7 +489,7 @@ def folder_automatch():
     people, photos_named, remaining = written["people"], written["photos"], written["remaining_counts"]
     answer = {"success": True, "dry_run": False, "matched_count": len(named), "faces": len(named),
               "photos": len(photos_named), "people": people, "renamed": 0, "remaining_counts": remaining,
-              "photos_named": photos_named, "tags_written": outcome["tags_written"]}
+              "photos_named": photos_named, "tags_written": outcome["tags_written"], "job": outcome["job"]}
     if face_routes.trouble(outcome):
         answer["warning"] = face_routes.trouble(outcome)
     return jsonify(answer)

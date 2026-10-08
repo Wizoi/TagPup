@@ -62,9 +62,23 @@ def names_by_face(conn, photo_path):
 
 def named_in_photo(conn, photo_path):
     """[(face id, name, name_source)] of the faces of one photo that carry a name and are not ruled out, on `conn`."""
-    where, params = _on_photo(conn, photo_path)
-    return conn.execute("SELECT id, name, name_source FROM faces WHERE " + where
-                        + " AND name IS NOT NULL AND excluded = 0 ORDER BY id", params).fetchall()
+    return [(face_id, name, source) for face_id, name, source, excluded in _of_photo(conn, photo_path)
+            if name is not None and not excluded]
+
+
+def nobody_in_photo(conn, photo_path):
+    """[face id] of the faces of one photo a person called nobody (name NULL, name_source 'manual') and that are not ruled out."""
+    return [face_id for face_id, name, source, excluded in _of_photo(conn, photo_path)
+            if name is None and source == "manual" and not excluded]
+
+
+def _of_photo(conn, photo_path):
+    """[(id, name, name_source, excluded)] of one photo's faces, found by idx_faces_photo_id: with the name and the exclusion in
+    the WHERE the planner reads idx_faces_identify (every named face of the library, 0.12 s on photo_index) for each photo."""
+    where, params = store_roots.sql_equals(conn, "path", photo_path)
+    return [row for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params).fetchall()
+            for row in conn.execute("SELECT id, name, name_source, excluded FROM faces INDEXED BY idx_faces_photo_id"
+                                    " WHERE photo_id = ? ORDER BY id", (photo_id,)).fetchall()]
 
 
 def names_given(conn, names):
@@ -409,6 +423,29 @@ def named_among(conn, face_ids):
             "SELECT p.path, f.name FROM faces f" + PHOTO + " WHERE f." + _in(chunk)
             + " AND f.name IS NOT NULL AND f.excluded = 0", chunk).fetchall(), 0))
     return found
+
+
+def decided_by_id(conn, face_ids):
+    """{face id: (name, name_source)} of the faces among `face_ids` that carry a name and are not excluded: what they were, for a
+    job that can put them back (its Undo)."""
+    found = {}
+    for chunk in _chunks(face_ids):
+        found.update((face_id, (name, source)) for face_id, name, source, excluded in conn.execute(
+            "SELECT f.id, f.name, f.name_source, f.excluded FROM faces f WHERE f." + _in(chunk), chunk)
+            if name is not None and not excluded)
+    return found
+
+
+def reinstate(conn, prior):
+    """Give each face of `prior` ({face id: (name, name_source)}) the name and decider it had, when it is unnamed and not ruled
+    out now (a face named, or ruled out, since is somebody's newer decision). Returns the ids reinstated. The caller commits."""
+    done = []
+    for face_id, (name, source) in prior.items():
+        if conn.execute("UPDATE faces SET name = ?, name_source = ? WHERE id = ? AND name IS NULL AND excluded = 0",
+                        (name, source, face_id)).rowcount:
+            done.append(face_id)
+    _rebuilt(conn, _photos_of(conn, done), len(done))
+    return done
 
 
 def named_by_id(conn, face_ids):

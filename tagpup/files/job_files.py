@@ -194,7 +194,9 @@ def sweep(folder, now=None):
     expired = []
     for job, entry in jobs.items():
         pair = entry["kinds"] == {"ids", "state.json"}
-        if now - entry["newest"] > (KEEP_RESUMABLE_SECONDS if pair else KEEP_SECONDS):
+        # A face assignment's plan and state (tagpup.jobs.face_assignments): resumable, so kept as long as a time shift's.
+        stopped = {"plan.json", "state.json"} <= entry["kinds"]
+        if now - entry["newest"] > (KEEP_RESUMABLE_SECONDS if pair or stopped else KEEP_SECONDS):
             forget(folder, job)
             if pair:
                 expired.append(job)

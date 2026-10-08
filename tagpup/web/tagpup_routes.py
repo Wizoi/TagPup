@@ -1190,6 +1190,8 @@ def _faces_unnamed(result):
     said = {}
     if result.details.get("unnamed_faces"):
         said["unnamed_faces"] = result.details["unnamed_faces"]
+    if result.details.get("renamed_faces"):
+        said["renamed_faces"] = result.details["renamed_faces"]
     if result.details.get("faces_problem"):
         said["faces_problem"] = result.details["faces_problem"]
     return said

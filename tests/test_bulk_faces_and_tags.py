@@ -261,7 +261,8 @@ class InterruptedAndAtOnce(Bulk):
         self.assertIn("0 of 2", found["message"])
         gate.set()
         job.finished.wait(30)
-        self.assertIsNone(face_assignment.read_plan(self.library, job.handle), "a finished job keeps nothing")
+        self.assertEqual("done", face_assignment.read_state(self.library, job.handle)["state"],
+                         "a finished job keeps its record, for its Undo")
 
     def test_a_second_assignment_while_one_runs_is_a_conflict_and_changes_nothing(self):
         made, plan = self.plan(3)

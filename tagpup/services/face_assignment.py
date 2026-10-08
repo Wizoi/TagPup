@@ -6,7 +6,9 @@ and Ignore cluster, and Re-examine this folder -- are one decision per face AND 
 (tagpup.services.face_people, the one owner of that rule). A selection of hundreds of faces means hundreds of photo files to
 write, so it is not one request's work: this module makes the PLAN, and the job runs it a step at a time.
 
-* **A plan** is what the click meant, decided up front, read-only, and refused as a whole for what the single write refuses
+* **A plan** (it holds the people's NAMES -- `person_name`, and `names` for the faces a removal had -- so it is kept in the
+  library's cache folder only as long as the job's record is, 30 days, as a bulk edit's state names its people) is what the click
+  meant, decided up front, read-only, and refused as a whole for what the single write refuses
   (two faces of one photo, the person already on another face of the photo, a person the tree files in two places): `op`
   (name, unname, exclude or guess), the steps -- each a few faces, the faces of one photo never split between two -- and for
   unname/exclude `names`, {face id: the name it carried when the click was made}. It is kept (`write_plan`) BEFORE the first
@@ -50,7 +52,7 @@ def _chunks(items, size):
 
 
 def _plan(op, steps, **more):
-    plan = {"op": op, "steps": steps, "person_name": None, "reason": None, "undo": False, "names": {},
+    plan = {"op": op, "steps": steps, "person_name": None, "reason": None, "undo": False, "names": {}, "sources": {},
             "skipped_excluded": [], "looked_at": 0}
     plan.update(more)
     plan["faces"] = sum(len(step) for step in steps)
@@ -79,19 +81,19 @@ def plan_name(library, face_ids, person_name):
                  skipped_excluded=list(check.details["skipped_excluded"]))
 
 
-def _named(library, face_ids):
+def _prior(library, face_ids):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        return faces.named_by_id(conn, face_ids)
+        return faces.decided_by_id(conn, face_ids)
     finally:
         conn.close()
 
 
 def _removal_steps(library, face_ids):
-    """(steps, {face id: name}): the faces that carry a name are the steps that read and write photos, a few at a time; the
-    others, which touch no photo, many at a time, first."""
+    """(steps, {face id: (name, name_source)}): the faces that carry a name are the steps that read and write photos, a few at a
+    time; the others, which touch no photo, many at a time, first. What the named ones were is kept for the job's Undo."""
     face_ids = list(dict.fromkeys(face_ids))
-    names = _named(library, face_ids)
+    names = _prior(library, face_ids)
     plain = [face_id for face_id in face_ids if face_id not in names]
     named = [face_id for face_id in face_ids if face_id in names]
     return _chunks(plain, PLAIN_CHUNK) + _chunks(named, CHUNK), names
@@ -100,7 +102,8 @@ def _removal_steps(library, face_ids):
 def plan_unname(library, face_ids, undo=False):
     """The plan of taking the names off `face_ids`; `undo`: an assignment taken back, the faces left unreviewed."""
     steps, names = _removal_steps(library, face_ids)
-    return _plan(UNNAME, steps, undo=bool(undo), names={str(face_id): name for face_id, name in names.items()})
+    return _plan(UNNAME, steps, undo=bool(undo), names={str(face_id): name for face_id, (name, _s) in names.items()},
+                 sources={str(face_id): source for face_id, (_n, source) in names.items()})
 
 
 def plan_exclude(library, face_ids, reason=None):
@@ -110,7 +113,8 @@ def plan_exclude(library, face_ids, reason=None):
     if problem:
         raise Refused(problem)
     steps, names = _removal_steps(library, face_ids)
-    return _plan(EXCLUDE, steps, reason=reason, names={str(face_id): name for face_id, name in names.items()})
+    return _plan(EXCLUDE, steps, reason=reason, names={str(face_id): name for face_id, (name, _s) in names.items()},
+                 sources={str(face_id): source for face_id, (_n, source) in names.items()})
 
 
 def plan_guesses(library, folder, named):
@@ -127,6 +131,40 @@ def plan_guesses(library, folder, named):
 
 def _names(plan):
     return {int(face_id): name for face_id, name in plan["names"].items()}
+
+
+def named_still(library, plan, face_ids):
+    """The faces among `face_ids` that still carry the name `plan` (a naming or Re-examine's) gave them: a face a person renamed
+    since is theirs."""
+    wanted = {face_id: name for step in plan["steps"] for face_id, name in (
+        [(face_id, plan["person_name"]) for face_id in step] if plan["op"] == NAME else step)}
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        now = faces.rows(conn, list(face_ids))
+    finally:
+        conn.close()
+    return [face_id for face_id in face_ids if face_id in now and now[face_id][1]
+            and now[face_id][1].lower() == str(wanted.get(face_id, "")).lower()]
+
+
+def unname(library, face_ids):
+    """The faces an assignment named, back to unreviewed (not "nobody"): the rows changed."""
+    return faces_service.unname_faces(library, face_ids, undo=True).changed if face_ids else 0
+
+
+def put_back(library, plan):
+    """The faces a removal (unname, exclude) took the names of, as they were: ruled out ones restored, then each named again by the
+    name and the decider it had (a face named or ruled out since is left). The faces put back."""
+    if plan["op"] == EXCLUDE:
+        faces_service.restore(library, [face_id for step in plan["steps"] for face_id in step])
+    prior = prior_of(plan)
+    return len(db.write_with_connection(library.path, lambda conn: faces.reinstate(conn, prior),
+                                        label="put back the names a job took off"))
+
+
+def prior_of(plan):
+    """{face id: (name, name_source)} the faces of a removal had when its click was made: what its Undo puts back."""
+    return {int(face_id): (name, plan.get("sources", {}).get(face_id)) for face_id, name in plan["names"].items()}
 
 
 def run_step(library, plan, index, writer):

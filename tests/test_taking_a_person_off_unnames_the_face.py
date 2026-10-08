@@ -198,10 +198,10 @@ class WhatIsMeantToPutThePersonBackDoesNot(Taken):
         from tagpup.services import identify
         return identify.decided_faces(self.library)[1]
 
-    def test_the_one_face_rule_of_a_save_does_not_name_it_from_a_tag_put_back_by_hand(self):
+    def test_a_tag_put_back_by_hand_names_the_same_face_again(self):
         photo, face = self.removed()
         self.save(photo, [PEOPLE + WREN])           # the owner puts the pill back himself
-        self.assertEqual((None, "manual"), self.row(face)[:2], "a decision stands until the owner names the face")
+        self.assertEqual((WREN, "manual"), self.row(face)[:2], "the removal's own record names the face it unnamed")
 
     def test_faces_from_tags_names_nothing_for_it(self):
         _photo, face = self.removed()
