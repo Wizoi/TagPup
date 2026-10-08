@@ -330,11 +330,14 @@ def _pairs_for(conn, rows, new, exiftool_path):
     return pairs + matched, len(pairs), len(matched), occupied, len(known)
 
 
-def _near(lost, gone):
+def _near(lost, gone, known):
     """The folders a folder that is gone may be at, beside it: for each (id, path) of `lost`, the same path
     under each folder directly in the parent of the topmost folder gone (a renamed folder, and one holding it
     renamed: `Trips` to `Trips 2026` puts `Trips/Harbour` at `Trips 2026/Harbour`). One listing of that parent
-    and no walk; the same as folder_moves looks beside a folder."""
+    and no walk; the same as folder_moves looks beside a folder. A candidate that is the recorded folder of
+    another marked folder (`known`, their keys) is not read: it is that folder, with an id of its own, and the
+    folder that was renamed has a name nothing records. That keeps it to a read or two, not one for every
+    sibling (a marker read cost 4 ms a file on a local disk here)."""
     near, listed = [], {}
     for _folder_id, path in lost:
         top = gone.unit(path)
@@ -343,7 +346,9 @@ def _near(lost, gone):
             listed[paths.key(parent)] = folder_marker.subfolders(parent)
         relative = os.path.relpath(paths.stored(path), paths.stored(top))
         for sibling in listed[paths.key(parent)]:
-            near.append(sibling if relative == "." else os.path.join(sibling, relative))
+            candidate = sibling if relative == "." else os.path.join(sibling, relative)
+            if paths.key(candidate) not in known:
+                near.append(candidate)
     return near
 
 
@@ -390,7 +395,8 @@ def look_follow(library, places=(), trees=(), row_folders=None, exiftool_path=No
         lost_ids = {folder_id for folder_id, _path in lost}
         wanting = [each for each in lost if each[0] not in found]
         if wanting:
-            look_at(*folder_marker.read_in(_near(wanting, gone), library_id))
+            look_at(*folder_marker.read_in(_near(wanting, gone, {paths.key(each[1]) for each in recorded}),
+                                           library_id))
         added = added_folders.every(conn)
         # A root kept in two places on this machine (the server's master and a local mirror) holds the same
         # marker at the same place under the root: one folder, not a copy. Places are told apart as the

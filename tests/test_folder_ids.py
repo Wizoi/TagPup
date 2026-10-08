@@ -341,6 +341,25 @@ class Marking(Case):
         self.assertEqual(written, folder_marker.read(os.path.dirname(folder)).entries, "adopting made a second id")
         self.assertEqual({os.path.dirname(folder): written[0][1]}, self.ids())
 
+    def test_a_crashed_runs_temporary_file_goes_from_a_folder_already_marked_and_one_to_adopt(self):
+        made = self.meet("2026-01-31 Parkrun")
+        other = self.meet("Harbour")
+        self.mark(apply=True)
+        stale = []
+        for path in (made[0], other[0]):
+            temp = folder_marker.stage(os.path.dirname(path), b"x")
+            os.utime(temp, (THEN, THEN))
+            stale.append(temp)
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("DELETE FROM folder_ids WHERE id = ?", (self.ids()[os.path.dirname(other[0])],))   # Harbour: a marker to adopt
+            conn.commit()
+        finally:
+            conn.close()
+        result = self.mark(apply=True)
+        self.assertEqual((1, 1), (result.details["counts"]["already"], result.details["counts"]["adopt"]))
+        self.assertEqual([], [temp for temp in stale if os.path.exists(temp)])
+
     def test_a_folder_the_library_ignores_is_not_marked(self):
         made = self.meet("Not these")
         settings_service.change(self.library, {settings_service.IGNORED: os.path.dirname(made[0])}, apply=True)
@@ -774,7 +793,10 @@ class FollowingAFolder(Case):
         # Harbour's marker is replaced by the Parkrun one while Parkrun is gone.
         shutil.rmtree(os.path.dirname(made[0]))
         overwrite(folder_marker.location(self.at("Harbour")), ("%s %s\n" % (self.identity(), folder_id)).encode())
-        done = self.follow(apply=True)
+        beside = self.follow(apply=True)
+        self.assertEqual((1, 0, 0), (beside.details["counts"]["not_found"], beside.details["counts"]["conflicts"],
+                                     beside.changed), "a folder another row records is not read beside the lost one")
+        done = self.follow(apply=True, places=[self.at("Harbour")])
         self.assertEqual((1, 0), (done.details["counts"]["conflicts"], done.changed))
 
     def test_a_folder_whose_rows_cannot_go_because_its_files_have_rows_is_left_and_not_said_followed(self):
