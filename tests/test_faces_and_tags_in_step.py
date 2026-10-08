@@ -21,7 +21,7 @@ from test_organize_faces import Case, ODA, WREN  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
-from tagpup.store import checks, db, faces, people, taxonomy  # noqa: E402
+from tagpup.store import checks, db, faces, people, photos, taxonomy  # noqa: E402
 
 PEOPLE = "People/"
 
@@ -116,6 +116,29 @@ class NamingAddsThePersonToThePhoto(InStep):
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertEqual((WREN, "manual"), self.row(chosen)[:2])
         self.assertEqual((None, None), self.row(other)[:2], "the face not chosen was given the name as a guess")
+
+    def test_a_rename_from_tagpups_panel_does_not_leave_the_other_face_guessed(self):
+        # The page's own save of the new person's tag ran the one-face rule, which named the OTHER face as a guess; then the
+        # page asks to name the chosen face (it wrote the tag itself: no writer here).
+        photo = self.held("strip_013.jpg", [PEOPLE + ODA])
+        chosen = self.face(photo, name=ODA, name_source="manual")
+        other = self.face(photo, box=(70, 10, 110, 60))
+        self.files.keep_tags(photo, [PEOPLE + ODA, PEOPLE + WREN])
+        photos.record_tags(self.path, photo, [PEOPLE + ODA, PEOPLE + WREN])
+        self.assertEqual(WREN, self.row(other)[0], "the rule gave the other face the name as a guess")
+        reply = self.post("face/match", {"face_id": chosen, "person_name": WREN, "page_writes_tags": True})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((WREN, "manual"), self.row(chosen)[:2])
+        self.assertEqual((None, None), self.row(other)[:2], "the other face was left guessed as the new person")
+        self.assertEqual({photo: [PEOPLE + ODA]}, reply.get_json()["untag"], "the new tag stays; the old person goes")
+        self.assertEqual(0, self.files.writes)
+
+    def test_a_name_somebody_decided_on_another_face_still_refuses_the_page(self):
+        photo = self.held("strip_014.jpg", [PEOPLE + WREN])
+        self.face(photo, name=WREN, name_source="manual")
+        other = self.face(photo, box=(70, 10, 110, 60))
+        reply = self.post("face/match", {"face_id": other, "person_name": WREN, "page_writes_tags": True})
+        self.assertEqual(400, reply.status_code)
 
     def test_a_face_renamed_takes_the_old_person_off_the_photo_unless_another_face_is_them(self):
         photo = self.held("strip_009.jpg", [PEOPLE + ODA, "Regatta"])

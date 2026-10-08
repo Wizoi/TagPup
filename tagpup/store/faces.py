@@ -491,12 +491,22 @@ def restore(conn, face_ids):
     return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
 
-def named_elsewhere_in_photo(conn, photo_path, person_name, face_id):
+def named_elsewhere_in_photo(conn, photo_path, person_name, face_id, decided_only=False):
     """Does a face in the photo other than `face_id` carry the name? By equality: a LIKE
-    retry scanned every face row, and read an underscore in a file name as any character."""
+    retry scanned every face row, and read an underscore in a file name as any character.
+    With `decided_only`, only a name somebody decided counts, not a guess (name_source NULL)."""
     where, params = _on_photo(conn, photo_path)
-    return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND name = ? AND id != ?",
+    return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND name = ? AND id != ?"
+                        + (" AND name_source IS NOT NULL" if decided_only else ""),
                         params + (person_name, face_id)).fetchone() is not None
+
+
+def guesses_named(conn, photo_path, person_name, face_id):
+    """{id: name} of the faces of the photo other than `face_id` that carry the name as a guess (name_source NULL)."""
+    where, params = _on_photo(conn, photo_path)
+    return {other: person_name for (other,) in conn.execute(
+        "SELECT id FROM faces WHERE " + where + " AND name = ? AND id != ? AND name_source IS NULL",
+        params + (person_name, face_id))}
 
 
 #: The faces of the photos under a folder, the photos found first: their range on

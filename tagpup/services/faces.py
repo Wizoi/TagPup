@@ -76,10 +76,11 @@ def name_face(library, face_id, person_name):
     return result
 
 
-def check_nameable(library, face_id, person_name, refused):
+def check_nameable(library, face_id, person_name, refused, guesses_yield=False):
     """What name_face would refuse, asked before anything else is written (face_people writes the photo's tag first): the
     photo's path and the name the face carries now (or None) when `face_id` can be named `person_name` -- also when it carries
-    the name already -- and None when it cannot, `refused` (a Result) saying why. NotFound for a face that is not there, Conflict for one excluded. Reads only;
+    the name already -- and None when it cannot, `refused` (a Result) saying why. With `guesses_yield` a face carrying the name as a guess does not refuse it (the caller gives the guess
+    back: face_people.name_face, for a page that wrote the tag first). NotFound for a face that is not there, Conflict for one excluded. Reads only;
     name_face asks again under the write lock, which is the check that holds."""
     problem = validation.problem("name", person_name)
     if problem:
@@ -95,7 +96,7 @@ def check_nameable(library, face_id, person_name, refused):
         if excluded:
             raise Conflict("Cannot match: this face is excluded. Restore it first to name it.")
         if (not (old_name and vocabulary.key(old_name) == vocabulary.key(person_name))
-                and faces.named_elsewhere_in_photo(conn, photo_path, person_name, face_id)):
+                and faces.named_elsewhere_in_photo(conn, photo_path, person_name, face_id, decided_only=guesses_yield)):
             refused.refuse("Cannot match: '%s' is already tagged on another face in this photo." % person_name)
             return None
         return photo_path, old_name

@@ -221,10 +221,15 @@ def name_face(library, face_id, person_name, writer):
     details["untag"] says which."""
     person_name = (person_name or "").strip()
     refused = Result(attempted=1)
-    found = faces_service.check_nameable(library, face_id, person_name, refused)
+    # The page wrote the tag before it asked (no writer): its save ran the one-face rule (#788) and may have given the
+    # person to ANOTHER face as a guess. A guess yields to a person's choice (and is given back below); a name somebody
+    # decided on another face still refuses.
+    found = faces_service.check_nameable(library, face_id, person_name, refused, guesses_yield=writer is None)
     if found is None:
         return refused
     photo_path, was = found
+    if writer is None:
+        _give_back_guesses(library, photo_path, face_id, person_name)
     before = _names_on(library, photo_path)
     # No writer: the page wrote the tag itself (TagPup's box and strip, first), and says so.
     tagged = add_people(library, [(photo_path, person_name)], writer) if writer is not None else Result()
@@ -261,6 +266,18 @@ def _names_on(library, photo_path):
         return faces.names_by_face(conn, photo_path)
     finally:
         conn.close()
+
+
+def _give_back_guesses(library, photo_path, face_id, person_name):
+    """Take back the guesses that carry `person_name` on the photo's other faces (only a face still carrying it as a guess)."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        taken = faces.guesses_named(conn, photo_path, person_name, face_id)
+    finally:
+        conn.close()
+    if taken:
+        db.write_with_connection(library.path, lambda conn: faces.revert_automatic(conn, taken),
+                                 label="give a name back to the face chosen")
 
 
 def _give_back_to(library, photo_path, face_id, person_name, before):
