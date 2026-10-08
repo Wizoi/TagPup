@@ -65,7 +65,7 @@ from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import launcher as launches  # noqa: E402
 from tagpup import supervisor  # noqa: E402
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import byte_lock, paths, processes  # noqa: E402
 
 #: Versions kept: the new one and the two before it.
 KEEP = 3
@@ -208,7 +208,7 @@ def update(destination, home, python, say=print):
     failed install leaves the version there was. Returns the version installed, or None.
     One at a time: TagPup.cmd and TagTuner.cmd started together both run this, and the
     second, once the first is done, finds its version installed."""
-    lock = supervisor.Lock(os.path.join(destination, INSTALL_LOCK))
+    lock = byte_lock.Lock(os.path.join(destination, INSTALL_LOCK))
     if not lock.acquire(0):
         # The other launcher's install: say so, or the window is blank while it copies.
         say("TagPup: another install is running; waiting for it (at most %d s)..." % INSTALL_WAIT)
@@ -281,6 +281,32 @@ def to_remove(existing, new, previous, in_use=()):
     return [name for name in ordered[:-KEEP] if name not in (new, previous) and name not in set(in_use)]
 
 
+def open_by_running_pythons(destination, names, lines):
+    """The versions among `names` that a running python has open: the version's folder is in the command line of a
+    python process (`lines`, processes.python_command_lines), however it was started. A server that began before
+    records existed, or by hand, has none to be found by (docs/findings.md, #756)."""
+    text = [paths.name_key(line) for line in lines]
+    return {name for name in names
+            if any(paths.key(os.path.join(destination, "versions", name)) + os.sep in line for line in text)}
+
+
+def leave_what_is_open(destination, removing, say):
+    """`removing` without the versions a running python has open. When the running programs cannot be
+    listed nothing can be shown not to be open, and no old version is removed this time."""
+    if not removing:
+        return removing
+    lines = processes.python_command_lines()
+    if lines is None:
+        say("keeping      %s (the running programs could not be listed to see whether one has them open)"
+            % ", ".join(removing))
+        return []
+    held = open_by_running_pythons(destination, removing, lines)
+    for name in removing:
+        if name in held:
+            say("keeping      %s (a running program has it open)" % os.path.join(destination, "versions", name))
+    return [name for name in removing if name not in held]
+
+
 def install(destination, home, python, name=None, apply=False, say=print, shortcuts_in=(), hand_over=False):
     """Install a new version, and make shortcuts to the apps in each folder of
     `shortcuts_in`. Returns (the version's name, the versions removed). `hand_over`: what
@@ -295,6 +321,9 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
     # a server started by a launcher runs from its version until the next launch replaces it.
     removing = to_remove(versions(destination), name, previous,
                          supervisor.versions_in_use(home) | launches.versions_running())
+    # And by what is running, whatever the records say: a server of before they existed left a version's
+    # folder empty under it (#756).
+    removing = leave_what_is_open(destination, removing, say)
 
     say("install      %s" % folder)
     say("home         %s  (data/)" % home)
@@ -416,7 +445,7 @@ def main(argv=None):
         return 1
     # One install at a time, a launcher's among them; the hand-over after it, which may wait
     # for a long job, holds a lock of its own and lets the launchers install meanwhile.
-    lock = supervisor.Lock(os.path.join(destination, INSTALL_LOCK))
+    lock = byte_lock.Lock(os.path.join(destination, INSTALL_LOCK))
     if not lock.acquire(0):
         print("another install is running; waiting for it (at most %d s)..." % INSTALL_WAIT, flush=True)
         if not lock.acquire(INSTALL_WAIT):

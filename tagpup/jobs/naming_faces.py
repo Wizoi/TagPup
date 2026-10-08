@@ -48,6 +48,7 @@ from tagpup.services import bulk_edit
 from tagpup.services import faces as face_service
 from tagpup.services import faces_from_tags, identities, search
 from tagpup.services import job_runs as runs_service
+from tagpup.services import journal as journal_service
 
 logger = logging.getLogger(__name__)
 
@@ -337,17 +338,27 @@ class Job:
                             "named": after["named"]}
         self._after(what)
 
+    def _undo_still_works(self):
+        """Would History still undo the change that wrote the names, now that grouping ran? Grouping keeps a name its
+        photo's tags confirm (#855), so it often rewrites none of them; the rehearsal says. Unable to tell, no."""
+        try:
+            return not journal_service.undo(self.library, self.applied["change"], apply=False).refused
+        except Exception:
+            logger.exception("Could not rehearse the undo of the names written in %s", self.library.name)
+            return False
+
     def _after(self, what):
         """The job is over: what the open folder holds now, and the sentence."""
         if self.in_folder is not None and self.in_folder.get("before") is not None:
             self.in_folder["after"] = self._library_folder()
         parts = []
-        if self.applied and self.grouped:
+        if self.applied and self.grouped and not self._undo_still_works():
             parts.append("%s given from the photos' tags (one change in History). %s"
                          % (_plural(self.applied["changed"], "face name"), UNDO_LOST))
         elif self.applied:
-            parts.append("%s given from the photos' tags (one change in History, which Undo takes back)."
-                         % _plural(self.applied["changed"], "face name"))
+            parts.append("%s given from the photos' tags (one change in History, which Undo takes back%s)."
+                         % (_plural(self.applied["changed"], "face name"),
+                            "; History cannot undo grouping" if self.grouped else ""))
         if self.grouped:
             delta = self.grouped["named_more"]
             parts.append("Grouping re-derived the library's automatic names (%s): %s." % (

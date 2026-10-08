@@ -80,6 +80,41 @@ def is_alive(pid):
         return True
 
 
+#: Windows: lists every python process's command line, as UTF-8.
+_PYTHON_COMMAND_LINES = ("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+                         "Get-CimInstance Win32_Process -Filter \"Name LIKE 'python%'\" "
+                         "| ForEach-Object { $_.CommandLine }")
+
+
+def python_command_lines(timeout=30):
+    """The command line of every python process running now, [str] (a program's own folder is in its
+    command line, wherever it was started from); None when they cannot be listed. What an install
+    checks before it removes a version's folder: a server or a console program started before the
+    records existed, or by hand, has no record to find it by (docs/findings.md, #756). A caller that
+    gets None does not know that nothing runs, and must act as though something did."""
+    try:
+        if os.name == "nt":
+            done = run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _PYTHON_COMMAND_LINES],
+                       capture_output=True, timeout=timeout)
+            if done.returncode != 0:
+                return None
+            return [line.strip() for line in done.stdout.decode("utf-8", "replace").splitlines() if line.strip()]
+        lines = []
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open("/proc/%s/cmdline" % entry, "rb") as handle:
+                    words = handle.read().decode("utf-8", "replace").split("\0")
+            except OSError:
+                continue
+            if words and "python" in os.path.basename(words[0]).lower():
+                lines.append(" ".join(word for word in words if word))
+        return lines
+    except Exception:
+        return None
+
+
 def recorded_alive(record):
     """Is the process a record names -- {"pid", "started"}: its id and when it started
     (started()) -- still running? A record of an ended process whose id another now has is

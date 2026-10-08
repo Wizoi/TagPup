@@ -23,7 +23,7 @@ import os
 import types
 
 from tagpup.core import paths
-from tagpup.store import db, generations, people, person_ids
+from tagpup.store import db, faces_detected, generations, people, person_ids
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -234,6 +234,32 @@ def decided_for_photo(conn, photo_path):
                         + " AND (name_source = 'manual' OR excluded = 1)", params).fetchone()[0]
 
 
+def decided_count(conn, photo_id):
+    """How many of one photo's faces carry a decision somebody made (decided_for_photo's rule), by photo id."""
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE photo_id = ? AND (name_source = 'manual' OR excluded = 1)",
+                        (photo_id,)).fetchone()[0]
+
+
+def for_merging(conn, photo_id):
+    """[(id, box JSON, name, name_source, excluded, excluded_reason)] of one photo's faces, by id: what was
+    decided about each, without its embedding or crop (tagpup.services.duplicate_rows)."""
+    return conn.execute("SELECT id, box, name, name_source, excluded, excluded_reason FROM faces WHERE photo_id = ?"
+                        " ORDER BY id", (photo_id,)).fetchall()
+
+
+def decided_photo_ids(conn, photo_ids):
+    """The ids among `photo_ids` of photos with a face somebody decided (decided_for_photo's rule): a name or a
+    "nobody" given by hand, or an exclusion. One lookup a chunk, by photo id (idx_faces_photo_id)."""
+    photo_ids = sorted(photo_ids)
+    found = set()
+    for start in range(0, len(photo_ids), CHUNK):
+        chunk = photo_ids[start:start + CHUNK]
+        found.update(photo_id for (photo_id,) in conn.execute(
+            "SELECT DISTINCT photo_id FROM faces WHERE photo_id IN (%s) AND (name_source = 'manual' OR excluded = 1)"
+            % ",".join("?" * len(chunk)), chunk))
+    return found
+
+
 def _photos_of(conn, face_ids):
     """The ids of the photos the faces among `face_ids` are in."""
     found = set()
@@ -261,7 +287,11 @@ def remove_for_photo(conn, photo_path):
     found, found_params = store_roots.sql_equals(conn, "path", photo_path)
     photo_ids = {photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + found, found_params)}
     where, params = _on_photo(conn, photo_path)
-    return _rebuilt(conn, photo_ids, conn.execute("DELETE FROM faces WHERE " + where, params).rowcount)
+    removed = conn.execute("DELETE FROM faces WHERE " + where, params).rowcount
+    if removed:
+        # Their detection is no longer on file (a caller that detects again records it after).
+        faces_detected.forget_faceless(conn, photo_ids)
+    return _rebuilt(conn, photo_ids, removed)
 
 
 def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
@@ -762,8 +792,11 @@ def decisions(conn):
 def delete(conn, face_ids):
     """Delete faces by id. Returns rows deleted. The caller commits."""
     photo_ids = _photos_of(conn, face_ids)
-    return _rebuilt(conn, photo_ids, sum(conn.execute("DELETE FROM faces WHERE " + _in(chunk), chunk).rowcount
-                                         for chunk in _chunks(face_ids)))
+    removed = sum(conn.execute("DELETE FROM faces WHERE " + _in(chunk), chunk).rowcount
+                  for chunk in _chunks(face_ids))
+    if removed:
+        faces_detected.forget_faceless(conn, photo_ids)
+    return _rebuilt(conn, photo_ids, removed)
 
 
 # ---- What verify_workflow reads --------------------------------------------------------

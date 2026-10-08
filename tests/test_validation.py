@@ -134,7 +134,7 @@ class TheSettings(unittest.TestCase):
     HELD = {"paths.exiftool", "model.name", "model.pretrained", "model.preserve_full_frame",
             "model.max_aspect_ratio", "model.force_image_size", "candidates.tags", "faces.min_face_size",
             "faces.confidence_threshold", "faces.mtcnn_thresholds", "renaming.format", "library.roots",
-            "library.ignored"}
+            "library.ignored", "library.reread_resized_pictures"}
 
     def test_every_setting_is_declared(self):
         self.assertEqual(set(validation.SETTINGS), self.HELD)

@@ -67,6 +67,7 @@ from tagpup.runtime import Runtime
 from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
+from tagpup.services import duplicate_rows as duplicate_rows_service
 from tagpup.services import faces_from_tags as faces_from_tags_service
 from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import identities
@@ -112,19 +113,21 @@ def library_index(runtime, db_path, read_only=False):
     command that only looks: the library is not migrated (docs/findings.md, #243)."""
     return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)), read_only=read_only)
 
-def default_suggestions_file(db_path):
-    """Where `suggest` writes when not told: beside the library, named for it, as the
-    app's own files are. It was suggestions.json in whatever folder the command was run
-    from, which left one at the checkout's root (docs/findings.md, #102)."""
-    folder = os.path.dirname(os.path.abspath(db_path))
-    return os.path.join(folder, os.path.splitext(os.path.basename(db_path))[0] + "_suggestions.json")
-
 def say_if_behind(photo_index):
     """Tell the person a library a look did not migrate is behind this version of TagPup."""
     if photo_index.behind:
         console.print(f"[yellow]This library has not had {len(photo_index.behind)} of this version's"
                       " migrations; a look does not apply them. Indexing it, or opening it in TagPup,"
                       " brings it up to date.[/yellow]")
+
+def say_not_loaded(photo_index, hint=""):
+    """A look could not load the library: it is too far behind this version to be read (say so; the note of
+    say_if_behind came just before), or it holds no index (docs/findings.md, #297)."""
+    if photo_index.behind:
+        console.print("[bold red]Error:[/bold red] This library cannot be read until it is brought up to date.")
+    else:
+        console.print("[bold red]Error:[/bold red] No photo index found." + hint)
+
 
 def get_exiftool_path(db_path, read_only=False) -> str:
     """The ExifTool the library names, else the machine's (tagpup.runtime.exiftool).
@@ -654,7 +657,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str, add_folder
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
-    output = output or default_suggestions_file(db_path)
+    output = output or libraries.suggestions_file(db_path)
     library = Library(db_path)
     # Suggest records faces and vectors for every photo it looks at, each on its row: only
     # in the folders the library holds (tagpup.services.libraries.not_in).
@@ -932,7 +935,7 @@ def search(ctx, query: str, k: int):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
+        say_not_loaded(photo_index, " Please run 'index' first.")
         return
         
     try:
@@ -981,7 +984,7 @@ def stats(ctx):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
+        say_not_loaded(photo_index, " Please run 'index' first.")
         return
         
     try:
@@ -1232,6 +1235,12 @@ def sync(ctx, folder, apply_):
                       " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
+    if counts.get("size_changed"):
+        again = runtimes.peek_settings(library).reread_resized_pictures
+        console.print("  %d of the changed file(s) changed SIZE (%d with a face decided by hand): their pictures %s"
+                      % (counts["size_changed"], counts["size_changed_decided"],
+                         "are read again (library.reread_resized_pictures is on)." if again else
+                         "are not read again: library.reread_resized_pictures is off, as a keyword write changes the size too."))
     if counts.get("unreadable_files"):
         console.print("  %d photo(s) found damaged before, unchanged since, passed over: restore them from a"
                       " backup (the Activity page lists them)." % counts["unreadable_files"])
@@ -1371,6 +1380,43 @@ def tags_from_faces(ctx, apply_, guesses):
             console.print("  %d x %s" % (count, why), markup=False, soft_wrap=True)
     if result.refused or result.errors:
         raise SystemExit(1)
+
+
+@cli.command("dedupe-spelled-rows")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Merge the rows of each file held more than once, as one change of the journal. Without it, only counts.")
+@click.pass_context
+def dedupe_spelled_rows(ctx, apply_):
+    """Find the files the library holds under more than one row -- one file reached by two spellings (a share and
+    its drive, a link) -- and merge them: what the extra rows hold (a face, a name given by hand, a vector) is moved
+    onto the row kept (the one under a root) where it lacks it, then they are deleted. Only rows PROVABLY one file
+    (the file system's own identity) are touched: a copy of a file in another folder has a row of its own and is
+    left alone. A dry run unless --apply; counts only, never a name or a path."""
+    library = _existing_library(ctx)
+    result = duplicate_rows_service.dedupe_spelled_rows(library, apply=apply_)
+    if result.refused or result.errors:
+        for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
+            console.print(line, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d file(s) are held by more than one row: %d row(s) to remove."
+                  % (counts["files_held_twice"], counts["rows_to_remove"]))
+    console.print("  kept: %d under a root, %d not under one" % (counts["kept_under_a_root"], counts["kept_not_under_a_root"]))
+    console.print("  moved onto the kept row first: %d face(s), %d decision(s) a counterpart lacked, %d vector(s)"
+                  % (counts["faces_moved"], counts["decisions_carried"], counts["vectors_carried"]))
+    console.print("  left alone: %d row(s) in %d group(s) that are copies (other files with the same name and size, each "
+                  "with its own row), %d row(s) whose file is missing, %d set(s) whose rows differ, %d set(s) disputed"
+                  % (counts["copies_left_alone"], counts["copy_groups_left_alone"], counts["missing_files_left_alone"],
+                     counts["sets_whose_rows_differ"], counts["sets_disputed"]))
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply merges them.")
+        return
+    console.print("Wrote %d row(s) (rows removed, faces moved, decisions and vectors carried). %s"
+                  % (result.changed, maintenance.recorded(result, library.path)), markup=False, soft_wrap=True)
+    console.print("Still held twice now: %d file(s)." % result.details.get("remaining", {"files_held_twice": 0})["files_held_twice"])
+    for line in maintenance.skipped(result):
+        console.print(line, markup=False, soft_wrap=True)
 
 
 def _job_libraries(ctx):
@@ -1793,7 +1839,7 @@ def list_index(ctx, folder):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found.")
+        say_not_loaded(photo_index)
         return
         
     try:

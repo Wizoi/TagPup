@@ -106,7 +106,7 @@ class Tagging(PhotoCase):
     def test_a_caption_the_file_holds_already_is_not_being_set(self):
         # Written by another program; refusing it would leave the photo unsaveable.
         _session, et = self.exiftool({"XMP:Subject": ["Places/Harbour"], "XMP:Description": "Relays" + BELL})
-        with mock.patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
+        with mock.patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             result = tagging.save_photo(self.lib.library, self.photo, "Relays" + BELL, ["Places/Harbour"],
                                         None, "exiftool", "{grouping} - {index} - {caption}")
         self.assertIsNone(result.refused)
@@ -124,7 +124,7 @@ class Tagging(PhotoCase):
         return et
 
     def save(self, caption):
-        with mock.patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
+        with mock.patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             return tagging.save_photo(self.lib.library, self.photo, caption, ["Places/Harbour"],
                                       None, "exiftool", "{grouping} - {index} - {caption}")
 

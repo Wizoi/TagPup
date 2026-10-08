@@ -672,10 +672,12 @@ def record_batch(conn, batch, overwrite=False, detector=None):
         db.begin(conn)
         recorded = []
         for photo_path, detected in batch.items():
-            _record_detection(conn, photo_path, detector, detected)
             if not overwrite and faces.count_for_photo(conn, photo_path) > 0:
+                _record_detection(conn, photo_path, detector, detected)
                 continue
+            # Recorded after the old faces go: removing a photo's faces forgets that they were detected.
             faces.remove_for_photo(conn, photo_path)
+            _record_detection(conn, photo_path, detector, detected)
             for face in detected:
                 _insert_detected(conn, photo_path, face, name=face.get("name"))
             if detected:

@@ -135,8 +135,8 @@ function nfRenderQuestion(status) {
     children.push(buildElement('label', { className: 'name-faces-group', attrs: { for: 'name-faces-group' } }, [
         nfDialog.group,
         buildElement('span', { text: 'Also group the rest of the faces by who they look like, and name those groups from the tags. '
-            + 'This works on every face in the library and re-derives the automatic names it has been given, so it can take away '
-            + 'some of the names written above (names you gave by hand are kept). It can take about an hour on a large library, '
+            + 'This works on every face in the library and re-derives the automatic names it has been given. A name '
+            + "its photo's own tags confirm is kept, and so is a name you gave by hand. It can take about an hour on a large library, "
             + 'needs no graphics card, and History cannot undo it. Once it has run, History can no longer be counted on to undo '
             + 'the change that writes those names either.' }),
     ]));

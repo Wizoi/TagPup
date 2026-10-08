@@ -274,13 +274,28 @@ def exiftool(library, settings=None):
     return tagpup_config.exiftool_path((settings or library_settings(library)).exiftool)
 
 
+#: Called with (library, folder) when this process's index queue has finished a folder, indexed or not: rows were
+#: written even when clustering failed afterwards. The server puts here the dropping of its cached scan of the
+#: folder, which describes it as it was before (tagpup.web.tagpup_routes; docs/findings.md, #341). A process with
+#: no pages has none.
+folder_indexed = []
+
+
 def index_folder(library, subfolders=True):
     """How this process adds a folder to `library` from its index queue: the CLI's `index`
     in a process of its own, from this code (tagpup.services.indexing.index_folder); with
-    its subfolders unless not `subfolders`."""
+    its subfolders unless not `subfolders`. Whoever queued it, the folder's cached scans are dropped
+    when it ends (folder_indexed)."""
     def index(folder, cluster, report):
-        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report,
-                                     subfolders=subfolders)
+        try:
+            return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report,
+                                         subfolders=subfolders)
+        finally:
+            for told in list(folder_indexed):
+                try:
+                    told(library, folder)
+                except Exception:
+                    logger.exception("Could not tell that %s was indexed", folder)
     return index
 
 
@@ -303,7 +318,8 @@ def sync(library, folder=None, apply=False, index_new=True):
             return indexing_jobs.queue_for(library).start(folders, index_folder(library, subfolders=False),
                                                           together=True)
     return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
-                             roots=settings.roots, ignored=settings.ignored)
+                             roots=settings.roots, ignored=settings.ignored,
+                             reread_resized=settings.reread_resized_pictures)
 
 
 def check_damaged(library, photo_paths=None):
@@ -334,7 +350,7 @@ def include(library, folder):
 
     def queue(folders):
         return indexing_jobs.queue_for(library).start(folders, index_folder(library))
-    return sync_service.include(library, folder, settings.roots, queue)
+    return sync_service.include(library, folder, settings.roots, queue, settings.ignored)
 
 
 def _frozen(settings):

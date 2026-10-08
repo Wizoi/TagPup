@@ -54,6 +54,7 @@ import urllib.request
 
 from tagpup import config
 from tagpup import supervisor
+from tagpup.core import byte_lock
 from tagpup.core import library as libraries
 from tagpup.core import processes
 
@@ -505,7 +506,7 @@ def hand_over(installed, python, home, say, sleep=time.sleep, clock=time.monoton
     one's home. `say(line)` tells the owner, at the install's window. False when a server
     was not handed over: left running (busy and refusing, not this user's), or the new
     version did not start."""
-    lock = supervisor.Lock(os.path.join(installed, HANDOVER_LOCK))
+    lock = byte_lock.Lock(os.path.join(installed, HANDOVER_LOCK))
     if not lock.acquire(0):
         say("Another install is handing the running server over; it starts the version installed last.")
         return True

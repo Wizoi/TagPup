@@ -434,10 +434,13 @@ def resolve(photo_index, max_iterations=5, on_step=None):
             face_resolved = {f["id"]: current_resolved_names.get(f["id"]) for f in photo_faces}
             
             # A name clustering gave is kept while the face still reaches the value
-            # it was named at, against the person's closest face (tagpup.core.clustering).
+            # it was named at, against the person's closest face (tagpup.core.clustering)
+            # -- unless the photo's own keywords name the person: the tag bears the name
+            # out, whatever the likeness (docs/findings.md, #855). That took away the
+            # names faces-from-tags had written at 0.70 to 0.80.
             for f in photo_faces:
                 name = face_resolved.get(f["id"])
-                if name and name in resolved_by_name:
+                if name and name in resolved_by_name and name not in photo_tags:
                     similarity = closest_to(name, f["embedding"], f["photo_path"])
                     if similarity is not None and not clustering.names_unasked(similarity):
                         face_resolved[f["id"]] = None
@@ -631,10 +634,13 @@ def resolve(photo_index, max_iterations=5, on_step=None):
 
             if photo_tags:
                 # Photo is tagged with people. We only match if the best matching name is in those tags.
-                # Since we have confirmation via tags, we name without asking at the
-                # value for that (tagpup.core.clustering), to prevent false
-                # assignments in multi-face photos
-                if best_name in photo_tags and clustering.names_unasked(best_sim):
+                # The tag bears the name out, so the face is named from where it is worth offering
+                # (tagpup.core.clustering.is_offered), not only from where it is named with no one
+                # looking: the loop above keeps a tag-confirmed name whatever the likeness (#855), and a
+                # face that reaches this pass unnamed -- its cluster has no anchor -- was left unnamed at
+                # 0.73 and 0.78 (docs/findings.md, #902). A name already taken by another face of the photo
+                # is skipped (`skip`), to prevent false assignments in multi-face photos.
+                if best_name in photo_tags and clustering.is_offered(best_sim):
                     final_name = best_name
                     names_taken_here.add(final_name)
                     traces[face["id"]] = {
