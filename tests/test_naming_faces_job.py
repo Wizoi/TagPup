@@ -429,17 +429,43 @@ class Grouping(Case789):
                                                 (self.known_face,))[0], "a name given by hand is kept")
         self.assertIn("Grouping re-derived the library's automatic names", found["message"])
 
-    def test_the_result_of_a_grouping_does_not_say_undo_takes_the_names_back(self):
+    def rewrites_a_name_the_change_wrote(self, face):
+        """A grouping that takes the name of `face` away, as it did a name between 0.70 and 0.80 before #855."""
+        real = identities.resolve
+
+        def resolve(index, max_iterations=5, on_step=None):
+            found = real(index, max_iterations, on_step)
+            faces.set_names(index.conn, {face: None})
+            index.conn.commit()
+            return found
+        return mock.patch.object(identities, "resolve", resolve)
+
+    def test_the_result_of_a_grouping_that_rewrote_the_names_does_not_say_undo_takes_them_back(self):
         # #870
         self.seed()
         job = self.start()
-        naming_faces.confirm(self.library, job.handle, group=True)
-        message = wait(job)["message"]
+        with self.rewrites_a_name_the_change_wrote(self.single_face):
+            naming_faces.confirm(self.library, job.handle, group=True)
+            message = wait(job)["message"]
         self.assertIn(naming_faces.UNDO_LOST, message)
         self.assertNotIn("Undo takes back", message)
 
     def test_history_refuses_the_undo_once_grouping_rewrote_a_name_the_change_wrote(self):
-        # A face the tag names at 0.77 of the person (offered, not named unasked): grouping keeps a name only from 0.80.
+        from tagpup.services import journal as journal_service
+        known = self.photo("known_001.jpg", ["People/" + WREN])
+        self.face(known, at(0), name=WREN, name_source="manual")
+        face = self.face(self.photo("middling_001.jpg", ["People/" + WREN]), at(40))
+        job = self.start()
+        with self.rewrites_a_name_the_change_wrote(face):
+            naming_faces.confirm(self.library, job.handle, group=True)
+            found = wait(job)
+        undone = journal_service.undo(self.library, found["applied"]["change"], apply=False)
+        self.assertTrue(undone.refused, "the result's warning is true: the change cannot be undone now")
+        self.assertIn(naming_faces.UNDO_LOST, found["message"])
+
+    def test_grouping_keeps_a_name_its_photos_tag_confirms_and_the_undo_still_works(self):
+        # #855: a face the tag names at 0.77 of the person (offered, not named unasked) was taken away by grouping, which
+        # kept a name only from 0.80, after which History refused the undo. The tag bears the name out: it stays.
         from tagpup.services import journal as journal_service
         known = self.photo("known_001.jpg", ["People/" + WREN])
         self.face(known, at(0), name=WREN, name_source="manual")
@@ -447,10 +473,13 @@ class Grouping(Case789):
         job = self.start()
         naming_faces.confirm(self.library, job.handle, group=True)
         found = wait(job)
-        self.assertIsNone(look(self.path, "SELECT name FROM faces WHERE id = ?", (face,))[0][0], "grouping took the name away")
+        self.assertEqual(WREN, look(self.path, "SELECT name FROM faces WHERE id = ?", (face,))[0][0],
+                         "grouping took the name away")
         undone = journal_service.undo(self.library, found["applied"]["change"], apply=False)
-        self.assertTrue(undone.refused, "the result's warning is true: the change cannot be undone now")
-        self.assertIn(naming_faces.UNDO_LOST, found["message"])
+        self.assertFalse(undone.refused, undone.refused)
+        self.assertNotIn(naming_faces.UNDO_LOST, found["message"])
+        self.assertIn("which Undo takes back", found["message"])
+        self.assertIn("History cannot undo grouping", found["message"])
 
     def test_grouping_is_not_run_unless_ticked(self):
         self.seed()
