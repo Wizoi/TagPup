@@ -77,7 +77,7 @@ function isPlainClick(event) {
 }
 
 function jumpLink(spec, label, count, title) {
-    const anchor = buildElement('a', { className: 'selection-jump-link', text: label, title, attrs: { href: viewSearch(spec) } });
+    const anchor = buildElement('a', { className: 'selection-jump-link', text: label, title, attrs: { href: viewSearch({ ...spec, order: state.nav.order }) } });
     anchor.addEventListener('click', (event) => {
         if (event.defaultPrevented || !isPlainClick(event)) return;
         event.preventDefault();

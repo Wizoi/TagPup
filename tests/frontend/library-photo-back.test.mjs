@@ -256,6 +256,81 @@ describe("what is asked, and what fails", () => {
     assert.ok(gridShown(ctx) && !photoShown(ctx));
   });
 
+  test("another view opened over the photo saves the first view's scroll on the photo's place (#863)", async (t) => {
+    const ctx = await leftView(t);
+    await open(ctx, ctx.left.photo);
+    ctx.here.scrollTop = 0;                      // a hidden grid has no offset: the browser forgot it
+    ctx.module("hooks.js").upper.openLibraryView({ kind: "year", value: "2020", recursive: false });
+    await ctx.settle(200);
+    ctx.window.history.back();
+    await ctx.settle(200);
+    assert.equal(ctx.state.library.kind, "all");
+    assert.equal(topOf(ctx), ctx.left.scroll, "the first view opens where it was left, not at the top");
+  });
+
+  test("a second search typed over a photo opened over a search: Clear returns to the view before the first search (#862)", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=year&value=2020", ids: IDS });
+    const words = el(ctx, "library-search-words");
+    const type = async (text) => {
+      words.value = text;
+      words.dispatchEvent(new ctx.window.Event("input"));
+      ctx.key(words, "Enter");
+      await ctx.settle();
+    };
+    await type("beach");
+    await open(ctx, IDS[3]);
+    await type("sea");
+    assert.equal(ctx.state.library.kind, "search");
+    assert.ok(gridShown(ctx) && !photoShown(ctx));
+    el(ctx, "btn-library-search-clear").click();
+    await ctx.settle(300);
+    assert.equal(ctx.state.library.kind, "year", "not the first search");
+  });
+
+  test("a search pushed from a photo's place is one place further from the view before it (#862)", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=year&value=2020", ids: IDS });
+    await open(ctx, IDS[3]);
+    const words = el(ctx, "library-search-words");
+    words.value = "sea";
+    words.dispatchEvent(new ctx.window.Event("input"));
+    ctx.key(words, "Enter");
+    await ctx.settle();
+    assert.equal(ctx.state.library.kind, "search");
+    assert.equal(ctx.window.history.state.searchBack, 2);
+    el(ctx, "btn-library-search-clear").click();
+    await ctx.settle(300);
+    assert.equal(ctx.state.library.kind, "year");
+  });
+
+  test("a held Escape or a double click on Back asks the browser to go back once, until it has arrived (#864)", async (t) => {
+    const ctx = await leftView(t);
+    await open(ctx, ctx.left.photo);
+    const real = ctx.window.history.back.bind(ctx.window.history);
+    let asked = 0;
+    ctx.window.history.back = () => { asked += 1; };
+    press(ctx, "Escape");
+    press(ctx, "Escape");
+    click(ctx.window, backButton(ctx));
+    assert.equal(asked, 1, "one step");
+    ctx.window.history.back = real;
+    real();
+    await ctx.settle(200);                       // the popstate arrives
+    assertAsLeft(ctx, "after the one step");
+    await open(ctx, ctx.left.photo);
+    ctx.window.history.back = () => { asked += 1; };
+    press(ctx, "Escape");
+    assert.equal(asked, 2, "asked again once it arrived");
+  });
+
+  test("the same photo opened again after Back has its place noted, so Forward opens it (#867)", async (t) => {
+    const ctx = await leftView(t);
+    await open(ctx, ctx.left.photo);
+    click(ctx.window, backButton(ctx));
+    await ctx.settle(200);
+    await open(ctx, ctx.left.photo);
+    assert.equal(ctx.window.history.state.photo, ctx.left.photo);
+  });
+
   test("a reload: the view comes from the address, and a Back to the view's place finds where it was scrolled to, best-effort", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all", ids: IDS });
     ctx.window.history.replaceState({ scrollTop: 7 * STRIDE }, "");

@@ -184,6 +184,7 @@ function openPhoto(path) {
     if (held) {
         state.library.activeId = held.id;
         showPhoto(path);
+        notePhoto(held.id);   // the same photo opened again after Back: its place says which, for Forward (#867)
         return;
     }
     const id = libraryIdOfPath(path);

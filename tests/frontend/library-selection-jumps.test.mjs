@@ -101,6 +101,18 @@ describe("People jump and Keyword jump", () => {
     assert.ok(link.getAttribute("href"));
   });
 
+  test("a link's address carries the order the navigator reads views in, as a plain click does (#868)", async (t) => {
+    const ctx = await view(t);
+    ctx.state.nav.order = "name-desc";
+    pick(ctx, 13);
+    await ctx.settle(700);
+    const [first] = links(ctx, "selection-people-jump");
+    assert.match(first.getAttribute("href"), /&order=name-desc$/);
+    first.click();
+    await ctx.settle(200);
+    assert.equal(ctx.state.library.order, "name-desc", "the plain click opens it in that order too");
+  });
+
   test("a name is text, never markup", async (t) => {
     const tally = { ...TALLY, people: [{ name: "<img src=x onerror=alert(1)>", count: 1 }], tags: [{ tag: "Trips/<b>Coast</b>", count: 1 }] };
     const ctx = await view(t, { tally });

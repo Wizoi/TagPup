@@ -29,7 +29,7 @@ import {
 } from './folder.js';
 import { clearSelection } from './selected.js';
 import { positionOf, pushEntry } from './history-entries.js';
-import { backToView, bestEffortScroll, forgetViewLeft, leavePhotoPlace, photoPlaceMoved, saveScroll } from './view-left.js';
+import { backArrived, backToView, bestEffortScroll, forgetViewLeft, leavePhotoPlace, onPhotoPlace, photoPlaceMoved, saveScroll } from './view-left.js';
 import { attachBulk, lockBulkControls } from './bulk-job.js';
 import { forgetBanner } from './library-banner.js';
 import { clearSyncInfo, loadSyncInfo } from './sync-state.js';
@@ -242,9 +242,10 @@ function addressNamesWhatIsShown() {
 
 function beginView(spec, history, scrollTop) {
     const previous = state.library;
-    const back = !spec.error && spec.kind === 'search' ? searchBackOf(previous) : 0;
-    forgetViewLeft();          // what was left of the view before is not this view's
-    if (history === 'replace') leavePhotoPlace();   // opened in the place of a photo's: the place is the view's now
+    // A search pushed from a photo's place is one place further from the view before it (#862); one that replaces the photo's place is
+    // not (it takes the place's index), and the place is the search's now.
+    const back = !spec.error && spec.kind === 'search' ? searchBackOf(previous) + (history === 'push' && onPhotoPlace() ? 1 : 0) : 0;
+    if (history === 'replace') leavePhotoPlace(back);   // opened in the place of a photo's: the place is the view's now
     if (previous) destroyLibrary(previous);
     else quietTheFolder();
     const lib = newLibrary(spec.error ? { kind: 'all' } : spec);
@@ -259,7 +260,9 @@ function beginView(spec, history, scrollTop) {
     state.lastSelectedPath = null;
     state.folderPhotos = [];
     forgetBanner();            // what the disk held of the view before is not this view's
+    // The address is written while the view left is still known: the photo's place keeps where that view was scrolled to (#863).
     writeAddress(spec, history, back);
+    forgetViewLeft();          // what was left of the view before is not this view's
     lib.entryState = { ...(window.history.state || {}) };   // the state of its place in the history (#770)
     showChrome();
     upper.navigatorFollows();  // the sidebar shows the source, in the tab it belongs to
@@ -466,6 +469,7 @@ export function wireLibraryView() {
     window.history.replaceState({ ...(window.history.state || {}), entryLoad: state.entries.load, entryPos: 0 }, '');
     state.entries.at = 0;
     window.addEventListener('popstate', (event) => {
+        backArrived();
         // Back or Forward between a folder and a view, or between two views.
         const from = state.entries.at;
         const to = positionOf(event.state);

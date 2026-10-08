@@ -87,12 +87,21 @@ export function searchPlacesBack() {
     return back > 0 ? back + (isPhotoPlace(here) ? 1 : 0) : 0;
 }
 
-/** A view opened in the photo's place, replacing it: the place is the new view's, not a photo's (its `searchBack` still counts). */
-export function leavePhotoPlace() {
+/** Is the page on a place the photo made? A view pushed from it is one place further from the view before a search (#862). */
+export function onPhotoPlace() {
+    return isPhotoPlace(window.history.state);
+}
+
+/**
+ * A view opened in the photo's place, replacing it: the place is the new view's, not a photo's. A search takes `back`, its distance
+ * from the view before it (the photo's place was one further than the search it was made over, #862); 0 leaves what the place held.
+ */
+export function leavePhotoPlace(back = 0) {
     const here = window.history.state;
     if (!isPhotoPlace(here)) return;
     const kept = { ...here };
     delete kept.photo;
+    if (back > 0) kept.searchBack = back;
     try {
         window.history.replaceState(kept, '');
     } catch (err) {
@@ -136,10 +145,22 @@ export function restoreViewAsLeft() {
  */
 export function backToView() {
     if (state.library && state.activePhotoPath && state.viewLeft && isPhotoPlace(window.history.state)) {
+        // One step back at a time: a held Escape or a double click would take the second off the view before the first arrived (#864).
+        if (state.backUnderway) return;
+        state.backUnderway = true;
+        window.setTimeout(backArrived, BACK_WAITS_MS);       // should the browser never say (nothing to go back to)
         window.history.back();
         return;
     }
     leavePhotoThen(openFolderView);
+}
+
+/** How long a Back that was asked for is waited for before another may be asked. */
+export const BACK_WAITS_MS = 1500;
+
+/** The browser's Back or Forward has arrived (a popstate): another Back may be asked. */
+export function backArrived() {
+    state.backUnderway = false;
 }
 
 /** The folder view's header, in Organize; in a library view with a photo open it is Back. */
