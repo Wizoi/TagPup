@@ -283,10 +283,9 @@ def _names_of(library, face_ids):
     """[(photo path, name)] of the faces among `face_ids` that carry a name and are not excluded."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        rows = faces.rows(conn, face_ids)
+        return faces.named_among(conn, face_ids)
     finally:
         conn.close()
-    return [(photo_path, name) for photo_path, name, excluded in rows.values() if name and not excluded]
 
 
 # ---- Automatch ------------------------------------------------------------------------------------------------------

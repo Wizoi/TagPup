@@ -357,6 +357,17 @@ def rows(conn, face_ids):
     return found
 
 
+def named_among(conn, face_ids):
+    """[(photo path, name)] of the faces among `face_ids` that carry a name and are not excluded -- and only those: ignoring
+    a cluster sends thousands of nameless faces, whose photos are not read. By the faces' key, then each one's photo by its."""
+    found = []
+    for chunk in _chunks(face_ids):
+        found.extend(store_roots.natives(conn, conn.execute(
+            "SELECT p.path, f.name FROM faces f" + PHOTO + " WHERE f." + _in(chunk)
+            + " AND f.name IS NOT NULL AND f.excluded = 0", chunk).fetchall(), 0))
+    return found
+
+
 def name(conn, face_ids, person_name):
     """Name faces as a person's decision (name_source 'manual'), which re-clustering does
     not revise. Excluded faces are left alone. Returns rows named. The caller commits."""
