@@ -65,7 +65,7 @@ from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import launcher as launches  # noqa: E402
 from tagpup import supervisor  # noqa: E402
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import byte_lock, processes  # noqa: E402
 
 #: Versions kept: the new one and the two before it.
 KEEP = 3
@@ -208,7 +208,7 @@ def update(destination, home, python, say=print):
     failed install leaves the version there was. Returns the version installed, or None.
     One at a time: TagPup.cmd and TagTuner.cmd started together both run this, and the
     second, once the first is done, finds its version installed."""
-    lock = supervisor.Lock(os.path.join(destination, INSTALL_LOCK))
+    lock = byte_lock.Lock(os.path.join(destination, INSTALL_LOCK))
     if not lock.acquire(0):
         # The other launcher's install: say so, or the window is blank while it copies.
         say("TagPup: another install is running; waiting for it (at most %d s)..." % INSTALL_WAIT)
@@ -445,7 +445,7 @@ def main(argv=None):
         return 1
     # One install at a time, a launcher's among them; the hand-over after it, which may wait
     # for a long job, holds a lock of its own and lets the launchers install meanwhile.
-    lock = supervisor.Lock(os.path.join(destination, INSTALL_LOCK))
+    lock = byte_lock.Lock(os.path.join(destination, INSTALL_LOCK))
     if not lock.acquire(0):
         print("another install is running; waiting for it (at most %d s)..." % INSTALL_WAIT, flush=True)
         if not lock.acquire(INSTALL_WAIT):

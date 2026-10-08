@@ -23,9 +23,11 @@ RUNTIME = os.path.join("tagpup", "runtime.py")
 #: Where a turn may be taken: the owner, the runtime that hands models their turn, and
 #: each model's own check before it loads.
 TAKERS = {OWNER, RUNTIME, os.path.join("tagpup", "ml", "clip.py"), os.path.join("tagpup", "ml", "faces.py")}
-#: The byte locks of the machine's shared files: the card's, and the installer's own
-#: (tagpup.supervisor.Lock), which is not the card's.
-LOCKERS = {OWNER, os.path.join("tagpup", "supervisor.py")}
+#: The byte locks of the machine's shared files: the card's (named by its owner), and the one lock
+#: every such file uses (tagpup.core.byte_lock: the installer's, the hand-over's, the supervisor's, the card's).
+BYTE_LOCK = os.path.join("tagpup", "core", "byte_lock.py")
+LOCKERS = {OWNER, BYTE_LOCK}
+CALLS_THE_SYSTEM_LOCK = re.compile(r"msvcrt\.locking|fcntl\.flock")
 #: Names the turns' folder, to move it into a home of its own (tagpup.config.own_home_environment,
 #: a test's and a sandbox's, #796), and locks nothing: held to the locks themselves.
 NAMES_THE_FOLDER = {os.path.join("tagpup", "config.py")}
@@ -93,6 +95,14 @@ class TheCardHasOneOwner(unittest.TestCase):
             elif relative not in LOCKERS:
                 problems += lines_matching(LOCKS, relative)
         self.assertEqual([], problems)
+
+    def test_the_byte_lock_is_written_once(self):
+        # docs/findings.md, #762: supervisor.Lock and the card each had a copy.
+        problems = []
+        for relative in python_sources():
+            if relative != BYTE_LOCK:
+                problems += lines_matching(CALLS_THE_SYSTEM_LOCK, relative)
+        self.assertEqual([], problems, "\n\nLock a byte through tagpup.core.byte_lock:\n\n" + "\n".join(problems))
 
     def test_the_guard_recognises_what_it_forbids(self):
         unchecked = ("from facenet_pytorch import MTCNN\n"

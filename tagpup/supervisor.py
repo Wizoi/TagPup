@@ -60,7 +60,7 @@ import urllib.request
 
 from tagpup import config as tagpup_config
 from tagpup import logs
-from tagpup.core import processes
+from tagpup.core import byte_lock, processes
 
 logger = logging.getLogger(__name__)
 
@@ -242,61 +242,6 @@ def _now():
 
 
 # ---- One per home ----------------------------------------------------------------------
-
-class Lock:
-    """An exclusive lock on a file, held while the process lives: the operating system
-    lets go of it when the process ends, however it ends."""
-
-    def __init__(self, path):
-        self.path = path
-        self._fd = None
-
-    def acquire(self, wait=0.0):
-        """Take it, waiting up to `wait` seconds. False when another holds it."""
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        deadline = time.monotonic() + wait
-        while True:
-            fd = os.open(self.path, os.O_RDWR | os.O_CREAT)
-            try:
-                _lock(fd)
-                self._fd = fd
-                return True
-            except OSError:
-                os.close(fd)
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(0.25)
-
-    def release(self):
-        fd, self._fd = self._fd, None
-        if fd is None:
-            return
-        try:
-            _unlock(fd)
-        except OSError:
-            pass
-        os.close(fd)
-
-
-def _lock(fd):
-    if os.name == "nt":
-        import msvcrt
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def _unlock(fd):
-    if os.name == "nt":
-        import msvcrt
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(fd, fcntl.LOCK_UN)
-
 
 # ---- The installed app -------------------------------------------------------------------
 
@@ -933,7 +878,7 @@ class Supervisor:
         self._inherited_token = before.get("server_token")
         if handed_over:
             self._predecessor_version = before.get("server_version") or before.get("version")
-        lock = Lock(data_file(LOCK_FILE))
+        lock = byte_lock.Lock(data_file(LOCK_FILE))
         if not lock.acquire(wait_for_lock):
             other = running() or {}
             logger.warning("Another TagPup supervisor is running in this home (pid %s); this one stops.",

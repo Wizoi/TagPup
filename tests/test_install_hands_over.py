@@ -37,7 +37,7 @@ import install_app  # noqa: E402
 import tagpup_web  # noqa: E402
 from tagpup import launcher  # noqa: E402
 from tagpup import supervisor  # noqa: E402
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import byte_lock, processes  # noqa: E402
 
 OLD, NEW = "20261006-093740-aaaaaaa", "20261006-103400-bbbbbbb"
 
@@ -239,7 +239,7 @@ class Choices(unittest.TestCase):
         self.assertIn("importing alone took", waiting[0])
 
     def test_a_second_install_at_once_leaves_the_server_to_the_first(self):
-        held = supervisor.Lock(os.path.join(self.installed, launcher.HANDOVER_LOCK))
+        held = byte_lock.Lock(os.path.join(self.installed, launcher.HANDOVER_LOCK))
         self.assertTrue(held.acquire())
         self.addCleanup(held.release)
         with mock.patch.object(launcher, "make_way") as make_way:
@@ -461,7 +461,7 @@ class TheInstallsMain(unittest.TestCase):
             self.assertEqual(1, self.main())
 
     def test_two_installs_at_once_take_turns(self):
-        held = supervisor.Lock(os.path.join(self.dest, install_app.INSTALL_LOCK))
+        held = byte_lock.Lock(os.path.join(self.dest, install_app.INSTALL_LOCK))
         self.assertTrue(held.acquire())
         self.addCleanup(held.release)
         with mock.patch.object(install_app, "INSTALL_WAIT", 0.5), \

@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 import install_app  # noqa: E402
 sys.path.insert(0, WORKSPACE_DIR)
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import byte_lock, processes  # noqa: E402
 from measure_identify_faces import free_port, remove_sandbox  # noqa: E402
 
 
@@ -300,9 +300,8 @@ class AServerOfAnotherVersionRunning(InstallCase):
     def test_a_launcher_waiting_for_another_install_says_so_first(self):
         """#749: the second window was blank for as long as the first install took."""
         import threading
-        from tagpup import supervisor
         self.install(name="20260925-115722-0dd8402")
-        held = supervisor.Lock(os.path.join(self.dest, install_app.INSTALL_LOCK))
+        held = byte_lock.Lock(os.path.join(self.dest, install_app.INSTALL_LOCK))
         self.assertTrue(held.acquire())
         self.addCleanup(held.release)   # a failure leaves no thread waiting on it
         answers = {"rev-parse": "0dd8402", "status": ""}
