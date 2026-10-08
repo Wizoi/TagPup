@@ -96,6 +96,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
 
     app.before_request(security.guard)
     app.before_request(libraries.attach_library)
+    app.before_request(name_faces_routes.refuse_writes_while_naming)
     app.before_request(roots_gate.guard)
     app.before_request(roots_ingress.guard)
     app.after_request(roots_ingress.mark)

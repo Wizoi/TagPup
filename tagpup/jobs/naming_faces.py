@@ -94,6 +94,10 @@ REFUSED_SAYS = ("Something changed while the question was open (a name given, or
                 "TagPup, say): nothing was written. Ask again.")
 APPLIED_MEANWHILE = ("The names were written by another run since this plan was read (in another window or process); they are "
                      "references for this one now. Nothing was written. Start again to see what can be named now.")
+#: What the dialog says of a library this has been done to before (#872): the CLI's sentence (AGAIN) is about a flag.
+AGAIN_SAYS = ("Names were given from tags in this library before, and not undone. Those faces are references now, so this run can "
+              "name faces that look like them: each run can name more, and a person's references can drift one step at a time. "
+              "Identify Faces is where a drifted name is taken back. Yes does it again.")
 UNDO_LOST = ("Grouping rewrote names of faces that change wrote, so History can no longer be counted on to undo it "
              "(and it cannot undo grouping).")
 NO_FACES = "This library holds no faces yet: index photos first. Nothing was changed."
@@ -262,7 +266,7 @@ class Job:
                     self.plan = {"faces": planned.size, "by_tag": by_tag, "by_comparison": planned.size - by_tag,
                                  "photos": by_tag + counts["photos_named_by_comparison"],
                                  "left": counts["photos_left_for_identify_faces"], "earlier_apply": earlier,
-                                 "again": faces_from_tags.AGAIN if earlier else None}
+                                 "again": AGAIN_SAYS if earlier else None}
                     self.state, self.asked = ASKING, time.time()
                     self.done = self.total = 1
                 self._end_run(what)
@@ -585,6 +589,14 @@ def current(library):
     with _lock:
         found = _working(library) or _waiting(library)
     return found.status() if found is not None else None
+
+
+def writing(library):
+    """Is a job of this library writing names now -- giving them from the tags, or grouping? What the library's other writers
+    of faces, tags and rows wait for (tagpup.web.tuner_routes.clustering_refusal): the plan was read, and grouping commits a
+    name for every face it read at its start, so a name given meanwhile would be overwritten or cleared without a word."""
+    with _lock:
+        return any(job.state in (APPLYING, GROUPING) for job in _held(library).values())
 
 
 def running(library=None):

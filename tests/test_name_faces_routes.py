@@ -16,7 +16,7 @@ from test_faces_from_tags import ODA, WREN, Case, at, look  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import naming_faces  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
-from tagpup.web import tuner_routes  # noqa: E402
+from tagpup.web import name_faces_routes, tuner_routes  # noqa: E402
 
 START, STATUS, CONFIRM, CANCEL, CURRENT = ("/harbour/api/name-faces/" + name
                                            for name in ("start", "status", "confirm", "cancel", "current"))
@@ -137,6 +137,59 @@ class TwoClicksAndBusyLibraries(RoutesCase):
             answer = self.apps["tagpup"].post(START, json={})
         self.assertEqual(409, answer.status_code)
         self.assertIn("clustered", answer.get_json()["error"])
+
+    def while_names_are_given(self):
+        """Run `with` this: the job is writing (its change blocked at the write) and the gate lets it finish after."""
+        import contextlib
+        import threading
+
+        from tagpup.services import faces_from_tags
+
+        @contextlib.contextmanager
+        def blocked():
+            gate, reached = threading.Event(), threading.Event()
+            real = faces_from_tags.faces_from_tags
+
+            def slow(*args, **more):
+                reached.set()
+                gate.wait(30)
+                return real(*args, **more)
+            started = self.start("tuner").get_json()["status"]
+            with mock.patch.object(faces_from_tags, "faces_from_tags", slow):
+                self.apps["tuner"].post(CONFIRM, json={"job": started["job"]})
+                self.assertTrue(reached.wait(30))
+                try:
+                    yield started["job"]
+                finally:
+                    gate.set()
+                    self.join(started["job"])
+        return blocked()
+
+    def test_the_writes_that_would_be_written_over_are_refused_while_names_are_given(self):
+        # #871: the plan was read, and grouping commits a name for every face it read.
+        import json
+        guarded = {"/harbour" + path: {} for path in sorted(name_faces_routes.GUARDED) if path != "/api/sync"}
+        guarded["/harbour/api/sync"] = {"apply": True}
+        with self.while_names_are_given():
+            for kind, client in self.apps.items():
+                for url, body in guarded.items():
+                    with self.subTest(kind=kind, url=url):
+                        answer = client.post(url, json=body)
+                        self.assertEqual(409, answer.status_code, url)
+                        self.assertEqual(tuner_routes.NAMING_REFUSAL, answer.get_json()["error"])
+            # Reads are not refused: a sync's rehearsal, a photo's faces, the status of the job itself.
+            self.assertNotEqual(409, self.apps["tuner"].post("/harbour/api/sync", json={}).status_code)
+            self.assertEqual(200, self.apps["tagpup"].get("/harbour/api/photo-faces", query_string={"path": self.single}).status_code)
+            self.assertEqual(200, self.apps["tuner"].get(CURRENT).status_code)
+            # TagTuner's own writes were already refused, now in the same words.
+            refused = self.apps["tuner"].post("/harbour/api/face/match", json={"face_id": self.single_face, "name": WREN})
+            self.assertEqual(409, refused.status_code)
+            self.assertEqual(tuner_routes.NAMING_REFUSAL, refused.get_json()["error"])
+            json.dumps(refused.get_json())
+        for url, body in guarded.items():
+            answer = self.apps["tagpup"].post(url, json=body)
+            self.assertNotEqual(tuner_routes.NAMING_REFUSAL, (answer.get_json(silent=True) or {}).get("error"),
+                                "and let go after: %s" % url)
 
     def test_the_faces_are_held_against_writes_while_the_names_are_given(self):
         seen = []

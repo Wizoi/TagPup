@@ -29,6 +29,28 @@ def _this_pc_only():
     return None
 
 
+#: The writes the job's plan and grouping must not be written over (#871): adding or indexing folders, a sync's apply, a bulk edit,
+#: a photo's keywords and the bulk tag writes, and deleting photos. Answered 409 while names are given (the one owner of the
+#: refusal is tuner_routes.clustering_refusal, which TagTuner's own writes ask too); reads are never refused.
+GUARDED = frozenset((
+    "/api/folder/index-start", "/api/folder/add", "/api/sync/review/include", "/api/library/bulk/start",
+    "/api/library/bulk/resume", "/api/photo/save-metadata", "/api/photos/bulk-tags", "/api/folder/auto-apply",
+    "/api/photo/delete", "/api/sync"))
+
+
+def refuse_writes_while_naming():
+    """app.before_request: a write of GUARDED is refused while the library's names are being written."""
+    if request.method != "POST":
+        return None
+    library = state.current()
+    at = request.path.find("/api/")
+    if library is None or at < 0 or request.path[at:] not in GUARDED:
+        return None
+    if request.path[at:] == "/api/sync" and (request.get_json(silent=True) or {}).get("apply") is not True:
+        return None     # a rehearsal reads
+    return tuner_routes.clustering_refusal(library, only_naming=True)
+
+
 def _busy(library):
     """What runs in this process that the job must not run beside, as sentences: the index queue, Suggest, a sync and a Verify
     (tagpup.web.tuner_routes), and whatever is already clustering the library's faces (the flag TagTuner's writes honour)."""

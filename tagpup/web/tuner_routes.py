@@ -25,6 +25,7 @@ from tagpup.core import paths
 from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import identify as identify_jobs
 from tagpup.jobs import indexing as indexing_jobs
+from tagpup.jobs import naming_faces
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.jobs import verifying as verify_jobs
 from tagpup.services import faces as faces_service
@@ -125,11 +126,20 @@ _int_arg = face_routes.int_arg
 _read_face_ids = face_routes._read_face_ids
 
 
-def clustering_refusal(library):
+#: What a write of faces, tags or rows is answered with while "Name faces from tags" gives names or groups faces (#871, #872).
+NAMING_REFUSAL = "Names are being given from tags; face changes wait until it finishes."
+
+
+def clustering_refusal(library, only_naming=False):
     """The 409 a write that sets faces' names is answered with while `library`'s faces
-    are being clustered, or None. TagTuner's writes are refused here before each POST;
-    the tree's routes, which both apps serve, ask it for a rename and a delete."""
-    if library is not None and clustering.of(library).is_set():
+    are being clustered, or names are being given from the tags (tagpup.jobs.naming_faces), or None.
+    TagTuner's writes are refused here before each POST; the tree's routes, which both apps
+    serve, ask it for a rename and a delete, and tagpup.web.name_faces_routes for the writes
+    of TagPup that name faces from tags must not be written over. `only_naming`: not for
+    the flag clustering from an index run holds."""
+    if library is not None and naming_faces.writing(library):
+        return jsonify({"success": False, "error": NAMING_REFUSAL}), 409
+    if not only_naming and library is not None and clustering.of(library).is_set():
         return jsonify({"success": False,
                         "error": "Server is currently clustering faces. Please try again later."}), 409
     return None
