@@ -143,6 +143,47 @@ for (const app of ["tagpup", "tagtuner"]) {
       assert.equal(ctx.document.activeElement, ctx.button);
     });
 
+    test("enabled and focused in one breath, as folder.js does after Change, the focus lands on the button", async (t) => {
+      const ctx = await open(app, t);
+      ctx.select.disabled = true;
+      await flush(ctx.window);
+      assert.equal(ctx.button.disabled, true);
+      // updateDogParkLock enables the select, and closeFolderForDogPark focuses it, with nothing between.
+      ctx.select.disabled = false;
+      ctx.select.focus();
+      assert.equal(ctx.document.activeElement, ctx.button, "the focus was lost on a button still disabled");
+    });
+
+    test("a label for the select reaches the button", async (t) => {
+      const ctx = await open(app, t);
+      for (const label of ctx.document.querySelectorAll("label")) {
+        if (label.textContent.includes("DB:")) assert.equal(label.htmlFor, ctx.button.id);
+      }
+    });
+
+    test("a refresh while the list is open keeps the highlighted row", async (t) => {
+      const ctx = await open(app, t);
+      ctx.button.click();
+      ctx.key("ArrowDown");
+      const option = ctx.document.createElement("option");
+      option.value = "elm-grove";
+      ctx.select.appendChild(option);
+      await flush(ctx.window);
+      assert.equal(ctx.list.querySelectorAll(".active").length, 1, "no row is highlighted after the list was rebuilt");
+      assert.equal(ctx.document.getElementById(ctx.list.getAttribute("aria-activedescendant")).classList.contains("active"), true);
+    });
+
+    test("where a press on the button does not focus it, the click that closed the list does not open it again", async (t) => {
+      const ctx = await open(app, t);
+      ctx.button.click();
+      assert.equal(ctx.shown(), true);
+      // the press moved the focus out of the list to nothing: the list closes; then the click arrives
+      ctx.list.dispatchEvent(new ctx.window.FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
+      assert.equal(ctx.shown(), false);
+      ctx.button.click();
+      assert.equal(ctx.shown(), false, "the same gesture opened the list again");
+    });
+
     test("with no library in the address the button asks for one, and the prompt is not offered", async (t) => {
       const ctx = await open(app, t, { url: "http://localhost:8090/" });
       assert.match(ctx.button.textContent, /Choose a library/);

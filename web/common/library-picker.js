@@ -52,13 +52,18 @@ export function enhanceSelect(select, { label = 'Library' } = {}) {
     select.tabIndex = -1;
     select.parentNode.insertBefore(root, select);
     // A label for the select, or the page focusing it, lands on the button.
-    select.focus = () => button.focus();
-    if (select.id) button.id = select.id + '-button';
+    // The page enables the select and focuses it in one breath (folder.js); the button follows the select at once.
+    select.focus = () => { refresh(); button.focus(); };
+    if (select.id) {
+        button.id = select.id + '-button';
+        for (const l of doc.querySelectorAll('label[for="' + select.id + '"]')) l.htmlFor = button.id;
+    }
 
     let rows = [];       // [{ value, li }] of the choosable options
     let active = -1;     // the row the arrow keys are on
     let typed = '';
     let typedAt = 0;
+    let closedAt = 0;    // when a loss of focus last closed the list
 
     const isOpen = () => !list.classList.contains('hidden');
 
@@ -84,6 +89,7 @@ export function enhanceSelect(select, { label = 'Library' } = {}) {
             list.appendChild(li);
             rows.push({ value, li });
         }
+        if (isOpen() && rows.length) setActive(active);
     }
 
     function setActive(index) {
@@ -115,6 +121,11 @@ export function enhanceSelect(select, { label = 'Library' } = {}) {
         if (giveFocusBack) button.focus();
     }
 
+    function closeByFocus() {
+        if (isOpen()) closedAt = Date.now();
+        close(false);
+    }
+
     function outside(event) {
         if (!root.contains(event.target)) close(false);
     }
@@ -140,7 +151,12 @@ export function enhanceSelect(select, { label = 'Library' } = {}) {
         return false;
     }
 
-    button.addEventListener('click', () => (isOpen() ? close() : open()));
+    // A button that does not take focus on a press (Safari, Firefox on a Mac) leaves it in the list, which then closes on
+    // the press itself; the click that ends the same gesture would open it again.
+    button.addEventListener('click', () => {
+        if (isOpen()) close();
+        else if (Date.now() - closedAt > 300) open();
+    });
     button.addEventListener('keydown', (e) => {
         if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) {
             e.preventDefault();
@@ -165,7 +181,7 @@ export function enhanceSelect(select, { label = 'Library' } = {}) {
         e.preventDefault();
     });
     list.addEventListener('focusout', (e) => {
-        if (!e.relatedTarget || !root.contains(e.relatedTarget)) close(false);
+        if (!e.relatedTarget || !root.contains(e.relatedTarget)) closeByFocus();
     });
 
     const Observer = win.MutationObserver;
