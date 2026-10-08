@@ -16,6 +16,19 @@ machine's own map is never touched), and looks at the disk. For each row:
   never read; sync reads it, and it is not "changed since indexed";
 - **unreadable**: the disk refused the folder or the file's stamp.
 
+**Markers.** A library that has marked folders (tagpup.services.folder_ids; `folder_ids` rows) also has the
+marker read (`.tagpup`, tagpup.files.folder_marker) in each of the root's marked folders AT THE CANDIDATE, the
+row's `@name/rel` turned into a path by the same Roots built here, and counted: **matches** (the marker holds
+this library's entry for the id the row has), **differs** (it holds this library's entry for another id, or only
+other libraries' -- likely a different folder at that path), **unmarked** (no marker: the library predates
+marking, or the folder is new), **malformed** (a file of that name that is not a marker, hand-edited: counted and
+never a reason to refuse), **unreadable** (the disk refused) and **not there** (the folder is not at the
+candidate). A sample reads at most MARKER_SAMPLE of them, each folder once, within MARKER_BUDGET; a full run all
+of them, with progress and cancel. Each read is made on the bounded thread as a listing is, so a share that does
+not answer stops it as "unreachable". A library with no `folder_ids` rows for the root (not marked, or behind
+migration 26) has `markers` None and nothing is said. Markers that DIFFER make the result poor (so Change
+location refuses it unless the owner overrides); ones that are absent, malformed or unreadable never do.
+
 And, in a full run, how many photos lie at the location that no row has, the rows held under no
 root (grouped by folder), and the rows stored by this machine's spelling that lie where the
 candidate would put the root (they would be missed by every lookup: a second set of rows on the
@@ -38,6 +51,7 @@ each folder once, so the rows and the photos no row has are counted by the one w
 **Read-only.** It writes no row, no file and not the map. The library is read through
 `store.root_rows`, with its own connection; `machine` is only asked where the other roots are.
 """
+import functools
 import logging
 import os
 import random
@@ -45,7 +59,8 @@ import time
 
 from tagpup.core import paths
 from tagpup.core.result import NotFound, Refused
-from tagpup.files import images, shares
+from tagpup.files import folder_marker, images, shares
+from tagpup.store import folder_ids as store_folder_ids
 from tagpup.store import photos as store_photos
 from tagpup.store import root_rows
 from tagpup.store import roots as store_roots
@@ -71,6 +86,10 @@ POOR_MISSING = 0.05
 #: other times or sizes -- passes the missing test, and the sync that follows a move re-reads those rows
 #: from the files at the new place, replacing tags newer in the rows than in those files.
 POOR_DIFFERS = 0.5
+
+#: Marked folders a sample reads the marker of, and how long it may spend on them.
+MARKER_SAMPLE = 300
+MARKER_BUDGET = 10.0
 
 # ---- Looking at the disk, never for long -----------------------------------------------------
 
@@ -222,6 +241,111 @@ def sample_of(by_folder, want):
     return chosen
 
 
+# ---- The markers --------------------------------------------------------------------------------
+
+def _marked_folders(library, name, roots):
+    """(the library's identifier, [(folder id, folder at the candidate)] of root `name`'s marked folders, the
+    rows that do not convert). The identifier is None, and the list empty, for a library that has marked
+    nothing or is behind migration 26: nothing to say then."""
+    library_id, held = store_folder_ids.held(library.path)
+    if not library_id:
+        return None, [], 0
+    mark, sep = paths.ROOT_MARK, paths.ROW_SEP
+    ours, bad, seen = [], 0, set()
+    for folder_id, path in held:
+        if not path.startswith(mark) or path[1:].split(sep, 1)[0].lower() != name:
+            continue
+        try:
+            folder = paths.from_row(path, roots)
+        except paths.RootsError:
+            bad += 1
+            continue
+        key = paths.key(folder)
+        if key not in seen:
+            seen.add(key)
+            ours.append((folder_id, folder))
+    return library_id, ours, bad
+
+
+def _marker_state(folder, folder_id, library_id):
+    """What the marker of `folder` says of `folder_id`: "match" | "differs" | "unmarked" | "malformed" |
+    "unreadable" | "not_there". One stat and one read; OSError (a folder the disk refuses) escapes."""
+    try:
+        os.stat(paths.stored(folder))
+    except (FileNotFoundError, NotADirectoryError):
+        return "not_there"
+    marker = folder_marker.read(folder)
+    if marker.state == folder_marker.ABSENT:
+        return "unmarked"
+    if marker.state == folder_marker.MALFORMED:
+        return "malformed"
+    if marker.state == folder_marker.UNREADABLE:
+        return "unreadable"
+    return "match" if marker.entry_of(library_id) == folder_id else "differs"
+
+
+class _Marks:
+    """What the reading of markers has counted."""
+    STATES = ("match", "differs", "unmarked", "malformed", "unreadable", "not_there")
+
+    def __init__(self, rows, unreadable=0):
+        self.rows = rows
+        self.counts = dict.fromkeys(self.STATES, 0)
+        self.counts["unreadable"] = unreadable
+        self.checked = 0
+        self.partial = False
+
+    def line(self):
+        """One line for a person; never a folder's name."""
+        counts = self.counts
+        text = "%d of %d marked folders match; %d differ; %d not marked" % (
+            counts["match"], self.checked, counts["differs"], counts["unmarked"])
+        for key, said in (("malformed", "%d with a marker that is not readable as one"),
+                          ("unreadable", "%d could not be read"), ("not_there", "%d not there")):
+            if counts[key]:
+                text += "; " + said % counts[key]
+        return text
+
+    def answer(self):
+        return dict(self.counts, rows=self.rows, checked=self.checked, partial=self.partial, line=self.line())
+
+
+def _marker_run(location, folders, library_id, marks, cancel, progress, deadline, seconds, tally):
+    """Read the marker of each of `folders` [(folder id, folder)] once, on the bounded thread; stops for a cancel
+    or a share that does not answer (tally.stopped), or the deadline (marks.partial)."""
+    for folder_id, folder in folders:
+        if cancel():
+            tally.stopped = "cancelled"
+            return
+        if deadline is not None and time.monotonic() >= deadline:
+            marks.partial = True
+            return
+        state, value = _bounded(location, functools.partial(_marker_state, folder, folder_id, library_id), seconds)
+        if state == "away":
+            tally.stopped = "unreachable"
+            return
+        marks.counts["unreadable" if state == "error" else value] += 1
+        marks.checked += 1
+        progress(tally.checked, marks.rows, tally.folders + marks.checked)
+
+
+def _markers(library, name, roots, location, full, tally, cancel, progress, budget, seconds):
+    """The markers of the root's marked folders at `location`, as `_Marks.answer()`; None when the library has no
+    marked folder of the root."""
+    library_id, folders, bad = _marked_folders(library, name, roots)
+    if not folders and not bad:
+        return None
+    marks = _Marks(len(folders) + bad, unreadable=bad)
+    marks.checked = bad
+    if not full and len(folders) > MARKER_SAMPLE:
+        chosen = sorted(folders, key=lambda each: paths.key(each[1]))
+        random.Random(len(chosen)).shuffle(chosen)
+        folders = chosen[:MARKER_SAMPLE]
+    deadline = None if budget is None or full else time.monotonic() + min(budget, MARKER_BUDGET)
+    _marker_run(location, folders, library_id, marks, cancel, progress, deadline, seconds, tally)
+    return marks.answer()
+
+
 # ---- The run -----------------------------------------------------------------------------------
 
 class _Tally:
@@ -358,7 +482,8 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
     "matches", "differs", "missing", "unreadable", "folders" (looked at), "not_in_library" (None
     unless full), "other_rows" (held under no root, or under another), "outside" (the rows under no
     root, by folder: paths.outside_roots), "native_inside", "not_converting", "partial",
-    "stopped" (None | "cancelled" | "unreachable" | "time"), "poor" and "poor_why", and "summary", a
+    "markers" (None, or the counts of the root's marked folders' markers: "rows", "checked", "match", "differs", "unmarked",
+    "malformed", "unreadable", "not_there", "partial" and "line", a sentence; see the module), "stopped" (None | "cancelled" | "unreachable" | "time"), "poor" and "poor_why", and "summary", a
     sentence. Refused (Refused, NotFound) for a root the library does not have, a location that
     is not an absolute folder on this machine, a map that cannot be read or that the location
     does not fit.
@@ -381,7 +506,7 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
     answer = {"root": name, "location": location, "mode": "all" if full else "sample", "rows": total,
               "checked": 0, "matches": 0, "differs": 0, "unread": 0, "missing": 0,
               "unreadable": counts["not_converting"],
-              "folders": 0, "not_in_library": None, "other_rows": counts["other_roots"],
+              "folders": 0, "not_in_library": None, "markers": None, "other_rows": counts["other_roots"],
               "native_inside": counts["native_inside"], "not_converting": counts["not_converting"],
               "outside": paths.outside_roots(counts["outside"], roots), "outside_rows": len(counts["outside"]),
               "partial": False, "stopped": None, "poor": False, "poor_why": []}
@@ -398,6 +523,8 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
         chosen = sample_of(by_folder, sample)
         deadline = None if budget is None else time.monotonic() + budget
         _sample_run(location, chosen, by_folder, tally, cancel, progress, deadline, total, seconds)
+    if not tally.stopped:
+        answer["markers"] = _markers(library, name, roots, location, full, tally, cancel, progress, budget, seconds)
     answer.update(checked=tally.checked, matches=tally.matches, differs=tally.differs, unread=tally.unread, missing=tally.missing,
                   unreadable=tally.unreadable + counts["not_converting"], folders=tally.folders,
                   stopped=tally.stopped)
@@ -429,6 +556,10 @@ def _conclude(answer, total):
         why.append("%d of the %d rows looked at (%d%%) differ from their files (other size or modified time): "
                    "this looks like an older or edited copy. %s" % (
                        answer["differs"], checked, round(100 * answer["differs"] / checked), SYNC_REPLACES))
+    marks = answer.get("markers")
+    if marks and marks["differs"]:
+        why.append("%d of the %d marked folders looked at carry the marker of a different folder: this looks like "
+                   "another folder at that place." % (marks["differs"], marks["checked"]))
     if answer["native_inside"]:
         why.append("%d row(s) are held by this machine's own spelling of a place that would be this root's: "
                    "they would be missed, and indexed again as new photos." % answer["native_inside"])
@@ -456,6 +587,8 @@ def _summary(answer, total):
         text += " " + SYNC_REPLACES
     if answer["not_in_library"]:
         text += " %d photo(s) at the location have no row." % answer["not_in_library"]
+    if answer.get("markers"):
+        text += " " + answer["markers"]["line"] + "."
     if answer["stopped"] == "cancelled":
         text += " Cancelled before it finished."
     elif answer["stopped"] == "time":

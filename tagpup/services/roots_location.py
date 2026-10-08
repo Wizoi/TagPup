@@ -85,7 +85,7 @@ def last_verify(library, name):
         return None
     run = found[0]
     keep = ("mode", "location", "checked", "matches", "differs", "unread", "missing", "unreadable", "rows", "not_in_library",
-            "partial")
+            "partial", "marked", "marks_match", "marks_differ", "marks_unmarked")
     return dict({key: run.changed[key] for key in keep if key in run.changed},
                 when=run.finished or run.started, outcome=run.outcome)
 
@@ -192,6 +192,10 @@ def run_verify(library, name, location, machine, full=False, cancel=None, progre
                                            "folders") if key in answer}
     if answer["not_in_library"] is not None:
         counts["not_in_library"] = answer["not_in_library"]
+    if answer.get("markers"):
+        marks = answer["markers"]
+        counts.update(marked=marks["checked"], marks_match=marks["match"], marks_differ=marks["differs"],
+                      marks_unmarked=marks["unmarked"])
     counts.update(mode=answer["mode"], location=answer["location"], partial=int(answer["partial"]),
                   what="verified root %s at %s (%s): %s" % (name, answer["location"],
                                                             "all" if full else "sample", answer["summary"]))
