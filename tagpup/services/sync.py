@@ -42,7 +42,8 @@ folder scan's rule), and sorts what differs:
 
 Which folders: the library's root folders (its settings, tagpup.services.settings) and
 every folder it holds photos in, each walked once from the topmost, or the one folder
-asked for. New files in a folder the library holds photos in are queued with that folder
+asked for. A library with no roots set yet walks the folders it holds, and a new subfolder
+of one is a folder to review as under a root, never queued unasked (#395). New files in a folder the library holds photos in are queued with that folder
 alone (indexed without its subfolders); a folder under a root that holds photos and no
 indexed photo is not indexed on its own: it is listed as a folder to review (`review`),
 which the page offers to include (`include`: indexed with its subfolders) or to ignore
@@ -207,8 +208,8 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots, library_folde
     """Where each new file goes: ({indexed folder: new files}, the folders its new files
     are queued for; {folder to review: photos}; photos under an ignored folder; {folder
     held back: files}; photos in no folder the library holds and under none of `roots`).
-    With no `roots` (none set yet), a new file under a held folder is queued with its own
-    folder, whether the library holds it or not, and nothing is reviewed.
+    With no `roots` (none set yet), a new subfolder of a held folder is a folder to review, as
+    under a root: never queued unasked.
     A new file in a folder the library holds photos in is indexed
     with that folder alone. One in a folder holding none is under a folder to review: the
     topmost above it, below a root (`stops`, keys), that holds no indexed photo at any
@@ -255,15 +256,9 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots, library_folde
                 top = parent
             tops[folder_key] = top
         top = tops[folder_key]
-        if not roots:
-            # A library with no roots (none set yet): every folder under one it holds is
-            # kept in step as indexing walked it -- a new subfolder queued too, each
-            # folder of new files indexed on its own -- and nothing is reviewed.
-            if folder_key in ambiguous_folders:
-                held_back[folder] = held_back.get(folder, 0) + 1
-            else:
-                queued.setdefault(folder_key, [folder, 0])[1] += 1
-        elif not _under_any(folder, roots):
+        # A library with no roots (none set yet) offers a new subfolder of a folder it holds for review, as it does
+        # under a root, and never queues it unasked (#395); nothing is "outside" the roots it has not got.
+        if roots and not _under_any(folder, roots):
             # Beside a folder the library holds outside every root (a folder indexed by
             # hand, elsewhere): kept in step itself, and nothing new beside it offered.
             outside += 1
@@ -451,7 +446,8 @@ def review(library, roots=(), ignored=()):
 def include(library, folder, roots, queue):
     """Index a folder to review, with its subfolders: `queue([folder])` (the index queue's
     start). Refused for a folder the rules do not take as one, one not on disk, and one
-    under none of the library's `roots`. A Result: `changed` 1 when it was queued."""
+    under none of the library's `roots` -- or, a library with no roots yet, under none of the
+    folders it holds. A Result: `changed` 1 when it was queued."""
     result = Result(attempted=1)
     problem = validation.problem("folder", folder)
     if problem:
@@ -461,9 +457,19 @@ def include(library, folder, roots, queue):
     if not os.path.isdir(folder):
         result.refuse("That folder is not on disk.")
         return result
-    if not _under_any(folder, {paths.key(r): paths.stored(r) for r in roots}):
-        result.refuse("That folder is under none of the library's root folders.")
-        return result
+    if roots:
+        if not _under_any(folder, {paths.key(r): paths.stored(r) for r in roots}):
+            result.refuse("That folder is under none of the library's root folders.")
+            return result
+    else:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            walked = store_folders.of(conn, []).walked()
+        finally:
+            conn.close()
+        if not _under_any(folder, {paths.key(f): f for f in walked}):
+            result.refuse("That folder is under none of the folders the library holds.")
+            return result
     outcome = queue([folder])
     result.changed = outcome.changed
     for what, why in outcome.skipped:
