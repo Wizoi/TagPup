@@ -72,6 +72,7 @@ the run is recorded in the library (tagpup.store.sync_runs): what it found and w
 changed, and whether it left the library in step -- nothing new, changed or moved left
 over; missing files do not count against it -- which is the pages' "last in step".
 """
+import logging
 import os
 import threading
 import time
@@ -86,6 +87,8 @@ from tagpup.store import embeddings as store_embeddings
 from tagpup.store import faces as store_faces
 from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
+
+logger = logging.getLogger(__name__)
 
 #: What the change is recorded as.
 OPERATION = "sync"
@@ -584,11 +587,19 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started,
     result.details["folder_markers"] = None
     # Whatever the scope: the watcher syncs the folder a folder was renamed in, and that sync is the one that would
     # otherwise queue the renamed folder as new.
-    follow_markers = bool(counts and planned is not None and planned.work and result.details["folders_marked"]
-                          and (counts.get("missing") or counts.get("moved")))
+    # A folder queued as new that carries a marker of a marked folder recorded elsewhere is the folder moved into a
+    # folder the library holds, where this sync sees nothing missing or moved: followed as well (lost_among).
+    work = dict(planned.work) if planned is not None and planned.work else None
+    if work and result.details["folders_marked"] and work["new_folders"]:
+        try:
+            work["row_folders"] = list(work["row_folders"]) + folder_ids.lost_among(library, work["new_folders"])
+        except Exception as e:
+            logger.warning("Marked folders among the new folders were not looked at (%s: %s)", type(e).__name__, e)
+    follow_markers = bool(counts and work and result.details["folders_marked"]
+                          and (counts.get("missing") or counts.get("moved") or work["row_folders"]))
     if not apply:
         if follow_markers:
-            result.details["folder_markers"] = _follow_markers(library, exiftool_path, planned.work, False)
+            result.details["folder_markers"] = _follow_markers(library, exiftool_path, work, False)
         result.details["in_step"] = in_step(counts)
         return result
 
@@ -606,7 +617,7 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started,
     new_folders = list(planned.work["new_folders"]) if planned is not None and planned.work else []
     if follow_markers:
         # After the sync's own change and before anything is queued: the files of a folder followed are not new.
-        report = result.details["folder_markers"] = _follow_markers(library, exiftool_path, planned.work, True)
+        report = result.details["folder_markers"] = _follow_markers(library, exiftool_path, work, True)
         if report["error"]:
             result.details["warnings"].append(report["error"])
         followed_to = [new for _old, new in report["followed"]]

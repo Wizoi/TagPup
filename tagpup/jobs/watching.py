@@ -410,6 +410,11 @@ class Watcher:
                 return
             details = getattr(result, "details", {}) or {}
             counts = details.get("counts", {})
+            marks = (details.get("folder_markers") or {}).get("counts") or {}
+            if marks.get("left") or marks.get("not_found"):
+                logger.warning("Marked folders in %s not followed: %d left (the files there already have rows), %d "
+                               "not found; see `sync` for what to do.", library.name, marks.get("left", 0),
+                               marks.get("not_found", 0))
             if result.changed or details.get("queued") or counts.get("missing"):
                 logger.info("Synced %s in %s: %d row(s) changed, %d folder(s) queued to index, %d missing.",
                             what, library.name, result.changed, details.get("queued", 0), counts.get("missing", 0))

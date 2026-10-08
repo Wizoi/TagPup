@@ -280,6 +280,33 @@ def _apply(library):
     return result
 
 
+def lost_among(library, folders):
+    """The recorded folders [native] of marked folders that a marker in one of `folders` says moved: the marker
+    carries this library's entry for an id the library records for a different folder. Asked of the folders a sync
+    would queue as new -- one marker read each, no ExifTool, no stat of any recorded folder, and nothing at all
+    when no such folder carries a marker -- so that a marked folder moved into a folder the library holds (where
+    the sync sees nothing missing or moved) is followed before its files are read as new. [] for a library that
+    has marked nothing."""
+    if not folders:
+        return []
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        library_id = store.identity(conn)
+        recorded = store.rows(conn) if library_id else []
+    finally:
+        conn.close()
+    if not recorded:
+        return []
+    found, _stats = folder_marker.read_in(folders, library_id)
+    where = {folder_id: path for folder_id, path, _marked in recorded}
+    lost = {}
+    for folder_id, places in found.items():
+        path = where.get(folder_id)
+        if path is not None and not any(paths.same(path, place) for place in places):
+            lost[paths.key(path)] = path
+    return list(lost.values())
+
+
 def marked_count(library):
     """How many folders the library has marked (0 for a library behind this version). Reads only."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)

@@ -1416,8 +1416,11 @@ def sync(ctx, folder, apply_):
     markers = result.details.get("folder_markers")
     if markers:
         counts_here = markers["counts"]
-        console.print("  %d marked folder(s) gone from disk: %d %s by their markers." % (
-            counts_here.get("gone", 0), counts_here.get("followed", 0), "followed" if apply_ else "to follow"))
+        console.print("  %d marked folder(s) gone from disk: %d %s by their markers%s." % (
+            counts_here.get("gone", 0), counts_here.get("followed", 0), "followed" if apply_ else "to follow",
+            "".join([", %d left (the files there already have rows of their own: nothing was moved)" % counts_here["left"]
+                     if counts_here.get("left") else "",
+                     ", %d not found" % counts_here["not_found"] if counts_here.get("not_found") else ""])))
         if markers["error"]:
             console.print("  %s" % markers["error"], markup=False, soft_wrap=True)
     if counts["unreadable"]:
