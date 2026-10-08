@@ -23,7 +23,7 @@ import os
 import types
 
 from tagpup.core import paths
-from tagpup.store import db, generations, people, person_ids
+from tagpup.store import db, faces_detected, generations, people, person_ids
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -255,7 +255,11 @@ def remove_for_photo(conn, photo_path):
     found, found_params = store_roots.sql_equals(conn, "path", photo_path)
     photo_ids = {photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + found, found_params)}
     where, params = _on_photo(conn, photo_path)
-    return _rebuilt(conn, photo_ids, conn.execute("DELETE FROM faces WHERE " + where, params).rowcount)
+    removed = conn.execute("DELETE FROM faces WHERE " + where, params).rowcount
+    if removed:
+        # Their detection is no longer on file (a caller that detects again records it after).
+        faces_detected.forget_faceless(conn, photo_ids)
+    return _rebuilt(conn, photo_ids, removed)
 
 
 def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
@@ -717,8 +721,11 @@ def decisions(conn):
 def delete(conn, face_ids):
     """Delete faces by id. Returns rows deleted. The caller commits."""
     photo_ids = _photos_of(conn, face_ids)
-    return _rebuilt(conn, photo_ids, sum(conn.execute("DELETE FROM faces WHERE " + _in(chunk), chunk).rowcount
-                                         for chunk in _chunks(face_ids)))
+    removed = sum(conn.execute("DELETE FROM faces WHERE " + _in(chunk), chunk).rowcount
+                  for chunk in _chunks(face_ids))
+    if removed:
+        faces_detected.forget_faceless(conn, photo_ids)
+    return _rebuilt(conn, photo_ids, removed)
 
 
 # ---- What verify_workflow reads --------------------------------------------------------
