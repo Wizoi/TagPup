@@ -68,6 +68,7 @@ from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import faces_from_tags as faces_from_tags_service
+from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import damaged_photos
@@ -1306,6 +1307,56 @@ def faces_from_tags(ctx, apply_, again):
     console.print("Still to be named by the rule now: %d face(s)." % result.details.get("remaining", {"faces": 0})["faces"])
     for line in maintenance.skipped(result):
         console.print(line, markup=False, soft_wrap=True)
+
+
+@cli.command("tags-from-faces")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the keywords into the photo files. Without it, only says how many photos it would write.")
+@click.pass_context
+def tags_from_faces(ctx, apply_):
+    """Put on a photo the people its faces name and its keywords do not: a face named, the photo
+    saying "No people tags" (#861). A dry run unless --apply; counts only, never names.
+
+    --apply CHANGES PHOTO FILES: it writes each person's keyword into the photo's file with
+    ExifTool, 25 photos to a change of the journal (`history` lists them, `undo` takes one back).
+    Run it on a small library first; TagPup and TagTuner may stay open (a file changed meanwhile
+    is a conflict, reported and not overwritten: run it again). Photos whose person the tree
+    files in two places are left."""
+    library = _existing_library(ctx)
+    planned = tags_from_faces_service.plan(library)
+    counts = planned.details["counts"]
+    console.print("%d photo(s) list a person from a face alone (%d people): their keywords do not name them."
+                  % (counts["photos_with_a_person_on_a_face_alone"], counts["people"]))
+    if counts["people_the_tree_files_in_two_places"]:
+        console.print("  %d of the people are filed in more than one place in the tag tree (or the tree has several people "
+                      "roots): left, for you to choose where." % counts["people_the_tree_files_in_two_places"])
+    console.print("  %d photo file(s) would be written, for %d people."
+                  % (counts["photos_to_write"], counts["people_to_write"]))
+    if not apply_:
+        console.print("Nothing changed. --apply writes the keywords into those %d PHOTO FILE(S), 25 photos to a change "
+                      "of the journal that `undo` takes back." % counts["photos_to_write"], markup=False, soft_wrap=True)
+        return
+    if not counts["photos_to_write"]:
+        console.print("Nothing to write.")
+        return
+    exiftool = get_exiftool_path(library.path)
+    console.print("Writing %d photo file(s)..." % counts["photos_to_write"])
+    result = tags_from_faces_service.apply(
+        library, planned, exiftool,
+        on_chunk=lambda done, total: console.print("  %d of %d photo(s) done" % (done, total), markup=False))
+    console.print("Wrote %d photo file(s) in %d change(s) of the journal (`history` lists them)."
+                  % (result.changed, len(result.details.get("changes", []))), markup=False)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+    if result.errors:
+        reasons = {}
+        for _photo, why in result.errors:
+            reasons[why] = reasons.get(why, 0) + 1
+        console.print("%d photo(s) could not be written; run it again once they can:" % len(result.errors), markup=False)
+        for why, count in sorted(reasons.items(), key=lambda pair: -pair[1])[:5]:
+            console.print("  %d x %s" % (count, why), markup=False, soft_wrap=True)
+    if result.refused or result.errors:
+        raise SystemExit(1)
 
 
 def _job_libraries(ctx):

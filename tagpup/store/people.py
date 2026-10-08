@@ -123,6 +123,16 @@ def keyword_keys(conn):
     return listed
 
 
+def on_faces_alone(conn):
+    """[(photo path as stored, name)] of each person a photo lists from a face alone (`photo_people` source 'face': a
+    face not ruled out names them, and no keyword does), by photo and position -- the drift between a face and the photo's
+    tags (#861), which `tagpup_cli.py tags-from-faces` mends and the doctor counts. A scan of photo_people (nothing
+    indexes `source`; 100,000 rows read in milliseconds), then one photo row by its key for each."""
+    return conn.execute(
+        "SELECT p.path, pp.name FROM photo_people pp JOIN photos p ON p.id = pp.photo_id"
+        " WHERE pp.source = 'face' ORDER BY pp.photo_id, pp.position").fetchall()
+
+
 def of_photo(conn, photo_path):
     """The people of one photo, in order; [] without a row."""
     where, params = store_roots.sql_equals(conn, "path", photo_path)

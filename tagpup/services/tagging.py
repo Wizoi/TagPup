@@ -282,7 +282,7 @@ def add_tags(library, additions, exiftool_path, persons=None):
 
 
 @roots_service.canonical_args("changes")
-def change_each(library, changes, exiftool_path, operation, persons=None, et=None):
+def change_each(library, changes, exiftool_path, operation, persons=None, et=None, stop_at_first_error=True):
     """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own, as ONE change of
     photo files named `operation` in the journal. A photo with nothing to add or take off is left alone.
     Held photos are written with their rows and journaled, and the damaged skipped; a photo in a folder
@@ -292,7 +292,8 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     decides, per photo, now. What is added is checked (tagpup.core.validation); what is taken off is not.
 
     `persons`: as add_tags'. `et`: an ExifTool session the caller opened (with a deadline of its own), as
-    change_tags'. Apply All's own is add_tags; the faces' (tagpup.services.face_people) adds and takes
+    change_tags'. `stop_at_first_error` False: a photo that cannot be read or written is an error and the others are
+    written, as a bulk job does. Apply All's own is add_tags; the faces' (tagpup.services.face_people) adds and takes
     off a person per photo."""
     problem = validation.first_problem("tag", dict.fromkeys(t for add, _remove in changes.values() for t in add))
     if problem:
@@ -311,10 +312,11 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     done = None
     if held or not loose:
         done = libraries.with_skipped(_change_each(library, plan_of(kept), exiftool_path, operation,
-                                                   persons=persons, et=et), left)
+                                                   persons=persons, et=et,
+                                                   stop_at_first_error=stop_at_first_error), left)
     if not loose:
         return file_only.combined(done, None)
-    if done is not None and not done.ok:
+    if stop_at_first_error and done is not None and not done.ok:
         done.attempted += len(loose)
         for path in loose:
             done.skip(path, "not written: an earlier photo failed")
@@ -322,7 +324,7 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     writable, skipped = file_only.leave_out_unwritable(loose)
     files = libraries.with_skipped(
         _change_each(library, plan_of(writable), exiftool_path, operation, files_only=True, persons=persons,
-                     et=et)
+                     et=et, stop_at_first_error=stop_at_first_error)
         if writable else _refused(0, None), skipped)
     return file_only.combined(done, files)
 

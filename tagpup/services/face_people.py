@@ -107,22 +107,24 @@ class Writer:
         self.on_chunk = on_chunk
 
 
-def write_tags(library, changes, writer, operation, persons=None):
+def write_tags(library, changes, writer, operation, persons=None, stop_at_first_error=True):
     """Give each photo of `changes` ({path: (tags to add, tags to take off)}) its own, CHUNK photos at a time, each chunk one
     journaled change under the one lock of changes of photo files and with a deadline on ExifTool; the lock is let go
     between chunks, so another change of photo files waits for a chunk and not for all of them. Stops at the first chunk
-    that fails. A Result: `changed` the files written, details["written"] and `changes`, the journal's ids."""
+    that fails, unless `stop_at_first_error` is False (the repair: a photo that cannot be written is an error, and the
+    others are written). A Result: `changed` the files written, details["written"] and `changes`, the journal's ids."""
     result = Result(attempted=len(changes))
     items = list(changes.items())
     for start in range(0, len(items), CHUNK):
         chunk = dict(items[start:start + CHUNK])
         with exiftool_session.ExifToolSession(executable=writer.exiftool_path, timeout=TIMEOUT) as session:
             with file_changes.exclusively():
-                done = tagging.change_each(library, chunk, writer.exiftool_path, operation, persons=persons, et=session)
+                done = tagging.change_each(library, chunk, writer.exiftool_path, operation, persons=persons, et=session,
+                                           stop_at_first_error=stop_at_first_error)
                 if writer.told:
                     writer.told(done)
         _merge(result, done)
-        if not done.ok:
+        if not done.ok and stop_at_first_error:
             break
         if writer.on_chunk:
             writer.on_chunk(min(start + CHUNK, len(items)), len(items))
@@ -130,7 +132,7 @@ def write_tags(library, changes, writer, operation, persons=None):
     return result
 
 
-def add_people(library, wanted, writer, filer=None):
+def add_people(library, wanted, writer, filer=None, operation=ADDED, stop_at_first_error=True):
     """Add the person of each (photo path, name) of `wanted` to the photo's keywords, a photo given all its people in
     one write. A Result: `changed` the files written, details `written`. A photo whose keywords name the person already
     (as the library records them: the page's own save of the tag has just been recorded) is not read or written again.
@@ -151,7 +153,7 @@ def add_people(library, wanted, writer, filer=None):
         if tag not in add:
             add.append(tag)
         persons.setdefault(paths.key(photo_path), set()).add(tag)
-    return write_tags(library, changes, writer, ADDED, persons) if changes else result
+    return write_tags(library, changes, writer, operation, persons, stop_at_first_error) if changes else result
 
 
 def untag_plan(library, items):
