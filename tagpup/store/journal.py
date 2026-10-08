@@ -132,6 +132,9 @@ MIGRATION = "migration "
 #: no rows, and its undo converts the library's paths back.
 ADOPTION = "roots adopt"
 
+#: The change that gives a root's address back its two leading backslashes (#914): no rows either.
+ADDRESS_REPAIR = "roots repair-address"
+
 #: How long a change stays undoable. Pruning then deletes its values and keeps its
 #: summary, and the change becomes `pruned`. An undo is for a mistake noticed in use,
 #: and three months is long enough to notice one; a deleted face's crop and vector are
@@ -968,6 +971,9 @@ def refusal(conn, change_id):
     if _operation.startswith(ADOPTION):
         from tagpup.store import adoption   # adoption imports this module
         return adoption.undo_refusals(conn, change_id)
+    if _operation.startswith(ADDRESS_REPAIR):
+        from tagpup.store import adoption
+        return adoption.address_undo_refusals(conn, change_id)
     return ["change %d (%s), applied after it, changed the same rows: undo it first" % (other, name)
             for other, name in _newer_overlapping(conn, change_id)]
 
@@ -1033,6 +1039,10 @@ def _undo_rows(conn, change_id):
         counted = adoption.undo_in(conn, change_id)
         converted = sum(counted.values())
         notes = _adoption_note(conn, change_id, counted)
+    if conn.execute("SELECT 1 FROM changes WHERE id = ? AND substr(operation, 1, ?) = ?",
+                    (change_id, len(ADDRESS_REPAIR), ADDRESS_REPAIR)).fetchone():
+        from tagpup.store import adoption
+        adoption.undo_address_repair(conn, change_id)
     changes = _load(conn, change_id)
     reasons = _not_as_left(conn, change_id, changes)
     inverse = [_inverse(change) for change in reversed(changes)]

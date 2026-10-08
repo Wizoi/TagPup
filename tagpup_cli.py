@@ -1581,6 +1581,31 @@ def roots_adopt(ctx, name, address, location, apply_):
         result.changed, result.details["change"], result.details["change"]), markup=False)
 
 
+@roots_command.command("repair-address")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the repair as one journaled change. Without it, only says what would change.")
+@click.pass_context
+def roots_repair_address(ctx, apply_):
+    """Give a root whose address lost a leading backslash (\\\\server\\share stored as \\server\\share,
+    which Git Bash does to an argument) its two. A dry run unless --apply; one journaled change
+    that `undo` reverses."""
+    library = _existing_library(ctx)
+    result = library_roots.repair_addresses(library, apply=apply_)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    repairs = result.details["repairs"]
+    if not repairs:
+        console.print("No root's address is missing a leading backslash.", markup=False)
+        return
+    for entry in repairs:
+        console.print("%s  %s  ->  %s" % (entry["name"], entry["was"], entry["now"]), markup=False, soft_wrap=True)
+    if not apply_:
+        console.print("Nothing changed. --apply writes it.", markup=False)
+        return
+    console.print("Repaired %d root(s)." % result.changed, markup=False)
+
+
 @roots_command.command("check")
 @click.pass_context
 def roots_check(ctx):
