@@ -73,13 +73,82 @@ class TheDryRun(Mending):
         self.drifted("drift_b.jpg", who=ODA)
         planned = tags_from_faces.plan(self.library)
         self.assertEqual({"photos_with_a_person_on_a_face_alone": 2, "people": 2, "photos_to_write": 1, "people_to_write": 1,
-                          "people_the_tree_files_in_two_places": 1}, planned.details["counts"])
+                          "people_the_tree_files_in_two_places": 1, "people_the_file_names_under_another_root": 0,
+                          "people_from_a_guess_only": 0, "guesses_included": False}, planned.details["counts"])
 
     def test_a_library_in_step_has_nothing_to_do(self):
         self.photo("fine.jpg", [PEOPLE + WREN])
         said = self.run_cli("--apply")
         self.assertEqual(0, said.exit_code)
         self.assertIn("Nothing to write", said.output)
+
+
+class OneRuleForThePersonAPhotoAlreadyNames(Mending):
+    def under_another_root(self, name="other_root.jpg"):
+        # The photo's keyword is the person's leaf under a root the tree does not file people under: the index lists the person
+        # from the face alone, and the keyword writer would drop the add (the file names them by their leaf).
+        photo = self.photo(name, ["Parkrunner/" + WREN])
+        self.files.keep_tags(photo, ["Parkrunner/" + WREN])
+        self.face(photo, name=WREN, name_source="manual")
+        return photo
+
+    def test_the_dry_run_skips_and_counts_it_and_never_names_the_person(self):
+        self.under_another_root()
+        self.drifted("drift_a.jpg", who=ODA)
+        said = self.run_cli()
+        self.assertIn("2 photo(s) list a person from a face alone", said.output)
+        self.assertIn("1 of the people: the photo's keywords already name them under a root", said.output)
+        self.assertIn("tree question", said.output)
+        self.assertIn("1 photo file(s) would be written", said.output)
+        self.assertNotIn(WREN, said.output)
+        self.assertNotIn("Parkrunner", said.output)
+
+    def test_the_count_to_write_is_what_apply_writes_and_a_second_run_finds_none(self):
+        photo = self.under_another_root()
+        self.drifted("drift_b.jpg", who=ODA)
+        dry = tags_from_faces.plan(self.library)
+        wrote = self.run_cli("--apply")
+        self.assertEqual(0, wrote.exit_code, wrote.output)
+        self.assertIn("Wrote %d photo file(s)" % dry.details["counts"]["photos_to_write"], wrote.output)
+        self.assertEqual(["Parkrunner/" + WREN], self.files.tags_of(photo), "the file that names the person was written")
+        again = self.run_cli()
+        self.assertIn("0 photo file(s) would be written", again.output)
+        self.assertEqual(1, tags_from_faces.plan(self.library).details["counts"]["people_the_file_names_under_another_root"])
+
+
+class GuessesAreLeftUnlessAsked(Mending):
+    def guessed(self, name="guess.jpg"):
+        photo = self.photo(name)
+        self.files.keep_tags(photo, [])
+        self.face(photo, name=WREN)             # no name_source: a guess of clustering or automatch
+        return photo
+
+    def test_a_person_only_a_guess_backs_is_skipped_and_counted(self):
+        guess = self.guessed()
+        self.drifted("drift_c.jpg", who=ODA)
+        said = self.run_cli()
+        self.assertIn("1 of the people: from a guess only", said.output)
+        self.assertIn("1 photo file(s) would be written", said.output)
+        applied = self.run_cli("--apply")
+        self.assertEqual(0, applied.exit_code, applied.output)
+        self.assertEqual([], self.files.tags_of(guess), "a guess was written into a photo file")
+
+    def test_a_face_named_by_hand_beside_a_guess_of_the_same_person_counts_as_decided(self):
+        photo = self.photo("both.jpg")
+        self.files.keep_tags(photo, [])
+        self.face(photo, name=WREN, name_source="manual")
+        self.face(photo, box=(70, 10, 110, 60), name=WREN)
+        self.assertEqual(1, tags_from_faces.plan(self.library).details["counts"]["people_to_write"])
+
+    def test_guesses_asks_for_them_with_a_warning(self):
+        guess = self.guessed("guess_b.jpg")
+        said = self.run_cli("--guesses")
+        self.assertIn("WARNING: --guesses", said.output)
+        self.assertIn("decided reference", said.output)
+        self.assertIn("1 photo file(s) would be written", said.output)
+        applied = self.run_cli("--apply", "--guesses")
+        self.assertEqual(0, applied.exit_code, applied.output)
+        self.assertEqual([PEOPLE + WREN], self.files.tags_of(guess))
 
 
 class TheApply(Mending):

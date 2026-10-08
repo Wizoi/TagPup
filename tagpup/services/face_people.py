@@ -72,6 +72,13 @@ def not_filed(name):
             "path." % name)
 
 
+def already_names(tags, tag):
+    """Do the photo's `tags` name the person `tag` is, by their leaf under any root? THE rule for "this photo already names
+    them" -- the keyword writer's own (tagging._change_each: vocabulary.same_person) -- so that what is planned, what is
+    skipped and what is written agree."""
+    return any(vocabulary.same_person(tag, there) for there in tags)
+
+
 def _person_tags(tags, name, known):
     """The tags among `tags` that name the person `name`: under a people root, or a person's node, by the leaf."""
     return [tag for tag in tags
@@ -135,19 +142,18 @@ def write_tags(library, changes, writer, operation, persons=None, stop_at_first_
 def add_people(library, wanted, writer, filer=None, operation=ADDED, stop_at_first_error=True):
     """Add the person of each (photo path, name) of `wanted` to the photo's keywords, a photo given all its people in
     one write. A Result: `changed` the files written, details `written`. A photo whose keywords name the person already
-    (as the library records them: the page's own save of the tag has just been recorded) is not read or written again.
+    (by their leaf under any root: already_names) is not read or written again.
     Refused, nothing written, for a name the tree files in two places."""
     filer = filer or Filer(library)
     result = Result(attempted=len(wanted))
     held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, [path for path, _name in wanted])}
-    known = taxonomy.people_vocabulary(library.path)
     changes, persons = {}, {}
     for photo_path, name in wanted:
         tag = filer.tag(name)
         if tag is None:
             result.refuse(not_filed(name))
             return result
-        if _person_tags(held.get(paths.key(photo_path), []), name, known):
+        if already_names(held.get(paths.key(photo_path), []), tag):
             continue
         add = changes.setdefault(photo_path, ([], ()))[0]
         if tag not in add:

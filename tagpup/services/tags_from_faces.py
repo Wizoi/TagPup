@@ -11,7 +11,10 @@ ExifTool, as every other keyword write does (tagpup.services.tagging.change_each
 records every file's fields before and after: `undo` takes a chunk back, and a file that was changed outside since is
 a conflict and is never overwritten. That journal is the way back; no copy of the library is taken (a photo's keywords
 are not in the library alone, and the journal holds what a copy of the library could not). A person the tree files in
-two places, or a tree with several people roots, is left (counted): which tag they are is the owner's to choose.
+two places, or a tree with several people roots, is left (counted): which tag they are is the owner's to choose. So is a
+photo whose keywords already name the person under a root the tree does not file people under (`Parkrunner/<name>`): counted,
+a tree question. And a person only a GUESS backs -- no face of that name named by hand -- is left unless `--guesses`: the
+keyword would make the guess a decided reference (#640).
 
 Interrupted part-way (a crash, a closed window): the chunks written are written, journaled and recorded in their rows;
 the chunk under way is settled at the next start by what its files hold (tagpup.services.file_changes), and running it
@@ -21,37 +24,52 @@ read again just before it is written, and a file another process changed meanwhi
 overwritten -- run it again. A photo whose file cannot be read (a share that is away, a file gone) is an error counted
 and the others are written.
 """
+from tagpup.core import paths
 from tagpup.core.result import Result
 from tagpup.services import face_people
-from tagpup.store import db, people
+from tagpup.store import db, people, photos
 from tagpup.store import roots as store_roots
 
 #: What the journal calls the changes made here (History's `operation`).
 OPERATION = "person tags from faces"
 
 
-def plan(library):
+def plan(library, guesses=False):
     """What `apply` would write, counted: a Result whose details are `counts` (safe to show anyone) and `work`, the
-    (photo path, name) of each person to put on a photo (never reported). Reads only."""
+    (photo path, name) of each person to put on a photo (never reported). Reads only.
+
+    One rule for each row, in this order: the person the tree files in two places is left; the photo whose keywords
+    already name them (by their leaf under ANY root: face_people.already_names, the writer's own rule) is skipped -- a
+    people tag under a root the tree does not file people under; a person only a guess of clustering or automatch backs
+    (no face of that name named by hand) is skipped unless `guesses`, since the keyword would make the guess a decided
+    reference (#640). Each is counted, so the count to write is what `apply` writes and a second run finds none."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         found = store_roots.natives(conn, people.on_faces_alone(conn), 0)
     finally:
         conn.close()
+    held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, sorted({row[0] for row in found}))}
     filer = face_people.Filer(library)
-    work, left, photos = [], 0, set()
-    for photo_path, name in found:
-        photos.add(photo_path)
-        if filer.tag(name) is None:
+    work, photo_set = [], set()
+    left = elsewhere = guessed = 0
+    for photo_path, name, decided in found:
+        photo_set.add(photo_path)
+        tag = filer.tag(name)
+        if tag is None:
             left += 1
+        elif face_people.already_names(held.get(paths.key(photo_path), []), tag):
+            elsewhere += 1
+        elif not decided and not guesses:
+            guessed += 1
         else:
             work.append((photo_path, name))
-    result = Result(attempted=len(photos))
+    result = Result(attempted=len(photo_set))
     result.details.update(
         dry_run=True, work=work,
-        counts={"photos_with_a_person_on_a_face_alone": len(photos), "people": len(found),
+        counts={"photos_with_a_person_on_a_face_alone": len(photo_set), "people": len(found),
                 "photos_to_write": len({photo_path for photo_path, _name in work}), "people_to_write": len(work),
-                "people_the_tree_files_in_two_places": left})
+                "people_the_tree_files_in_two_places": left, "people_the_file_names_under_another_root": elsewhere,
+                "people_from_a_guess_only": guessed, "guesses_included": bool(guesses)})
     return result
 
 

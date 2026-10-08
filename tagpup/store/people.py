@@ -124,12 +124,16 @@ def keyword_keys(conn):
 
 
 def on_faces_alone(conn):
-    """[(photo path as stored, name)] of each person a photo lists from a face alone (`photo_people` source 'face': a
-    face not ruled out names them, and no keyword does), by photo and position -- the drift between a face and the photo's
-    tags (#861), which `tagpup_cli.py tags-from-faces` mends and the doctor counts. A scan of photo_people (nothing
-    indexes `source`; 100,000 rows read in milliseconds), then one photo row by its key for each."""
+    """[(photo path as stored, name, decided)] of each person a photo lists from a face alone (`photo_people` source 'face':
+    a face not ruled out names them, and no keyword does), by photo and position -- the drift between a face and the photo's
+    tags (#861), which `tagpup_cli.py tags-from-faces` mends and the doctor counts. `decided`: some face of that name on the
+    photo was named by a person (name_source 'manual'), not only guessed by clustering or automatch. A scan of photo_people
+    (nothing indexes `source`; 100,000 rows read in milliseconds), then one photo row and its faces (idx_faces_photo_id) for
+    each."""
     return conn.execute(
-        "SELECT p.path, pp.name FROM photo_people pp JOIN photos p ON p.id = pp.photo_id"
+        "SELECT p.path, pp.name, EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = pp.photo_id AND f.name = pp.name COLLATE NOCASE"
+        " AND f.name_source = 'manual' AND f.excluded = 0)"
+        " FROM photo_people pp JOIN photos p ON p.id = pp.photo_id"
         " WHERE pp.source = 'face' ORDER BY pp.photo_id, pp.position").fetchall()
 
 
