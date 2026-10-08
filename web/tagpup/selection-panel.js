@@ -88,6 +88,13 @@ function jumpLink(spec, label, count, title) {
     ]);
 }
 
+/** A name with no view to open: its text and its count, no link. */
+function jumpPlain(label, count, title) {
+    return buildElement('span', { className: 'selection-jump-item', title, attrs: { role: 'listitem' } }, [
+        label, ' ', buildElement('span', { className: 'selection-folder-count', text: `(${count.toLocaleString()})` }),
+    ]);
+}
+
 /** The first JUMP_SHOWN items, or all of them once "and N more" was pressed; the button that does it is the last child. */
 function fillJumpList(container, key, items, left, what) {
     if (!items.length && !left) {
@@ -126,13 +133,18 @@ function namesAListedFolder(tag, folders) {
  */
 export function drawJumps(data) {
     if (!selectionPeopleJump || !selectionKeywordJump || !data) return;
+    // Only a name that is one person node of the tree is a person to open a view of (the server says: `has_node`); a branch, a name
+    // two nodes share or one no node has is listed, without a link (#866).
     const people = sortedTags(data.people, each => each.name).map(each => ({
-        spec: { kind: 'person', value: each.name, recursive: false }, label: each.name, count: each.count,
+        spec: { kind: 'person', value: each.name, recursive: false }, label: each.name, count: each.count, linked: each.has_node !== false,
     }));
     const tags = sortedTags(data.tags, each => each.tag)
-        .filter(each => !data.people.some(person => samePerson(each.tag, person.name)) && !namesAListedFolder(each.tag, data.folders))
+        .filter(each => !data.people.some(person => person.has_node !== false && samePerson(each.tag, person.name))
+            && !namesAListedFolder(each.tag, data.folders))
         .map(each => ({ spec: { kind: 'keyword', value: each.tag, recursive: false }, label: each.tag, count: each.count }));
-    const item = (each, what) => jumpLink(each.spec, each.label, each.count, `Open ${what} ${each.label}: its photos, not only these`);
+    const item = (each, what) => (each.linked === false
+        ? jumpPlain(each.label, each.count, `${each.label} is not a person of the tag tree: there is no People view of it`)
+        : jumpLink(each.spec, each.label, each.count, `Open ${what} ${each.label}: its photos, not only these`));
     fillJumpList(selectionPeopleJump, 'people', people.map(each => item(each, 'the People view of')), data.more_people || 0, 'people');
     fillJumpList(selectionKeywordJump, 'keywords', tags.map(each => item(each, 'the Keywords view of')), data.more_tags || 0, 'keywords');
 }

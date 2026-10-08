@@ -113,6 +113,18 @@ describe("People jump and Keyword jump", () => {
     assert.equal(ctx.state.library.order, "name-desc", "the plain click opens it in that order too");
   });
 
+  test("a name the tree has no person node for is listed without a link, and its keyword stays a keyword (#866)", async (t) => {
+    const tally = {
+      ...TALLY,
+      people: [{ name: "Ash Brookmire", count: 3, has_node: true }, { name: "Family", count: 2, has_node: false }],
+      tags: [{ tag: "People/Family", count: 2 }, { tag: "Trips/Coast", count: 2 }],
+    };
+    const ctx = await view(t, { tally });
+    assert.deepEqual(labels(ctx, "selection-people-jump"), ["Ash Brookmire"], "one link");
+    assert.match(listText(ctx, "selection-people-jump"), /Family \(2\)/, "the branch's name is listed");
+    assert.deepEqual(labels(ctx, "selection-keyword-jump"), ["People/Family", "Trips/Coast"], "its tag is a keyword, a branch");
+  });
+
   test("a name is text, never markup", async (t) => {
     const tally = { ...TALLY, people: [{ name: "<img src=x onerror=alert(1)>", count: 1 }], tags: [{ tag: "Trips/<b>Coast</b>", count: 1 }] };
     const ctx = await view(t, { tally });

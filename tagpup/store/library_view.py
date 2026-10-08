@@ -719,15 +719,19 @@ def tally(conn, ids=None, source=None, excluded=()):
     of `source` but `excluded`. From photo_tags (by tag-tree node: the tag the tree spells, exactly -- not the tags under it --
     so a keyword no node holds is not counted, as the navigator's counts) and photo_people, each a single grouped statement over
     the selection; names that are one person without regard to case are one entry under the spelling most photos hold
-    (people_counts). Unsorted: the service orders and cuts them. One read transaction."""
+    (people_counts). A tag that is a person's node (person_ids: a leaf of the tree that holds faces) is a person, listed under
+    "people" and not here: left out BEFORE the service cuts the list, so the cut spends its slots on keywords (#865). "nameless" is
+    the names among "people" that are no person node's by the tree's rule -- a branch, two nodes, none (#866): not people to
+    open a view of. Unsorted: the service orders and cuts them. One read transaction."""
     db.begin(conn)
     selected, params = selected_sql(conn, ids, source, excluded)
     if selected is None:
-        return {"total": 0, "tags": [], "people": []}
+        return {"total": 0, "tags": [], "people": [], "nameless": []}
     total = conn.execute("SELECT COUNT(*) FROM (%s)" % selected, params).fetchone()[0]
-    tags = conn.execute(
-        "SELECT t.tag, COUNT(*) FROM photo_tags pt JOIN tag_taxonomy t ON t.id = pt.tag_id"
-        " WHERE pt.photo_id IN (%s) GROUP BY pt.tag_id" % selected, params).fetchall()
+    known = person_ids.read(conn)
+    tags = [(tag, count) for tag_id, tag, count in conn.execute(
+        "SELECT t.id, t.tag, COUNT(*) FROM photo_tags pt JOIN tag_taxonomy t ON t.id = pt.tag_id"
+        " WHERE pt.photo_id IN (%s) GROUP BY pt.tag_id" % selected, params) if tag_id not in known.nodes]
     held = conn.execute("SELECT name, COUNT(DISTINCT photo_id) FROM photo_people WHERE photo_id IN (%s) GROUP BY name"
                         % selected, params).fetchall()
     grouped = collections.defaultdict(list)
@@ -743,7 +747,8 @@ def tally(conn, ids=None, source=None, excluded=()):
         people.append((names[0], conn.execute(
             "SELECT COUNT(DISTINCT photo_id) FROM photo_people WHERE name IN (%s) AND photo_id IN (%s)"
             % (",".join("?" * len(names)), selected), names + list(params)).fetchone()[0]))
-    return {"total": total, "tags": [tuple(each) for each in tags], "people": people}
+    return {"total": total, "tags": tags, "people": people,
+            "nameless": [name for name, _count in people if known.id_of(name) is None]}
 
 
 # ---- The navigator's counts ------------------------------------------------------------------
