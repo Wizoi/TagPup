@@ -177,10 +177,14 @@ def _decided_of(conn, name):
 def _photos_to_be_named(conn, name):
     """How many photos -- 2 at most: it is asked whether there is one or several -- have a face to be named
     (unnamed, not excluded, not called nobody, no speck) and `name` among their keyword people. By the
-    people's name index (idx_photo_people_name), one person at a time."""
+    people's name index (idx_photo_people_name), one person at a time, and from each of their photos to its faces
+    by idx_faces_photo_id: left to itself SQLite drove the join from the library's 190,000 unnamed faces
+    (idx_faces_identify), each probing photo_people, and the count took 134 ms a person (#844; the same join as
+    tagpup.store.faces.UNDER_FROM_PHOTOS, #644)."""
     seen = set()
     for photo_id, box in conn.execute(
-            "SELECT pp.photo_id, f.box FROM photo_people pp JOIN faces f ON f.photo_id = pp.photo_id"
+            "SELECT pp.photo_id, f.box FROM photo_people pp CROSS JOIN faces f INDEXED BY idx_faces_photo_id"
+            " ON f.photo_id = pp.photo_id"
             " WHERE pp.name = ? AND pp.source = 'keyword' AND f.name IS NULL AND f.excluded = 0"
             " AND COALESCE(f.name_source, '') <> 'manual'", (name,)):
         if photo_id not in seen and not _small(box):
@@ -190,7 +194,7 @@ def _photos_to_be_named(conn, name):
     return len(seen)
 
 
-def _gated(conn, singles, result, cache):
+def _gated(conn, singles, result, cache, on_step=None):
     """The `singles` -- (photo id, face id, person name, name_source), each a photo's one face to be named
     and one person -- that the tag alone may name (#833), as Choices, counted in `result.counts`.
     A person with no decided face is named; one with decided faces only if the face's best cosine to them
@@ -198,7 +202,9 @@ def _gated(conn, singles, result, cache):
     to be named (#839). The decided faces are read once per person, kept in `cache` ({name: vectors or None},
     a batch's: #841), not once per photo."""
     vectors = _embeddings(conn, [face_id for _photo, face_id, _name, _source in singles])
-    for photo_id, face_id, name, source in singles:
+    for number, (photo_id, face_id, name, source) in enumerate(singles):
+        if on_step is not None and number % STEP == 0:
+            on_step("checking", number, len(singles))
         result.counts["tag_alone"] += 1
         if name not in cache:
             cache[name] = _decided_of(conn, name)
@@ -227,12 +233,15 @@ def _gated(conn, singles, result, cache):
         result.counts["one_face_one_person"] += 1
 
 
+#: How many photos or faces a plan goes through between two calls of its `on_step`.
+STEP = 50
+
 #: How many faces are compared with every decided face at once: a block of faces x the decided
 #: faces, 73 MB for 36,000 of them (services.faces.COMPARE_BLOCK).
 BLOCK = 512
 
 
-def _reached(vectors, references):
+def _reached(vectors, references, on_step=None):
     """{face id: {the keys of the people some decided face of whom it is alike enough to}} for the
     faces of `vectors` {face id: embedding bytes} that can be compared: compared a block at a
     time, never a face at a time (a library's faces to place are tens of thousands)."""
@@ -247,6 +256,8 @@ def _reached(vectors, references):
     usable = [(face_id, blob) for face_id, blob in vectors.items() if blob and len(blob) == width * 4]
     reached = {}
     for start in range(0, len(usable), BLOCK):
+        if on_step is not None:
+            on_step("comparing", start, len(usable))
         block = usable[start:start + BLOCK]
         stacked = np.stack([np.frombuffer(blob, dtype=np.float32) for _face, blob in block])
         norms = np.linalg.norm(stacked, axis=1)
@@ -273,14 +284,41 @@ def _matched(unnamed, free, reached):
     return [(faces_for[0], wanted[key]) for key, faces_for in proposed.items() if len(faces_for) == 1]
 
 
-def plan(conn, photo_ids=None, references=None, cache=None):
+def guards(conn, choices):
+    """What the plan read of each photo it names a face of, beyond the face itself, for the write to hold the change to (#869):
+    ({photo id: its tags as stored}, {face id: name} of the photo's other faces, those the plan does not name). A person's tag
+    taken off a planned photo, or another face of it named meanwhile, is a reason the plan no longer holds: the face itself is
+    guarded by its own row (name NULL, excluded 0, name_source as read), but the photo's keyword people (its tags) and its
+    other faces' names are what made it a candidate. Read on `conn` as it stands: inside the plan's own transaction, it is the
+    state the plan read."""
+    photo_ids = sorted({choice.photo_id for choice in choices})
+    planned = {choice.face_id for choice in choices}
+    tags = {}
+    for chunk in _chunks(photo_ids):
+        for photo_id, text in conn.execute("SELECT id, tags FROM photos WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk):
+            tags[photo_id] = text
+    siblings = {}
+    for rows in _faces_of(conn, photo_ids).values():
+        for face_id, name, _source, _excluded, _box in rows:
+            if face_id not in planned:
+                siblings[face_id] = name
+    return tags, siblings
+
+
+def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
     """A Plan: which faces of `photo_ids` -- every photo, without -- a keyword person names.
     Reads only, on `conn` as it stands; the photos with such a person are found from
     photo_people and their faces by idx_faces_photo_id, a chunk at a time, never a photo at a
     time. `references` as the module's docstring says -- or a function that gives them, called
     only when a photo needs them: without them, only the photos with one face to be named and
-    one person are decided."""
+    one person are decided.
+
+    `on_step(stage, done, total)`, if given, hears where the plan has got -- "reading", "checking" (the photos with
+    one face and one person), "comparing" (the faces of the others against the decided faces), "deciding" -- every
+    STEP photos or each block of faces, and may raise to stop it: the plan writes nothing, so nothing is left."""
     result = Plan()
+    if on_step is not None:
+        on_step("reading", 0, 1)
     people_of = _keyword_people(conn, None if photo_ids is None else sorted(set(photo_ids)))
     faces_of = _faces_of(conn, sorted(people_of))
     open_ones = []   # (photo id, unnamed face ids, free people) still to be compared
@@ -301,11 +339,15 @@ def plan(conn, photo_ids=None, references=None, cache=None):
         else:
             result.counts["left"] += 1
     if singles:
-        _gated(conn, singles, result, {} if cache is None else cache)
+        _gated(conn, singles, result, {} if cache is None else cache, on_step)
     if open_ones:
         vectors = _embeddings(conn, [face_id for _photo, unnamed, _free in open_ones for face_id in unnamed])
+        if on_step is not None:
+            on_step("comparing", 0, len(vectors))
         references = references() if callable(references) else references
-        reached = _reached(vectors, references)
+        reached = _reached(vectors, references, on_step)
+        if on_step is not None:
+            on_step("deciding", 0, len(open_ones))
         for photo_id, unnamed, free in open_ones:
             found = _matched(unnamed, free, reached)
             result.named += [Choice(face_id, photo_id, name, "match", unnamed[face_id]) for face_id, name in found]

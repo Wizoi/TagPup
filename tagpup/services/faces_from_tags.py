@@ -12,6 +12,8 @@ and the photo's keywords name that person (tagpup.store.face_tags).
 Names are written as automatic (name_source stays NULL): clustering may revise them. A face a
 person unmatched by hand, or excluded, is never read as a candidate.
 """
+import collections
+
 from tagpup.core.result import Result
 from tagpup.services import identify, maintenance
 from tagpup.store import db, face_tags, journal
@@ -37,10 +39,17 @@ def _decided(library):
     return identify.decided_faces(library)[1]
 
 
-def _plan(library):
+#: What a plan carries for the write: the faces to name, and what it read of their photos (face_tags.guards).
+Named = collections.namedtuple("Named", "choices photo_tags siblings")
+
+
+def _plan(library, on_step=None):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        found = face_tags.plan(conn, references=lambda: _decided(library))
+        # One read transaction: the guards are the state the plan read, not a later one.
+        db.begin(conn)
+        found = face_tags.plan(conn, references=lambda: _decided(library), on_step=on_step)
+        photo_tags, siblings = face_tags.guards(conn, found.named)
     finally:
         conn.close()
     named = found.named
@@ -62,34 +71,56 @@ def _plan(library):
                 "background_sized_faces_passed_over": found.counts["background_sized"]},
         ids={"faces": [choice.face_id for choice in named]},
         reveal={"named": [(choice.face_id, choice.name) for choice in named]},
-        work=named)
+        work=Named(named, photo_tags, siblings))
+
+
+def plan(library, on_step=None):
+    """The plan alone, for a caller that shows it before anything is written (the job behind the apps' button, which asks
+    first): a maintenance.Plan -- `size` the faces it would name, `counts` as faces_from_tags' details, `work` what
+    `faces_from_tags(..., planned=)` applies. `on_step(stage, done, total)` hears the plan's progress and may raise to stop
+    it (tagpup.store.face_tags.plan). Reads only."""
+    return _plan(library, on_step)
 
 
 def _edits(planned):
     """Each face by id, while it is still what the plan read: unnamed, not excluded, and not
-    marked nobody by hand since."""
-    return [journal.update("faces", (choice.face_id,),
-                           {"name": None, "excluded": 0, "name_source": choice.source},
-                           {"name": choice.name}, kind=KIND)
-            for choice in planned.work]
+    marked nobody by hand since. And, writing nothing, what made each a candidate (#869): its
+    photo's tags, and its photo's other faces' names, as the plan read them -- a person's tag
+    taken off, or another face of the photo named, while the question was open, refuses the
+    whole change (journal.update with no values writes nothing; its `expect` is the guard)."""
+    work = planned.work
+    edits = [journal.update("faces", (choice.face_id,),
+                            {"name": None, "excluded": 0, "name_source": choice.source},
+                            {"name": choice.name}, kind=KIND)
+             for choice in work.choices]
+    edits += [journal.update("faces", (face_id,), {"name": name}, {}) for face_id, name in work.siblings.items()]
+    edits += [journal.update("photos", (photo_id,), {"tags": tags}, {}) for photo_id, tags in work.photo_tags.items()]
+    return edits
 
 
 def _remaining(library):
-    return {"faces": len(_plan(library).work)}
+    return {"faces": len(_plan(library).work.choices)}
 
 
-def faces_from_tags(library, apply=False, again=False):
+def faces_from_tags(library, apply=False, again=False, planned=None):
     """Plan, and with `apply` make, the naming of every face a keyword person of its photo
     names (see the module's docstring). A Result on the maintenance scaffold: `changed` is the
     face rows written; details `counts` as _plan's, and `earlier_apply`. A second apply is refused
-    without `again` (#840), with the counts it would have named in the details."""
+    without `again` (#840), with the counts it would have named in the details.
+
+    With `planned`, a plan read earlier (`plan`), that plan is what is applied -- the faces a person was
+    asked about -- instead of one read again, which took 13.6 s on photo_index and could name other faces
+    than the question said; the counts after the write are not read again either. The write is as
+    guarded as ever: each face must still be what the plan read, or nothing is written."""
     earlier = earlier_apply(library)
+    plan_of = _plan if planned is None else (lambda _library: planned)
     if apply and earlier and not again:
-        planned = _plan(library)
+        planned = plan_of(library)
         result = Result(attempted=planned.size, details={"dry_run": True, "change": None, "counts": dict(planned.counts),
                                                          "ids": dict(planned.ids), "reveal": {}, "earlier_apply": True})
         result.refuse(AGAIN)
         return result
-    result = maintenance.run(library, "faces_from_tags", _plan, _edits, apply=apply, remaining=_remaining)
+    result = maintenance.run(library, "faces_from_tags", plan_of, _edits, apply=apply,
+                             remaining=_remaining if planned is None else None)
     result.details["earlier_apply"] = earlier
     return result
