@@ -65,13 +65,19 @@ def _dated_paths(conn, photo_paths):
 MTIME_TOLERANCE = 0.1
 
 
+def same_mtime(row_mtime, file_mtime):
+    """Are a row's modified time and its file's the same (within MTIME_TOLERANCE)? The one rule: the scan, refresh
+    and the MCP's comparison of a row with its file go by it. None for either is no."""
+    return row_mtime is not None and file_mtime is not None and abs(row_mtime - file_mtime) < MTIME_TOLERANCE
+
+
 def describes(row_mtime, row_size, stamp):
     """Does a row stamped (`row_mtime`, `row_size`) describe the file whose stamp is
     `stamp`, (mtime, size)? What the folder scan trusts a row by; None for any of them
     is no."""
     if row_mtime is None or row_size is None or not stamp or None in stamp:
         return False
-    return row_size == stamp[1] and abs(row_mtime - stamp[0]) < MTIME_TOLERANCE
+    return row_size == stamp[1] and same_mtime(row_mtime, stamp[0])
 
 
 def _describes_before(row_mtime, row_size, before):
