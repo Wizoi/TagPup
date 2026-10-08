@@ -19,7 +19,7 @@ import {
 import { setStatus } from './status.js';
 import { isJustLooking, libraryName } from './looking.js';
 import { whereWritten } from './write-queue.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import {
     exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
     getFolderDateStats, parseExifDateToLocalDate, takenOf
@@ -655,6 +655,9 @@ export function deleteActivePhoto() {
 
     // The record asked about, in hand: by the time the reply comes the folder may be another (findings #532).
     const asked = state.folderPhotos[index];
+    // And where it was asked: the view or folder open now may be another by then, and its records are not this photo's.
+    const askedInView = state.library;
+    const askedInFolder = state.scannedFolder;
     const filename = asked.filename || 'this photo';
     // A photo of a folder the library does not hold: say that only the file moves. And on a network
     // share there is no Recycle Bin: it goes through this PC's (#694), and where it restores to is said before it goes.
@@ -682,9 +685,15 @@ export function deleteActivePhoto() {
         body: JSON.stringify({ path })
     })
     .then(data => {
-        if (data.success && state.library) {
+        if (data.success && askedInView && state.library !== askedInView) {
+            // Another view (or a folder) was opened while the delete was out: nothing of it is this photo's.
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Ready';
+            return;
+        }
+        if (data.success && askedInView) {
             // The photo leaves the view: its card goes and the total drops. The next one in the order opens.
-            const lib = state.library;
+            const lib = askedInView;
             const gone = asked;
             const at = lib.ids.indexOf(gone.id);
             state.folderPhotos = [];
@@ -700,6 +709,8 @@ export function deleteActivePhoto() {
             // Found again now, by its path: a folder opened meanwhile has no such card, and none of it goes.
             const at = state.folderPhotos.findIndex(p => samePath(p.path, path));
             if (at === -1) {
+                removeFromSelection([path]);
+                if (askedInFolder) forgetCachedPhoto(askedInFolder, path);
                 statusDot.className = 'status-indicator-dot';
                 statusText.textContent = data.message || 'Ready';
                 return;

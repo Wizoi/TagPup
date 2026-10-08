@@ -49,5 +49,10 @@ describe("a delete in flight while another folder is opened", () => {
     await flush(ctx.window, 8);
     assert.deepEqual(state.folderPhotos.map((p) => p.filename), ["c.jpg", "d.jpg", "e.jpg"],
       "a card of the folder now open was taken off for a photo of the one before");
+    // The first folder's scan kept in the browser no longer lists the photo that was deleted (#880).
+    const key = Object.keys(ctx.window.localStorage).find((k) => /^tagpup_cache_.*2020$/.test(k));
+    const kept = key && JSON.parse(ctx.window.localStorage.getItem(key));
+    assert.ok(kept, "the first folder's scan was not kept");
+    assert.deepEqual(kept.photos.map((p) => p.filename), ["a.jpg"], "the kept scan still lists the deleted photo");
   });
 });

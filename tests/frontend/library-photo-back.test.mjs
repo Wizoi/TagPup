@@ -220,6 +220,50 @@ describe("what is asked, and what fails", () => {
     assert.equal(ctx.window.location.search, ctx.left.address);
   });
 
+  describe("a delete still out when another view opens (#880)", () => {
+    /** Delete the open photo of the first view, its reply held; `then` runs while it is out; the reply comes. */
+    async function deleteThen(t, then) {
+      const ctx = await leftView(t);
+      const held = [];
+      ctx.server.first("/api/photo/delete", () => new Promise((resolve) => held.push(() => resolve({ success: true }))));
+      await open(ctx, ctx.left.photo);
+      el(ctx, "btn-delete-photo").click();
+      await ctx.settle(60);
+      assert.equal(held.length, 1, "the delete was not sent");
+      await then(ctx);
+      const view = ctx.state.library;
+      const ids = view.ids.slice();
+      held.shift()();
+      await ctx.settle(200);
+      return { ctx, view, ids };
+    }
+
+    test("the view opened meanwhile keeps its records and its place, and no photo opens in it", async (t) => {
+      const { ctx, view, ids } = await deleteThen(t, async (c) => {
+        c.module("hooks.js").upper.openLibraryView({ kind: "year", value: "2020", recursive: false });
+        await c.settle(200);
+      });
+      assert.equal(ctx.state.library, view);
+      assert.equal(view.kind, "year");
+      assert.deepEqual(view.ids, ids, "the new view lost photos for one the delete was about in the old");
+      assert.ok(gridShown(ctx) && !photoShown(ctx), "a photo was opened in the view opened meanwhile");
+    });
+
+    test("the second of two views opened meanwhile is left alone too", async (t) => {
+      const { ctx, view, ids } = await deleteThen(t, async (c) => {
+        const { upper } = c.module("hooks.js");
+        upper.openLibraryView({ kind: "year", value: "2020", recursive: false });
+        await c.settle(200);
+        upper.openLibraryView({ kind: "year", value: "2021", recursive: false });
+        await c.settle(200);
+      });
+      assert.equal(ctx.state.library, view);
+      assert.equal(view.value, "2021");
+      assert.deepEqual(view.ids, ids);
+      assert.ok(gridShown(ctx) && !photoShown(ctx));
+    });
+  });
+
   test("the last photo deleted: the grid, as left, an empty view", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all", ids: [11] });
     await open(ctx, 11);
