@@ -418,7 +418,7 @@ def folder_auto_apply():
             result = tagging_actions.apply_suggestions(library, suggestions, state.exiftool(library), threshold)
             if result.refused:
                 return _refused_after_writing(library, result)
-            _records_written(library, result)
+            records_written(library, result)
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
         return responses.error(500, str(e))
@@ -1164,7 +1164,7 @@ def photos_bulk_tags():
                                                  state.exiftool(library))
             if result.refused:
                 return _refused_after_writing(library, result)
-            _records_written(library, result)
+            records_written(library, result)
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
         return responses.error(500, str(e))
@@ -1220,12 +1220,12 @@ def _refused_after_writing(library, result):
     some files: the page is told which, and the cached records say so, as for a failure -- the one owner of that
     answer for the bulk tag write and Apply All (findings #878)."""
     if result.details.get("written"):
-        _records_written(library, result)
+        records_written(library, result)
         return responses.refused(result, written=_written_tags(result), change=result.details.get("change"))
     return responses.refused(result)
 
 
-def _records_written(library, result):
+def records_written(library, result):
     """The page's records of the photos a bulk write wrote (`written` in its details).
     The photos written before any failure are written; the page's copy of them has to
     say so either way."""

@@ -19,6 +19,12 @@
  * element's size. Sideways photos (EXIF orientation 5-8) are a known open issue: the
  * browser turns the picture, the box stays in the stored pixels.
  *
+ * A page that draws over the picture itself (TagPup's boxes on every face of the open photo, with a panel to name
+ * each, #859) asks where the picture sits (zoomedPicture), draws into the layer it is given, and hears when that
+ * may have changed (onImageZoomChange: opened, the original has come, resized, closed). Clicks in that layer do
+ * not close the zoom; a click or Escape elsewhere asks the page first (onImageZoomDismiss), so a panel open over the
+ * picture goes before the zoom does.
+ *
  * Click or Escape closes it, and the focus goes back to what opened it. While it is
  * open the keys that move around the page behind it do nothing, rather than change the
  * photo underneath. It shows what it was opened with: a selection that changes behind
@@ -31,6 +37,8 @@ const zoom = {
     image: null,
     boxEl: null,
     note: null,
+    /** The layer a page draws over the picture in (zoomedPicture). */
+    layer: null,
     /** What to return the focus to on close. */
     opener: null,
     preview: '',
@@ -39,9 +47,60 @@ const zoom = {
     fellBack: false,
 };
 
+/** What a page asked to hear: `change` when the picture may have moved, `dismiss` before a click or Escape closes the zoom. */
+const zoomListeners = { change: [], dismiss: [] };
+
+/** Call `listener()` when what zoomedPicture() says may have changed. */
+export function onImageZoomChange(listener) {
+    zoomListeners.change.push(listener);
+}
+
+/**
+ * Call `handler()` before a click on the backdrop or Escape closes the zoom; if it answers true it has dismissed
+ * something of its own (a panel over the picture) and the zoom stays.
+ */
+export function onImageZoomDismiss(handler) {
+    zoomListeners.dismiss.push(handler);
+}
+
+function zoomChanged() {
+    for (const listener of zoomListeners.change) listener();
+}
+
+/** A click or Escape: the page's own first, then the zoom. */
+function dismissZoom() {
+    if (zoomListeners.dismiss.some((handler) => handler() === true)) return;
+    closeImageZoom();
+}
+
+/**
+ * Where the picture sits while the zoom is open, for a page to draw over it: {layer, left, top, width, height}, the
+ * layer (inside the overlay, above the picture, taking no pointer itself) and the picture's room in it -- the image's
+ * content box, which `contain` fits the original (or its smaller copy behind it) inside, so a page places a box with
+ * boxInContainedImage as it does over its own photo. Null when the zoom is closed or shows nothing.
+ */
+export function zoomedPicture() {
+    if (!imageZoomOpen() || !zoom.image.getAttribute('src')) return null;
+    const rect = zoom.image.getBoundingClientRect();
+    const frame = zoom.overlay.getBoundingClientRect();
+    const pad = parseFloat(window.getComputedStyle(zoom.image).paddingLeft) || 0;
+    return {
+        layer: zoom.layer,
+        left: rect.left - frame.left + pad,
+        top: rect.top - frame.top + pad,
+        width: rect.width - 2 * pad,
+        height: rect.height - 2 * pad,
+    };
+}
+
 /** Keys that move around the page behind: kept from it while the zoom is open. */
 const PAGE_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', ' ',
     'PageUp', 'PageDown', 'Home', 'End'];
+
+/** The layer a page draws over the picture in (zoomedPicture says where, while it is open); null before wireImageZoom. */
+export function zoomLayer() {
+    return zoom.layer;
+}
 
 /** Is the zoom open? */
 export function imageZoomOpen() {
@@ -118,6 +177,7 @@ export function openImageZoom(src, { preview = '', box = null, opener = null } =
     zoom.image.src = src;
     zoom.overlay.classList.remove('hidden');
     zoom.overlay.focus({ preventScroll: true });
+    zoomChanged();
 }
 
 /** Close it, and give the focus back. */
@@ -131,6 +191,7 @@ export function closeImageZoom() {
     const opener = zoom.opener;
     zoom.opener = null;
     zoom.box = null;
+    zoomChanged();
     if (opener && opener !== document.body && opener.isConnected && typeof opener.focus === 'function') {
         opener.focus({ preventScroll: true });
     }
@@ -155,17 +216,22 @@ export function wireImageZoom() {
     const note = document.createElement('div');
     note.className = 'image-zoom-note hidden';
     note.setAttribute('role', 'status');
-    overlay.replaceChildren(image, boxEl, note);
+    const layer = document.createElement('div');
+    layer.className = 'image-zoom-layer';
+    // What is drawn in it is the page's own, and a click in it is not a click on the backdrop.
+    layer.addEventListener('click', (e) => e.stopPropagation());
+    overlay.replaceChildren(image, boxEl, note, layer);
     if (!overlay.isConnected) document.body.append(overlay);
-    Object.assign(zoom, { overlay, image, boxEl, note });
+    Object.assign(zoom, { overlay, image, boxEl, note, layer });
 
-    overlay.addEventListener('click', closeImageZoom);
+    overlay.addEventListener('click', dismissZoom);
     image.addEventListener('load', () => {
         if (!imageZoomOpen() || !image.getAttribute('src')) return;
         // The original (or the fallback preview) has arrived; drop the background so a
         // transparent PNG does not show the preview through.
         image.style.backgroundImage = '';
         placeBox();
+        zoomChanged();
     });
     image.addEventListener('error', () => {
         if (!imageZoomOpen() || !image.getAttribute('src')) return;
@@ -183,7 +249,10 @@ export function wireImageZoom() {
         zoom.boxEl.classList.add('hidden');
         say('This photo could not be loaded.');
     });
-    window.addEventListener('resize', placeBox);
+    window.addEventListener('resize', () => {
+        placeBox();
+        if (imageZoomOpen()) zoomChanged();
+    });
 
     // Captured, so it is decided before a page's own key handling hears it. Ctrl+S and
     // the other chords are left alone. Escape closes the zoom and nothing else: text
@@ -193,7 +262,7 @@ export function wireImageZoom() {
         if (e.key === 'Escape') {
             e.preventDefault();
             e.stopPropagation();
-            closeImageZoom();
+            dismissZoom();
             return;
         }
         if (PAGE_KEYS.includes(e.key)) {

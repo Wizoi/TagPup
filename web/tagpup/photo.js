@@ -7,7 +7,7 @@ import { attachPersonFaces } from './common/person-faces.js';
 import { baseName, isUnc, pathKey, samePath } from './common/paths.js';
 import { photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
-import { clearPhotoFaces, showPhotoFaces } from './face-boxes.js';
+import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
 import {
     btnCancelDateModal, btnCarryForward, btnCloseDateModal, btnEditDateTaken, btnSaveDateModal,
@@ -24,7 +24,7 @@ import {
     exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
     getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
-import { namesAPerson, updateTagsDatalist } from './tags.js';
+import { namesAPerson, normalizeTag, updateTagsDatalist } from './tags.js';
 import {
     leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
@@ -128,28 +128,33 @@ export function renderPhotoFaces(photoPath) {
                 }
                 card.appendChild(label);
 
-                // Clicking a face adds that person to the photo, which is the
-                // small correction TagPup is meant for; deeper work is TagTuner's.
+                // Clicking a face names it that person AND puts the person on the
+                // photo, as a box's panel does (nameFaceAs: the tag first, then the
+                // face, one function for both, #860/#861). It used to add the tag
+                // only, so a face "named" from the strip stayed a red box that the
+                // owner had named, in a copy of the answer nothing refreshed.
                 //
-                // A recognised face counts as much as a proposed one. Only
-                // unnamed-with-a-suggestion used to be clickable, so a photo whose
-                // faces were already identified offered no way to act on them --
-                // the strip said who was in the picture while People Tags sat
-                // empty, and clicking did nothing.
+                // A recognised face counts as much as a proposed one: its click adds
+                // the person to the photo when the photo lacks them. And a proposed
+                // one whose person the photo has already is still clickable, to name
+                // the face. Only a card that would change nothing is settled.
                 const namesSomebody = face.name || face.suggestion;
                 const alreadyTagged = namesSomebody
                     && photoAlreadyHas(photoRecord, namesSomebody, namesAPerson);
 
-                if (namesSomebody && !alreadyTagged && !face.excluded) {
+                if (namesSomebody && !face.excluded && (!alreadyTagged || !face.name)) {
                     card.classList.add('face-card-actionable');
                     // Keep what the card already said -- the closest match and how
                     // sure it is -- and add what pressing it does. Replacing it
                     // threw away the reading somebody hovers to check.
+                    const does = face.name ? `add ${namesSomebody} to this photo`
+                        : alreadyTagged ? `name this face ${namesSomebody}`
+                            : `name this face ${namesSomebody} and add them to this photo`;
                     card.title = `${card.title || namesSomebody}`
                         + `
-Click to add ${namesSomebody} to this photo.`;
+Click to ${does}.`;
                     card.addEventListener('click', () => {
-                        upper.applySuggestedTagDirect(namesSomebody, true, photoPath);
+                        nameFaceAs(face, namesSomebody);
                     });
                 } else if (alreadyTagged) {
                     // Not clickable, and saying so beats a card that looks live
@@ -526,18 +531,38 @@ export function saveSingleAddTag() {
 }
 
 export function deletePhotoTag(tagToRemove) {
-    const path = state.activePhotoPath;
-    if (!path) return;
-    
-    const photo = state.folderPhotos.find(p => p.path === path);
-    if (!photo) return;
+    return removePhotoTags(state.activePhotoPath, [tagToRemove]);
+}
 
-    return queueWriteOf(path, async () => {
+/**
+ * The open photo's faces, read again after its tags were written (the one hook of every write of them: a save, a chip, Apply
+ * All, an Undo). A tag can name a face on the server (tagpup.store.face_tags, #788) and the page's copy of the faces, which the
+ * boxes and the strip are drawn from, would go on saying "not found" until the photo was opened again. Only when the photo has
+ * a face still to be named (nothing else a tag could change), and not while a naming of this page's is under way, which draws
+ * them again itself when it is done.
+ */
+export function facesFollowTags(path) {
+    const box = state.faceBoxes;
+    if (!path || !samePath(state.activePhotoPath, path) || !box.path || !samePath(box.path, path) || box.busy) return;
+    if (!box.faces.some(each => !each.name && !each.excluded)) return;
+    renderPhotoFaces(path);
+}
+
+/**
+ * Take tags off a photo, through the page's own save of its keywords (its queue, its stamp, its refusal of a file changed on
+ * disk). `tagsToRemove` as the photo spells them. Resolves true when they are off, or were not there.
+ */
+export function removePhotoTags(path, tagsToRemove) {
+    const photo = path && state.folderPhotos.find(p => samePath(p.path, path));
+    if (!photo) return Promise.resolve(false);
+    const gone = new Set(tagsToRemove.map(normalizeTag));
+
+    return queueWriteOf(photo.path, async () => {
         // From the tags as they are when this runs: two pills clicked in quick
         // succession each used to write "all but mine", and the later one put
         // the other back.
         const current = photo.tags || [];
-        const updatedTags = current.filter(t => t !== tagToRemove);
+        const updatedTags = current.filter(t => !gone.has(normalizeTag(t)));
         if (updatedTags.length === current.length) return true;
 
         setStatus('busy', 'Deleting tag...');

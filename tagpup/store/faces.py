@@ -54,6 +54,12 @@ def names_in_photo(conn, photo_path):
         "SELECT name FROM faces WHERE " + where + " AND name IS NOT NULL", params)}
 
 
+def names_by_face(conn, photo_path):
+    """{face id: name} of the faces of one photo that carry a name, on `conn`."""
+    where, params = _on_photo(conn, photo_path)
+    return dict(conn.execute("SELECT id, name FROM faces WHERE " + where + " AND name IS NOT NULL", params).fetchall())
+
+
 def names_given(conn, names):
     """Which of `names` some face carries now, on `conn`: one indexed query for them all.
     A name read before a write began may have been renamed, or taken off every face,
@@ -357,6 +363,17 @@ def rows(conn, face_ids):
     return found
 
 
+def named_among(conn, face_ids):
+    """[(photo path, name)] of the faces among `face_ids` that carry a name and are not excluded -- and only those: ignoring
+    a cluster sends thousands of nameless faces, whose photos are not read. By the faces' key, then each one's photo by its."""
+    found = []
+    for chunk in _chunks(face_ids):
+        found.extend(store_roots.natives(conn, conn.execute(
+            "SELECT p.path, f.name FROM faces f" + PHOTO + " WHERE f." + _in(chunk)
+            + " AND f.name IS NOT NULL AND f.excluded = 0", chunk).fetchall(), 0))
+    return found
+
+
 def name(conn, face_ids, person_name):
     """Name faces as a person's decision (name_source 'manual'), which re-clustering does
     not revise. Excluded faces are left alone. Returns rows named. The caller commits."""
@@ -412,6 +429,24 @@ def name_unnamed(conn, names_by_id, vocabulary=None):
     return done
 
 
+def revert_automatic(conn, names_by_id):
+    """Take back guesses just made (automatch's names, when their photo's tag could not be written):
+    each face in {id: name} that still carries that name AS A GUESS (name_source NULL) is unnamed again,
+    as it was before, not as a decision. A face a person named, confirmed or unmatched meanwhile is theirs
+    and is left. Returns the ids reverted. The caller commits."""
+    by_name = collections.defaultdict(list)
+    for face_id, person_name in names_by_id.items():
+        by_name[person_name].append(face_id)
+    reverted = []
+    for person_name, face_ids in by_name.items():
+        for chunk in _chunks(face_ids):
+            reverted.extend(face_id for (face_id,) in conn.execute(
+                "UPDATE faces SET name = NULL WHERE " + _in(chunk) + " AND name = ? AND name_source IS NULL"
+                " RETURNING id", chunk + [person_name]).fetchall())
+    _rebuilt(conn, _photos_of(conn, reverted), len(reverted))
+    return reverted
+
+
 def unname(conn, face_ids, source="manual"):
     """Take the names off faces, recording who decided in name_source: 'manual' for
     "this is nobody", None for an undone guess. Returns rows changed. The caller commits."""
@@ -456,12 +491,22 @@ def restore(conn, face_ids):
     return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
 
-def named_elsewhere_in_photo(conn, photo_path, person_name, face_id):
+def named_elsewhere_in_photo(conn, photo_path, person_name, face_id, decided_only=False):
     """Does a face in the photo other than `face_id` carry the name? By equality: a LIKE
-    retry scanned every face row, and read an underscore in a file name as any character."""
+    retry scanned every face row, and read an underscore in a file name as any character.
+    With `decided_only`, only a name somebody decided counts, not a guess (name_source NULL)."""
     where, params = _on_photo(conn, photo_path)
-    return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND name = ? AND id != ?",
+    return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND name = ? AND id != ?"
+                        + (" AND name_source IS NOT NULL" if decided_only else ""),
                         params + (person_name, face_id)).fetchone() is not None
+
+
+def guesses_named(conn, photo_path, person_name, face_id):
+    """{id: name} of the faces of the photo other than `face_id` that carry the name as a guess (name_source NULL)."""
+    where, params = _on_photo(conn, photo_path)
+    return {other: person_name for (other,) in conn.execute(
+        "SELECT id FROM faces WHERE " + where + " AND name = ? AND id != ? AND name_source IS NULL",
+        params + (person_name, face_id))}
 
 
 #: The faces of the photos under a folder, the photos found first: their range on

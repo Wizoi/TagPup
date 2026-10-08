@@ -5,7 +5,8 @@ in and whether the photo is stored turned), suggests people from `/api/face-matc
 name off or rules out a face through TagTuner's own views of one face (`/api/face/match`, `/api/face/unmatch`,
 `/api/faces/exclude`), served by TagPup too. The photo's tag is written by the page's own save of its
 keywords; these tests stand in for that with the index record a save leaves (photos.record_tags), and check
-that the tag and the faces agree in both apps.
+that the tag and the faces agree in both apps. A face's name and the photo's person tag are one decision (#861,
+tests/test_faces_and_tags_in_step.py); ExifTool is a table of files, for the writes the server makes of the tag.
 
 Rows are made as the code that makes them makes them: the photo by the indexer's record (tests/photo_rows.py),
 the tree by tagpup.store.taxonomy, the faces by tagpup.store.faces.
@@ -23,6 +24,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
+import fake_exiftool  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import db, faces, people, photos, taxonomy  # noqa: E402
@@ -54,6 +56,7 @@ def jpeg(path, size=(60, 40), orientation=None):
 
 class Case(unittest.TestCase):
     def setUp(self):
+        self.files = fake_exiftool.standing_in(self)
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
         self.path = self.home.library("library.db")
@@ -243,7 +246,7 @@ class NamingFromABox(Case):
         self.assertEqual([(None,)] * 3, self.look("SELECT name FROM faces ORDER BY id"),
                          "three faces and one person are not decided by the tag alone (#788)")
         reply = self.post("face/match", {"face_id": second, "person_name": WREN})
-        self.assertEqual({"success": True, "changed": 1}, reply.get_json())
+        self.assertEqual({"success": True, "changed": 1, "tags_written": 0}, reply.get_json())
         self.assertEqual((WREN, "manual", 0), self.row(second)[:3])
         self.assertEqual([(None,), (None,)], self.look("SELECT name FROM faces WHERE id != ? ORDER BY id", (second,)))
         self.assertIsNotNone(self.row(second)[3], "the face carries the person's id beside the name")
@@ -281,16 +284,18 @@ class NamingFromABox(Case):
         self.assertEqual(1, self.post("faces/exclude", {"face_ids": [face]}).get_json()["excluded"])
         self.assertEqual(409, self.post("face/match", {"face_id": face, "person_name": WREN}).status_code)
 
-    def test_a_name_taken_off_is_nobody_and_the_tag_is_left_alone(self):
-        # Decided: unmatching says "this face is not them", not "they are not in the photo": the
-        # person tag stays, and removing it is the people pills' own click.
+    def test_a_name_taken_off_is_nobody_and_the_person_goes_from_the_photo(self):
+        # #861 reverses #791's "the tag stays": a face that is not them is not a person of the photo, unless
+        # another face carries them (tests/test_faces_and_tags_in_step.py has the cases).
         photo = self.photo("regatta_009.jpg", ["People/" + WREN])
+        self.files.keep_tags(photo, ["People/" + WREN])
         face = self.face(photo)
         photos.record_tags(self.path, photo, ["People/" + WREN])
         self.assertEqual(WREN, self.row(face)[0])
         self.post("face/unmatch", {"face_id": face})
         self.assertEqual((None, "manual"), self.row(face)[:2])
-        self.assertEqual([(WREN,)], self.look("SELECT name FROM photo_people"))
+        self.assertEqual([], self.look("SELECT name FROM photo_people"))
+        self.assertEqual([], self.files.tags_of(photo))
         photos.record_tags(self.path, photo, ["People/" + WREN])          # saved again: not renamed
         self.assertEqual((None, "manual"), self.row(face)[:2])
 

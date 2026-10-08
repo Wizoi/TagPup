@@ -1,9 +1,9 @@
-/* The popup of a suggested person's faces (web/common/person-faces.js): above the pages,
-   a picture and not a control -- it takes no pointer, so a click goes to the button under it. */
+/* The popup of a suggested person's faces (web/common/person-faces.js): above the pages and
+   the photo's zoom (3000), whose face panel it explains -- a picture and not a control -- it takes no pointer, so a click goes to the button under it. */
 
 .person-faces {
     position: fixed;
-    z-index: 2500;
+    z-index: 3500;
     box-sizing: border-box;
     max-width: 280px;
     padding: 8px;

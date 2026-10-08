@@ -2963,8 +2963,16 @@ body.just-looking .face-layer {
     display: none !important;
 }
 
-.face-layer.is-busy {
+.face-layer.is-busy,
+.image-zoom-layer.is-busy {
     cursor: progress;
+}
+
+/* The same boxes over the picture in the full-window zoom (#859): a holder exactly over the picture, in the zoom's own
+   layer, which takes no pointer; the icon, the boxes and the panel in it do. */
+.face-zoom-picture {
+    position: absolute;
+    pointer-events: none;
 }
 
 .face-boxes-toggle {
