@@ -14,6 +14,7 @@ import { selectionFoldersList, selectionPeopleList, selectionTagsList } from './
 import { selectionCount, tallyRequest } from './selected.js';
 import { editByPill } from './bulk-edit.js';
 import { lockBulkControls } from './bulk-job.js';
+import { drawJumpNote, drawJumps } from './selection-panel.js';
 
 /** How long the selection must stand still before it is counted. */
 export const TALLY_DELAY_MS = 250;
@@ -97,15 +98,18 @@ export function drawTally() {
         replaceContent(selectionPeopleList, note('counting…'));
         replaceContent(selectionTagsList, note('counting…'));
         if (selectionFoldersList) replaceContent(selectionFoldersList, note('counting…'));
+        drawJumpNote('counting…');
     } else if (tally.status === 'error') {
         replaceContent(selectionPeopleList, note(tally.message));
         replaceContent(selectionTagsList, note(tally.message));
         if (selectionFoldersList) replaceContent(selectionFoldersList, note(tally.message));
+        drawJumpNote(tally.message);
     } else if (tally.data) {
         const data = tally.data;
         replaceContent(selectionPeopleList, ...listOf(data.people, data.more_people, data.total, 'person', 'name'));
         replaceContent(selectionTagsList, ...listOf(data.tags, data.more_tags, data.total, 'tag', 'tag'));
         if (selectionFoldersList) replaceContent(selectionFoldersList, ...foldersOf(data.folders));
+        drawJumps(data);
     }
     lockBulkControls();
 }

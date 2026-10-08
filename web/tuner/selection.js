@@ -1,7 +1,9 @@
 // Selecting faces in the Identify grid, and the selected face's details.
 import { api } from './common/api.js';
+import { attachPersonFaces } from './common/person-faces.js';
 import { sortedTags } from './common/vocabulary.js';
 import { buildElement, replaceContent } from './common/dom.js';
+import { boxInContainedImage } from './common/image-zoom.js';
 import { state } from './state.js';
 import {
     btnExcludeSelected, btnNewPerson, btnReassignSelected, btnRestoreSelected,
@@ -32,6 +34,31 @@ const matchingDetailCropSize = document.getElementById('matching-detail-crop-siz
 
 const btnMatchingSelectAll = document.getElementById('btn-matching-select-all');
 
+/**
+ * Box the face on the pane's picture. The box is in the stored pixels of the full file; the
+ * picture is a 512 px copy, whose own size says nothing about them (dividing by it put the box
+ * outside the picture for 97.7% of faces, and its shadow dimmed everything: #787). So the box
+ * waits for the file's size, which the photo's details carry, and for the picture; with no size
+ * it is not drawn. The arithmetic is the zoom's (boxInContainedImage).
+ */
+function placePaneBox(face) {
+    const overlay = matchingDetailBoundingBoxOverlay;
+    overlay.style.width = '0';
+    overlay.style.height = '0';
+    const size = state.detailPhotoSize;
+    if (!size || state.detailFace !== face) return;
+    if (!matchingDetailImg.complete || !matchingDetailImg.naturalWidth) return;
+    const placed = boxInContainedImage(
+        { width: size[0], height: size[1] },
+        { width: matchingDetailImg.clientWidth, height: matchingDetailImg.clientHeight },
+        face.box);
+    if (!placed) return;
+    overlay.style.left = `${matchingDetailImg.offsetLeft + placed.left}px`;
+    overlay.style.top = `${matchingDetailImg.offsetTop + placed.top}px`;
+    overlay.style.width = `${placed.width}px`;
+    overlay.style.height = `${placed.height}px`;
+}
+
 // Populate matching details sidebar
 export function showFaceDetails(faceId) {
     if (state.sidebarDetailAbortController) {
@@ -43,6 +70,8 @@ export function showFaceDetails(faceId) {
     const face = state.activePersonFaces.find(f => f.id === faceId);
     if (!face) return;
 
+    state.detailFace = face;
+    state.detailPhotoSize = null;
     matchingDetailsPlaceholder.classList.add('hidden');
     matchingDetailsContent.classList.remove('hidden');
 
@@ -76,31 +105,7 @@ export function showFaceDetails(faceId) {
     }
 
     // Prepare image onload
-    matchingDetailImg.onload = () => {
-        const naturalWidth = matchingDetailImg.naturalWidth;
-        const naturalHeight = matchingDetailImg.naturalHeight;
-        const renderedWidth = matchingDetailImg.clientWidth;
-        const renderedHeight = matchingDetailImg.clientHeight;
-        const offsetLeft = matchingDetailImg.offsetLeft;
-        const offsetTop = matchingDetailImg.offsetTop;
-
-        if (naturalWidth > 0 && naturalHeight > 0 && face.box && face.box.length === 4) {
-            const x1_pct = face.box[0] / naturalWidth;
-            const y1_pct = face.box[1] / naturalHeight;
-            const x2_pct = face.box[2] / naturalWidth;
-            const y2_pct = face.box[3] / naturalHeight;
-
-            const left = offsetLeft + x1_pct * renderedWidth;
-            const top = offsetTop + y1_pct * renderedHeight;
-            const width = (x2_pct - x1_pct) * renderedWidth;
-            const height = (y2_pct - y1_pct) * renderedHeight;
-
-            matchingDetailBoundingBoxOverlay.style.left = `${left}px`;
-            matchingDetailBoundingBoxOverlay.style.top = `${top}px`;
-            matchingDetailBoundingBoxOverlay.style.width = `${width}px`;
-            matchingDetailBoundingBoxOverlay.style.height = `${height}px`;
-        }
-    };
+    matchingDetailImg.onload = () => placePaneBox(face);
 
     // Load original preview
     matchingDetailImg.src = api.image(`/api/photo-file?path=${encodeURIComponent(face.photo_path)}&size=512`);
@@ -122,6 +127,8 @@ export function showFaceDetails(faceId) {
             return res.json();
         })
         .then(details => {
+            state.detailPhotoSize = Array.isArray(details.size) && details.size.length === 2 ? details.size : null;
+            placePaneBox(face);
             matchingDetailTags.innerHTML = '';
             const tagsList = details.tags || [];
             sortedTags(tagsList).forEach(tag => {
@@ -182,6 +189,9 @@ export function showFaceDetails(faceId) {
 
                     itemDiv.appendChild(nameSpan);
                     itemDiv.appendChild(simSpan);
+                    // A suggested person too: focusable, so the keyboard sees their faces as well.
+                    itemDiv.tabIndex = 0;
+                    attachPersonFaces(itemDiv, item.name);
                     matchingDetailDiagnostics.appendChild(itemDiv);
                 });
             }

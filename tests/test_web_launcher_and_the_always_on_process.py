@@ -150,14 +150,25 @@ class BesideItsRequests(unittest.TestCase):
             tagpup_web.main(ARGS)
         self.assertEqual(["start watcher", "serve", "stop watcher"], log)
 
-    def test_it_lets_the_models_go_after_thirty_minutes_unless_told_otherwise(self):
+    def test_a_default_start_loads_no_model_and_warm_up_is_a_flag(self):
+        # The owner's log: models on the card 15 s after a start, nobody asking (2026-10-05).
+        warmed = []
+        with mock.patch.dict(os.environ), mock.patch.object(tagpup_web.web, "serve"), \
+                mock.patch.object(Runtime, "warm_up_in_background", side_effect=lambda libs: warmed.append(libs)):
+            os.environ.pop("TAGPUP_WEB_NO_WARMUP", None)
+            tagpup_web.main(ARGS)
+            self.assertEqual([], warmed, "a default start warmed the models")
+            tagpup_web.main(ARGS + ["--warm-up"])
+            self.assertEqual(1, len(warmed))
+
+    def test_it_lets_the_models_go_after_five_minutes_unless_told_otherwise(self):
         made = []
         with mock.patch.object(tagpup_web.web, "serve"), \
                 mock.patch.object(tagpup_web, "Runtime", side_effect=lambda **kw: made.append(kw) or Runtime(**kw)):
             tagpup_web.main(ARGS)
-            tagpup_web.main(ARGS + ["--release-models-after", "5"])
+            tagpup_web.main(ARGS + ["--release-models-after", "20"])
             tagpup_web.main(ARGS + ["--release-models-after", "0"])
-        self.assertEqual([30 * 60, 5 * 60, None], [kw["idle_after"] for kw in made])
+        self.assertEqual([5 * 60, 20 * 60, None], [kw["idle_after"] for kw in made])
         # Kept between runs in each, "0" keeping them for good (#774).
         self.assertEqual([True, True, True], [kw.get("keep_models") for kw in made])
 

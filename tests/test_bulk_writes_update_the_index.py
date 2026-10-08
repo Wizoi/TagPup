@@ -163,9 +163,9 @@ class TestEveryBulkWriterTellsTheIndex(unittest.TestCase):
     """The guard. Both bulk handlers wrote files without recording the result, and
     nothing in the app showed the difference, so a third one would be just as quiet."""
 
-    #: A keyword write, wherever it is made: the files layer's writers, the journaled one
-    #: (tagpup.files.field_values) through which every service writes now.
-    WRITES = ("write_keywords(", "field_values.write(")
+    #: A keyword write, wherever it is made: the journaled one (tagpup.files.field_values)
+    #: through which every service writes.
+    WRITES = ("field_values.write(",)
 
     #: The rule is that the index hears about it, not that any one helper is used:
     #: saving a single photo writes its own row as part of a larger update, and

@@ -16,13 +16,17 @@ import {
 import { fetchKnownTagsAndPeople } from './tags.js';
 import { leavePhotoThen, wireUnsavedEdits } from './edits.js';
 import {
-    browseFolder, filterFileList, renderFileList, scanFolder, showFolderView,
+    browseFolder, filterFileList, renderFileList, scanFolder,
     wireChangeDogPark, wireFolderPathInput, wireSidebarResizer
 } from './folder.js';
 import { wireTagPupGear } from './gear.js';
+import { wireNameFaces } from './name-faces.js';
 import {
-    leaveLibraryView, libraryChanged, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
+    leaveLibraryView, libraryChanged, openLibraryView, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
 } from './library-view.js';
+import { wireSelectionPanel } from './selection-panel.js';
+import { wireDetailsPanel } from './details-panel.js';
+import { restoreViewAsLeft, showGrid, wireViewLeft } from './view-left.js';
 import { deleteSelection } from './bulk-edit.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
 import { choosePane, navigatorCountsChanged, navigatorFollows, wireNavigator } from './navigator.js';
@@ -35,7 +39,8 @@ import { photosWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
 import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
-    carryTagsForward, deleteActivePhoto, openPhotoInDefaultApp, renderTags, rotatePhoto,
+    carryTagsForward, deleteActivePhoto, facesFollowTags, openLibraryPhoto, openPhotoInDefaultApp, removePhotoTags,
+    renderPhotoFaces, renderTags, rotatePhoto,
     reloadChangedPhoto, saveSingleAddPerson, saveSingleAddTag, saveSingleTitle, selectPhoto,
     updateCarryForwardState, wireDateTakenModal, wireZoom
 } from './photo.js';
@@ -45,6 +50,7 @@ import {
 } from './grid.js';
 import { recordUndo, undoLastOperation } from './undo.js';
 import { enableSwipeNavigation, wireKeyboard } from './navigation.js';
+import { wireFaceBoxes } from './face-boxes.js';
 import {
     bulkAddPeopleToSelection, bulkAddTagsToSelection, updateSelectedThumbnailsCount
 } from './selection.js';
@@ -61,11 +67,12 @@ import {
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
     addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, choosePane,
-    deleteSelection,
-    populateCameraModelsDropdown, recordUndo,
-    renderFileList, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
+    deleteSelection, facesFollowTags,
+    populateCameraModelsDropdown, recordUndo, removePhotoTags,
+    renderFileList, renderPhotoFaces, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
     landOnAnchor, leaveLibraryView, libraryChanged, libraryViewPainted, navigatorCountsChanged, navigatorFollows, openInOrganize,
+    openLibraryPhoto, openLibraryView, restoreViewAsLeft,
     photosDeleted, photosWritten, reloadChangedPhoto, showSortOrder,
     updateCameraHighlights, updateCarryForwardState, updateFolderAutoApplyState,
     updateSelectedThumbnailsCount, updateSuggestButtonState
@@ -99,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnRefreshList.addEventListener('click', refreshFolderOrView);
     
     photoSearch.addEventListener('input', filterFileList);
-    folderViewHeader.addEventListener('click', showFolderView);
+    folderViewHeader.addEventListener('click', showGrid);
     
     btnSelectAllThumbnails.addEventListener('click', selectAllThumbnails);
     btnSelectNoneThumbnails.addEventListener('click', selectNoneThumbnails);
@@ -149,6 +156,15 @@ document.addEventListener('DOMContentLoaded', () => {
     wireMoves();
     wireBanner();
 
+    // The selection details: the Tagging section's button, and what this browser remembers of it.
+    wireSelectionPanel();
+
+    // In a narrow window the selection details are behind a button, over the grid when opened.
+    wireDetailsPanel();
+
+    // The photo panel's Back, to the grid of a library view as it was left.
+    wireViewLeft();
+
     // The strip of a bulk edit of the library's photos: Cancel, Resume, Start again.
     wireBulk();
 
@@ -158,11 +174,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnUndo) btnUndo.addEventListener('click', undoLastOperation);
 
     wireZoom();
+    wireFaceBoxes();
 
     wireDateTakenModal();
 
     // The gear: the tag editor (web/common/tag-editor.js) and TagTuner on this library.
     wireTagPupGear();
+
+    // The folder view's "Name faces from tags".
+    wireNameFaces();
 
     // A library whose root this computer does not place says so, at the top of the page.
     wireRootsBanner();
@@ -170,19 +190,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---- Start ------------------------------------------------------------
     //
     // Last, deliberately. This opens the folder in the ?path= and picks up an index
-    // already running on it, which means it calls into most of the app. Doing that
-    // from the middle of this closure reaches `let` bindings declared further down
-    // before their declarations have run, and a `let` reached early does not read as
-    // undefined -- it throws.
+    // already running on it, which means it calls into most of the app: through the
+    // listeners wired above and the calls up the page that main.js fills in (hooks.js).
+    // Started before those lines, it would run without them.
     //
-    // It did: checkIndexingStatus touched indexProgressTimer, threw, and took the
-    // rest of this closure's body with it, so facesRequestToken was never initialised
-    // either. The scan that followed then failed on *that*, and the message said
-    // "Error scanning folder: Cannot access 'facesRequestToken' before
-    // initialization" -- two removes from the line at fault.
-    //
-    // Nothing runs the app before this point. tests/frontend/tag-vocabulary.test.mjs
-    // keeps it that way.
+    // main.js declares no state of its own (tests/frontend/page-state.test.mjs), so
+    // nothing here reaches a binding before its line has run; what is left of the rule
+    // is this block's position, and tests/frontend/tag-vocabulary.test.mjs keeps it.
     // How many of the library's photos were found damaged, in the header (damaged.js).
     showLibraryDamage();
     // A bulk edit already running in this library (started before this page was opened or reloaded) is picked up by its strip.

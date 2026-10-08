@@ -26,6 +26,7 @@ from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import roots as roots_service
 from tagpup.store import checks as rules
 from tagpup.store import db, embeddings, inspection, taxonomy
+from tagpup.store import photos as photo_rows
 
 #: How many ids an answer lists at most, unless asked for more; the count is always whole.
 LIMIT = 100
@@ -208,7 +209,7 @@ def photo_against_file(library, photo_id, exiftool_path=None, reveal=False):
     # different fields, and only what both hold can disagree.
     differing = sorted(k for k in set(in_row) & set(in_file) if in_row[k] != in_file[k])
     answer.update(
-        mtime={"same": row["mtime"] is not None and abs(row["mtime"] - record["mtime"]) < 0.1,
+        mtime={"same": photo_rows.same_mtime(row["mtime"], record["mtime"]),
                "seconds_apart": None if row["mtime"] is None else round(record["mtime"] - row["mtime"], 3)},
         size={"same": row["size"] == record["size"], "row": row["size"], "file": record["size"]},
         tags=_compared(row["tags"], record["tags"], reveal),

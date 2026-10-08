@@ -88,15 +88,26 @@ def _save_face_names(photo_index, face_updates):
         raise e
 
 
-def resolve(photo_index, max_iterations=5):
+#: How many clusters, photos or faces resolve goes through between two calls of its `on_step`.
+STEP = 2000
+
+
+def resolve(photo_index, max_iterations=5, on_step=None):
     """Cluster a library's faces with DBSCAN, name each cluster from the people its photos'
     tags name, and write the names back; returns {name: faces named}.
 
     `photo_index` is the library's, loaded (tagpup.services.search.PhotoIndex): its
     connection, its photos' metadata and its path. Names given by hand are never
     overwritten, and excluded faces take no part.
+
+    `on_step(stage, done, total)`, if given, hears where it has got -- "reading", "grouping" (one call of
+    DBSCAN: no count inside it), "voting", "propagating", "matching" and "saving" -- and may raise to stop it. Every
+    stage but the last only reads; the names are written in one commit after "saving" is announced, so a stop is
+    nothing written or all of it, never part (the job behind the apps' button, tagpup.jobs.naming_faces).
     """
+    step = on_step or (lambda stage, done=0, total=1: None)
     logger.info("Starting self-tuning face identity resolution...")
+    step("reading", 0, 1)
     all_faces = _all_faces(photo_index)
     if not all_faces:
         logger.info("No face embeddings found in the index.")
@@ -127,6 +138,7 @@ def resolve(photo_index, max_iterations=5):
         )
 
     # Prepare embeddings for clustering
+    step("grouping", 0, 1)
     embeddings = np.array([f["embedding"] for f in all_faces], dtype=np.float32)
     
     # DBSCAN parameters:
@@ -227,7 +239,9 @@ def resolve(photo_index, max_iterations=5):
 
     # Phase 2: Cluster voting using direct anchors
     initial_resolved_names = {}
-    for cluster_id, cluster_faces in tqdm(clusters.items(), desc="Resolving face identities"):
+    for number, (cluster_id, cluster_faces) in enumerate(tqdm(clusters.items(), desc="Resolving face identities")):
+        if number % STEP == 0:
+            step("voting", number, len(clusters))
         # Count direct anchor names present in this cluster
         cluster_anchors = {}
         photo_people_tags = []
@@ -384,6 +398,7 @@ def resolve(photo_index, max_iterations=5):
         photo_years[path] = dates.record_year(meta)
         
     for iteration in range(max_iterations):
+        step("propagating", iteration, max_iterations)
         # 2a. Group embeddings and their photo years by name
         # Prioritize direct anchors to build unpolluted centroids
         resolved_by_name = {}
@@ -408,7 +423,9 @@ def resolve(photo_index, max_iterations=5):
 
         new_resolved_names = {}
         
-        for p_path, photo_faces in faces_by_photo.items():
+        for number, (p_path, photo_faces) in enumerate(faces_by_photo.items()):
+            if number and number % STEP == 0:
+                step("propagating", iteration, max_iterations)
             # Get photo metadata people tags
             meta = meta_by_path.get(p_path)
             photo_tags = set(meta.get("people", [])) if meta else set()
@@ -417,10 +434,13 @@ def resolve(photo_index, max_iterations=5):
             face_resolved = {f["id"]: current_resolved_names.get(f["id"]) for f in photo_faces}
             
             # A name clustering gave is kept while the face still reaches the value
-            # it was named at, against the person's closest face (tagpup.core.clustering).
+            # it was named at, against the person's closest face (tagpup.core.clustering)
+            # -- unless the photo's own keywords name the person: the tag bears the name
+            # out, whatever the likeness (docs/findings.md, #855). That took away the
+            # names faces-from-tags had written at 0.70 to 0.80.
             for f in photo_faces:
                 name = face_resolved.get(f["id"])
-                if name and name in resolved_by_name:
+                if name and name in resolved_by_name and name not in photo_tags:
                     similarity = closest_to(name, f["embedding"], f["photo_path"])
                     if similarity is not None and not clustering.names_unasked(similarity):
                         face_resolved[f["id"]] = None
@@ -593,7 +613,9 @@ def resolve(photo_index, max_iterations=5):
         if name:
             assigned_names_by_photo.setdefault(face["photo_path"], set()).add(name)
 
-    for face in all_faces:
+    for number, face in enumerate(all_faces):
+        if number % STEP == 0:
+            step("matching", number, len(all_faces))
         final_name = refined_resolved_names.get(face["id"])
 
         if final_name is None:
@@ -612,10 +634,13 @@ def resolve(photo_index, max_iterations=5):
 
             if photo_tags:
                 # Photo is tagged with people. We only match if the best matching name is in those tags.
-                # Since we have confirmation via tags, we name without asking at the
-                # value for that (tagpup.core.clustering), to prevent false
-                # assignments in multi-face photos
-                if best_name in photo_tags and clustering.names_unasked(best_sim):
+                # The tag bears the name out, so the face is named from where it is worth offering
+                # (tagpup.core.clustering.is_offered), not only from where it is named with no one
+                # looking: the loop above keeps a tag-confirmed name whatever the likeness (#855), and a
+                # face that reaches this pass unnamed -- its cluster has no anchor -- was left unnamed at
+                # 0.73 and 0.78 (docs/findings.md, #902). A name already taken by another face of the photo
+                # is skipped (`skip`), to prevent false assignments in multi-face photos.
+                if best_name in photo_tags and clustering.is_offered(best_sim):
                     final_name = best_name
                     names_taken_here.add(final_name)
                     traces[face["id"]] = {
@@ -668,7 +693,8 @@ def resolve(photo_index, max_iterations=5):
         if final_name:
             resolved_stats[final_name] = resolved_stats.get(final_name, 0) + 1
 
-    # Apply name updates to the SQLite database
+    # Apply name updates to the SQLite database: the last place to stop
+    step("saving", 0, 1)
     if face_updates:
         _save_face_names(photo_index, face_updates)
         

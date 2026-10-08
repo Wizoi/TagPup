@@ -23,7 +23,7 @@ import os
 import types
 
 from tagpup.core import paths
-from tagpup.store import db, generations, people, person_ids
+from tagpup.store import db, faces_detected, generations, people, person_ids
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -52,6 +52,12 @@ def names_in_photo(conn, photo_path):
     where, params = _on_photo(conn, photo_path)
     return {name for (name,) in conn.execute(
         "SELECT name FROM faces WHERE " + where + " AND name IS NOT NULL", params)}
+
+
+def names_by_face(conn, photo_path):
+    """{face id: name} of the faces of one photo that carry a name, on `conn`."""
+    where, params = _on_photo(conn, photo_path)
+    return dict(conn.execute("SELECT id, name FROM faces WHERE " + where + " AND name IS NOT NULL", params).fetchall())
 
 
 def names_given(conn, names):
@@ -228,6 +234,32 @@ def decided_for_photo(conn, photo_path):
                         + " AND (name_source = 'manual' OR excluded = 1)", params).fetchone()[0]
 
 
+def decided_count(conn, photo_id):
+    """How many of one photo's faces carry a decision somebody made (decided_for_photo's rule), by photo id."""
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE photo_id = ? AND (name_source = 'manual' OR excluded = 1)",
+                        (photo_id,)).fetchone()[0]
+
+
+def for_merging(conn, photo_id):
+    """[(id, box JSON, name, name_source, excluded, excluded_reason)] of one photo's faces, by id: what was
+    decided about each, without its embedding or crop (tagpup.services.duplicate_rows)."""
+    return conn.execute("SELECT id, box, name, name_source, excluded, excluded_reason FROM faces WHERE photo_id = ?"
+                        " ORDER BY id", (photo_id,)).fetchall()
+
+
+def decided_photo_ids(conn, photo_ids):
+    """The ids among `photo_ids` of photos with a face somebody decided (decided_for_photo's rule): a name or a
+    "nobody" given by hand, or an exclusion. One lookup a chunk, by photo id (idx_faces_photo_id)."""
+    photo_ids = sorted(photo_ids)
+    found = set()
+    for start in range(0, len(photo_ids), CHUNK):
+        chunk = photo_ids[start:start + CHUNK]
+        found.update(photo_id for (photo_id,) in conn.execute(
+            "SELECT DISTINCT photo_id FROM faces WHERE photo_id IN (%s) AND (name_source = 'manual' OR excluded = 1)"
+            % ",".join("?" * len(chunk)), chunk))
+    return found
+
+
 def _photos_of(conn, face_ids):
     """The ids of the photos the faces among `face_ids` are in."""
     found = set()
@@ -237,14 +269,15 @@ def _photos_of(conn, face_ids):
     return found
 
 
-def _rebuilt(conn, photo_ids, changed):
+def _rebuilt(conn, photo_ids, changed, vocabulary=None):
     """`changed`, after rebuilding the people of `photo_ids` and giving their faces and listed people
     the ids their names give (person_ids), if anything changed. The tree's people are read once for
-    both (docs/findings.md, #659)."""
+    both (docs/findings.md, #659). `vocabulary` is the tree's PeopleVocabulary when the caller has it
+    already (a batch that rebuilds many photos reads the tree once: #838)."""
     if changed and photo_ids:
         known = person_ids.read(conn)
         person_ids.follow_faces(conn, photo_ids, known)
-        people.rebuild(conn, photo_ids, ids=known)
+        people.rebuild(conn, photo_ids, known=vocabulary, ids=known)
     return changed
 
 
@@ -254,7 +287,11 @@ def remove_for_photo(conn, photo_path):
     found, found_params = store_roots.sql_equals(conn, "path", photo_path)
     photo_ids = {photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + found, found_params)}
     where, params = _on_photo(conn, photo_path)
-    return _rebuilt(conn, photo_ids, conn.execute("DELETE FROM faces WHERE " + where, params).rowcount)
+    removed = conn.execute("DELETE FROM faces WHERE " + where, params).rowcount
+    if removed:
+        # Their detection is no longer on file (a caller that detects again records it after).
+        faces_detected.forget_faceless(conn, photo_ids)
+    return _rebuilt(conn, photo_ids, removed)
 
 
 def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
@@ -356,6 +393,17 @@ def rows(conn, face_ids):
     return found
 
 
+def named_among(conn, face_ids):
+    """[(photo path, name)] of the faces among `face_ids` that carry a name and are not excluded -- and only those: ignoring
+    a cluster sends thousands of nameless faces, whose photos are not read. By the faces' key, then each one's photo by its."""
+    found = []
+    for chunk in _chunks(face_ids):
+        found.extend(store_roots.natives(conn, conn.execute(
+            "SELECT p.path, f.name FROM faces f" + PHOTO + " WHERE f." + _in(chunk)
+            + " AND f.name IS NOT NULL AND f.excluded = 0", chunk).fetchall(), 0))
+    return found
+
+
 def name(conn, face_ids, person_name):
     """Name faces as a person's decision (name_source 'manual'), which re-clustering does
     not revise. Excluded faces are left alone. Returns rows named. The caller commits."""
@@ -363,6 +411,20 @@ def name(conn, face_ids, person_name):
         "UPDATE faces SET name = ?, name_source = 'manual' WHERE " + _in(chunk) + " AND excluded = 0",
         [person_name] + chunk).rowcount for chunk in _chunks(face_ids))
     return _rebuilt(conn, _photos_of(conn, face_ids), changed)
+
+
+def decided_by_hand(conn, face_id):
+    """Did a person decide this face's name -- or that it is nobody (name_source 'manual')?"""
+    row = conn.execute("SELECT name_source FROM faces WHERE id = ?", (face_id,)).fetchone()
+    return bool(row) and row[0] == "manual"
+
+
+def confirm(conn, face_id):
+    """A person confirms the name a face carries (an automatic one: clustering's, or its photo's tag's):
+    name_source 'manual', the name and its spelling left as they are. Not an excluded face, a nameless
+    one or one confirmed already. Returns rows changed. The caller commits."""
+    return conn.execute("UPDATE faces SET name_source = 'manual' WHERE id = ? AND name IS NOT NULL AND excluded = 0"
+                        " AND COALESCE(name_source, '') <> 'manual'", (face_id,)).rowcount
 
 
 def name_if_unnamed(conn, face_id, person_name):
@@ -375,13 +437,14 @@ def name_if_unnamed(conn, face_id, person_name):
     return _rebuilt(conn, _photos_of(conn, [face_id]), changed)
 
 
-def name_unnamed(conn, names_by_id):
+def name_unnamed(conn, names_by_id, vocabulary=None):
     """Give each face in {id: name} its name as a guess, as name_if_unnamed does -- only a face still
     unnamed, not excluded and not unmatched by hand -- in one statement per name and chunk, and rebuild
     their photos once: automatch's write (docs/findings.md, #659), which named a folder's faces one by
     one and rebuilt a photo for each. Returns the ids its UPDATE changed (RETURNING), in the order given:
     a face another process named meanwhile is not counted, inside a transaction or not (#665). The
-    caller commits, inside the transaction that read the faces it chose."""
+    caller commits, inside the transaction that read the faces it chose. `vocabulary`: the tree's people
+    when the caller has read them (_rebuilt)."""
     guard = " AND name IS NULL AND excluded = 0 AND " + NOT_DECIDED_NOBODY % ""
     by_name = collections.defaultdict(list)
     for face_id, person_name in names_by_id.items():
@@ -392,8 +455,26 @@ def name_unnamed(conn, names_by_id):
             named.update(face_id for (face_id,) in conn.execute(
                 "UPDATE faces SET name = ? WHERE " + _in(chunk) + guard + " RETURNING id", [person_name] + chunk).fetchall())
     done = [face_id for face_id in names_by_id if face_id in named]
-    _rebuilt(conn, _photos_of(conn, done), len(done))
+    _rebuilt(conn, _photos_of(conn, done), len(done), vocabulary)
     return done
+
+
+def revert_automatic(conn, names_by_id):
+    """Take back guesses just made (automatch's names, when their photo's tag could not be written):
+    each face in {id: name} that still carries that name AS A GUESS (name_source NULL) is unnamed again,
+    as it was before, not as a decision. A face a person named, confirmed or unmatched meanwhile is theirs
+    and is left. Returns the ids reverted. The caller commits."""
+    by_name = collections.defaultdict(list)
+    for face_id, person_name in names_by_id.items():
+        by_name[person_name].append(face_id)
+    reverted = []
+    for person_name, face_ids in by_name.items():
+        for chunk in _chunks(face_ids):
+            reverted.extend(face_id for (face_id,) in conn.execute(
+                "UPDATE faces SET name = NULL WHERE " + _in(chunk) + " AND name = ? AND name_source IS NULL"
+                " RETURNING id", chunk + [person_name]).fetchall())
+    _rebuilt(conn, _photos_of(conn, reverted), len(reverted))
+    return reverted
 
 
 def unname(conn, face_ids, source="manual"):
@@ -440,12 +521,22 @@ def restore(conn, face_ids):
     return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
 
-def named_elsewhere_in_photo(conn, photo_path, person_name, face_id):
+def named_elsewhere_in_photo(conn, photo_path, person_name, face_id, decided_only=False):
     """Does a face in the photo other than `face_id` carry the name? By equality: a LIKE
-    retry scanned every face row, and read an underscore in a file name as any character."""
+    retry scanned every face row, and read an underscore in a file name as any character.
+    With `decided_only`, only a name somebody decided counts, not a guess (name_source NULL)."""
     where, params = _on_photo(conn, photo_path)
-    return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND name = ? AND id != ?",
+    return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND name = ? AND id != ?"
+                        + (" AND name_source IS NOT NULL" if decided_only else ""),
                         params + (person_name, face_id)).fetchone() is not None
+
+
+def guesses_named(conn, photo_path, person_name, face_id):
+    """{id: name} of the faces of the photo other than `face_id` that carry the name as a guess (name_source NULL)."""
+    where, params = _on_photo(conn, photo_path)
+    return {other: person_name for (other,) in conn.execute(
+        "SELECT id FROM faces WHERE " + where + " AND name = ? AND id != ? AND name_source IS NULL",
+        params + (person_name, face_id))}
 
 
 #: The faces of the photos under a folder, the photos found first: their range on
@@ -526,6 +617,20 @@ def unnamed_for_matching(conn):
 def count_unnamed(conn):
     """How many nameless faces are in play. idx_faces_identify answers it without the rows."""
     return conn.execute("SELECT COUNT(*) FROM faces WHERE name IS NULL AND excluded = 0").fetchone()[0]
+
+
+def named_and_unnamed(conn, folder=None):
+    """(named, unnamed) faces in play -- an excluded face is neither -- in the whole library, or in the photos under
+    `folder` at any depth. The library's by idx_faces_identify, without the rows; a folder's by its photos'
+    faces (UNDER_FROM_PHOTOS), as unnamed_counts."""
+    if folder is None:
+        named = conn.execute("SELECT COUNT(*) FROM faces WHERE excluded = 0 AND name IS NOT NULL").fetchone()[0]
+        return named, count_unnamed(conn)
+    where, params = _photos_under(conn, folder)
+    named, unnamed = conn.execute(
+        "SELECT COUNT(f.name), COUNT(*) - COUNT(f.name)" + UNDER_FROM_PHOTOS + " WHERE " + where
+        + " AND f.excluded = 0", params).fetchone()
+    return named, unnamed
 
 
 def unnamed_embeddings(conn):
@@ -687,8 +792,11 @@ def decisions(conn):
 def delete(conn, face_ids):
     """Delete faces by id. Returns rows deleted. The caller commits."""
     photo_ids = _photos_of(conn, face_ids)
-    return _rebuilt(conn, photo_ids, sum(conn.execute("DELETE FROM faces WHERE " + _in(chunk), chunk).rowcount
-                                         for chunk in _chunks(face_ids)))
+    removed = sum(conn.execute("DELETE FROM faces WHERE " + _in(chunk), chunk).rowcount
+                  for chunk in _chunks(face_ids))
+    if removed:
+        faces_detected.forget_faceless(conn, photo_ids)
+    return _rebuilt(conn, photo_ids, removed)
 
 
 # ---- What verify_workflow reads --------------------------------------------------------

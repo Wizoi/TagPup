@@ -129,7 +129,7 @@ class TheRunsTagTheirLines(LinesTest):
     def test_a_sync_tags_what_it_logs_with_when_it_started_as_its_record_keeps_it(self):
         held = {}
 
-        def fake(library, folder, apply, exiftool_path, queue, roots, ignored, started):
+        def fake(library, folder, apply, exiftool_path, queue, roots, ignored, started, reread_resized=False):
             held["tags"], held["started"] = runs.current(), started
             return Result()
 

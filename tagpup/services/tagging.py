@@ -49,11 +49,12 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     undone: the photo's keyword, caption and date fields, before and after, committed
     first, and the row told what the file holds as it is marked done. It was written
     with ExifTool of its own and recorded nowhere (docs/findings.md, #266). A file
-    holding it all already is not written: `changed` is 0. A write that fails raises,
-    as it did, for the page to say so.
+    holding it all already is not written: `changed` is 0. A write that fails is in the Result's
+    errors (the route answers 500 from them); nothing is renamed.
 
-    A rename moves the photo's index row -- embedding, faces and all -- rather than
-    leaving them behind; then the row gets what the file holds now. A failure recording
+    A rename is a change of its own in the library's journal (file_changes.rename: in History, undoable), which
+    moves the photo's index row -- embedding, faces and all -- rather than leaving them behind; then the row gets
+    what the file holds now. A rename that fails leaves the file as it was: `renamed` False, `rename_failed` says why. A failure recording
     it is logged, not raised: the file is written either way. The read, the write and the
     rename hold the lock of changes of photo files (file_changes.exclusively): a write
     between the read and the write was overwritten.
@@ -129,12 +130,17 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
                                                 held={paths.key(photo_path): now},
                                                 read_back_also=fields.METADATA_FIELDS)
         if not written.ok:
-            raise RuntimeError(written.message())
+            result.errors.extend(written.errors)
+            result.changed = written.changed
+            return result
         result.changed = written.changed
         kept = now.get(names.PRESERVED_NAME) or [""]
-        new_path = paths.stored(metadata.sync_title_to_filename(photo_path, title, exiftool_path, rename_format,
-                                                                kept[0]))
+        new_path, skipped, rename_failed = _rename_after_caption(
+            library, photo_path, paths.stored(metadata.title_filename(photo_path, title, rename_format, kept[0])),
+            files_only)
         renamed = not paths.same(new_path, photo_path)
+        if rename_failed:
+            result.details["rename_failed"] = rename_failed
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
                               hierarchical=hierarchical, index_warning=None, change=written.details["change"],
                               base={"tags": _tags_held(after), "title": vocabulary.trimmed(title or "")})
@@ -153,7 +159,6 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         return result   # no row to tell: the index reads the file when the folder is added
     try:
         recorded_tags = vocabulary.extract_tags(raw_meta)
-        skipped = photos.move_rows(library.path, {photo_path: new_path})[1] if renamed else []
         if skipped:
             result.details["index_warning"] = (
                 "Renamed, but the index already has a photo at %s; its rows were left as they were."
@@ -164,6 +169,25 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     except Exception as e:
         logger.warning("Failed to update SQLite database metadata for %s: %s", new_path, e)
     return result
+
+
+def _rename_after_caption(library, photo_path, wanted, files_only):
+    """(the photo's path now, the (old, new) pairs whose new name the index already had, why the rename failed
+    or None). The rename of a photo of the library is a change in its journal (file_changes.rename: in
+    History, undoable, its row moving with it); a photo of a folder it does not hold is renamed alone, as Smart
+    Rename does it. A rename that fails leaves the file as it was and is reported, not raised: the fields were
+    written."""
+    if wanted == photo_path:
+        return photo_path, [], None
+    try:
+        if files_only:
+            done = file_only.rename({photo_path: wanted}, {})
+        else:
+            done = file_changes.rename(library, "rename after caption", {photo_path: wanted}, {}, summary={"photos": 1})
+    except Exception as e:
+        logger.warning("Could not rename %s after its caption: %s", photo_path, e)
+        return photo_path, [], e.message() if isinstance(e, names.RenameFailed) else str(e)
+    return paths.stored(done.done.get(photo_path, wanted)), done.skipped or [], None
 
 
 def _caption_problem(et, photo_path, caption):
@@ -272,44 +296,60 @@ def _change_present(library, photo_paths, add, remove, exiftool_path, operation=
 def add_tags(library, additions, exiftool_path, persons=None):
     """Add each photo in `additions` (path -> tags) its own tags. Apply All on a folder's
     suggestions: suggestions deal in people's bare names, which are written as the tags
-    they are filed under. A photo with nothing to add is left alone. See _change_each.
+    they are filed under. A photo with nothing to add is left alone. See change_each.
     A tag that may not be set refuses the whole of it, and nothing is written.
-
-    A photo in a folder the library does not hold (Just look: what Suggest offered it was
-    analysed in memory) is written to its file only, as change_tags does
-    (tagpup.services.file_only): no row, no journal change, and the tag tree is only read, so a
-    person or tag the tree does not hold is written as it is offered. The library's own answer
-    decides, per photo, now.
 
     `persons` ({paths.key(path): the tags of `additions` that are people}): a person the file already
     names by their leaf is not added again (_change_each)."""
-    problem = validation.first_problem("tag", dict.fromkeys(t for tags in additions.values() for t in tags))
+    return change_each(library, {path: (tags, ()) for path, tags in additions.items()}, exiftool_path,
+                       "apply all suggestions", persons=persons)
+
+
+@roots_service.canonical_args("changes")
+def change_each(library, changes, exiftool_path, operation, persons=None, et=None, stop_at_first_error=True):
+    """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own, as ONE change of
+    photo files named `operation` in the journal. A photo with nothing to add or take off is left alone.
+    Held photos are written with their rows and journaled, and the damaged skipped; a photo in a folder
+    the library does not hold (Just look: what Suggest offered it was analysed in memory) is written to
+    its file only (tagpup.services.file_only): no row, no journal change, and the tag tree is only read,
+    so a person or tag the tree does not hold is written as it is offered. The library's own answer
+    decides, per photo, now. What is added is checked (tagpup.core.validation); what is taken off is not.
+
+    `persons`: as add_tags'. `et`: an ExifTool session the caller opened (with a deadline of its own), as
+    change_tags'. `stop_at_first_error` False: a photo that cannot be read or written is an error and the others are
+    written, as a bulk job does. Apply All's own is add_tags; the faces' (tagpup.services.face_people) adds and takes
+    off a person per photo."""
+    problem = validation.first_problem("tag", dict.fromkeys(t for add, _remove in changes.values() for t in add))
     if problem:
-        return _refused(len(additions), problem)
-    refused = _refused(len(additions), None)
-    held, loose = libraries.split(library, [path for path, tags in additions.items() if tags])
+        return _refused(len(changes), problem)
+    refused = _refused(len(changes), None)
+    held, loose = libraries.split(library, [path for path, (add, remove) in changes.items() if add or remove])
     if held and libraries.refuse_writes(refused, library, held, damaged_ok=True):
         return refused
     # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
     kept, left = libraries.leave_out_damaged(refused, library, held) if held else ([], [])
     if kept is None:
         return refused
+
+    def plan_of(chosen):
+        return [(path, list(changes[path][0]), changes[path][1]) for path in chosen]
     done = None
     if held or not loose:
-        done = libraries.with_skipped(_change_each(library, [(path, additions[path], ()) for path in kept],
-                                                   exiftool_path, "apply all suggestions", persons=persons), left)
+        done = libraries.with_skipped(_change_each(library, plan_of(kept), exiftool_path, operation,
+                                                   persons=persons, et=et,
+                                                   stop_at_first_error=stop_at_first_error), left)
     if not loose:
         return file_only.combined(done, None)
-    if done is not None and not done.ok:
+    if stop_at_first_error and done is not None and not done.ok:
         done.attempted += len(loose)
         for path in loose:
             done.skip(path, "not written: an earlier photo failed")
         return file_only.combined(done, None)
     writable, skipped = file_only.leave_out_unwritable(loose)
     files = libraries.with_skipped(
-        _change_each(library, [(path, additions[path], ()) for path in writable], exiftool_path,
-                     "apply all suggestions", files_only=True, persons=persons) if writable
-        else _refused(0, None), skipped)
+        _change_each(library, plan_of(writable), exiftool_path, operation, files_only=True, persons=persons,
+                     et=et, stop_at_first_error=stop_at_first_error)
+        if writable else _refused(0, None), skipped)
     return file_only.combined(done, files)
 
 

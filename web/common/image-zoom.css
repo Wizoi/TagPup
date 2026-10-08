@@ -1,0 +1,70 @@
+/* The photo zoom (web/common/image-zoom.js): the whole window, above everything, the
+   photo as large as fits. The image element fills it and object-fit scales the original
+   to fit; the smaller copy sits behind as a background scaled the same way, so the first
+   frame is not empty. Both pages load this file. */
+
+.image-zoom-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    background: rgba(0, 0, 0, 0.94);
+    cursor: zoom-out;
+    outline: none;
+}
+
+.image-zoom-overlay.hidden {
+    display: none !important;
+}
+
+.image-zoom-overlay img {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    padding: 4px;
+    object-fit: contain;
+    background-origin: content-box;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: contain;
+}
+
+/* The face's box, over the original. It takes no clicks: a click anywhere closes. */
+.image-zoom-box {
+    position: absolute;
+    box-sizing: border-box;
+    border: 2px solid #ef4444;
+    pointer-events: none;
+}
+
+.image-zoom-box.hidden,
+.image-zoom-note.hidden {
+    display: none !important;
+}
+
+.image-zoom-note {
+    position: absolute;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    max-width: 80%;
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: rgba(17, 24, 39, 0.9);
+    color: #f3f4f6;
+    font-size: 13px;
+    pointer-events: none;
+}
+
+/* Where a page draws over the picture (zoomedPicture): the whole overlay, taking no pointer itself, so a click on the
+   backdrop still closes; what the page draws in it asks for the pointer. */
+.image-zoom-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+/* Something that opens the zoom when clicked. */
+.zoomable {
+    cursor: zoom-in;
+}

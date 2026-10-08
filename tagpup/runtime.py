@@ -121,7 +121,7 @@ def recurring_jobs(runtime=None, libraries=None, clock=None):
 #: How long the models, the vectors and the other caches may go unused before the web
 #: server lets them go (minutes): a ViT-H-14 keeps a few GB of GPU memory, photo_index's
 #: vectors 270 MB, and the always-on process would hold them all day.
-RELEASE_MODELS_AFTER_MINUTES = 30
+RELEASE_MODELS_AFTER_MINUTES = 5
 
 #: The runtime's own entries in its idle registry (Runtime.idle).
 MODELS, PHOTO_INDEXES = "models", "photo indexes"
@@ -274,13 +274,28 @@ def exiftool(library, settings=None):
     return tagpup_config.exiftool_path((settings or library_settings(library)).exiftool)
 
 
+#: Called with (library, folder) when this process's index queue has finished a folder, indexed or not: rows were
+#: written even when clustering failed afterwards. The server puts here the dropping of its cached scan of the
+#: folder, which describes it as it was before (tagpup.web.tagpup_routes; docs/findings.md, #341). A process with
+#: no pages has none.
+folder_indexed = []
+
+
 def index_folder(library, subfolders=True):
     """How this process adds a folder to `library` from its index queue: the CLI's `index`
     in a process of its own, from this code (tagpup.services.indexing.index_folder); with
-    its subfolders unless not `subfolders`."""
+    its subfolders unless not `subfolders`. Whoever queued it, the folder's cached scans are dropped
+    when it ends (folder_indexed)."""
     def index(folder, cluster, report):
-        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report,
-                                     subfolders=subfolders)
+        try:
+            return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report,
+                                         subfolders=subfolders)
+        finally:
+            for told in list(folder_indexed):
+                try:
+                    told(library, folder)
+                except Exception:
+                    logger.exception("Could not tell that %s was indexed", folder)
     return index
 
 
@@ -303,7 +318,8 @@ def sync(library, folder=None, apply=False, index_new=True):
             return indexing_jobs.queue_for(library).start(folders, index_folder(library, subfolders=False),
                                                           together=True)
     return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
-                             roots=settings.roots, ignored=settings.ignored)
+                             roots=settings.roots, ignored=settings.ignored,
+                             reread_resized=settings.reread_resized_pictures)
 
 
 def relink_folders(library, apply=False, only=None):
@@ -342,7 +358,7 @@ def include(library, folder):
 
     def queue(folders):
         return indexing_jobs.queue_for(library).start(folders, index_folder(library))
-    return sync_service.include(library, folder, settings.roots, queue)
+    return sync_service.include(library, folder, settings.roots, queue, settings.ignored)
 
 
 def _frozen(settings):
@@ -679,6 +695,31 @@ class Runtime:
             logger.info("Let go of %s, unused for %d minutes; the next use makes them again.",
                         ", ".join(released), round(self.idle_after / 60))
         return released
+
+    def models_state(self):
+        """What the process has loaded: {"loaded": ["CLIP", "faces"] (those in memory), "in_use":
+        a run holds one, "last_used": seconds since a model was last asked for, or None
+        when none has been since they were let go, "release_after": the idle period in
+        seconds, or None}. What the Activity page shows."""
+        with self._lock:
+            clips = list(self._clips.values()) + ([self._clip] if self._clip is not None else [])
+            faces = list(self._face_models.values()) + ([self._faces] if self._faces is not None else [])
+            in_use = bool(self._held)
+
+        def loaded(models):
+            return any(callable(getattr(m, "loaded", None)) and m.loaded() for m in models)
+        names = [name for name, models in (("CLIP", clips), ("faces", faces)) if loaded(models)]
+        return {"loaded": names, "in_use": in_use, "last_used": self.idle.idle_for(MODELS) if names else None,
+                "release_after": self.idle_after}
+
+    def unload_models_now(self):
+        """The owner's Unload models now: every model let go and the turn on the graphics
+        card given up at once -- unless a Suggest run holds one, when nothing is touched.
+        Returns {"unloaded": [names that were loaded], "busy": bool}."""
+        before = self.models_state()
+        if not self.idle.release_now(MODELS):
+            return {"unloaded": [], "busy": True}
+        return {"unloaded": before["loaded"], "busy": False}
 
     def _release_models(self):
         """Every model, when no run holds one (the registry asks in_use first). How many."""

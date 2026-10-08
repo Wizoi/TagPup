@@ -14,6 +14,11 @@ export const state = {
     allPeopleWithCounts: [],
     // The same people in the order the sidebar shows them (people.js sets it when it draws them).
     shownPeople: [],
+    // "name" or "face": how the people list is drawn (people.js remembers it per browser).
+    peopleView: 'name',
+    // {name: face id}: the face most like each person, as /api/people-faces answers; only
+    // read while the list is shown by face.
+    personFaces: {},
     activePersonName: null,
     lastLoadedPersonName: null,
     //: The person whose grid is being fetched right now. Redrawing the sidebar asks
@@ -48,6 +53,10 @@ export const state = {
     //: that face, and must not quietly follow a later, different selection.
     nameFilledForFaceIds: null,
     activePersonFaces: [],
+    //: The face the Face Crop Details pane shows (selection.js): the zoom draws its box.
+    detailFace: null,
+    /** [width, height] of the file the details face's box is in, once the details say; else null. */
+    detailPhotoSize: null,
     activeTab: 'matches', // 'matches' or 'outliers'
     modalSelectedFaceIds: [],
 

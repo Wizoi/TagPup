@@ -6,6 +6,7 @@
 Prints what the library holds, then each rule (tagpup.store.checks) with how many rows
 break it -- among them the library's roots: a rooted row that cannot be read, a native row
 under a root -- then how many photos have no CLIP vector for the model the config names,
+then the photos that list a person from a face alone (a face was named and no keyword says so: reported, not broken),
 then the rows whose file is not on disk, by folder, and the photos under no root, by folder.
 Counts only, unless --show asks for examples: they are paths and tags, and paths name
 people. Then the keywords photos carry that the tag tree has no node for, which is reported, not
@@ -63,6 +64,7 @@ def report(db_path, show=0, out=print):
             unplaced, missing = unplaced or str(problem), []
         unembedded = checks.without_a_vector(conn, model) if model else None
         undetected = checks.faces_to_detect(conn)
+        on_faces_alone = checks.people_on_faces_alone(conn)
         unrooted = checks.unrooted_by_folder(conn)
         unnamed = checks.tags_without_a_node(conn)
         empty = checks.empty_folders(conn)
@@ -92,6 +94,10 @@ def report(db_path, show=0, out=print):
             "computes them)" % unembedded)
     out("photos whose faces are still to be detected: %d (indexed from a damaged copy; the next index "
         "of their folders detects them)" % undetected)
+    if on_faces_alone[0]:
+        out("photos listing a person from a face alone: %d, %d people (reported, not broken: a face was named and the "
+            "photo's keywords do not say so; `tagpup_cli.py tags-from-faces` counts them, and with --apply writes the "
+            "keywords into those photo FILES)" % on_faces_alone)
     if not unplaced:
         rows = sum(count for _folder, count, _there in missing)
         gone = [(folder, count) for folder, count, there in missing if not there]

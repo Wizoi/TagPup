@@ -148,6 +148,9 @@ class Batch:
         self.conn = conn
         self._tree = None
         self.folders = {}
+        #: {person: the unit vectors of their decided faces, or None}: what a run of writes naming faces
+        #: from their photos' tags has read of each person, once (tagpup.store.face_tags, #841).
+        self.decided = {}
 
     @property
     def tree(self):

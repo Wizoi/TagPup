@@ -633,6 +633,18 @@ class TheNavigator(Library):
         self.assertEqual((1, [], 1), (years[2019]["count"], years[2019]["months"], years[2019]["other"]), "a year from a name")
         self.assertEqual(1, found["undated"])
 
+    def test_a_year_nobody_could_have_taken_it_in_is_marked_for_the_page_to_group(self):
+        # #510: photo_index holds 61 years, 1827 to 2079: a number in a file name, a scan's clock. The server says
+        # which are implausible (before 1900, after next year) and the page only shows what it is told.
+        import datetime
+        this_year = datetime.date.today().year
+        for taken in ("1888:05:01 10:00:00", "1900:01:02 10:00:00", "1919:03:04 10:00:00",
+                      "%04d:06:07 10:00:00" % (this_year + 1), "%04d:06:07 10:00:00" % (this_year + 2)):
+            self.vl.photo("odd years", "%s.jpg" % taken[:4], taken=taken)
+        found = {each["year"]: each["implausible"] for each in self.section("dates")["years"]}
+        self.assertEqual({1888: True, 1900: False, 1919: False, 2019: False, 2023: False, 2024: False,
+                          this_year + 1: False, this_year + 2: True}, found)
+
     def test_each_month_and_year_agrees_with_the_source_it_opens(self):
         for each in self.section("dates")["years"]:
             self.assertEqual(each["count"], library_view.view(self.vl.library, "year", str(each["year"]))["total"])

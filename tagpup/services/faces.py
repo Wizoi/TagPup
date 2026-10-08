@@ -20,8 +20,9 @@ import numpy as np
 
 from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
+from tagpup.services import photos as photo_files
 from tagpup.services import thumbnails
-from tagpup.store import db, faces, faces_detected, faces_pending, photos
+from tagpup.store import db, face_tags, faces, faces_detected, faces_pending, photos
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import folders as store_folders
 
@@ -38,8 +39,10 @@ def name_face(library, face_id, person_name):
     """Name one face. Clicking a suggestion, or typing a name, on a face card.
 
     A person chose this, so it is recorded as a manual decision: re-clustering re-derives
-    every name from scratch and must not discard it. Refused when somebody else's face in
-    the photo already carries the name; a Conflict for a face that has been excluded.
+    every name from scratch and must not discard it -- also when the face already carries
+    this name as an automatic one (a person confirming a guess: `changed` 1). Refused when
+    somebody else's face in the photo already carries the name; a Conflict for a face that
+    has been excluded.
     """
     result = Result(attempted=1)
     person_name = (person_name or "").strip()
@@ -57,7 +60,11 @@ def name_face(library, face_id, person_name):
         # that is both ruled out and claimed, which no view shows and no Undo reaches.
         if excluded:
             raise Conflict("Cannot match: this face is excluded. Restore it first to name it.")
+        # Already this person: nothing to change but who decided -- an automatic name (clustering's, or a
+        # photo's tag's, #788) a person now confirms becomes their decision, in the spelling it has.
         if old_name and vocabulary.key(old_name) == vocabulary.key(person_name):
+            result.changed = faces.confirm(write.conn, face_id)
+            result.details.update(face_ids=[face_id], fingerprints=(write.before, write.after))
             return result
         if faces.named_elsewhere_in_photo(write.conn, photo_path, person_name, face_id):
             result.refuse("Cannot match: '%s' is already tagged on another face in this photo."
@@ -67,6 +74,34 @@ def name_face(library, face_id, person_name):
         result.changed = 1
     result.details.update(face_ids=[face_id], fingerprints=(write.before, write.after))
     return result
+
+
+def check_nameable(library, face_id, person_name, refused, guesses_yield=False):
+    """What name_face would refuse, asked before anything else is written (face_people writes the photo's tag first): the
+    photo's path and the name the face carries now (or None) when `face_id` can be named `person_name` -- also when it carries
+    the name already -- and None when it cannot, `refused` (a Result) saying why. With `guesses_yield` a face carrying the name as a guess does not refuse it (the caller gives the guess
+    back: face_people.name_face, for a page that wrote the tag first). NotFound for a face that is not there, Conflict for one excluded. Reads only;
+    name_face asks again under the write lock, which is the check that holds."""
+    problem = validation.problem("name", person_name)
+    if problem:
+        refused.refuse(problem)
+        return None
+    _library_there(library)
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        row = faces.rows(conn, [face_id]).get(face_id)
+        if not row:
+            raise NotFound("Face ID not found")
+        photo_path, old_name, excluded = row
+        if excluded:
+            raise Conflict("Cannot match: this face is excluded. Restore it first to name it.")
+        if (not (old_name and vocabulary.key(old_name) == vocabulary.key(person_name))
+                and faces.named_elsewhere_in_photo(conn, photo_path, person_name, face_id, decided_only=guesses_yield)):
+            refused.refuse("Cannot match: '%s' is already tagged on another face in this photo." % person_name)
+            return None
+        return photo_path, old_name
+    finally:
+        conn.close()
 
 
 def name_faces(library, face_ids, person_name):
@@ -309,7 +344,7 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     details: `dry_run`; `faces`, the faces named (or that would be); `photos`, the photos
     they are in; `people`, {name: faces}; `renamed`, the faces left because their person's
     name had gone. The same keys whether rehearsed or applied, so the page can say how the
-    two differ."""
+    two differ. Applied, `named_ids` too, {face id: name} of the faces written."""
     _library_there(library)
     result = Result(details={"dry_run": bool(rehearse), "faces": 0, "photos": 0, "people": {}, "renamed": 0})
     conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -359,7 +394,8 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
         # play are named, name_if_unnamed's guard, and only those are counted: in one write
         # whose photos are rebuilt once (faces.name_unnamed; docs/findings.md, #659).
         named = set(faces.name_unnamed(conn, {face_id: name for face_id, name, _photo in chosen}))
-        return [(name, face_photo) for face_id, name, face_photo in chosen if face_id in named], gone
+        return ([(name, face_photo) for face_id, name, face_photo in chosen if face_id in named], gone,
+                {face_id: name for face_id, name, _photo in chosen if face_id in named})
 
     if rehearse:
         conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -369,8 +405,9 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
             conn.close()
         done = [(name, face_photo) for _fid, name, face_photo in chosen]
     else:
-        done, gone = db.write_with_connection(library.path, match, label="automatch faces")
+        done, gone, named_ids = db.write_with_connection(library.path, match, label="automatch faces")
         result.changed = len(done)
+        result.details["named_ids"] = named_ids
     result.details.update(faces=len(done), photos=len({face_photo for _name, face_photo in done}),
                           people=dict(collections.Counter(name for name, _photo in done)), renamed=gone)
     if not rehearse:
@@ -417,9 +454,11 @@ def _library_there(library):
 # ---- What TagPup's photo panel shows -------------------------------------------------------
 
 def panel(library, photo_path):
-    """The faces detected on one photo, for the strip under its details: {"faces",
-    "total", "unmatched"}, each face with its box, area, name, prob, exclusion, and for
-    an unnamed one the closest name elsewhere in the library and how alike.
+    """The faces detected on one photo, for the strip under its details and the boxes over
+    it: {"faces", "total", "unmatched", "size", "turned"}, each face with its box, area, name,
+    prob, exclusion, and for an unnamed one the closest name elsewhere in the library and how
+    alike. `size` is [width, height] of the pixels the boxes are in, or None, and `turned`
+    says the photo declares an EXIF Orientation its boxes do not follow (photos.box_shape).
 
     TagPup ran face recognition invisibly: the suggester matched faces and surfaced
     only a name pill, so there was no way to see which face was unrecognised while
@@ -468,7 +507,8 @@ def panel(library, photo_path):
         })
     found.sort(key=lambda f: (f["name"] is None, -(f["similarity"] or 0.0), -f["area"]))
     return {"faces": found, "total": len(found),
-            "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"])}
+            "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"]),
+            **photo_files.box_shape(photo_path)}
 
 
 def _unit(embedding):
@@ -573,6 +613,8 @@ def record_detected(db_path, photo_path, detected, detector=None):
                 continue
             _insert_detected(conn, photo_path, face)
             inserted += 1
+        if inserted:
+            face_tags.name_paths(conn, [photo_path])   # the photo's person tag names its face (#788)
         return inserted
 
     try:
@@ -601,6 +643,8 @@ def replace_detected(conn, photo_path, detected, detector=None):
         faces.remove_for_photo(conn, photo_path)
         for face in detected:
             _insert_detected(conn, photo_path, face, name=face.get("name"))
+        if detected:
+            face_tags.name_paths(conn, [photo_path])   # (#788)
         faces_pending.clear(conn, [photo_path])
         _record_detection(conn, photo_path, detector, detected)
         conn.commit()
@@ -626,13 +670,20 @@ def record_batch(conn, batch, overwrite=False, detector=None):
         return
     try:
         db.begin(conn)
+        recorded = []
         for photo_path, detected in batch.items():
-            _record_detection(conn, photo_path, detector, detected)
             if not overwrite and faces.count_for_photo(conn, photo_path) > 0:
+                _record_detection(conn, photo_path, detector, detected)
                 continue
+            # Recorded after the old faces go: removing a photo's faces forgets that they were detected.
             faces.remove_for_photo(conn, photo_path)
+            _record_detection(conn, photo_path, detector, detected)
             for face in detected:
                 _insert_detected(conn, photo_path, face, name=face.get("name"))
+            if detected:
+                recorded.append(photo_path)
+        # The photos' person tags name their faces (#788), once the batch's faces are all there.
+        face_tags.name_paths(conn, recorded)
         # Detection ran on each photo of the batch: none is still to detect (store.faces_pending).
         faces_pending.clear(conn, list(batch))
         conn.commit()
@@ -661,6 +712,17 @@ def clear_automatic_names(conn):
         logger.error(f"Error resetting face assignments in database: {e}")
         conn.rollback()
         raise e
+
+
+def named_counts(library, folder=None):
+    """{"named", "unnamed"}: the faces in play (not excluded) that have a name and those that have none, in the whole
+    library or in the photos under `folder` at any depth. A look; a library that cannot be read raises."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        named, unnamed = faces.named_and_unnamed(conn, folder)
+    finally:
+        conn.close()
+    return {"named": named, "unnamed": unnamed}
 
 
 def known_faces(db_path):

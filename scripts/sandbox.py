@@ -3,7 +3,14 @@
 scripts/measure_identify_faces.py, measure_suggest_folder.py and measure_grid.py each run the app in a
 sandbox: the library copied through SQLite's backup API under a temporary TAGPUP_HOME, the library's roots
 placed at empty sandbox folders by the sandbox's own machine map, a server on a free port, all deleted
-afterwards. A script may not import another script, so what they share is here, a helper of scripts/
+afterwards. The sandbox is a home of its own (`environment`, `enter`: tagpup.config.own_home_environment, what
+a test's home sets too): a sandbox's server once wrote its records of where it answers into the owner's
+%LOCALAPPDATA%\\TagPup\\servers (docs/findings.md, #796). Its turn on the graphics card is the one folder it
+shares with the owner's apps (#810): a sandbox that loads models takes its turn in the owner's line, as every
+process on the machine does (tagpup.ml.gpu), so it never sits on the 10 GB card beside the owner's index (#750).
+Side effects, wanted: a sandbox waiting for the card makes the owner's idle server give up its models (its next
+Suggest loads them again, about 15 s), and a measurement that loads models measures a cold load.
+A script may not import another script, so what they share is here, a helper of scripts/
 (tests/test_scripts_are_entry_points.py, HELPERS) beside code_snapshot, which copies the code.
 """
 import os
@@ -18,6 +25,7 @@ import _root  # noqa: E402,F401
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.ml import gpu  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
 
 
@@ -26,6 +34,22 @@ def free_port():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+def environment(sandbox, **more):
+    """The environment of a process run in `sandbox` -- a server, a CLI command: this one's, with the sandbox as
+    its home and every folder of the user's own a TagPup process touches moved into it, and `more`."""
+    env = dict(os.environ)
+    env.update(tagpup_config.own_home_environment(sandbox))
+    env.pop(gpu.ENV, None)   # the card is the machine's: the owner's line, not a home's own (#810)
+    env.update(more)
+    return env
+
+
+def enter(sandbox):
+    """Make this process's own work happen in `sandbox`, as `environment` does for one it starts."""
+    os.environ.update(tagpup_config.own_home_environment(sandbox))
+    os.environ.pop(gpu.ENV, None)
 
 
 def copy_library(source_db, target):

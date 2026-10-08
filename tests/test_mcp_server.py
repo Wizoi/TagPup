@@ -128,10 +128,13 @@ class McpServer(unittest.TestCase):
             Image.new("RGB", (64, 48), (90, 120, 200)).save(path, "JPEG")
         if cls.exiftool:
             from tagpup.files.exiftool_session import ExifToolSession
-            from tagpup.files.keywords import write_keywords
+            from tagpup.core import fields
             with ExifToolSession(executable=cls.exiftool) as et:
                 # The file carries one tag its row does not.
-                write_keywords(et, cls.sailing, ["People/Rowan Thackeray", "Activity/Sailing", "Activity/Racing"])
+                flat, hierarchical = fields.expand_tag_fields(
+                    ["People/Rowan Thackeray", "Activity/Sailing", "Activity/Racing"])
+                et.set_tags([cls.sailing], tags=fields.keyword_fields(flat, hierarchical),
+                            params=["-overwrite_original"])
 
     def tearDown(self):
         with open(self.db_path, "rb") as handle:

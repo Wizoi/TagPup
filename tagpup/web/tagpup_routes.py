@@ -20,7 +20,6 @@ import threading
 
 from flask import Blueprint, Response, jsonify, request
 
-from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, vocabulary
 from tagpup.core.library import picker_name
@@ -31,7 +30,6 @@ from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import bulk_edit, damaged_photos
 from tagpup.services import faces as face_actions
 from tagpup.services import file_changes, file_only
-from tagpup.services import indexing
 from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
 from tagpup.services import people as people_service
@@ -166,16 +164,20 @@ def _folder_photos(library, folder):
 
 def _folder_indexer(library):
     """How this server adds a folder to a library: through the CLI
-    (tagpup.services.indexing.index_folder). Then the folder's cached scan is dropped,
-    since rows were written even when clustering failed afterwards. Runs on the queue's
-    thread, with the library it was handed."""
-    def index(folder, cluster, report):
-        try:
-            return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT,
-                                         cluster=cluster, report=report)
-        finally:
-            folders.of(library).pop(folder)
-    return index
+    (tagpup.services.indexing.index_folder), as every folder of this process's index queue is (tagpup.runtime.
+    index_folder), which tells `_scan_is_stale` when the folder is done. Runs on the queue's thread, with the
+    library it was handed."""
+    return runtimes.index_folder(library)
+
+
+def _scan_is_stale(library, folder):
+    """The folder was indexed: its cached scan, kept since before its photos were read (or read again), describes it
+    as it was -- even when clustering failed afterwards, since rows were written. Dropped, whoever queued the folder:
+    this route, a sync, the damaged-photo check (docs/findings.md, #341)."""
+    folders.of(library).pop(folder)
+
+
+runtimes.folder_indexed.append(_scan_is_stale)
 
 
 def _wanted_path():
@@ -417,8 +419,8 @@ def folder_auto_apply():
         with file_changes.exclusively():
             result = tagging_actions.apply_suggestions(library, suggestions, state.exiftool(library), threshold)
             if result.refused:
-                return responses.refused(result)
-            _records_written(library, result)
+                return _refused_after_writing(library, result)
+            records_written(library, result)
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
         return responses.error(500, str(e))
@@ -1116,6 +1118,9 @@ def photo_save_metadata():
                                             state.exiftool(library), state.rename_format(library), stamp, base)
         if result.refused:
             return responses.refused(result)
+        if not result.ok:
+            logger.error("Error saving metadata for %s: %s", photo_path, result.message())
+            return responses.error(500, result.message())
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
         # Every folder map holding the photo, found under the name it had (a rename
         # stays in the same directory).
@@ -1163,14 +1168,8 @@ def photos_bulk_tags():
             result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
                                                  state.exiftool(library))
             if result.refused:
-                # A write stopped half-way (its roots changed) has written some files: the page is told which,
-                # and its records say so, as for a failure.
-                if result.details.get("written"):
-                    _records_written(library, result)
-                    return responses.refused(result, written=_written_tags(result),
-                                             change=result.details.get("change"))
-                return responses.refused(result)
-            _records_written(library, result)
+                return _refused_after_writing(library, result)
+            records_written(library, result)
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
         return responses.error(500, str(e))
@@ -1221,7 +1220,17 @@ def _written_tags(result):
     return {path: list(tags) for path, (tags, _flat, _hierarchical) in result.details["written"].items()}
 
 
-def _records_written(library, result):
+def _refused_after_writing(library, result):
+    """The reply to a bulk write that was refused. One that stopped half-way (its roots changed) has written
+    some files: the page is told which, and the cached records say so, as for a failure -- the one owner of that
+    answer for the bulk tag write and Apply All (findings #878)."""
+    if result.details.get("written"):
+        records_written(library, result)
+        return responses.refused(result, written=_written_tags(result), change=result.details.get("change"))
+    return responses.refused(result)
+
+
+def records_written(library, result):
     """The page's records of the photos a bulk write wrote (`written` in its details).
     The photos written before any failure are written; the page's copy of them has to
     say so either way."""

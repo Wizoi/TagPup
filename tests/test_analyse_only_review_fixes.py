@@ -23,7 +23,7 @@ import test_analyse_only_suggest as base  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
-from tagpup.services import suggester  # noqa: E402
+from tagpup.services import indexing, suggester  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
@@ -50,7 +50,7 @@ class WithIndexing(Base):
         super().setUp()
         self.gate = None
         self.index = FakeIndex()
-        patcher = mock.patch.object(tagpup_routes.indexing, "index_folder", self.index)
+        patcher = mock.patch.object(indexing, "index_folder", self.index)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(indexing_jobs.forget, self.library)

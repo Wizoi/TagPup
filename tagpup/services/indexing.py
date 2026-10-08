@@ -20,11 +20,11 @@ from tagpup.core import validation
 from tagpup.core.result import Result
 from tagpup.services import roots as roots_service
 
-#: Where faces are clustered when adding a folder did not: the runner's button, whose
-#: label this is (tests/test_indexing_names_a_real_control.py holds the two together).
-#: The messages named a Recluster button no page has (docs/findings.md, #22).
-CLUSTERING_BUTTON = "Run Identity Resolution Clustering"
-CLUSTER_ELSEWHERE = "%s in TagPup Runner" % CLUSTERING_BUTTON
+#: Where faces are named from the photos' tags when adding a folder did not cluster: the button of both apps, whose
+#: label this is (tests/test_indexing_names_a_real_control.py holds the messages and the pages together). The messages named
+#: a Recluster button no page has (docs/findings.md, #22), then the Tk runner's button; the apps have their own now (#789).
+CLUSTERING_BUTTON = "Name faces from tags"
+CLUSTER_ELSEWHERE = "%s in TagTuner's header" % CLUSTERING_BUTTON
 
 #: The kind of log the indexer writes, one file a run (tagpup.logs.run_log).
 INDEXER_LOG = "indexer"

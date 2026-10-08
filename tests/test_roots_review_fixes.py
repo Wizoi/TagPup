@@ -10,7 +10,6 @@ import os
 import shutil
 import sys
 import threading
-import time
 import unittest
 from unittest import mock
 
@@ -20,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
+import share_waits  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core.result import Conflict  # noqa: E402
@@ -265,10 +265,11 @@ class OneOwnerOfAShareBeingAway(unittest.TestCase):
         self.addCleanup(release.set)
         state, _ = roots_verify._bounded(self.SHARE, lambda: release.wait(30), 0.2)
         self.assertEqual("away", state)
-        started = time.monotonic()
-        self.assertIsNone(damaged_photos._folder_stamps(self.SHARE + "\\2024"),
-                          "a share Verify found away was asked for again by the damaged photos' list")
-        self.assertLess(time.monotonic() - started, 0.15)
+        waits, counting = share_waits.counted()
+        with counting:
+            self.assertIsNone(damaged_photos._folder_stamps(self.SHARE + "\\2024"),
+                              "a share Verify found away was asked for again by the damaged photos' list")
+        self.assertEqual([], waits, "and waited for")
 
     def test_and_the_other_way(self):                                                         # #474
         release = threading.Event()
@@ -277,9 +278,10 @@ class OneOwnerOfAShareBeingAway(unittest.TestCase):
                 mock.patch.object(damaged_photos, "SHARE_WAIT", 0.2):
             self.assertIsNone(damaged_photos._folder_stamps(self.SHARE + "\\2024"))
         self.assertIn(shares.share_of(self.SHARE), shares._away)
-        started = time.monotonic()
-        self.assertEqual("away", roots_verify._bounded(self.SHARE, lambda: "never asked", 5)[0])
-        self.assertLess(time.monotonic() - started, 0.15)
+        waits, counting = share_waits.counted()
+        with counting:
+            self.assertEqual("away", roots_verify._bounded(self.SHARE, lambda: "never asked", 5)[0])
+        self.assertEqual([], waits, "a share the damaged photos' list found away was waited for by Verify")
 
     def test_the_duplicate_is_gone(self):                                                     # #474
         source = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tagpup", "services",

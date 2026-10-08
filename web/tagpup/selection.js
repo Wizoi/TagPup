@@ -28,6 +28,7 @@ import { BULK_CONFIRM_ABOVE, BULK_LIMIT, isSelected, selectionCount, selectionPr
 import { setStatus } from './status.js';
 import { addTypedToSelection } from './bulk-edit.js';
 import { clearTally, selectionTallied } from './tally.js';
+import { drawJumpNote, showPanelFor } from './selection-panel.js';
 
 /**
  * A library view's selection that a request cannot carry says why beside the panel, the moment it is so, not when a bulk
@@ -59,6 +60,7 @@ export function updateSelectedThumbnailsCount() {
         selectionSummaryScroll.classList.toggle('hidden', count === 0);
     }
 
+    showPanelFor(Boolean(state.library));
     if (state.library) {
         showLibrarySelection();
         return;
@@ -286,6 +288,7 @@ function showLibrarySelection() {
         clearTally();
         if (selectionPeopleList) selectionPeopleList.innerHTML = '';
         if (selectionTagsList) selectionTagsList.innerHTML = '';
+        drawJumpNote('');
     } else {
         selectionTallied();
     }

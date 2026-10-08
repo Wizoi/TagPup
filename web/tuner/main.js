@@ -22,6 +22,8 @@ import {
 import { restoreIndexingState, wireIndexing } from './indexing.js';
 import { wireReview } from './review.js';
 import { wireTunerGear } from './gear.js';
+import { wireNameFaces } from './name-faces.js';
+import { wireZoom } from './zoom.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     // What may be set, as the server says (web/common/validate.js): once.
@@ -58,16 +60,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     updateMatchedToggleVisibility();
 
-    fetchPhotos();
-    fetchKnownPeople();
-    restoreIndexingState();
-
     // Each feature's listeners, in the order the page first added them.
     wireSidebar();
     wireFacesStrip();
     wireAssign();
     wireNewPerson();
     wireSelection();
+    wireZoom();
     wireGrid();
     wireIndexing();
     wirePeople();
@@ -77,8 +76,18 @@ document.addEventListener('DOMContentLoaded', () => {
     wireTunerGear();
     // How many folders under the library's roots wait to be included or ignored.
     wireReview();
+    // The Folder Matches header's "Name faces from tags" (the gear's item is wired with the gear).
+    wireNameFaces();
     // A library whose root this computer does not place says so, at the top of the page.
     wireRootsBanner();
     // How many of the library's photos were found damaged, in the header.
     showDamagedCount(document.getElementById('damaged-badge'));
+
+    // ---- Start ------------------------------------------------------------
+    // Last, deliberately: these read the library and pick up an index already running, which calls into
+    // most of the page, through the listeners wired above and the calls up the page (hooks.js).
+    // tests/frontend/tuner-starts-last.test.mjs keeps it so.
+    fetchPhotos();
+    fetchKnownPeople();
+    restoreIndexingState();
 });

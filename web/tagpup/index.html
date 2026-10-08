@@ -9,7 +9,12 @@
     <link rel="stylesheet" href="common/tag-editor.css">
     <link rel="stylesheet" href="common/settings-dialog.css">
     <link rel="stylesheet" href="common/history-dialog.css">
+    <link rel="stylesheet" href="common/name-faces.css">
     <link rel="stylesheet" href="common/roots-banner.css">
+    <link rel="stylesheet" href="common/image-zoom.css">
+    <link rel="stylesheet" href="common/person-faces.css">
+    <link rel="stylesheet" href="common/dark-select.css">
+    <link rel="stylesheet" href="common/library-picker.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -196,6 +201,8 @@
                     <!-- Top section: Original Image -->
                     <div class="image-section">
                         <div class="card-header">
+                            <!-- In a library view only: back to the grid as it was left (web/tagpup/view-left.js, #780). Escape and the browser's Back do the same. -->
+                            <button type="button" id="btn-photo-back" class="btn btn-secondary btn-sm hidden" title="Back to the view as you left it (Escape)">&larr; Back to the view</button>
                             <h3>Original Image <span id="photo-position" class="photo-position hidden" title="Where this photo is in the list"></span></h3>
                             <div class="image-rotation-controls" data-writes>
                                 <button id="btn-rotate-left" class="btn btn-secondary btn-sm" title="Rotate 90° Left">🔄 Rotate Left</button>
@@ -207,8 +214,10 @@
                         <p id="photo-damaged-note" class="photo-damaged-note hidden" role="alert"></p>
                         <!-- This photo's file is gone: it is shown as the library holds it, and cannot be edited (web/tagpup/stale.js). -->
                         <p id="photo-missing-note" class="photo-missing-note hidden" role="alert"></p>
-                        <div class="image-viewer">
+                        <div class="image-viewer" id="image-viewer">
                             <img id="main-image" src="" alt="Selected Photo">
+                            <!-- Over the picture exactly: the face icon, the boxes and the panel of the face clicked (web/tagpup/face-boxes.js). -->
+                            <div id="face-layer" class="face-layer hidden"></div>
                         </div>
                     </div>
 
@@ -355,8 +364,12 @@
                                     <p class="folder-subtitle">Select images to batch edit tags, time shift, or cleanly rename.</p>
                                 </div>
                                 <div class="folder-view-actions">
+                                    <!-- Name faces from tags, in the whole library (web/tagpup/name-faces.js, web/common/name-faces.js). -->
+                                    <button id="btn-name-faces" type="button" class="btn btn-secondary btn-sm" title="Name the faces the photos' person tags name, in the whole library, not only this folder. You are shown the plan and asked before anything is written.">Name faces from tags</button>
                                     <button id="btn-show-in-library" class="btn btn-secondary btn-sm hidden" title="Open this folder's photos as the library holds them: by Date Taken, from the index, with the folder's subfolders">Show in library</button>
                                     <div class="selection-actions">
+                                        <!-- In a narrow window only (style.css): the Selection Details panel is collapsed behind this, and opened lies over the grid (web/tagpup/details-panel.js, #720). -->
+                                        <button id="btn-details-toggle" type="button" class="btn btn-secondary btn-sm details-toggle" aria-expanded="false" aria-controls="folder-selection-sidebar" title="Show or hide the Selection Details panel">Details</button>
                                         <button id="btn-select-all-thumbnails" class="btn btn-secondary btn-sm">Select All</button>
                                         <button id="btn-select-none-thumbnails" class="btn btn-secondary btn-sm">Select None</button>
                                         <!-- In a library view only: delete the selected photos, files and rows, as a job (web/tagpup/bulk-edit.js, #674). -->
@@ -439,6 +452,8 @@
                         <div class="sidebar-card-header">
                             <h3>Selection Details</h3>
                             <span id="selection-summary-count" class="selected-count-badge">Selected: 0</span>
+                            <!-- In a narrow window only: the opened panel lies over the grid's header, and the Details button with it (details-panel.js, #720). -->
+                            <button id="btn-details-close" type="button" class="btn btn-secondary btn-sm details-close" aria-label="Hide Selection Details" title="Hide Selection Details">&times;</button>
                         </div>
                         
                         <div class="selection-empty-hint hidden" id="selection-empty-hint">
@@ -447,11 +462,26 @@
                         </div>
 
                         <div class="selection-summary-scroll">
-                            <!-- In a library view only: the folders the selected photos are in, each opening in Organize, when there
-                                 are 10 or fewer; more are counted (web/tagpup/tally.js, #675). -->
-                            <div class="selection-summary-group hidden" id="selection-folders-group">
-                                <span class="detail-label">Folders to Organize</span>
-                                <div id="selection-folders-list" class="selection-folders-list"></div>
+                            <!-- Why the selection cannot be edited as it is, when it cannot (selection.js). -->
+                            <div id="selection-note" class="selection-missing-note hidden" role="status"></div>
+
+                            <!-- In a library view only: the NAVIGATION half of the panel (web/tagpup/selection-panel.js, #781). Each
+                                 link changes the view as a click in the sidebar does; the selection stays behind. -->
+                            <div id="selection-navigation" class="selection-navigation hidden">
+                                <!-- The folders the selected photos are in, each opening in Organize, when there
+                                     are 10 or fewer; more are counted (web/tagpup/tally.js, #675). -->
+                                <div class="selection-summary-group hidden" id="selection-folders-group">
+                                    <span class="detail-label">Folders to Organize</span>
+                                    <div id="selection-folders-list" class="selection-folders-list"></div>
+                                </div>
+                                <div class="selection-summary-group" id="selection-people-jump-group">
+                                    <span class="detail-label" id="selection-people-jump-label">People jump</span>
+                                    <div id="selection-people-jump" class="selection-jump-list" role="list" aria-labelledby="selection-people-jump-label"></div>
+                                </div>
+                                <div class="selection-summary-group" id="selection-keyword-jump-group">
+                                    <span class="detail-label" id="selection-keyword-jump-label">Keyword jump</span>
+                                    <div id="selection-keyword-jump" class="selection-jump-list" role="list" aria-labelledby="selection-keyword-jump-label"></div>
+                                </div>
                             </div>
 
                             <!-- Organize only: a library view's panel has no Date Taken (#675). -->
@@ -460,6 +490,12 @@
                                 <span class="detail-value" id="selection-date-value" style="font-size: 13px; font-weight: 500;">Unknown</span>
                             </div>
                             
+                            <!-- The TAGGING half. In a library view it is a section that starts closed, and the choice is kept in this
+                                 browser (selection-panel.js); in Organize there is no button and the section is the panel it always was. -->
+                            <button type="button" id="btn-selection-tagging" class="selection-tagging-toggle hidden" aria-expanded="false" aria-controls="selection-tagging-body">
+                                <span class="selection-tagging-arrow" aria-hidden="true">&#x25B8;</span> Tagging
+                            </button>
+                            <div id="selection-tagging-body" class="selection-tagging-body">
                             <div class="selection-summary-group">
                                 <span class="detail-label">People in Selection</span>
                                 <div id="selection-people-list" class="selection-summary-chips">
@@ -488,8 +524,6 @@
                                 </div>
                             </div>
 
-                            <div id="selection-note" class="selection-missing-note hidden" role="status"></div>
-
                             <div class="bulk-editor-divider"></div>
 
                             <div class="bulk-edit-section">
@@ -512,8 +546,10 @@
                                 </div>
                             </div>
                             
-                            <div style="padding: 12px 20px; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
+                            <!-- Organize only: Suggest's auto-apply is not a library view's (selection-panel.js). -->
+                            <div id="selection-auto-apply" style="padding: 12px 20px; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
                                 <button id="btn-folder-auto-apply" class="btn btn-accent btn-sm" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;" disabled>🤖 Auto-Apply AI Suggestions</button>
+                            </div>
                             </div>
                         </div>
                     </div>
@@ -580,11 +616,6 @@
                 <button class="btn btn-primary" id="btn-add-folder">Add</button>
             </div>
         </div>
-    </div>
-
-    <!-- Zoom: the open photo as large as the window allows. Click or Escape closes. -->
-    <div id="image-zoom" class="image-zoom-overlay hidden" title="Click or press Escape to close">
-        <img id="image-zoom-img" alt="">
     </div>
 
     <!-- The photo write queue: "Saving 2 of 5...", its entries on hover (write-queue.js). -->

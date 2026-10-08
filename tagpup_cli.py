@@ -67,6 +67,9 @@ from tagpup.runtime import Runtime
 from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
+from tagpup.services import duplicate_rows as duplicate_rows_service
+from tagpup.services import faces_from_tags as faces_from_tags_service
+from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import damaged_photos
@@ -110,19 +113,21 @@ def library_index(runtime, db_path, read_only=False):
     command that only looks: the library is not migrated (docs/findings.md, #243)."""
     return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)), read_only=read_only)
 
-def default_suggestions_file(db_path):
-    """Where `suggest` writes when not told: beside the library, named for it, as the
-    app's own files are. It was suggestions.json in whatever folder the command was run
-    from, which left one at the checkout's root (docs/findings.md, #102)."""
-    folder = os.path.dirname(os.path.abspath(db_path))
-    return os.path.join(folder, os.path.splitext(os.path.basename(db_path))[0] + "_suggestions.json")
-
 def say_if_behind(photo_index):
     """Tell the person a library a look did not migrate is behind this version of TagPup."""
     if photo_index.behind:
         console.print(f"[yellow]This library has not had {len(photo_index.behind)} of this version's"
                       " migrations; a look does not apply them. Indexing it, or opening it in TagPup,"
                       " brings it up to date.[/yellow]")
+
+def say_not_loaded(photo_index, hint=""):
+    """A look could not load the library: it is too far behind this version to be read (say so; the note of
+    say_if_behind came just before), or it holds no index (docs/findings.md, #297)."""
+    if photo_index.behind:
+        console.print("[bold red]Error:[/bold red] This library cannot be read until it is brought up to date.")
+    else:
+        console.print("[bold red]Error:[/bold red] No photo index found." + hint)
+
 
 def get_exiftool_path(db_path, read_only=False) -> str:
     """The ExifTool the library names, else the machine's (tagpup.runtime.exiftool).
@@ -652,7 +657,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str, add_folder
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
-    output = output or default_suggestions_file(db_path)
+    output = output or libraries.suggestions_file(db_path)
     library = Library(db_path)
     # Suggest records faces and vectors for every photo it looks at, each on its row: only
     # in the folders the library holds (tagpup.services.libraries.not_in).
@@ -930,7 +935,7 @@ def search(ctx, query: str, k: int):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
+        say_not_loaded(photo_index, " Please run 'index' first.")
         return
         
     try:
@@ -979,7 +984,7 @@ def stats(ctx):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
+        say_not_loaded(photo_index, " Please run 'index' first.")
         return
         
     try:
@@ -1291,6 +1296,12 @@ def sync(ctx, folder, apply_):
                           " itself (a dry run).")
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
+    if counts.get("size_changed"):
+        again = runtimes.peek_settings(library).reread_resized_pictures
+        console.print("  %d of the changed file(s) changed SIZE (%d with a face decided by hand): their pictures %s"
+                      % (counts["size_changed"], counts["size_changed_decided"],
+                         "are read again (library.reread_resized_pictures is on)." if again else
+                         "are not read again: library.reread_resized_pictures is off, as a keyword write changes the size too."))
     if counts.get("unreadable_files"):
         console.print("  %d photo(s) found damaged before, unchanged since, passed over: restore them from a"
                       " backup (the Activity page lists them)." % counts["unreadable_files"])
@@ -1313,6 +1324,162 @@ def sync(ctx, folder, apply_):
     console.print("In step." if result.details["in_step"] else "Not yet in step: sync again once indexing is done.")
     if result.errors:
         raise SystemExit(1)
+@cli.command("faces-from-tags")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Name the faces, as one change of the journal. Without it, only says how many it would.")
+@click.option("--again", is_flag=True,
+              help="Apply once more to a library it was applied to before: the names it gave then are references now.")
+@click.pass_context
+def faces_from_tags(ctx, apply_, again):
+    """Name the faces a photo's person tag names: a photo with one face still to be named and
+    one tagged person no face of it carries gives the face that person; several faces or
+    people only when one person's named faces alike leave no doubt. Names are automatic, so
+    clustering may revise them; faces unmatched by hand or excluded are left alone. A dry run
+    unless --apply; counts only, never names."""
+    library = _existing_library(ctx)
+    result = faces_from_tags_service.faces_from_tags(library, apply=apply_, again=again)
+    if result.refused and result.details.get("earlier_apply"):
+        console.print("Would name %d face(s). Nothing changed." % result.details["counts"]["faces"])
+    if result.refused or result.errors:
+        for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
+            console.print(line, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d photo(s) have a face to be named and a tagged person no face carries."
+                  % counts["photos_with_a_face_and_a_person_to_place"])
+    console.print("  %d photo(s): one face, one person; named by the tag alone: %d"
+                  % (counts["one_face_one_person"], counts["named_by_the_tag_alone"]))
+    console.print("      the person has no named face to compare with: %d (named)" % counts["person_has_no_decided_face"])
+    console.print("      the face is like them, at 0.80 or more: %d, from 0.70 to 0.80: %d (named)"
+                  % (counts["like_them_from_0.80"], counts["like_them_from_0.70_to_0.80"]))
+    console.print("      the face is not like them (under 0.70): %d (left for Identify Faces)" % counts["not_like_them"])
+    if counts["not_decidable_yet"]:
+        console.print("      the person has no named face and several photos wait: %d (left for Identify Faces)"
+                      % counts["not_decidable_yet"])
+    if counts["face_unreadable"]:
+        console.print("      the face cannot be compared: %d (left)" % counts["face_unreadable"])
+    if counts["background_sized_faces_passed_over"]:
+        console.print("  %d face(s) under 2,000 square pixels passed over" % counts["background_sized_faces_passed_over"])
+    console.print("  %d photo(s): named by comparison with the person's named faces"
+                  % counts["photos_named_by_comparison"])
+    console.print("  %d photo(s) left for Identify Faces" % counts["photos_left_for_identify_faces"])
+    console.print("%d face(s) %s." % (counts["faces"], "named" if apply_ else "would be named"))
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        if result.details.get("earlier_apply"):
+            console.print("Applied before: " + faces_from_tags_service.AGAIN, markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply names them%s."
+                      % (" (with --again)" if result.details.get("earlier_apply") else ""))
+        return
+    console.print("Wrote %d face(s). %s" % (result.changed, maintenance.recorded(result, library.path)),
+                  markup=False, soft_wrap=True)
+    # Counted again after the write: the faces just named change which photos have one face left.
+    console.print("Still to be named by the rule now: %d face(s)." % result.details.get("remaining", {"faces": 0})["faces"])
+    for line in maintenance.skipped(result):
+        console.print(line, markup=False, soft_wrap=True)
+
+
+@cli.command("tags-from-faces")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the keywords into the photo files. Without it, only says how many photos it would write.")
+@click.option("--guesses", is_flag=True,
+              help="Also write people only a guess backs (clustering's or automatch's): the keyword makes the guess a decided reference.")
+@click.pass_context
+def tags_from_faces(ctx, apply_, guesses):
+    """Put on a photo the people its faces name and its keywords do not: a face named, the photo
+    saying "No people tags" (#861). A dry run unless --apply; counts only, never names.
+
+    --apply CHANGES PHOTO FILES: it writes each person's keyword into the photo's file with
+    ExifTool, 25 photos to a change of the journal (`history` lists them, `undo` takes one back).
+    Run it on a small library first; TagPup and TagTuner may stay open (a file changed meanwhile
+    is a conflict, reported and not overwritten: run it again). Left, and counted: a person the
+    tree files in two places; a photo whose keywords already name the person under a root the
+    tree does not file people under; and, unless --guesses, a person only a guess backs."""
+    library = _existing_library(ctx)
+    planned = tags_from_faces_service.plan(library, guesses=guesses)
+    counts = planned.details["counts"]
+    console.print("%d photo(s) list a person from a face alone (%d people): their keywords do not name them."
+                  % (counts["photos_with_a_person_on_a_face_alone"], counts["people"]))
+    if counts["people_the_tree_files_in_two_places"]:
+        console.print("  %d of the people are filed in more than one place in the tag tree (or the tree has several people "
+                      "roots): left, for you to choose where." % counts["people_the_tree_files_in_two_places"])
+    if counts["people_the_file_names_under_another_root"]:
+        console.print("  %d of the people: the photo's keywords already name them under a root the tag tree does not file people "
+                      "under: skipped. They are people tags under a non-people root, a tree question: make that root a people "
+                      "root in the tag tree (TagTuner's tag editor), or retag them; the count then falls on its own."
+                      % counts["people_the_file_names_under_another_root"], markup=False, soft_wrap=True)
+    if counts["people_from_a_guess_only"]:
+        console.print("  %d of the people: from a guess only (clustering's or automatch's, no face of that name named by hand): "
+                      "skipped. --guesses writes them." % counts["people_from_a_guess_only"], markup=False, soft_wrap=True)
+    if guesses:
+        console.print("  WARNING: --guesses writes people only a guess backs; the keyword makes each guess a decided reference "
+                      "for the faces compared with it afterwards (#640).", markup=False, soft_wrap=True)
+    console.print("  %d photo file(s) would be written, for %d people."
+                  % (counts["photos_to_write"], counts["people_to_write"]))
+    if not apply_:
+        console.print("Nothing changed. --apply writes the keywords into those %d PHOTO FILE(S), 25 photos to a change "
+                      "of the journal that `undo` takes back." % counts["photos_to_write"], markup=False, soft_wrap=True)
+        return
+    if not counts["photos_to_write"]:
+        console.print("Nothing to write.")
+        return
+    exiftool = get_exiftool_path(library.path)
+    console.print("Writing %d photo file(s)..." % counts["photos_to_write"])
+    result = tags_from_faces_service.apply(
+        library, planned, exiftool,
+        on_chunk=lambda done, total: console.print("  %d of %d photo(s) done" % (done, total), markup=False))
+    console.print("Wrote %d photo file(s) in %d change(s) of the journal (`history` lists them)."
+                  % (result.changed, len(result.details.get("changes", []))), markup=False)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+    if result.errors:
+        reasons = {}
+        for _photo, why in result.errors:
+            reasons[why] = reasons.get(why, 0) + 1
+        console.print("%d photo(s) could not be written; run it again once they can:" % len(result.errors), markup=False)
+        for why, count in sorted(reasons.items(), key=lambda pair: -pair[1])[:5]:
+            console.print("  %d x %s" % (count, why), markup=False, soft_wrap=True)
+    if result.refused or result.errors:
+        raise SystemExit(1)
+
+
+@cli.command("dedupe-spelled-rows")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Merge the rows of each file held more than once, as one change of the journal. Without it, only counts.")
+@click.pass_context
+def dedupe_spelled_rows(ctx, apply_):
+    """Find the files the library holds under more than one row -- one file reached by two spellings (a share and
+    its drive, a link) -- and merge them: what the extra rows hold (a face, a name given by hand, a vector) is moved
+    onto the row kept (the one under a root) where it lacks it, then they are deleted. Only rows PROVABLY one file
+    (the file system's own identity) are touched: a copy of a file in another folder has a row of its own and is
+    left alone. A dry run unless --apply; counts only, never a name or a path."""
+    library = _existing_library(ctx)
+    result = duplicate_rows_service.dedupe_spelled_rows(library, apply=apply_)
+    if result.refused or result.errors:
+        for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
+            console.print(line, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d file(s) are held by more than one row: %d row(s) to remove."
+                  % (counts["files_held_twice"], counts["rows_to_remove"]))
+    console.print("  kept: %d under a root, %d not under one" % (counts["kept_under_a_root"], counts["kept_not_under_a_root"]))
+    console.print("  moved onto the kept row first: %d face(s), %d decision(s) a counterpart lacked, %d vector(s)"
+                  % (counts["faces_moved"], counts["decisions_carried"], counts["vectors_carried"]))
+    console.print("  left alone: %d row(s) in %d group(s) that are copies (other files with the same name and size, each "
+                  "with its own row), %d row(s) whose file is missing, %d set(s) whose rows differ, %d set(s) disputed"
+                  % (counts["copies_left_alone"], counts["copy_groups_left_alone"], counts["missing_files_left_alone"],
+                     counts["sets_whose_rows_differ"], counts["sets_disputed"]))
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply merges them.")
+        return
+    console.print("Wrote %d row(s) (rows removed, faces moved, decisions and vectors carried). %s"
+                  % (result.changed, maintenance.recorded(result, library.path)), markup=False, soft_wrap=True)
+    console.print("Still held twice now: %d file(s)." % result.details.get("remaining", {"files_held_twice": 0})["files_held_twice"])
+    for line in maintenance.skipped(result):
+        console.print(line, markup=False, soft_wrap=True)
+
+
 def _job_libraries(ctx):
     """The library --db names, or every library in the data folder."""
     if ctx.obj.get("db"):
@@ -1733,7 +1900,7 @@ def list_index(ctx, folder):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found.")
+        say_not_loaded(photo_index)
         return
         
     try:

@@ -6,7 +6,7 @@ import { btnUndo } from './elements.js';
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
 import { renderFileList } from './folder.js';
-import { renderTags } from './photo.js';
+import { facesFollowTags, renderTags } from './photo.js';
 import { renderThumbnails } from './grid.js';
 import { queuePhotoWrite, takeWritten } from './edits.js';
 
@@ -90,9 +90,16 @@ async function undoEntry(entry, queued) {
             restored += 1;
             const photo = state.folderPhotos.find(p => samePath(p.path, path));
             if (!photo) continue;
-            const kept = (photo.tags || []).filter(t => !group.added.includes(t));
-            photo.tags = kept.concat(group.removed.filter(t => !kept.includes(t)));
-            takeWritten(photo, stamps.get(pathKey(path)), heldTags.get(pathKey(path)));
+            // What the file holds is what the server says it wrote (a bare person name it resolved is
+            // the path it filed); only a reply that names the photo falls back to the difference (findings #390).
+            const held = heldTags.get(pathKey(path));
+            if (Array.isArray(held)) {
+                photo.tags = held.slice();
+            } else {
+                const kept = (photo.tags || []).filter(t => !group.added.includes(t));
+                photo.tags = kept.concat(group.removed.filter(t => !kept.includes(t)));
+            }
+            takeWritten(photo, stamps.get(pathKey(path)), held);
         }
         if (!data.success) {
             console.error('Undo:', data.error);
@@ -103,7 +110,10 @@ async function undoEntry(entry, queued) {
     renderThumbnails();
     if (state.activePhotoPath) {
         const photo = state.folderPhotos.find(p => p.path === state.activePhotoPath);
-        if (photo) renderTags(photo.tags || []);
+        if (photo) {
+            renderTags(photo.tags || []);
+            facesFollowTags(photo.path);
+        }
     }
     saveToLocalStorageCache();
 

@@ -190,6 +190,16 @@ def names_without_a_person(conn):
     return person_ids.unresolved(conn)
 
 
+def people_on_faces_alone(conn):
+    """(photos, people) a photo lists from a face alone (tagpup.store.people.on_faces_alone): reported, not broken --
+    mending it writes the keywords into the photo files, which only the owner's `tags-from-faces --apply` does. Waits
+    for migration 6 (photo_people)."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photo_people'").fetchone():
+        return 0, 0
+    photos, rows = conn.execute("SELECT COUNT(DISTINCT photo_id), COUNT(*) FROM photo_people WHERE source = 'face'").fetchone()
+    return photos, rows
+
+
 def orphan_nodes(conn):
     """Tag-tree nodes whose parent is not in the tree."""
     return _check("tree nodes whose parent is missing", [tag for (tag,) in conn.execute(

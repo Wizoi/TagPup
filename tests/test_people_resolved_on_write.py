@@ -184,9 +184,9 @@ class TestEveryWriteSiteResolvesPeople(unittest.TestCase):
         for name in sorted(os.listdir(os.path.join(WORKSPACE_DIR, "tagpup", "services")))
         if name.endswith(".py")]
 
-    #: The keyword writers, and where each takes the tags: write_keywords writes them,
-    #: _keywords_plan plans a journaled write of them (tagpup.services.tagging).
-    WRITERS = {"write_keywords": 2, "_keywords_plan": 0}
+    #: The keyword writers, and where each takes the tags: _keywords_plan plans a journaled write of
+    #: them (tagpup.services.tagging).
+    WRITERS = {"_keywords_plan": 0}
 
     def writes(self):
         """(where, the call, the function it is in) of every call of a WRITERS in

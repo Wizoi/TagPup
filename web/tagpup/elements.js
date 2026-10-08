@@ -40,9 +40,13 @@ export const folderViewContent = document.getElementById('folder-view-content');
 export const folderViewMain = document.getElementById('folder-view-main');
 export const folderViewTitle = document.getElementById('folder-view-title');
 export const folderViewStats = document.getElementById('folder-view-stats');
+export const btnDetailsToggle = document.getElementById('btn-details-toggle');
+export const btnDetailsClose = document.getElementById('btn-details-close');
 export const btnSelectAllThumbnails = document.getElementById('btn-select-all-thumbnails');
 export const btnSelectNoneThumbnails = document.getElementById('btn-select-none-thumbnails');
 export const btnDeleteSelection = document.getElementById('btn-delete-selection');
+// The photo panel's way back to the grid of a library view (view-left.js, #780)
+export const btnPhotoBack = document.getElementById('btn-photo-back');
 export const selectedThumbnailsCount = document.getElementById('selected-thumbnails-count');
 export const btnFolderAutoApply = document.getElementById('btn-folder-auto-apply');
 export const facesStrip = document.getElementById('faces-strip');
@@ -60,6 +64,13 @@ export const selectionDateGroup = document.getElementById('selection-date-group'
 export const selectionDateLabel = document.getElementById('selection-date-label');
 export const selectionFoldersGroup = document.getElementById('selection-folders-group');
 export const selectionFoldersList = document.getElementById('selection-folders-list');
+// The panel's two halves (selection-panel.js, #781)
+export const selectionNavigation = document.getElementById('selection-navigation');
+export const selectionPeopleJump = document.getElementById('selection-people-jump');
+export const selectionKeywordJump = document.getElementById('selection-keyword-jump');
+export const btnSelectionTagging = document.getElementById('btn-selection-tagging');
+export const selectionTaggingBody = document.getElementById('selection-tagging-body');
+export const selectionAutoApply = document.getElementById('selection-auto-apply');
 export const selectionDateValue = document.getElementById('selection-date-value');
 export const bulkAddPeopleInput = document.getElementById('bulk-add-people-input');
 export const btnBulkAddPeople = document.getElementById('btn-bulk-add-people');
@@ -83,6 +94,8 @@ export const renameGroupingInput = document.getElementById('rename-grouping-inpu
 export const btnApplyRename = document.getElementById('btn-apply-rename');
 
 export const mainImage = document.getElementById('main-image');
+export const imageViewer = document.getElementById('image-viewer');
+export const faceLayer = document.getElementById('face-layer');
 export const btnRotateLeft = document.getElementById('btn-rotate-left');
 export const btnRotateRight = document.getElementById('btn-rotate-right');
 export const btnDeletePhoto = document.getElementById('btn-delete-photo');
@@ -154,10 +167,6 @@ export const photoMissingNote = document.getElementById('photo-missing-note');
 
 // The grid's right-click menu (grid.js)
 export const gridContextMenu = document.getElementById('grid-context-menu');
-
-// The photo, zoomed (photo.js)
-export const imageZoom = document.getElementById('image-zoom');
-export const imageZoomImg = document.getElementById('image-zoom-img');
 
 // Date Taken Editor Dialog Controls
 export const btnEditDateTaken = document.getElementById('btn-edit-date-taken');

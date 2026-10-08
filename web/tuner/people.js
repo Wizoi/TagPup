@@ -15,6 +15,9 @@ import { updateTabLabels } from './grid-parts.js';
 import { renderPersonFaces } from './grid.js';
 
 const matchingPersonName = document.getElementById('matching-person-name');
+const peopleView = document.getElementById('people-view');
+const peopleViewName = document.getElementById('people-view-name');
+const peopleViewFace = document.getElementById('people-view-face');
 
 // Fetch people with face counts from backend
 export function fetchPeopleWithCounts(isSilent = false, keepTab = false) {
@@ -28,15 +31,26 @@ export function fetchPeopleWithCounts(isSilent = false, keepTab = false) {
         ? '/api/unmatched-faces/people'
         : '/api/people-with-counts';
 
-    api.fetch(apiPath, { signal: state.sidebarAbortController.signal })
+    const signal = state.sidebarAbortController.signal;
+    // The faces are asked for only when the list is drawn by them, and a failed ask draws
+    // placeholders: the names and counts are what the list is for.
+    const faces = showingFaces()
+        ? api.fetch('/api/people-faces', { signal })
+            .then(res => (res.ok ? res.json() : {}))
+            // An abort takes the people request with it (one signal), which is handled there.
+            .catch(() => ({}))
+        : Promise.resolve(null);
+
+    api.fetch(apiPath, { signal })
         .then(res => {
             if (!res.ok) throw new Error('Network response was not ok');
             return res.json();
         })
-        .then(data => {
+        .then(data => faces.then(personFaces => {
             state.allPeopleWithCounts = data;
+            if (personFaces) state.personFaces = personFaces;
             renderPeopleList(keepTab);
-        })
+        }))
         .catch(err => {
             if (err.name === 'AbortError') return;
             console.error('Error fetching people with counts:', err);
@@ -47,6 +61,57 @@ export function fetchPeopleWithCounts(isSilent = false, keepTab = false) {
 //: Remembered, because it is a standing preference about how you read the list
 //: rather than a per-visit decision.
 const PEOPLE_SORT_KEY = 'tagtuner.peopleSort';
+const PEOPLE_VIEW_KEY = 'tagtuner.peopleView';
+
+// By face is Review People's: Identify Faces' names are candidates, and its buckets have no face.
+function showingFaces() {
+    return state.peopleView === 'face' && modeSelect.value === 'face-matching';
+}
+
+// The By name / By face choice is offered in Review People alone.
+export function showPeopleViewChoice() {
+    if (!peopleView) return;
+    peopleView.classList.toggle('hidden', modeSelect.value !== 'face-matching');
+    const byFace = state.peopleView === 'face';
+    peopleViewName.classList.toggle('active', !byFace);
+    peopleViewFace.classList.toggle('active', byFace);
+    peopleViewName.setAttribute('aria-pressed', String(!byFace));
+    peopleViewFace.setAttribute('aria-pressed', String(byFace));
+}
+
+function choosePeopleView(view) {
+    if (state.peopleView === view) return;
+    state.peopleView = view;
+    try {
+        localStorage.setItem(PEOPLE_VIEW_KEY, view);
+    } catch (e) { /* the preference just will not stick */ }
+    showPeopleViewChoice();
+    // The faces come with the list; keep the tab, as re-ordering does.
+    fetchPeopleWithCounts(true, true);
+}
+
+// One person's row: a name and its count on one line, or a face with the name under it.
+function personFaceCard(person, li) {
+    const crop = document.createElement('div');
+    crop.className = 'person-face-crop';
+    const faceId = state.personFaces[person.name];
+    if (faceId) {
+        const img = document.createElement('img');
+        img.alt = '';
+        // The list can hold hundreds of people: the browser fetches a crop as it scrolls near.
+        img.setAttribute('loading', 'lazy');
+        img.setAttribute('decoding', 'async');
+        img.src = api.image(`/api/face-crop?id=${faceId}`);
+        crop.appendChild(img);
+    } else {
+        const blank = document.createElement('span');
+        blank.className = 'person-face-blank';
+        blank.textContent = (person.name || '?').trim().charAt(0).toUpperCase();
+        crop.appendChild(blank);
+    }
+    li.appendChild(crop);
+    return crop;
+}
 
 function currentPeopleSort() {
     if (peopleSort && peopleSort.value) return peopleSort.value;
@@ -86,6 +151,8 @@ function sortedPeople() {
 function renderPeopleList(keepTab = false) {
     const savedScrollTop = photoList.scrollTop;
     photoList.innerHTML = '';
+    const byFace = showingFaces();
+    photoList.classList.toggle('by-face', byFace);
     
     if (state.allPeopleWithCounts.length === 0) {
         state.shownPeople = [];
@@ -103,15 +170,18 @@ function renderPeopleList(keepTab = false) {
     state.shownPeople = sortedPeople();
     state.shownPeople.forEach(person => {
         const li = document.createElement('li');
-        li.className = 'photo-item';
+        li.className = byFace ? 'photo-item person-card' : 'photo-item person-row';
         li.personName = person.name;
+        li.title = person.name;
         
         if (person.name === state.activePersonName) {
             li.classList.add('active');
         }
 
         const match = person.name.toLowerCase().includes(query);
-        li.style.display = match ? 'block' : 'none';
+        li.style.display = match ? '' : 'none';
+
+        const crop = byFace ? personFaceCard(person, li) : null;
 
         const title = document.createElement('div');
         title.className = 'photo-title';
@@ -137,8 +207,16 @@ function renderPeopleList(keepTab = false) {
             badge.textContent = `${person.count} face${person.count !== 1 ? 's' : ''}`;
         }
 
-        li.appendChild(title);
-        li.appendChild(badge);
+        if (byFace) {
+            // The count on the crop's corner, the name under it; "n faces" is too long for it.
+            badge.textContent = person.count.toLocaleString();
+            badge.title = `${person.count.toLocaleString()} face${person.count !== 1 ? 's' : ''}`;
+            crop.appendChild(badge);
+            li.appendChild(title);
+        } else {
+            li.appendChild(title);
+            li.appendChild(badge);
+        }
 
         li.addEventListener('click', () => selectPerson(person.name, li));
         photoList.appendChild(li);
@@ -398,10 +476,19 @@ function stopGridBuildProgress() {
 
 // Its listeners, which main.js adds once the page has loaded.
 export function wirePeople() {
+    if (peopleView) {
+        try {
+            if (localStorage.getItem(PEOPLE_VIEW_KEY) === 'face') state.peopleView = 'face';
+        } catch (e) { /* by name, then */ }
+        peopleViewName.addEventListener('click', () => choosePeopleView('name'));
+        peopleViewFace.addEventListener('click', () => choosePeopleView('face'));
+        showPeopleViewChoice();
+    }
     if (peopleSort) {
         try {
             const saved = localStorage.getItem(PEOPLE_SORT_KEY);
-            if (saved) peopleSort.value = saved;
+            // Only a choice the list offers; the first visit has none and starts on Name (A-Z) (#793).
+            if (saved && [...peopleSort.options].some(o => o.value === saved)) peopleSort.value = saved;
         } catch (e) { /* the preference just will not stick */ }
 
         peopleSort.addEventListener('change', () => {
