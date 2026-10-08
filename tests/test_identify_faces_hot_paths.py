@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup.services.search import PhotoIndex
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fake_exiftool  # noqa: E402
 import own_home  # noqa: E402
 import tuner_client  # noqa: E402
 from face_rows import add_face  # noqa: E402
@@ -150,6 +151,8 @@ class MatchingTestBase(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagpup_hot_")
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
+        # Naming a face puts the person on its photo (#861): ExifTool is a table of files, the photos here rows.
+        self.files = fake_exiftool.standing_in(self)
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")

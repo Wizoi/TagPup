@@ -76,6 +76,33 @@ def name_face(library, face_id, person_name):
     return result
 
 
+def check_nameable(library, face_id, person_name, refused):
+    """What name_face would refuse, asked before anything else is written (face_people writes the photo's tag first): the
+    photo's path when `face_id` can be named `person_name` -- also when it carries the name already -- and None when it
+    cannot, `refused` (a Result) saying why. NotFound for a face that is not there, Conflict for one excluded. Reads only;
+    name_face asks again under the write lock, which is the check that holds."""
+    problem = validation.problem("name", person_name)
+    if problem:
+        refused.refuse(problem)
+        return None
+    _library_there(library)
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        row = faces.rows(conn, [face_id]).get(face_id)
+        if not row:
+            raise NotFound("Face ID not found")
+        photo_path, old_name, excluded = row
+        if excluded:
+            raise Conflict("Cannot match: this face is excluded. Restore it first to name it.")
+        if (not (old_name and vocabulary.key(old_name) == vocabulary.key(person_name))
+                and faces.named_elsewhere_in_photo(conn, photo_path, person_name, face_id)):
+            refused.refuse("Cannot match: '%s' is already tagged on another face in this photo." % person_name)
+            return None
+        return photo_path
+    finally:
+        conn.close()
+
+
 def name_faces(library, face_ids, person_name):
     """Name many faces as one person. Assigning a group, or a selection, in the grids.
 
@@ -316,7 +343,7 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     details: `dry_run`; `faces`, the faces named (or that would be); `photos`, the photos
     they are in; `people`, {name: faces}; `renamed`, the faces left because their person's
     name had gone. The same keys whether rehearsed or applied, so the page can say how the
-    two differ."""
+    two differ. Applied, `named_ids` too, {face id: name} of the faces written."""
     _library_there(library)
     result = Result(details={"dry_run": bool(rehearse), "faces": 0, "photos": 0, "people": {}, "renamed": 0})
     conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -366,7 +393,8 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
         # play are named, name_if_unnamed's guard, and only those are counted: in one write
         # whose photos are rebuilt once (faces.name_unnamed; docs/findings.md, #659).
         named = set(faces.name_unnamed(conn, {face_id: name for face_id, name, _photo in chosen}))
-        return [(name, face_photo) for face_id, name, face_photo in chosen if face_id in named], gone
+        return ([(name, face_photo) for face_id, name, face_photo in chosen if face_id in named], gone,
+                {face_id: name for face_id, name, _photo in chosen if face_id in named})
 
     if rehearse:
         conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -376,8 +404,9 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
             conn.close()
         done = [(name, face_photo) for _fid, name, face_photo in chosen]
     else:
-        done, gone = db.write_with_connection(library.path, match, label="automatch faces")
+        done, gone, named_ids = db.write_with_connection(library.path, match, label="automatch faces")
         result.changed = len(done)
+        result.details["named_ids"] = named_ids
     result.details.update(faces=len(done), photos=len({face_photo for _name, face_photo in done}),
                           people=dict(collections.Counter(name for name, _photo in done)), renamed=gone)
     if not rehearse:

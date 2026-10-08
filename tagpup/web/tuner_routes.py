@@ -28,6 +28,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.jobs import verifying as verify_jobs
+from tagpup.services import face_people
 from tagpup.services import faces as faces_service
 from tagpup.services import identify as identify_service
 from tagpup.services import indexing
@@ -423,27 +424,31 @@ def faces_unmatch_bulk():
 
 @routes.post("/api/photo/unmatch-all")
 def photo_unmatch_all():
-    """Take the names off every face in a photo (tagpup.services.faces.unname_photo)."""
+    """Take the names off every face in a photo, and the tags of the people they named
+    (tagpup.services.face_people.unname_photo)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     photo_path = body.get("photo_path")
     if not photo_path:
         abort(400, description="Missing photo_path")
-    _faces_write(library, lambda lib: faces_service.unname_photo(lib, photo_path))
-    return jsonify({"success": True})
+    writer = face_routes.writer_for(library, body)
+    result = _faces_write(library, lambda lib: face_people.unname_photo(lib, photo_path, writer))
+    return jsonify({"success": True, **face_routes.tags_reply(result)})
 
 
 @routes.post("/api/photo/automatch")
 def photo_automatch():
-    """Automatch a photo's faces (tagpup.services.faces.automatch_photo)."""
+    """Automatch a photo's faces, and put the people it named on the photo
+    (tagpup.services.face_people.automatch_photo)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     photo_path = body.get("photo_path")
     if not photo_path:
         abort(400, description="Missing photo_path")
+    writer = face_routes.writer_for(library)
     result = _faces_write(
-        library, lambda lib: faces_service.automatch_photo(lib, photo_path, _decided(lib)))
-    return jsonify({"success": True, "matched_count": result.changed})
+        library, lambda lib: face_people.automatch_photo(lib, photo_path, _decided(lib), writer))
+    return jsonify({"success": True, "matched_count": result.changed, **face_routes.tags_reply(result)})
 
 
 @routes.post("/api/folder/automatch")

@@ -412,6 +412,24 @@ def name_unnamed(conn, names_by_id, vocabulary=None):
     return done
 
 
+def revert_automatic(conn, names_by_id):
+    """Take back guesses just made (automatch's names, when their photo's tag could not be written):
+    each face in {id: name} that still carries that name AS A GUESS (name_source NULL) is unnamed again,
+    as it was before, not as a decision. A face a person named, confirmed or unmatched meanwhile is theirs
+    and is left. Returns the ids reverted. The caller commits."""
+    by_name = collections.defaultdict(list)
+    for face_id, person_name in names_by_id.items():
+        by_name[person_name].append(face_id)
+    reverted = []
+    for person_name, face_ids in by_name.items():
+        for chunk in _chunks(face_ids):
+            reverted.extend(face_id for (face_id,) in conn.execute(
+                "UPDATE faces SET name = NULL WHERE " + _in(chunk) + " AND name = ? AND name_source IS NULL"
+                " RETURNING id", chunk + [person_name]).fetchall())
+    _rebuilt(conn, _photos_of(conn, reverted), len(reverted))
+    return reverted
+
+
 def unname(conn, face_ids, source="manual"):
     """Take the names off faces, recording who decided in name_source: 'manual' for
     "this is nobody", None for an undone guess. Returns rows changed. The caller commits."""

@@ -1,0 +1,311 @@
+"""A face's name and the person on the photo's keywords, kept in step (#861; docs/ARCHITECTURE.md,
+"Faces on the photo").
+
+They are one decision. A face named and the person absent from the photo's keywords is the drift the
+owner saw ("a green box and No people tags"); a person left on the photo after the face was said not to
+be them is the same drift the other way. So every write that names, unnames or rules out a face of an
+open photo goes through here, and this is the one place that says how the keyword follows:
+
+* **Naming** a face adds the person to the photo, the TAG FIRST: a tag that cannot be written (a file
+  that cannot be read, a network share that is away, a person the tree files in two places) names no
+  face, and says why. A face that cannot be named afterwards (somebody named the person on another face
+  meanwhile) keeps the tag, the state the app always allowed, and the same choice names it.
+* **Taking a name off** a face, ruling it out ("not important") or taking every name off a photo removes
+  the person's keywords from the photo, THE FACE FIRST, unless another face of the photo still carries the
+  person. The order is the other way round on purpose: the tag removed first and the face left named
+  would be the drift again, where a tag left behind is a state the app has always allowed (the person's
+  pill takes it off). A tag that cannot be removed leaves the face unnamed and says so.
+* **Automatch** decides the names under the write lock of the faces, so the tag it writes is the one it
+  decided: the faces first, and if the tag cannot be written the names it just gave are taken back
+  (`faces.revert_automatic`: a face a person named meanwhile is theirs).
+
+The tag is written by the machinery of every other keyword write (tagpup.services.tagging.change_each:
+one journaled change of photo files, `undo` and History take it back, a file changed outside since it was
+read is a conflict and never overwritten), under the one lock of changes of photo files, with a deadline
+on each ExifTool command so a share that has gone costs a minute, not five. TagPup's own page writes the
+tag itself for a box it draws (its queue, its undo, its placement question), so its calls say
+`page_writes_tags` and are told what to take off instead (`untag` in the details).
+
+Undo of the tag change in History leaves the face named, as the Undo of any tag write always has: the
+doctor line (tagpup.store.checks) counts it, and `tagpup_cli.py tags-from-faces` mends it.
+"""
+import logging
+
+from tagpup.core import paths, vocabulary
+from tagpup.core.result import Conflict, Result
+from tagpup.files import exiftool_session
+from tagpup.services import faces as faces_service
+from tagpup.services import file_changes, tagging
+from tagpup.store import db, faces, photos, taxonomy
+
+logger = logging.getLogger(__name__)
+
+#: What the journal calls the changes made here (History's `operation`).
+ADDED = "person added for a named face"
+REMOVED = "person taken off for an unnamed face"
+
+#: How long one ExifTool command of these writes may take, in seconds (the bulk edits' chunk's is the same).
+TIMEOUT = 60
+
+#: How many photos one change of the repair writes: a chunk is one journaled change (History lists each).
+CHUNK = 25
+
+
+# ---- Which tag ----------------------------------------------------------------------------------------------
+
+class Filer:
+    """The tag a person is written as, by the one rule a chip and Apply All follow (`vocabulary.person_tag`): the tree
+    read once, and only read -- no node is made. None for a person the tree files in two places, or a tree with several
+    people roots: someone must choose (the page's placement question)."""
+
+    def __init__(self, library):
+        self.filed, self.roots = taxonomy.people_filing(library.path)
+
+    def tag(self, name):
+        name = (name or "").strip()
+        return vocabulary.person_tag(name, self.filed.get(vocabulary.key(name), []), self.roots)
+
+
+def not_filed(name):
+    return ("%s is filed in more than one place in the tag tree (or the tree has several people roots), so it is "
+            "not known where to file them: add them to the photo from TagPup's Organize, which asks, or name the "
+            "path." % name)
+
+
+def _person_tags(tags, name, known):
+    """The tags among `tags` that name the person `name`: under a people root, or a person's node, by the leaf."""
+    return [tag for tag in tags
+            if any(vocabulary.same_person(person, name) for person in vocabulary.extract_people({}, [tag], known))]
+
+
+# ---- The tag, written and taken off ----------------------------------------------------------------------------
+
+def _merge(into, tag_result):
+    """What a tag write did, in `into` (a Result): the files written, the records of them for the pages, the
+    journal's change ids and what failed."""
+    into.details["tags_written"] = into.details.get("tags_written", 0) + tag_result.changed
+    into.details.setdefault("written", {}).update(tag_result.details.get("written", {}))
+    change = tag_result.details.get("change")
+    if change is not None:
+        into.details.setdefault("changes", []).append(change)
+    for what, why in tag_result.errors:
+        into.fail(what, why)
+    for what, why in tag_result.skipped:
+        into.skip(what, why)
+    if tag_result.refused and not into.refused:
+        into.refuse(tag_result.refused)
+
+
+class Writer:
+    """Where a photo's tags are written: the ExifTool program, and `told(result)`, heard after each chunk written with the
+    Result of its change (details["written"] is what the pages' records are told, in the order the files were written), and
+    `on_chunk(done, total)`, the progress. A caller whose page writes the photo's tags itself passes no Writer."""
+
+    def __init__(self, exiftool_path, told=None, on_chunk=None):
+        self.exiftool_path = exiftool_path
+        self.told = told
+        self.on_chunk = on_chunk
+
+
+def write_tags(library, changes, writer, operation, persons=None):
+    """Give each photo of `changes` ({path: (tags to add, tags to take off)}) its own, CHUNK photos at a time, each chunk one
+    journaled change under the one lock of changes of photo files and with a deadline on ExifTool; the lock is let go
+    between chunks, so another change of photo files waits for a chunk and not for all of them. Stops at the first chunk
+    that fails. A Result: `changed` the files written, details["written"] and `changes`, the journal's ids."""
+    result = Result(attempted=len(changes))
+    items = list(changes.items())
+    for start in range(0, len(items), CHUNK):
+        chunk = dict(items[start:start + CHUNK])
+        with exiftool_session.ExifToolSession(executable=writer.exiftool_path, timeout=TIMEOUT) as session:
+            with file_changes.exclusively():
+                done = tagging.change_each(library, chunk, writer.exiftool_path, operation, persons=persons, et=session)
+                if writer.told:
+                    writer.told(done)
+        _merge(result, done)
+        if not done.ok:
+            break
+        if writer.on_chunk:
+            writer.on_chunk(min(start + CHUNK, len(items)), len(items))
+    result.changed = result.details.get("tags_written", 0)
+    return result
+
+
+def add_people(library, wanted, writer, filer=None):
+    """Add the person of each (photo path, name) of `wanted` to the photo's keywords, a photo given all its people in
+    one write. A Result: `changed` the files written, details `written`. A photo whose keywords name the person already
+    (as the library records them: the page's own save of the tag has just been recorded) is not read or written again.
+    Refused, nothing written, for a name the tree files in two places."""
+    filer = filer or Filer(library)
+    result = Result(attempted=len(wanted))
+    held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, [path for path, _name in wanted])}
+    known = taxonomy.people_vocabulary(library.path)
+    changes, persons = {}, {}
+    for photo_path, name in wanted:
+        tag = filer.tag(name)
+        if tag is None:
+            result.refuse(not_filed(name))
+            return result
+        if _person_tags(held.get(paths.key(photo_path), []), name, known):
+            continue
+        add = changes.setdefault(photo_path, ([], ()))[0]
+        if tag not in add:
+            add.append(tag)
+        persons.setdefault(paths.key(photo_path), set()).add(tag)
+    return write_tags(library, changes, writer, ADDED, persons) if changes else result
+
+
+def untag_plan(library, items):
+    """{photo path: [the tags to take off]} for the (photo path, person name) of `items` whose person is on no face of the
+    photo any more -- read from the library NOW, after the faces were written -- and on whose keywords the person still
+    is, in every spelling the photo holds (a tag at the person's path and a bare one are one person)."""
+    wanted = {}
+    for photo_path, name in items:
+        wanted.setdefault(photo_path, []).append(name)
+    if not wanted:
+        return {}
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        carried = {photo_path: {vocabulary.key(name) for name in faces.names_in_photo(conn, photo_path)}
+                   for photo_path in wanted}
+        known = taxonomy.read_people_vocabulary(conn)
+    finally:
+        conn.close()
+    held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, list(wanted))}
+    plan = {}
+    for photo_path, names in wanted.items():
+        tags = held.get(paths.key(photo_path), [])
+        for name in dict.fromkeys(names):
+            if vocabulary.key(name) in carried[photo_path]:
+                continue
+            for tag in _person_tags(tags, name, known):
+                if tag not in plan.setdefault(photo_path, []):
+                    plan[photo_path].append(tag)
+    return {photo_path: tags for photo_path, tags in plan.items() if tags}
+
+
+def remove_people(library, plan, writer):
+    """Take the tags of `plan` ({photo path: [tags]}, untag_plan's) off their photos, as one journaled change."""
+    if not plan:
+        return Result()
+    return write_tags(library, {path: ((), tags) for path, tags in plan.items()}, writer, REMOVED)
+
+
+def _finish_untag(library, result, items, writer):
+    """After the faces were written: the tags that go with them, taken off now, or, when `writer` is None because
+    the page writes the photo's tags itself, told to the page as details["untag"]. A tag that could not be taken off leaves
+    the face unnamed all the same: details["tag_problem"] says why."""
+    plan = untag_plan(library, items)
+    result.details["untag"] = plan
+    if writer is None or not plan:
+        return
+    removed = remove_people(library, plan, writer)
+    result.details["tags_removed"] = removed.details.get("tags_written", 0)
+    result.details.setdefault("written", {}).update(removed.details.get("written", {}))
+    if removed.details.get("changes"):
+        result.details.setdefault("changes", []).extend(removed.details["changes"])
+    # The faces are written and reported as they are: a tag that stayed is said, not made an error of the faces.
+    if not removed.ok:
+        result.details["tag_problem"] = removed.refused or removed.message()
+
+
+# ---- Naming ---------------------------------------------------------------------------------------------------
+
+def name_face(library, face_id, person_name, writer):
+    """Name one face AND put the person on its photo, the tag first (see the module's docstring). Everything
+    faces_service.name_face refuses is refused before a tag is written. `changed` is the faces named; details
+    `tags_written` (0 when the photo named the person already) and `written`."""
+    person_name = (person_name or "").strip()
+    refused = Result(attempted=1)
+    photo_path = faces_service.check_nameable(library, face_id, person_name, refused)
+    if photo_path is None:
+        return refused
+    tagged = add_people(library, [(photo_path, person_name)], writer)
+    if not tagged.ok:
+        # Nothing was named: the face stays as it was.
+        failed = Result(attempted=1)
+        failed.details.update(tagged.details)
+        failed.refused = tagged.refused
+        failed.errors = list(tagged.errors)
+        if not failed.refused:
+            failed.refused = ("%s was not added to the photo, so the face is not named: %s"
+                              % (person_name, tagged.message()))
+        return failed
+    try:
+        result = faces_service.name_face(library, face_id, person_name)
+    except Conflict as late:
+        raise Conflict("%s The person was added to the photo." % late) from None
+    result.details.update(tags_written=tagged.details.get("tags_written", 0), written=tagged.details.get("written", {}))
+    if tagged.details.get("changes"):
+        result.details["changes"] = tagged.details["changes"]
+    if result.refused and tagged.details.get("tags_written"):
+        result.refused += " The person was added to the photo."
+    return result
+
+
+# ---- Taking names off ---------------------------------------------------------------------------------------------
+
+def unname_face(library, face_id, writer=None):
+    """Take a face's name off, then the person's tag off the photo unless another face still carries them. With no
+    `writer` the page writes the photo's tags itself: details["untag"] says which to take off."""
+    named = _names_of(library, [face_id])
+    result = faces_service.unname_face(library, face_id)
+    if result.changed:
+        _finish_untag(library, result, named, writer)
+    return result
+
+
+def unname_photo(library, photo_path, writer=None):
+    """Take the names off every face of a photo (Unmatch All), then the tags of the people they named."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        named = [(photo_path, name) for name in faces.names_in_photo(conn, photo_path)]
+    finally:
+        conn.close()
+    result = faces_service.unname_photo(library, photo_path)
+    if result.changed:
+        _finish_untag(library, result, named, writer)
+    return result
+
+
+def exclude(library, face_ids, reason=None, writer=None):
+    """Rule faces out ("not important"), then take the tags of the people they were named off their photos, as unnaming
+    does."""
+    named = _names_of(library, face_ids)
+    result = faces_service.exclude(library, face_ids, reason)
+    if result.changed and named:
+        _finish_untag(library, result, named, writer)
+    return result
+
+
+def _names_of(library, face_ids):
+    """[(photo path, name)] of the faces among `face_ids` that carry a name and are not excluded."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        rows = faces.rows(conn, face_ids)
+    finally:
+        conn.close()
+    return [(photo_path, name) for photo_path, name, excluded in rows.values() if name and not excluded]
+
+
+# ---- Automatch ------------------------------------------------------------------------------------------------------
+
+def automatch_photo(library, photo_path, named, writer):
+    """Automatch a photo's unnamed faces (faces_service.automatch_photo), then add the people it named to the photo. A
+    tag that cannot be written takes the names back: nothing is left named that the photo does not carry."""
+    result = faces_service.automatch_photo(library, photo_path, named)
+    named_ids = result.details.get("named_ids") or {}
+    if not named_ids:
+        return result
+    tagged = add_people(library, [(photo_path, name) for name in dict.fromkeys(named_ids.values())], writer)
+    if tagged.ok:
+        result.details.update(tags_written=tagged.details.get("tags_written", 0), written=tagged.details.get("written", {}))
+        return result
+    reverted = db.write_with_connection(library.path, lambda conn: faces.revert_automatic(conn, named_ids),
+                                        label="take back automatch names")
+    undone = Result(attempted=result.attempted)
+    undone.details.update(result.details)
+    undone.details["named_ids"] = {face_id: name for face_id, name in named_ids.items() if face_id not in reverted}
+    undone.changed = len(undone.details["named_ids"])
+    undone.fail(photo_path, "The people it named could not be added to the photo, so the names were taken back: %s"
+                % (tagged.refused or tagged.message()))
+    return undone

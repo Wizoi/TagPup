@@ -13,8 +13,20 @@ A file is also a real one on disk when the test made it so (tests/view_library.p
 (the stat, the tail check, the Recycle Bin) look at.
 """
 import threading
+from unittest import mock
 
 from tagpup.core import fields, paths
+
+
+def standing_in(testcase):
+    """ExifTool is a table of files for `testcase` (ExifToolSession patched until it ends): the Files, for a test of a route
+    that writes a photo's tags as a face is named or unnamed (tagpup.services.face_people), whose photos are rows and not
+    always files."""
+    files = Files()
+    patcher = mock.patch("tagpup.files.exiftool_session.ExifToolSession", files.session)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+    return files
 
 
 class Files:

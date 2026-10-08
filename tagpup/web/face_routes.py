@@ -4,7 +4,8 @@ faces a hover shows of one, and the writes of a single face -- name, unname, exc
 TagTuner's Identify Faces asked for these first; TagPup's Organize shows the faces on the open
 photo (docs/ARCHITECTURE.md, "Faces on the photo") and its Suggest chips show people, and each asks
 the same thing of the same service -- tagpup.services.identify, through tagpup.jobs.identify's
-caches -- so the numbers on one page are the other's. The process serves both apps, so the cache
+caches -- so the numbers on one page are the other's. The writes of one face are the same views too, and
+each is one decision of the face AND the photo's person tag (tagpup.services.face_people). The process serves both apps, so the cache
 of named faces is one, kept here; a write of either app moves the faces table's fingerprint, and
 what was cached against the old one is read again.
 """
@@ -15,9 +16,9 @@ from flask import Blueprint, abort, jsonify, make_response, request
 
 from tagpup.core.result import Conflict, NotFound
 from tagpup.jobs import identify as identify_jobs
-from tagpup.services import faces as faces_service
+from tagpup.services import face_people
 from tagpup.services import identify as identify_service
-from tagpup.web import responses, state
+from tagpup.web import responses, state, tagpup_routes
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,8 @@ def faces_write(library, action):
         abort(500, description="Internal error: %s" % e)
     if result.refused:
         refuse(400, result.refused)
+    if not result.ok:
+        refuse(500, result.message())
     fingerprints = result.details.get("fingerprints")
     if fingerprints and result.changed:
         identify_cache.of(library).forget_faces(result.details["face_ids"], *fingerprints)
@@ -145,8 +148,35 @@ def _read_face_ids(body):
         return None
 
 
+def writer_for(library, body=None):
+    """Where the photo's person tags are written for a face write (tagpup.services.face_people.Writer): the library's
+    ExifTool, TagPup's folder records told of each chunk as it is written. None when the request says the PAGE writes the
+    tags itself (`page_writes_tags`: TagPup's boxes, with their queue, their undo and their placement question); the
+    answer then says which to take off (`untag`)."""
+    if (body or {}).get("page_writes_tags"):
+        return None
+    return face_people.Writer(state.exiftool(library), told=lambda done: tagpup_routes.records_written(library, done))
+
+
+def tags_reply(result):
+    """What a face write says of the photo's tags: how many files it wrote, which tags the page is to take off when it
+    writes them itself, and, when a tag could not be taken off, a sentence (the faces are written all the same)."""
+    reply = {}
+    details = result.details
+    if "tags_written" in details:
+        reply["tags_written"] = details["tags_written"]
+    if "tags_removed" in details:
+        reply["tags_removed"] = details["tags_removed"]
+    if details.get("untag"):
+        reply["untag"] = details["untag"]
+    if details.get("tag_problem"):
+        reply["warning"] = ("The person is no longer on a face, but the tag could not be taken off the photo: %s"
+                            % details["tag_problem"])
+    return reply
+
+
 def face_match():
-    """Name one face (tagpup.services.faces.name_face)."""
+    """Name one face AND put the person on its photo, the tag first (tagpup.services.face_people.name_face)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     face_id, person_name = body.get("face_id"), body.get("person_name")
@@ -156,13 +186,15 @@ def face_match():
         face_id, person_name = int(face_id), str(person_name).strip()
     except (ValueError, TypeError):
         abort(400, description="Invalid parameters")
-    result = faces_write(library, lambda lib: faces_service.name_face(lib, face_id, person_name))
+    writer = writer_for(library)
+    result = faces_write(library, lambda lib: face_people.name_face(lib, face_id, person_name, writer))
     # What the write changed, not what was asked: naming a face the name it has is no change.
-    return jsonify({"success": True, "changed": result.changed})
+    return jsonify({"success": True, "changed": result.changed, **tags_reply(result)})
 
 
 def face_unmatch():
-    """Take a face's name off (tagpup.services.faces.unname_face)."""
+    """Take a face's name off, and the person's tag off the photo unless another face carries them
+    (tagpup.services.face_people.unname_face)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     face_id = body.get("face_id")
@@ -172,19 +204,22 @@ def face_unmatch():
         face_id = int(face_id)
     except (ValueError, TypeError):
         abort(400, description="Invalid face_id")
-    faces_write(library, lambda lib: faces_service.unname_face(lib, face_id))
-    return jsonify({"success": True})
+    writer = writer_for(library, body)
+    result = faces_write(library, lambda lib: face_people.unname_face(lib, face_id, writer))
+    return jsonify({"success": True, "changed": result.changed, **tags_reply(result)})
 
 
 def faces_exclude():
-    """Take faces out of identity work (tagpup.services.faces.exclude)."""
+    """Take faces out of identity work, and the tags of the people they were named off their photos
+    (tagpup.services.face_people.exclude)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     face_ids = _read_face_ids(body)
     if face_ids is None:
         abort(400, description="Missing or invalid face_ids")
     reason = body.get("reason")   # none: the service's default
-    result = faces_write(library, lambda lib: faces_service.exclude(lib, face_ids, reason))
+    writer = writer_for(library, body)
+    result = faces_write(library, lambda lib: face_people.exclude(lib, face_ids, reason, writer))
     # The rows changed, not the ids sent: an id that is not in the table was never
     # excluded, and saying it was is how a write reports success on nothing.
-    return jsonify({"success": True, "excluded": result.changed})
+    return jsonify({"success": True, "excluded": result.changed, **tags_reply(result)})
