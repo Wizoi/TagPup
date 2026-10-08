@@ -10,6 +10,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import migration_names  # noqa: E402
 import photo_rows  # noqa: E402
 from test_migrations import at_version  # noqa: E402
 
@@ -52,7 +53,7 @@ class MigrationTwenty(unittest.TestCase):
         tables = [table for table in tables if table not in ("schema_version", "changes", "change_rows")]
         before = {table: look(self.path, "SELECT * FROM %s" % table) for table in tables}
         with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:20]), mock.patch.object(schema, "LATEST", 20):
-            self.assertEqual(["photos by when they were taken"], schema.ensure(self.path))
+            self.assertEqual(migration_names.named(20), schema.ensure(self.path))
         self.assertEqual(INDEXES, self.indexes())
         self.assertEqual(before, {table: look(self.path, "SELECT * FROM %s" % table) for table in tables})
         self.assertEqual(20, look(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
