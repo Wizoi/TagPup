@@ -47,7 +47,7 @@ def _plan(library, on_step=None):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         # One read transaction: the guards are the state the plan read, not a later one.
-        conn.execute("BEGIN")
+        db.begin(conn)
         found = face_tags.plan(conn, references=lambda: _decided(library), on_step=on_step)
         photo_tags, siblings = face_tags.guards(conn, found.named)
     finally:

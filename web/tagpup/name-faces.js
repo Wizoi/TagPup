@@ -15,13 +15,13 @@ const nameFacesOptions = {
 };
 
 /** Open the dialog for the folder that is open. */
-export function startNamingFaces() {
+export function startNamingFacesInFolder() {
     return openNameFaces(nameFacesOptions);
 }
 
 export function wireNameFaces() {
     const button = document.getElementById('btn-name-faces');
-    if (button) button.addEventListener('click', startNamingFaces);
+    if (button) button.addEventListener('click', startNamingFacesInFolder);
     // A job already under way (another page, a reload) shows its progress.
     attachNameFaces(nameFacesOptions);
 }
