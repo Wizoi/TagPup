@@ -52,7 +52,7 @@ from tagpup.files import images
 from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring, watching
-from tagpup.services import damaged_photos, file_changes, indexing, search
+from tagpup.services import damaged_photos, file_changes, folder_moves, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
 from tagpup.services import sync as sync_service
@@ -320,6 +320,14 @@ def sync(library, folder=None, apply=False, index_new=True):
     return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
                              roots=settings.roots, ignored=settings.ignored,
                              reread_resized=settings.reread_resized_pictures)
+
+
+def relink_folders(library, apply=False, only=None):
+    """Follow the folders renamed outside the apps (tagpup.services.folder_moves): a dry run
+    unless `apply`, with the ExifTool the library names, read without stamping the library
+    for a dry run."""
+    settings = library_settings(library) if apply else peek_settings(library)
+    return folder_moves.relink(library, exiftool(library, settings), apply, only)
 
 
 def check_damaged(library, photo_paths=None):

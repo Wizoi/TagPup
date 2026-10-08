@@ -1,4 +1,4 @@
-"""Review of a1821cf (docs/findings.md, #922-#928): what a change of photo files really did to the people on its photos decides what
+"""Review of a1821cf (docs/findings.md, #950-#956): what a change of photo files really did to the people on its photos decides what
 happens to their faces (one place: tagpup.services.face_people.follow_change); a tag put back names the face the removal unnamed;
 the Undo of an assignment, an Ignore cluster or an Exclude selected is one undo of the job; the job is seen, held to by an update and
 kept as long as it can be resumed.
