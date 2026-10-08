@@ -431,7 +431,7 @@ def photo_unmatch_all():
     photo_path = body.get("photo_path")
     if not photo_path:
         abort(400, description="Missing photo_path")
-    writer = face_routes.writer_for(library, body)
+    writer = face_routes.writer_for(library, bool(body.get("page_writes_tags")))
     result = _faces_write(library, lambda lib: face_people.unname_photo(lib, photo_path, writer))
     return jsonify({"success": True, **face_routes.tags_reply(result)})
 

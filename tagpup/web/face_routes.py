@@ -148,12 +148,12 @@ def _read_face_ids(body):
         return None
 
 
-def writer_for(library, body=None):
+def writer_for(library, page_writes_tags=False):
     """Where the photo's person tags are written for a face write (tagpup.services.face_people.Writer): the library's
     ExifTool, TagPup's folder records told of each chunk as it is written. None when the request says the PAGE writes the
     tags itself (`page_writes_tags`: TagPup's boxes, with their queue, their undo and their placement question); the
     answer then says which to take off (`untag`)."""
-    if (body or {}).get("page_writes_tags"):
+    if page_writes_tags:
         return None
     return face_people.Writer(state.exiftool(library), told=lambda done: tagpup_routes.records_written(library, done))
 
@@ -188,7 +188,7 @@ def face_match():
         face_id, person_name = int(face_id), str(person_name).strip()
     except (ValueError, TypeError):
         abort(400, description="Invalid parameters")
-    writer = writer_for(library, body)
+    writer = writer_for(library, bool(body.get("page_writes_tags")))
     result = faces_write(library, lambda lib: face_people.name_face(lib, face_id, person_name, writer))
     # What the write changed, not what was asked: naming a face the name it has is no change.
     return jsonify({"success": True, "changed": result.changed, **tags_reply(result)})
@@ -206,7 +206,7 @@ def face_unmatch():
         face_id = int(face_id)
     except (ValueError, TypeError):
         abort(400, description="Invalid face_id")
-    writer = writer_for(library, body)
+    writer = writer_for(library, bool(body.get("page_writes_tags")))
     result = faces_write(library, lambda lib: face_people.unname_face(lib, face_id, writer))
     return jsonify({"success": True, "changed": result.changed, **tags_reply(result)})
 
@@ -220,7 +220,7 @@ def faces_exclude():
     if face_ids is None:
         abort(400, description="Missing or invalid face_ids")
     reason = body.get("reason")   # none: the service's default
-    writer = writer_for(library, body)
+    writer = writer_for(library, bool(body.get("page_writes_tags")))
     result = faces_write(library, lambda lib: face_people.exclude(lib, face_ids, reason, writer))
     # The rows changed, not the ids sent: an id that is not in the table was never
     # excluded, and saying it was is how a write reports success on nothing.
