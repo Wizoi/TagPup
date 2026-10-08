@@ -9,6 +9,7 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { fileAccessNote } from './common/file-access-note.js';
+import { samePath } from './common/paths.js';
 import { state } from './state.js';
 
 const TIMES = String.fromCharCode(0xd7);
@@ -348,30 +349,33 @@ function confirmMove(entry, ask, button, check, panel) {
 
 // ---- The dialog -------------------------------------------------------------------------------
 
-/** Does the sentence of where files are written already name the place the root is kept at? */
+/** Are files written to the place the root is kept at? The server says where; the page compares paths. */
 function writesToKeptPlace(entry) {
-    return !entry.writes_to || String(entry.writes_to).toLowerCase().includes(String(entry.active).toLowerCase());
+    return !entry.writes_to_place || samePath(entry.writes_to_place, entry.active);
 }
 
 /**
- * What is said of a root besides where it is kept, folded away: where tags and renames are written
- * and the place it was before. Open only when the writes go somewhere other than the place above,
- * which is the one thing worth seeing without asking. Null when there is nothing to say.
+ * What is said of a root besides where it is kept. The earlier place is always in the open: it is
+ * a separate copy that nothing written now reaches. Where files are written is folded away while it
+ * is the place above (redundant), and open, with its sentence, when it is somewhere else.
  */
 function moreAbout(entry) {
-    const parts = [];
-    const different = !writesToKeptPlace(entry);
-    if (entry.writes_to) parts.push(buildElement('p', { className: 'roots-writes', text: entry.writes_to }));
+    const nodes = [];
+    if (entry.writes_to) {
+        const redundant = writesToKeptPlace(entry);
+        const writes = buildElement('p', { className: 'roots-writes', text: entry.writes_to });
+        nodes.push(redundant
+            ? buildElement('details', { className: 'roots-more' },
+                [buildElement('summary', { text: 'Where files are written' }), writes])
+            : buildElement('details', { className: 'roots-more', attrs: { open: '' } },
+                [buildElement('summary', { text: 'Files are written elsewhere' }), writes]));
+    }
     if (entry.previous) {
-        parts.push(buildElement('p', { className: 'roots-previous',
+        nodes.push(buildElement('p', { className: 'roots-previous',
             text: `Before that: ${entry.previous}. It is a separate copy: nothing written now goes there. `
                 + 'Moving again forgets it.' }));
     }
-    if (!parts.length) return null;
-    return buildElement('details', { className: 'roots-more', attrs: different ? { open: '' } : {} }, [
-        buildElement('summary', { text: different ? 'Files are written elsewhere' : 'Where files are written' }),
-        ...parts,
-    ]);
+    return nodes;
 }
 
 function rootRow(entry) {
@@ -393,8 +397,7 @@ function rootRow(entry) {
     const facts = [];
     if (entry.mapped) {
         facts.push(buildElement('p', { className: 'roots-place', text: `Kept at ${entry.active}` }));
-        const more = moreAbout(entry);
-        if (more) facts.push(more);
+        facts.push(...moreAbout(entry));
         if (entry.shared_with && entry.shared_with.length) {
             facts.push(buildElement('p', { className: 'roots-shared',
                 text: `${entry.shared_with.join(', ')} also uses this root: moving it moves it for them too.` }));

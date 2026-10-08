@@ -283,7 +283,8 @@ def repair_addresses(library, apply=False):
     `apply`: details["repairs"] is [{"name", "was", "now"}] either way, `changed` the roots
     written. Refused, nothing written, when the repaired addresses would nest or another process
     holds the write lock. Needs no backup: it changes one text column and the journal holds the
-    way back."""
+    way back. A run in another process that holds the library's roots (an index, a sync, in any app)
+    stops with RootsChanged when it commits, so it is to be run with TagPup and TagTuner stopped."""
     result = Result(details={"dry_run": not apply})
     try:
         _there(library)
@@ -297,7 +298,7 @@ def repair_addresses(library, apply=False):
         return result
     try:
         done = adoption.repair_addresses(library.path)
-    except (paths.RootsError, ValueError) as problem:
+    except (adoption.Refused, paths.RootsError, ValueError) as problem:
         result.refuse("Nothing was written: %s" % problem)
         return result
     result.changed = len(done)

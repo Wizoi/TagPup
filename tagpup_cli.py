@@ -1590,6 +1590,9 @@ def roots_repair_address(ctx, apply_):
     which Git Bash does to an argument) its two. A dry run unless --apply; one journaled change
     that `undo` reverses."""
     library = _existing_library(ctx)
+    if apply_:
+        console.print("Run this with TagPup and TagTuner stopped: a run that holds the library's roots (an index, a "
+                      "sync) stops when the address changes.", markup=False, soft_wrap=True)
     result = library_roots.repair_addresses(library, apply=apply_)
     if result.refused:
         console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)

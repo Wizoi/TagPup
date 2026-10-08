@@ -8,7 +8,9 @@ as one journaled change that `undo` reverses.
 """
 import os
 import sys
+import sqlite3
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -19,7 +21,7 @@ import roots_library as rl  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
-from tagpup.store import db, journal  # noqa: E402
+from tagpup.store import adoption, db, journal  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
 WINDOWS = os.name == "nt"
@@ -132,6 +134,49 @@ class Repairing(unittest.TestCase):
         self.assertIsNone(undone.refused, undone.refused)
         self.assertEqual(LOST, self.addresses()["parkrun"])
 
+    def repair_change(self):
+        return [each for each in journal.history(self.side.db_path, limit=50)
+                if each["operation"].startswith(journal.ADDRESS_REPAIR)][0]["id"]
+
+    def test_undo_is_refused_once_the_address_is_not_the_one_the_repair_left(self):
+        roots_service.repair_addresses(self.side.library, apply=True)
+        other = "\\\\idziserver\\Pictures\\Pictures\\Elsewhere"
+        db.write_with_connection(self.side.db_path, lambda conn: conn.execute(
+            "UPDATE roots SET address = ? WHERE name = 'parkrun'", (other,)))   # the root adopted again, otherwise
+        undone = journal_service.undo(self.side.library, self.repair_change(), apply=True)
+        self.assertIn("not the one the repair left", undone.refused)
+        self.assertEqual(other, self.addresses()["parkrun"], "a valid address was not rewritten to a broken one")
+
+    def test_the_summary_holds_no_address(self):
+        roots_service.repair_addresses(self.side.library, apply=True)
+        conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
+        try:
+            summary = conn.execute("SELECT summary FROM changes WHERE id = ?", (self.repair_change(),)).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertNotIn("idziserver", summary)
+        self.assertNotIn("Parkrun", summary)
+
+    def test_the_undo_counts_what_it_wrote_back(self):
+        roots_service.repair_addresses(self.side.library, apply=True)
+        rehearsal = journal_service.undo(self.side.library, self.repair_change())
+        self.assertEqual(1, rehearsal.details["rehearsal"]["rows"] if "rehearsal" in rehearsal.details
+                         else rehearsal.changed)
+        undone = journal_service.undo(self.side.library, self.repair_change(), apply=True)
+        self.assertEqual(1, undone.changed)
+
+    def test_another_process_holding_the_write_lock_is_a_refusal_not_an_error(self):
+        locked = sqlite3.OperationalError("database is locked")
+        with mock.patch.object(adoption.db, "begin", side_effect=locked):
+            result = roots_service.repair_addresses(self.side.library, apply=True)
+        self.assertIn("another process holds the library's write lock", result.refused)
+        self.assertEqual(LOST, self.addresses()["parkrun"])
+
+    def test_the_server_lists_where_files_are_written(self):
+        from tagpup.services import roots_location
+        found = roots_location.overview(self.side.library, rl.machine())
+        self.assertIn("writes_to_place", found["roots"][0])
+
     def test_a_library_with_no_such_root_has_nothing_to_repair(self):
         other = rl.Side(self.home, "other", real=1, bulk=1, outside=0)
         result = roots_service.repair_addresses(other.library, apply=True)
@@ -148,6 +193,7 @@ class Repairing(unittest.TestCase):
         self.assertIn("Nothing changed. --apply writes it.", said.output)
         self.assertEqual(LOST, self.addresses()["parkrun"])
         said = run("--apply")
+        self.assertIn("Run this with TagPup and TagTuner stopped", said.output)
         self.assertIn("Repaired 1 root(s).", said.output)
         self.assertEqual(KEPT, self.addresses()["parkrun"])
         self.assertIn("No root's address is missing", run().output)

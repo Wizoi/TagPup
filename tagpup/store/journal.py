@@ -1042,7 +1042,7 @@ def _undo_rows(conn, change_id):
     if conn.execute("SELECT 1 FROM changes WHERE id = ? AND substr(operation, 1, ?) = ?",
                     (change_id, len(ADDRESS_REPAIR), ADDRESS_REPAIR)).fetchone():
         from tagpup.store import adoption
-        adoption.undo_address_repair(conn, change_id)
+        converted = adoption.undo_address_repair(conn, change_id)
     changes = _load(conn, change_id)
     reasons = _not_as_left(conn, change_id, changes)
     inverse = [_inverse(change) for change in reversed(changes)]
