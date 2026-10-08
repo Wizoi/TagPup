@@ -11,7 +11,7 @@ import { renameInSelection } from './selected.js';
 import { btnSaveDetails, inputAddPerson, inputAddTag, inputPhotoTitle } from './elements.js';
 import { setStatus } from './status.js';
 import { saveToLocalStorageCache } from './cache.js';
-import { markEntry, pendingWrites, queueEntry, whereWritten } from './write-queue.js';
+import { dismissEntry, markEntry, pendingWrites, queueEntry, whereWritten } from './write-queue.js';
 import {
     fetchKnownTagsAndPeople, namesAPerson, resolveTagOrPerson, updateTagsDatalist
 } from './tags.js';
@@ -110,11 +110,16 @@ export function wireUnsavedEdits() {
  * It waits its turn in the photo write queue and reads the fields when it runs,
  * so a second call sees what the first one wrote.
  */
-export function saveDetailEdits(fields = { title: true, tags: true, people: true }) {
-    const path = state.activePhotoPath;
-    // The fields belong to the photo they were typed on. Leaving waits for the
-    // queue, so this should always hold; if it does not, the text is not ours.
-    return queueWriteOf(path, () => (samePath(state.activePhotoPath, path) ? writeDetailEdits(fields) : true));
+export function saveDetailEdits(fields = { title: true, tags: true, people: true }, intent = null) {
+    // A retry names the photo and the text the failed save held (its entry's `intent`), not the panel as it is now.
+    const path = intent ? intent.path : state.activePhotoPath;
+    // The fields belong to the photo they were typed on. Leaving waits for the queue, so a first save
+    // finds it open; if it does not, the text is not ours.
+    return queueWriteOf(path, (entry) => {
+        if (intent || samePath(state.activePhotoPath, path)) return writeDetailEdits(fields, { intent, path, entry });
+        entry.error = 'The photo is no longer open, so the text typed on it is gone';
+        return false;
+    }, `Save photo ${baseName(path)}`, (entry) => saveDetailEdits(fields, entry.intent || null));
 }
 
 /**
@@ -122,9 +127,10 @@ export function saveDetailEdits(fields = { title: true, tags: true, people: true
  * for (openPhotoWrite). A bulk write is queued without one, and leaving waits for none:
  * an arrow key waited for a slow bulk write on a network share to finish.
  */
-export function queueWriteOf(path, job, label = `Save photo ${baseName(path)}`) {
+export function queueWriteOf(path, job, label = `Save photo ${baseName(path)}`, again = () => queueWriteOf(path, job, label)) {
     const key = pathKey(path);
-    const run = queuePhotoWrite(job, label).finally(() => {
+    // A failed save's Retry is a write of this photo too: the one leaving the photo waits for.
+    const run = queuePhotoWrite(job, label, again).finally(() => {
         if (state.photoWrites[key] === run) delete state.photoWrites[key];
         updateSaveButton();
     });
@@ -162,12 +168,13 @@ export function openPhotoWrite() {
  * folder the library does not hold is written to its file only, which the server decides per
  * photo (tagpup.services.file_only); the queue does not ask.
  */
-export function queuePhotoWrite(job, label = 'Save a photo') {
+export function queuePhotoWrite(job, label = 'Save a photo', again = () => queuePhotoWrite(job, label)) {
+    // `again` is given the entry that failed: a save's entry holds what it tried to write (`intent`).
     // An entry of the queue's status (write-queue.js): `label` says what it does, and
     // the job is given it, to put a failure's reason in `error`. A job that resolves
-    // false failed; Retry queues it again.
+    // false failed; Retry queues it again, as `again` says (a write of one photo is queued again as that photo's).
     const entry = queueEntry(label);
-    entry.retry = () => queuePhotoWrite(job, label);
+    entry.retry = () => again(entry);
     const before = state.detailSaveInFlight || Promise.resolve();
     const run = before.then(() => {
         markEntry(entry, 'writing');
@@ -276,19 +283,28 @@ export function redrawIfShowing(photo) {
     upper.updateCarryForwardState();
 }
 
-export async function writeDetailEdits(fields) {
-    const path = state.activePhotoPath;
+/**
+ * Write what a save holds. `intent` is the text of a save that failed ({ path, title, tagText, personText }), written as it
+ * was and not as the fields are now; without one it is read from the fields, and kept on `entry` so a Retry can write it
+ * (findings #877). Once it is written, an earlier failed save of the photo is settled (findings #881).
+ */
+export async function writeDetailEdits(fields, { intent = null, path = state.activePhotoPath, entry = null } = {}) {
     const photo = path && state.folderPhotos.find(p => samePath(p.path, path));
-    if (!photo) return true;
+    if (!photo) {
+        if (!intent) return true;
+        if (entry) entry.error = 'The photo is not in the open folder any more, so the text it held was not written';
+        return false;
+    }
     if (photo.unreadable) {
         setStatus('error', UNREADABLE_SAVE, { transient: false });
         alert(UNREADABLE_SAVE);
         return false;
     }
 
-    const typedTitle = inputPhotoTitle.value.trim();
-    const tagText = fields.tags ? inputAddTag.value : '';
-    const personText = fields.people ? inputAddPerson.value : '';
+    const typedTitle = intent ? intent.title : inputPhotoTitle.value.trim();
+    const tagText = intent ? intent.tagText : (fields.tags ? inputAddTag.value : '');
+    const personText = intent ? intent.personText : (fields.people ? inputAddPerson.value : '');
+    if (entry) entry.intent = { path, title: typedTitle, tagText, personText };
     const newTitle = fields.title && typedTitle !== String(photo.title || '').trim()
         ? typedTitle
         : null;
@@ -339,6 +355,7 @@ export async function writeDetailEdits(fields) {
 
     if (!added.length && newTitle === null) {
         clearTyped();
+        settleFailedSaves(path, entry);
         return true;
     }
 
@@ -398,7 +415,15 @@ export async function writeDetailEdits(fields) {
         console.error('Saved, but redrawing the page failed:', err);
     }
     setStatus('ready', `Saved ${photo.filename || baseName(photo.path)}.${whereWritten(data)}`.replace(/\.$/, ''));
+    settleFailedSaves(path, entry);
     return true;
+}
+
+/** A save of the photo worked: an earlier save of it that failed is settled, and stops offering a Retry that would write it again. */
+function settleFailedSaves(path, entry) {
+    for (const each of state.writeQueue.entries.slice()) {
+        if (each !== entry && each.status === 'failed' && each.intent && samePath(each.intent.path, path)) dismissEntry(each);
+    }
 }
 
 export function refreshAfterDetailSave(photo, path, newTitle, added) {

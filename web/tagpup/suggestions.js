@@ -512,9 +512,19 @@ export function applyFolderSuggestionsLevel() {
     // The photos selected when it was clicked. It waits in the photo write queue
     // (edits.js) behind every write clicked before it, as a bulk tag write does
     // (selection.js), and the photos are snapshotted for undo as those left them.
-    const targets = state.selectedThumbnails.slice();
+    return queueApplyAll(folder, state.selectedThumbnails.slice(), []);
+}
+
+/**
+ * One Apply All of `targets`, in the write queue. `prior`: the undo record of an attempt that failed part-way, when this
+ * is its Retry -- the photos it wrote, as they were before it. Kept on the failed entry (`undoSoFar`), so that the undo
+ * recorded now covers both attempts: this one snapshots the photos after the first attempt wrote some, and its record
+ * alone would leave those without a way back (findings #879).
+ */
+function queueApplyAll(folder, targets, prior) {
     return queuePhotoWrite((entry) => {
         const before = snapshotPhotos(targets);
+        entry.undoSoFar = prior;
         setStatus('busy', `Applying suggestions to ${targets.length} photo(s)...`);
         return api.json('/api/folder/auto-apply', {
             method: 'POST',
@@ -530,17 +540,15 @@ export function applyFolderSuggestionsLevel() {
             })
         })
         .then(data => {
-            if (!data.success) throw new Error(data.error);
-            // Each photo as the server says it holds it now: undo takes back the
-            // difference (undo.js).
-            const written = Object.entries(data.written || {});
-            recordUndo({
-                label: `auto-apply to ${before.length} photo(s)`,
-                photos: before.map(photo => {
-                    const now = written.find(([path]) => samePath(path, photo.path));
-                    return { ...photo, after: now ? now[1] : photo.before };
-                }),
-            });
+            if (!data.success) {
+                // Stopped part-way: the reply names the photos it wrote, and undo is of those (findings #391).
+                // One that wrote none leaves the operation before it to Ctrl+Z.
+                const kept = recordAutoApplyUndo(before, data.written, false, prior);
+                entry.undoSoFar = kept;
+                entry.error = kept.length ? `${data.error} (${kept.length} written: Ctrl+Z takes them back)` : data.error;
+                throw new Error(data.error);
+            }
+            recordAutoApplyUndo(before, data.written, true, prior);
             // A photo found damaged was skipped, nothing written to it (write-queue.js).
             const skipped = data.skipped_damaged || 0;
             noteSkipped(entry, skipped);
@@ -563,11 +571,35 @@ export function applyFolderSuggestionsLevel() {
             scanFolder(true);
             // A failure that would otherwise pass unnoticed still earns a modal.
             setStatus('error', 'Applying suggestions failed', { transient: false });
-            entry.error = err.message;
+            entry.error = entry.error || err.message;
             alert("Error applying suggestions: " + err.message);
             return false;
         });
-    }, `Apply All suggestions (${targets.length} photos)`);
+    }, `Apply All suggestions (${targets.length} photos)`, (failed) => queueApplyAll(folder, targets, failed.undoSoFar || []));
+}
+
+/**
+ * Undo's record of an Apply All, built from the REPLY's `written` (path -> the tags the file holds now), never
+ * from what was attempted: undo takes back the difference (undo.js). `all`: a finished write, which records
+ * every photo it was asked for (those it left alone differ by nothing); else only the photos named. Returns how
+ * the photos the record holds ([] if it recorded nothing). `prior`: the photos an earlier attempt wrote, kept as they
+ * were before it, with the tags this attempt's reply says they hold now.
+ */
+function recordAutoApplyUndo(before, writtenByPath, all, prior = []) {
+    const written = Object.entries(writtenByPath || {});
+    const named = before.filter(photo => written.some(([path]) => samePath(path, photo.path)));
+    const photos = (all ? before : named).map(photo => {
+        const now = written.find(([path]) => samePath(path, photo.path));
+        return { ...photo, after: now ? now[1] : photo.before };
+    });
+    const merged = prior.map(earlier => {
+        const again = photos.find(photo => samePath(photo.path, earlier.path));
+        return again ? { ...earlier, after: again.after } : earlier;
+    }).concat(photos.filter(photo => !prior.some(earlier => samePath(earlier.path, photo.path))));
+    // Nothing written this time: the record that stands (the earlier attempt's, or none) is left to Ctrl+Z.
+    if (!photos.length) return prior;
+    recordUndo({ label: `auto-apply to ${merged.length} photo(s)`, photos: merged });
+    return merged;
 }
 
 export function updateFolderAutoApplyState() {

@@ -19,7 +19,7 @@ import {
 import { setStatus } from './status.js';
 import { isJustLooking, libraryName } from './looking.js';
 import { whereWritten } from './write-queue.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import {
     exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
     getFolderDateStats, parseExifDateToLocalDate, takenOf
@@ -653,7 +653,12 @@ export function deleteActivePhoto() {
     const index = state.folderPhotos.findIndex(p => p.path === path);
     if (index === -1) return;
 
-    const filename = state.folderPhotos[index].filename || 'this photo';
+    // The record asked about, in hand: by the time the reply comes the folder may be another (findings #532).
+    const asked = state.folderPhotos[index];
+    // And where it was asked: the view or folder open now may be another by then, and its records are not this photo's.
+    const askedInView = state.library;
+    const askedInFolder = state.scannedFolder;
+    const filename = asked.filename || 'this photo';
     // A photo of a folder the library does not hold: say that only the file moves. And on a network
     // share there is no Recycle Bin: it goes through this PC's (#694), and where it restores to is said before it goes.
     const alone = isJustLooking()
@@ -680,10 +685,16 @@ export function deleteActivePhoto() {
         body: JSON.stringify({ path })
     })
     .then(data => {
-        if (data.success && state.library) {
+        if (data.success && askedInView && state.library !== askedInView) {
+            // Another view (or a folder) was opened while the delete was out: nothing of it is this photo's.
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Ready';
+            return;
+        }
+        if (data.success && askedInView) {
             // The photo leaves the view: its card goes and the total drops. The next one in the order opens.
-            const lib = state.library;
-            const gone = state.folderPhotos[index];
+            const lib = askedInView;
+            const gone = asked;
             const at = lib.ids.indexOf(gone.id);
             state.folderPhotos = [];
             lib.activeId = null;
@@ -695,8 +706,17 @@ export function deleteActivePhoto() {
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = 'Ready';
         } else if (data.success) {
-            // Remove photo from client folderPhotos array
-            state.folderPhotos.splice(index, 1);
+            // Found again now, by its path: a folder opened meanwhile has no such card, and none of it goes.
+            const at = state.folderPhotos.findIndex(p => samePath(p.path, path));
+            if (at === -1) {
+                removeFromSelection([path]);
+                if (askedInFolder) forgetCachedPhoto(askedInFolder, path);
+                statusDot.className = 'status-indicator-dot';
+                statusText.textContent = data.message || 'Ready';
+                return;
+            }
+            const wasOpen = samePath(state.activePhotoPath, path);
+            state.folderPhotos.splice(at, 1);
 
             // Remove from selection array if selected
             removeFromSelection([path]);
@@ -717,8 +737,9 @@ export function deleteActivePhoto() {
             // in folderPhotos, so hasUnsavedEdits finds nothing to save them to.
             if (state.folderPhotos.length === 0) {
                 showFolderView();
-            } else {
-                const nextPhoto = state.folderPhotos[index] || state.folderPhotos[index - 1];
+            } else if (wasOpen) {
+                // Another photo opened meanwhile stays open.
+                const nextPhoto = state.folderPhotos[at] || state.folderPhotos[at - 1];
                 selectPhoto(nextPhoto.path);
             }
 

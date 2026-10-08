@@ -259,16 +259,17 @@ class WhyAFaceIsExcluded(unittest.TestCase):
         return page_source("tuner")
 
     def test_the_page_offers_the_services_reasons(self):
-        from tagpup.services import faces
+        from tagpup.core import validation
         page = self.page()
-        offered = re.search(r"const EXCLUDE_REASONS = \[([^\]]*)\];", page)
+        # The page keeps no list: it offers the published choices (web/common/validate.js choicesOf), less the
+        # reason an ignored cluster is given, which it names.
+        self.assertIsNone(re.search(r"const EXCLUDE_REASONS\b", page), "the page keeps its own copy of the reasons again")
+        self.assertIn("choicesOf('exclusion reason')", page)
         ignored = re.search(r"const EXCLUDE_IGNORED_CLUSTER = '([^']*)';", page)
-        self.assertIsNotNone(offered, "the page's copy of the reasons moved")
         self.assertIsNotNone(ignored, "the page's reason for an ignored cluster moved")
-        copy = re.findall(r"'([^']*)'", offered.group(1))
-        self.assertEqual(faces.EXCLUSION_REASONS, tuple(copy + [ignored.group(1)]))
-        self.assertEqual(faces.DEFAULT_REASON, copy[0])
-        self.assertEqual(faces.IGNORED_CLUSTER, ignored.group(1))
+        self.assertEqual(validation.IGNORED_CLUSTER, ignored.group(1))
+        self.assertEqual(validation.EXCLUSION_REASONS[-1], ignored.group(1), "the ignored cluster is no longer the last choice")
+        self.assertNotIn(validation.IGNORED_CLUSTER, validation.EXCLUSION_REASONS[:-1])
 
     def test_nobody_else_spells_them(self):
         from tagpup.services import faces

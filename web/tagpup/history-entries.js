@@ -16,6 +16,16 @@ export function pushEntry(entry, url) {
     state.entries.at = pos;
 }
 
+/**
+ * The address of the place the page is at replaced -- a folder opened, or closed: no place is made or lost, so the place keeps its
+ * position. What a view or a photo made it (a photo to open again, a search's distance back, a scroll) is not the folder's.
+ */
+export function replaceAddress(url) {
+    const here = window.history.state;
+    const kept = positionOf(here) !== null ? { entryLoad: here.entryLoad, entryPos: here.entryPos } : {};
+    window.history.replaceState(kept, '', url);
+}
+
 /** The position of a place in the history this load made, or null. */
 export function positionOf(entry) {
     return entry && entry.entryLoad === state.entries.load && Number.isInteger(entry.entryPos) ? entry.entryPos : null;

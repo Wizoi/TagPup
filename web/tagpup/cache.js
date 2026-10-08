@@ -1,6 +1,6 @@
 // TagPup's page: a folder's scan, kept in this browser for half an hour, so opening it
 // again does not scan it again.
-import { pathKey } from './common/paths.js';
+import { pathKey, samePath } from './common/paths.js';
 import { state } from './state.js';
 
 // Browser local storage cache configuration (30 minutes timeout)
@@ -23,6 +23,22 @@ export function saveToLocalStorageCache() {
         if (legacyKey !== folderCacheKey(state.scannedFolder)) localStorage.removeItem(legacyKey);
     } catch (e) {
         console.warn("Storage quota exceeded, could not cache folder data.");
+    }
+}
+
+/**
+ * A photo deleted from a folder that is not the one open any more: the scan this browser kept for that folder must not
+ * list it (the open folder's is saved as it stands, saveToLocalStorageCache). Nothing is kept for a folder never scanned.
+ */
+export function forgetCachedPhoto(folder, photoPath) {
+    try {
+        const key = folderCacheKey(folder);
+        const kept = JSON.parse(localStorage.getItem(key) || 'null');
+        if (!kept || !Array.isArray(kept.photos)) return;
+        kept.photos = kept.photos.filter(photo => !samePath(photo.path, photoPath));
+        localStorage.setItem(key, JSON.stringify(kept));
+    } catch (e) {
+        console.warn('Could not take a deleted photo out of the scan kept for its folder:', e);
     }
 }
 

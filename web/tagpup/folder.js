@@ -16,6 +16,7 @@ import { CACHE_TTL_MS, folderCacheKey, saveToLocalStorageCache } from './cache.j
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { libraryPosition } from './library-source.js';
+import { replaceAddress } from './history-entries.js';
 
 export function wireChangeDogPark() {
     if (btnChangeDb) {
@@ -60,7 +61,7 @@ export function closeFolderForDogPark() {
     folderPathInput.value = '';
     const url = new URL(window.location);
     url.searchParams.delete('path');
-    window.history.replaceState({}, '', url);
+    replaceAddress(url);
     updateCurrentFolderLabel();
     // Close the photo too, and the list: both still showed the folder just
     // closed, editable and clickable. Edits were settled before this ran.
@@ -267,7 +268,7 @@ export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
                     // Update URL
                     const url = new URL(window.location);
                     url.searchParams.set('path', path);
-                    window.history.replaceState({}, '', url);
+                    replaceAddress(url);
                     
                     upper.checkSuggestionsStatus(path);
                     upper.checkFolderMembership(path);
@@ -353,7 +354,7 @@ export function showScannedFolder(path, data) {
     // Update URL search path parameter
     const url = new URL(window.location);
     url.searchParams.set('path', path);
-    window.history.replaceState({}, '', url);
+    replaceAddress(url);
 
     // Save to cache
     saveToLocalStorageCache();

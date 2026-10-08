@@ -189,19 +189,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---- Start ------------------------------------------------------------
     //
     // Last, deliberately. This opens the folder in the ?path= and picks up an index
-    // already running on it, which means it calls into most of the app. Doing that
-    // from the middle of this closure reaches `let` bindings declared further down
-    // before their declarations have run, and a `let` reached early does not read as
-    // undefined -- it throws.
+    // already running on it, which means it calls into most of the app: through the
+    // listeners wired above and the calls up the page that main.js fills in (hooks.js).
+    // Started before those lines, it would run without them.
     //
-    // It did: checkIndexingStatus touched indexProgressTimer, threw, and took the
-    // rest of this closure's body with it, so facesRequestToken was never initialised
-    // either. The scan that followed then failed on *that*, and the message said
-    // "Error scanning folder: Cannot access 'facesRequestToken' before
-    // initialization" -- two removes from the line at fault.
-    //
-    // Nothing runs the app before this point. tests/frontend/tag-vocabulary.test.mjs
-    // keeps it that way.
+    // main.js declares no state of its own (tests/frontend/page-state.test.mjs), so
+    // nothing here reaches a binding before its line has run; what is left of the rule
+    // is this block's position, and tests/frontend/tag-vocabulary.test.mjs keeps it.
     // How many of the library's photos were found damaged, in the header (damaged.js).
     showLibraryDamage();
     // A bulk edit already running in this library (started before this page was opened or reloaded) is picked up by its strip.
