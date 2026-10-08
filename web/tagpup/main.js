@@ -25,6 +25,7 @@ import {
     leaveLibraryView, libraryChanged, openLibraryView, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
 } from './library-view.js';
 import { wireSelectionPanel } from './selection-panel.js';
+import { wireDetailsPanel } from './details-panel.js';
 import { restoreViewAsLeft, showGrid, wireViewLeft } from './view-left.js';
 import { deleteSelection } from './bulk-edit.js';
 import { checkFolderMembership, wireMembership } from './membership.js';
@@ -156,6 +157,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // The selection details: the Tagging section's button, and what this browser remembers of it.
     wireSelectionPanel();
+
+    // In a narrow window the selection details are behind a button, over the grid when opened.
+    wireDetailsPanel();
 
     // The photo panel's Back, to the grid of a library view as it was left.
     wireViewLeft();

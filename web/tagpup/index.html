@@ -367,6 +367,8 @@
                                     <button id="btn-name-faces" type="button" class="btn btn-secondary btn-sm" title="Name the faces the photos' person tags name, in the whole library, not only this folder. You are shown the plan and asked before anything is written.">Name faces from tags</button>
                                     <button id="btn-show-in-library" class="btn btn-secondary btn-sm hidden" title="Open this folder's photos as the library holds them: by Date Taken, from the index, with the folder's subfolders">Show in library</button>
                                     <div class="selection-actions">
+                                        <!-- In a narrow window only (style.css): the Selection Details panel is collapsed behind this, and opened lies over the grid (web/tagpup/details-panel.js, #720). -->
+                                        <button id="btn-details-toggle" type="button" class="btn btn-secondary btn-sm details-toggle" aria-expanded="false" aria-controls="folder-selection-sidebar" title="Show or hide the Selection Details panel">Details</button>
                                         <button id="btn-select-all-thumbnails" class="btn btn-secondary btn-sm">Select All</button>
                                         <button id="btn-select-none-thumbnails" class="btn btn-secondary btn-sm">Select None</button>
                                         <!-- In a library view only: delete the selected photos, files and rows, as a job (web/tagpup/bulk-edit.js, #674). -->
@@ -449,6 +451,8 @@
                         <div class="sidebar-card-header">
                             <h3>Selection Details</h3>
                             <span id="selection-summary-count" class="selected-count-badge">Selected: 0</span>
+                            <!-- In a narrow window only: the opened panel lies over the grid's header, and the Details button with it (details-panel.js, #720). -->
+                            <button id="btn-details-close" type="button" class="btn btn-secondary btn-sm details-close" aria-label="Hide Selection Details" title="Hide Selection Details">&times;</button>
                         </div>
                         
                         <div class="selection-empty-hint hidden" id="selection-empty-hint">

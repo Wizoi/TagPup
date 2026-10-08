@@ -4,7 +4,7 @@ undone where each file still holds what the edit left (docs/ARCHITECTURE.md, pha
 
 Real JPEGs, made here in a home of the test's own, written by the real ExifTool; the
 test is skipped only where ExifTool is not installed. Rows are seeded as the indexer
-stores them, with SQL, never through the recorder under test. A crash is a
+stores them (tests/photo_rows.add_read, #309), never through the recorder under test. A crash is a
 BaseException raised at a step of the write (file_changes.STEPS), as tests/test_journal.py
 does for the journal of rows; `settle` then finishes what it left.
 """
@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -95,13 +96,12 @@ class FilesCase(unittest.TestCase):
             values["XMP-xmpMM:PreservedFileName"] = preserved
         write_outside(path, values)
         if row:
-            raw = {"XMP:Subject": list(tags), "IPTC:Keywords": list(tags)}
-            if taken:
-                raw["EXIF:DateTimeOriginal"] = taken
-            stat = os.stat(path)
-            self.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
-                         (path, stat.st_mtime, stat.st_size, json.dumps(list(tags)),
-                          json.dumps([caption] if caption else []), json.dumps(raw)))
+            conn = db.connect(self.library.path)
+            try:
+                photo_rows.add_read(conn, path, values)
+                conn.commit()
+            finally:
+                conn.close()
         return path
 
     def execute(self, sql, params=()):

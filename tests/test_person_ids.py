@@ -20,6 +20,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import migration_names  # noqa: E402
 import photo_rows  # noqa: E402
 from test_migrations import at_version  # noqa: E402
 
@@ -304,8 +305,7 @@ class TheMigration(unittest.TestCase):
         before = look(path, "SELECT id, photo_id, box, embedding, name, prob, name_source, excluded FROM faces ORDER BY id")
         listed = look(path, "SELECT photo_id, position, name, source FROM photo_people ORDER BY 1, 2")
         schema._current.clear()
-        self.assertEqual(["people by their node's id", "photos by file name", "photos by caption", "photos by their words",
-                          "the photos whose faces were detected"],
+        self.assertEqual(migration_names.after(20),
                          schema.ensure(path))
         self.assertEqual(before, look(path, "SELECT id, photo_id, box, embedding, name, prob, name_source, excluded"
                                             " FROM faces ORDER BY id"))
@@ -316,11 +316,9 @@ class TheMigration(unittest.TestCase):
         self.assertEqual({node_id(path, "People/" + WREN)}, ids_of(path, "photo_people")[WREN])
         self.assertEqual([0, 0], in_step(path))
         # migrations 22 and 23 (indexes), 24 (the word index) and 25 (faces_detected) are recorded after it
-        operation, summary = look(path, "SELECT operation, summary FROM changes WHERE operation NOT IN "
-                                        "('migration 22: photos by file name', 'migration 23: photos by caption',"
-                                        " 'migration 24: photos by their words',"
-                                        " 'migration 25: the photos whose faces were detected')"
-                                        " ORDER BY id DESC LIMIT 1")[0]
+        skipped = migration_names.operations_after(21)
+        operation, summary = look(path, "SELECT operation, summary FROM changes WHERE operation NOT IN (%s)"
+                                        " ORDER BY id DESC LIMIT 1" % ",".join("?" * len(skipped)), tuple(skipped))[0]
         self.assertEqual("migration 21: people by their node's id", operation)
         self.assertIn('"kind": "additive"', summary)
 
@@ -370,8 +368,7 @@ class TheMigration(unittest.TestCase):
         self.assertNotIn("tag_id", [row[1] for row in look(path, "PRAGMA table_info(faces)")], "all or nothing")
         self.assertEqual([], look(path, "SELECT name FROM sqlite_master WHERE name = 'idx_faces_person'"))
         schema._current.clear()
-        self.assertEqual(["people by their node's id", "photos by file name", "photos by caption", "photos by their words",
-                          "the photos whose faces were detected"],
+        self.assertEqual(migration_names.after(20),
                          schema.ensure(path))
         self.assertEqual(node_id(path, "Family/Coast/" + ODA),
                          look(path, "SELECT tag_id FROM faces WHERE id = ?", (made[0],))[0][0])

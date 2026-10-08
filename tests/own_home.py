@@ -122,9 +122,13 @@ def _reap_after_exit(folder):
         os.close(handle)
         # In a group of its own, so it outlives this process; with a hidden console,
         # not none, or the venv launcher's child gets a visible one (tagpup.core.processes).
-        (_START or processes.start)([sys.executable, os.path.abspath(__file__), "--reap", str(os.getpid()), _reap_list],
+        reaper = (_START or processes.start)([sys.executable, os.path.abspath(__file__), "--reap", str(os.getpid()), _reap_list],
                                     own_group=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, close_fds=True)
+        # Never waited for: it is meant to outlive this process. Left as running, Python warned "subprocess ... is
+        # still running" when the handle was collected -- in whichever test was running then, and again at exit (#743).
+        if hasattr(reaper, "returncode"):
+            reaper.returncode = 0
     with open(_reap_list, "a", encoding="utf-8") as handle:
         handle.write(folder + os.linesep)
 

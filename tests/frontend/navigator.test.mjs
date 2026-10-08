@@ -143,7 +143,7 @@ describe("the four sections", () => {
     assert.match(labels.at(-1), /^Other years \(\d+\)$/);
     const usual = labels.slice(0, -1).map(Number);
     assert.deepEqual(usual, [...usual].sort((a, b) => b - a));
-    assert.ok(usual.every((year) => year >= 1970 && year <= YEAR + 1));
+    assert.ok(usual.every((year) => year >= 1900 && year <= YEAR + 1));
     assert.equal(ctx.state.nav.sections.dates.index.size, 61);
     const other = ctx.rows("dates").at(-1);
     assert.equal(other.getAttribute("aria-expanded"), "false");
@@ -656,14 +656,21 @@ describe("the keys", () => {
 });
 
 describe("the model, alone", () => {
-  test("the junk years are the ones outside 1970 and next year", async (t) => {
+  test("the years the route calls implausible are the ones grouped, whatever they are (#510)", async (t) => {
     const ctx = await loadViewPage(t);
     const { indexDates } = ctx.module("navigator-model.js");
     const dates = indexDates(syntheticDates(2026), 2026);
     assert.equal(dates.size, 61);
-    assert.ok(dates.usual.every((each) => each.year >= 1970 && each.year <= 2027));
-    assert.ok(dates.odd.every((each) => each.year < 1970 || each.year > 2027));
+    assert.ok(dates.usual.every((each) => each.year >= 1900 && each.year <= 2027));
+    assert.ok(dates.odd.every((each) => each.year < 1900 || each.year > 2027));
     assert.equal(dates.usual.length + dates.odd.length, 61);
+    // The page owns no bounds: 1950 is a year the route did not flag, 1888 and 2090 are ones it did.
+    const make = (year, implausible) => ({ year, count: 1, months: [], other: 1, implausible });
+    const told = indexDates({ years: [make(1950, false), make(1888, true), make(2090, true), make(2026, false)], undated: 0 });
+    assert.equal(JSON.stringify(told.usual.map((each) => each.year)), "[2026,1950]");
+    assert.equal(JSON.stringify(told.odd.map((each) => each.year)), "[2090,1888]");
+    const unflagged = indexDates({ years: [{ year: 1500, count: 1, months: [], other: 1 }], undated: 0 });
+    assert.equal(unflagged.odd.length, 0, "an answer that does not say is not guessed at");
   });
 
   test("names that differ only in case are found as one, a cyclic tree ends, a folder whose parent is missing is a top", async (t) => {

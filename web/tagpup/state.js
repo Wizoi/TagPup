@@ -60,6 +60,9 @@ export const state = {
     viewLeft: null,
     // A Back out of the photo was asked of the browser and has not arrived (view-left.js backToView): a second asks nothing.
     backUnderway: false,
+    // Whether the Selection Details panel is opened over the grid in a narrow window (details-panel.js, #720); a wide window
+    // always shows it beside the grid.
+    detailsPanel: { open: false },
     // The Sort by menu of a view's header (sort-menu.js, #714): whether it is open, and the token of the view it was drawn for.
     sortMenu: { open: false, token: 0 },
     // The search box of the Library pane (search.js, phase 9e-2). `lists` the chips of All of, Any of and None of -- each a source

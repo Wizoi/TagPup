@@ -63,6 +63,51 @@ class NobodyElseSpawns(unittest.TestCase):
         self.assertIn("CREATE_NO_WINDOW", source)
 
 
+def terminated_launchers(source):
+    """Each `x.terminate()` in `source` where x was started by processes.start: [line]. On Windows the venv's
+    python.exe is a launcher, and terminate() ends the launcher alone, which may leave the interpreter it
+    started (and everything that one started) running -- kill_tree reaches them all (#736)."""
+    import ast
+
+    def dotted(node):
+        parts = []
+        while isinstance(node, ast.Attribute):
+            parts.append(node.attr)
+            node = node.value
+        if isinstance(node, ast.Name):
+            parts.append(node.id)
+            return ".".join(reversed(parts))
+        return None
+
+    tree = ast.parse(source)
+    started = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                and dotted(node.value.func) == "processes.start"):
+            started.update(name for name in map(dotted, node.targets) if name)
+    return [node.lineno for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "terminate"
+            and dotted(node.func.value) in started]
+
+
+class NobodyTerminatesALauncher(unittest.TestCase):
+    def test_a_test_ends_what_it_started_with_kill_tree(self):
+        found = []
+        folder = os.path.join(WORKSPACE_DIR, "tests")
+        for name in sorted(os.listdir(folder)):
+            if name.endswith(".py"):
+                with open(os.path.join(folder, name), encoding="utf-8") as handle:
+                    lines = terminated_launchers(handle.read())
+                if lines:
+                    found.append("%s:%s" % (name, ", ".join(map(str, lines))))
+        self.assertEqual([], found, "processes.kill_tree(process.pid), then wait")
+
+    def test_the_guard_sees_one(self):
+        self.assertEqual([2], terminated_launchers("p = processes.start(c)" + chr(10) + "p.terminate()" + chr(10)))
+        self.assertEqual([2], terminated_launchers("cls.p = processes.start(c)" + chr(10) + "cls.p.terminate()" + chr(10)))
+        self.assertEqual([], terminated_launchers("et = Session()" + chr(10) + "et.terminate()" + chr(10)))
+
+
 class WhatTheOwnerDoes(unittest.TestCase):
     def test_a_child_gets_no_window_of_its_own(self):
         done = processes.run([sys.executable, "-c", "print('hi')"], capture_output=True, text=True)

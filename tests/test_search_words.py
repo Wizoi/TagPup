@@ -16,6 +16,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import migration_names  # noqa: E402
 import web_client  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library  # noqa: E402
@@ -321,7 +322,7 @@ class MigrationTwentyFour(unittest.TestCase):
                                                        "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
         tables = [table for table in tables if table not in ("schema_version", "changes", "change_rows")]
         before = {table: look(self.path, "SELECT * FROM %s" % table) for table in tables}
-        self.assertEqual(["photos by their words"], self.migrate())
+        self.assertEqual(migration_names.named(24), self.migrate())
         added = sorted(row for row in self.schema_rows() if row not in before_schema)
         expected = sorted([("table", name, name) for name in search_index.TABLES + search_index.SHADOWS]
                           + [("trigger", "search_goes_with_its_photo", "photos")])
@@ -369,7 +370,7 @@ class MigrationTwentyFour(unittest.TestCase):
         self.assertEqual([], look(self.path, "SELECT name FROM sqlite_master WHERE name LIKE 'search%'"))
         schema._current.clear()
         with mock.patch.object(search_index, "rebuild", side_effect=real):
-            self.assertEqual(["photos by their words"], self.migrate())
+            self.assertEqual(migration_names.named(24), self.migrate())
         self.assertEqual(look(self.path, "SELECT COUNT(*) FROM photos"), look(self.path, "SELECT COUNT(*) FROM search_words"))
 
 

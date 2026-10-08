@@ -12,6 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import migration_names  # noqa: E402
 from journal_library import JournalLibrary  # noqa: E402
 
 from tagpup.store import db, journal, schema  # noqa: E402
@@ -501,9 +502,7 @@ class TheSchemaMovedOn(unittest.TestCase):
         finally:
             recorded.close()
         schema._current.clear()
-        self.assertEqual(["the library's roots", "the tables the library views stand on", "photos by when they were taken",
-                          "people by their node's id", "photos by file name", "photos by caption", "photos by their words",
-                          "the photos whose faces were detected"],
+        self.assertEqual(migration_names.after(17),
                          schema.ensure(path), "migrations 18 to 24 run on opening")
         undone = journal.undo(path, applied.change_id)
         self.assertEqual(1, undone.rows)
