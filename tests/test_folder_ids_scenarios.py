@@ -23,7 +23,7 @@ from tagpup.core.result import Result  # noqa: E402
 from tagpup.files import folder_marker  # noqa: E402
 from tagpup.services import folder_ids, sync  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
-from tagpup.store import db, journal, schema  # noqa: E402
+from tagpup.store import added_folders, db, journal, schema  # noqa: E402
 from tagpup.store import folder_ids as store  # noqa: E402
 from tagpup_cli import cli  # noqa: E402
 
@@ -191,19 +191,61 @@ class WhenSyncMeetsAMovedFolder(Case):
         self.sync(queued=queued)
         self.check_followed(made, ids, "Renamed and edited", queued)
 
-    def test_a_folder_moved_to_another_parent_is_followed_by_the_sync_that_found_its_files_there(self):
+    def moved_into_a_held_folder(self):
+        """A marked folder moved to another parent, renamed and touched photos (no DocumentID), the new parent a folder
+        the library holds (added with its subfolders): the sync of that folder sees nothing missing or moved."""
         made = [self.photo(self.at("2026-02-07 Parkrun"), "IMG_%04d.jpg" % n, n) for n in range(1, 4)]
         ids = self.index(*made)
         self.face(made[0])
         folder_ids.mark(self.library, apply=True)
-        os.makedirs(self.at("Archive"))
-        shutil.move(self.at("2026-02-07 Parkrun"), self.at("2026-02-07 Parkrun", self.at("Archive")))
+        archive = os.path.join(self.home.root, "Archive")
+        os.makedirs(archive)
+        conn = db.connect(self.db_path)
+        try:
+            added_folders.record(conn, archive, subfolders=True)
+            conn.commit()
+        finally:
+            conn.close()
+        there = os.path.join(archive, "2026-02-07 Parkrun")
+        shutil.move(self.at("2026-02-07 Parkrun"), there)
+        for n in range(1, 4):
+            new = os.path.join(there, "Finish %d.jpg" % n)
+            os.rename(os.path.join(there, "IMG_%04d.jpg" % n), new)
+            os.utime(new, (THEN + 60, THEN + 60))
+            self.truth["Finish %d.jpg" % n] = self.truth["IMG_%04d.jpg" % n]
+        return made, ids, archive, there
+
+    def check_moved(self, ids, there, queued):
+        self.assertEqual(set(ids.values()), set(self.paths_by_id()), "fresh rows were made beside the old ones")
+        self.assertTrue(all(os.path.exists(p) for p in self.paths_by_id().values()), "a row names no file")
+        self.assertEqual([("Rowan Thackeray",)], self.query("SELECT name FROM faces"), "the named face went")
+        self.assertEqual({there}, set(self.ids()))
+        self.assertEqual([], [each for each in queued if "Parkrun" in each], "the moved folder was queued as new")
+
+    def test_a_folder_moved_into_a_folder_the_library_holds_is_followed_when_the_destination_is_synced_first(self):
+        _made, ids, archive, there = self.moved_into_a_held_folder()
         queued = []
-        self.sync(queued=queued, folder=self.pictures)
+        done = self.sync(queued=queued, folder=archive)
+        self.assertEqual((0, 0), (done.details["counts"]["missing"], done.details["counts"]["moved"]),
+                         "this sync sees nothing missing or moved")
+        self.assertEqual(1, done.details["folder_markers"]["counts"]["followed"])
+        self.check_moved(ids, there, queued)
+
+    def test_the_same_when_the_source_is_synced_first_and_finds_nothing_to_lose(self):
+        _made, ids, archive, there = self.moved_into_a_held_folder()
+        queued = []
+        first = self.sync(queued=queued, folder=self.pictures)
+        self.assertEqual(1, first.details["folder_markers"]["counts"]["not_found"])
         self.assertEqual(set(ids.values()), set(self.paths_by_id()))
-        self.assertTrue(all(os.path.exists(p) for p in self.paths_by_id().values()))
-        self.assertEqual([("Rowan Thackeray",)], self.query("SELECT name FROM faces"))
-        self.assertEqual([], queued)
+        self.assertEqual({self.at("2026-02-07 Parkrun")}, set(self.ids()), "its id moved though nothing was found")
+        done = self.sync(queued=queued, folder=archive)
+        self.assertEqual(1, done.details["folder_markers"]["counts"]["followed"])
+        self.check_moved(ids, there, queued)
+
+    def test_the_cli_says_what_was_left_and_what_was_not_found(self):
+        self.moved_into_a_held_folder()
+        said = " ".join(CliRunner().invoke(cli, ["--db", self.db_path, "sync", "--folder", self.pictures]).output.split())
+        self.assertIn("1 not found", said)
 
     def test_a_library_that_marked_nothing_is_not_touched(self):
         self.meet("2026-02-07 Parkrun")

@@ -824,6 +824,45 @@ class FollowingAFolder(Case):
         self.assertEqual(set(rows), {i for i, p in self.paths_by_id().items() if p in made})
         self.assertEqual([("Rowan Thackeray",)], self.query("SELECT name FROM faces"))
 
+    def burst(self, name, count):
+        """Photos of one burst: the same size and the same Date Taken, and a DocumentID on none."""
+        folder = self.at(name)
+        os.makedirs(folder)
+        made = []
+        for n in range(1, count + 1):
+            path = os.path.join(folder, "BURST_%04d.jpg" % n)
+            with open(path, "wb") as handle:
+                handle.write(b"x" * 300)
+            os.utime(path, (THEN, THEN))
+            self.truth[os.path.basename(path)] = {"EXIF:DateTimeOriginal": DATE % 1}
+            made.append(path)
+        return made
+
+    def test_a_burst_of_equal_size_and_date_taken_pairs_nothing_by_guess(self):
+        """Live data has 88 (size, Date Taken) groups of 205 photos: evidence that is not one to one is no evidence."""
+        made = self.burst("2026-03-07 Burst", 2)
+        self.index(*made)
+        self.mark(apply=True)
+        self.rename("2026-03-07 Burst", "Renamed")
+        for n in (1, 2):
+            os.rename(os.path.join(self.at("Renamed"), "BURST_%04d.jpg" % n), os.path.join(self.at("Renamed"), "Shot %d.jpg" % n))
+            self.truth["Shot %d.jpg" % n] = self.truth["BURST_%04d.jpg" % n]
+        done = self.follow(apply=True)
+        self.assertEqual((0, 1, 0), (done.details["counts"]["followed"], done.details["counts"]["left"], done.changed))
+        self.assertEqual(set(made), set(self.paths_by_id().values()), "a row was given a file by guess")
+
+    def test_two_rows_and_one_file_of_one_burst_pair_nothing(self):
+        made = self.burst("2026-03-07 Burst", 2)
+        self.index(*made)
+        self.mark(apply=True)
+        self.rename("2026-03-07 Burst", "Renamed")
+        os.remove(os.path.join(self.at("Renamed"), "BURST_0002.jpg"))
+        os.rename(os.path.join(self.at("Renamed"), "BURST_0001.jpg"), os.path.join(self.at("Renamed"), "Shot 1.jpg"))
+        self.truth["Shot 1.jpg"] = self.truth["BURST_0001.jpg"]
+        done = self.follow(apply=True)
+        self.assertEqual((0, 1, 0), (done.details["counts"]["followed"], done.details["counts"]["left"], done.changed))
+        self.assertEqual(set(made), set(self.paths_by_id().values()))
+
     def test_a_dry_run_of_following_writes_nothing_and_the_rehearsal_says_the_undo_is_exact(self):
         self.marked()
         self.rename("2026-01-31 Parkrun", "Renamed")
