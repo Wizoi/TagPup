@@ -94,6 +94,8 @@ REFUSED_SAYS = ("Something changed while the question was open (a name given, or
                 "TagPup, say): nothing was written. Ask again.")
 APPLIED_MEANWHILE = ("The names were written by another run since this plan was read (in another window or process); they are "
                      "references for this one now. Nothing was written. Start again to see what can be named now.")
+UNDO_LOST = ("Grouping rewrote names of faces that change wrote, so History can no longer be counted on to undo it "
+             "(and it cannot undo grouping).")
 NO_FACES = "This library holds no faces yet: index photos first. Nothing was changed."
 
 _jobs = {}            # {library.key: {handle: Job}}
@@ -336,7 +338,10 @@ class Job:
         if self.in_folder is not None and self.in_folder.get("before") is not None:
             self.in_folder["after"] = self._library_folder()
         parts = []
-        if self.applied:
+        if self.applied and self.grouped:
+            parts.append("%s given from the photos' tags (one change in History). %s"
+                         % (_plural(self.applied["changed"], "face name"), UNDO_LOST))
+        elif self.applied:
             parts.append("%s given from the photos' tags (one change in History, which Undo takes back)."
                          % _plural(self.applied["changed"], "face name"))
         if self.grouped:

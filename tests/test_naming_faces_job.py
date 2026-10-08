@@ -133,6 +133,7 @@ class YesWritesTheChange(Case789):
         found = wait(job)
         self.assertEqual(naming_faces.DONE, found["state"], found["message"])
         self.assertEqual(2, found["applied"]["changed"])
+        self.assertIn("which Undo takes back", found["message"], "without grouping the change can still be undone")
         self.assertIsNotNone(found["applied"]["change"])
         self.assertEqual(WREN, look(self.path, "SELECT name FROM faces WHERE id = ?", (self.single_face,))[0][0])
         self.assertTrue(faces_from_tags.earlier_apply(self.library), "History has it, with Undo")
@@ -426,6 +427,29 @@ class Grouping(Case789):
         self.assertEqual((WREN, "manual"), look(self.path, "SELECT name, name_source FROM faces WHERE id = ?",
                                                 (self.known_face,))[0], "a name given by hand is kept")
         self.assertIn("Grouping re-derived the library's automatic names", found["message"])
+
+    def test_the_result_of_a_grouping_does_not_say_undo_takes_the_names_back(self):
+        # #870
+        self.seed()
+        job = self.start()
+        naming_faces.confirm(self.library, job.handle, group=True)
+        message = wait(job)["message"]
+        self.assertIn(naming_faces.UNDO_LOST, message)
+        self.assertNotIn("Undo takes back", message)
+
+    def test_history_refuses_the_undo_once_grouping_rewrote_a_name_the_change_wrote(self):
+        # A face the tag names at 0.77 of the person (offered, not named unasked): grouping keeps a name only from 0.80.
+        from tagpup.services import journal as journal_service
+        known = self.photo("known_001.jpg", ["People/" + WREN])
+        self.face(known, at(0), name=WREN, name_source="manual")
+        face = self.face(self.photo("middling_001.jpg", ["People/" + WREN]), at(40))
+        job = self.start()
+        naming_faces.confirm(self.library, job.handle, group=True)
+        found = wait(job)
+        self.assertIsNone(look(self.path, "SELECT name FROM faces WHERE id = ?", (face,))[0][0], "grouping took the name away")
+        undone = journal_service.undo(self.library, found["applied"]["change"], apply=False)
+        self.assertTrue(undone.refused, "the result's warning is true: the change cannot be undone now")
+        self.assertIn(naming_faces.UNDO_LOST, found["message"])
 
     def test_grouping_is_not_run_unless_ticked(self):
         self.seed()

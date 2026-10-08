@@ -123,6 +123,8 @@ function nfRenderQuestion(status) {
     if (plan.earlier_apply) {
         children.push(buildElement('p', { className: 'name-faces-again', text: 'Applied before. ' + plan.again + ' Yes applies it again.' }));
     }
+    nfDialog.undoNote = buildElement('p', { className: 'name-faces-again' });
+    if (plan.faces) children.push(nfDialog.undoNote);
     nfDialog.group = buildElement('input', { id: 'name-faces-group', attrs: { type: 'checkbox' } });
     nfDialog.group.addEventListener('change', nfSyncYes);
     children.push(buildElement('label', { className: 'name-faces-group', attrs: { for: 'name-faces-group' } }, [
@@ -130,7 +132,8 @@ function nfRenderQuestion(status) {
         buildElement('span', { text: 'Also group the rest of the faces by who they look like, and name those groups from the tags. '
             + 'This works on every face in the library and re-derives the automatic names it has been given, so it can take away '
             + 'some of the names written above (names you gave by hand are kept). It can take about an hour on a large library, '
-            + 'needs no graphics card, and History cannot undo it.' }),
+            + 'needs no graphics card, and History cannot undo it. Once it has run, History can no longer be counted on to undo '
+            + 'the change that writes those names either.' }),
     ]));
     replaceContent(nfDialog.body, ...children);
     nfButtons({ yes: true, no: true });
@@ -141,6 +144,12 @@ function nfRenderQuestion(status) {
 /** Yes needs something to do: names to write, or the grouping ticked. */
 function nfSyncYes() {
     const plan = nfDialog.last && nfDialog.last.plan;
+    if (nfDialog.undoNote) {
+        nfDialog.undoNote.textContent = nfDialog.group && nfDialog.group.checked
+            ? 'With the grouping ticked, History can no longer be counted on to undo this change once grouping has run: '
+                + 'grouping rewrites names of faces the change wrote.'
+            : 'Yes writes them as one change that History can undo.';
+    }
     nfDialog.yes.disabled = nfDialog.busy || !plan || (!plan.faces && !(nfDialog.group && nfDialog.group.checked));
 }
 

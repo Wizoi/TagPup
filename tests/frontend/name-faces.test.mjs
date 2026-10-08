@@ -105,6 +105,20 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.match(text, /names you gave by hand are kept/);
       assert.match(text, /needs no graphics card/);
       assert.match(text, /History cannot undo it/);
+      assert.match(text, /History can no longer be counted on to undo the change that writes those names either/);
+    });
+
+    test("the question says History undoes the change, until the grouping is ticked", async (t) => {
+      const ctx = await openFrom(appName, t);
+      await ctx.open();
+      assert.equal(ctx.text(".name-faces-again"), "Yes writes them as one change that History can undo.");
+      const box = ctx.modal().querySelector("#name-faces-group");
+      box.checked = true;
+      box.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
+      assert.match(ctx.text(".name-faces-again"), /^With the grouping ticked, History can no longer be counted on to undo this change once grouping has run/);
+      box.checked = false;
+      box.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
+      assert.equal(ctx.text(".name-faces-again"), "Yes writes them as one change that History can undo.");
     });
 
     test("Yes sends the answer once, without the grouping unless it is ticked", async (t) => {
