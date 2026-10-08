@@ -56,6 +56,14 @@
     pointer-events: none;
 }
 
+/* Where a page draws over the picture (zoomedPicture): the whole overlay, taking no pointer itself, so a click on the
+   backdrop still closes; what the page draws in it asks for the pointer. */
+.image-zoom-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
 /* Something that opens the zoom when clicked. */
 .zoomable {
     cursor: zoom-in;

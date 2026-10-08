@@ -23,6 +23,10 @@
 // The strip under the photo names a face through the same function as a box does (nameFaceAs), and every
 // write here draws the strip and the boxes again from one answer (upper.renderPhotoFaces).
 //
+// The same boxes, and the same panel, are drawn over the photo in the full-window zoom (web/common/image-zoom.js) while it is
+// open (#859): one surface at a time, the zoom's while it covers the window, with the icon to turn the boxes on and off. A panel
+// open over the picture goes before the zoom does (Escape, or a click on the backdrop).
+//
 // The boxes are in the stored pixels of the file and are placed by the one geometry both pages share
 // (boxInContainedImage). A photo stored turned (EXIF Orientation 2 to 8) is shown turned, and its boxes
 // are not: they are drawn where the stored pixels put them, which is not where the faces are, until the
@@ -30,7 +34,7 @@
 // faces are recorded there, and the icon is not offered.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { boxInContainedImage } from './common/image-zoom.js';
+import { boxInContainedImage, onImageZoomChange, onImageZoomDismiss, zoomLayer, zoomedPicture } from './common/image-zoom.js';
 import { samePath } from './common/paths.js';
 import { attachPersonFaces, forgetPersonFaces, hidePersonFaces } from './common/person-faces.js';
 import { leafOf, nameProblem, samePerson } from './common/vocabulary.js';
@@ -56,16 +60,30 @@ function faceById(faceId) {
     return state.faceBoxes.faces.find(face => face.id === faceId) || null;
 }
 
+/** The layer the boxes are drawn in now: the zoom's while the zoom is open, else the one over the photo in the panel. */
+function activeLayer() {
+    const zoomed = zoomedPicture();
+    return zoomed ? zoomed.layer : faceLayer;
+}
+
 function toggleButton() {
-    return faceLayer ? faceLayer.querySelector('.face-boxes-toggle') : null;
+    const layer = activeLayer();
+    return layer ? layer.querySelector('.face-boxes-toggle') : null;
 }
 
 function boxButton(faceId) {
-    return faceLayer ? faceLayer.querySelector(`.face-box[data-face-id="${faceId}"]`) : null;
+    const layer = activeLayer();
+    return layer ? layer.querySelector(`.face-box[data-face-id="${faceId}"]`) : null;
 }
 
 function panelElement() {
-    return faceLayer ? faceLayer.querySelector('.face-panel') : null;
+    const layer = activeLayer();
+    return layer ? layer.querySelector('.face-panel') : null;
+}
+
+/** Both layers show a naming under way as a busy cursor. */
+function showBusy(on) {
+    for (const layer of [faceLayer, zoomLayer()]) if (layer) layer.classList.toggle('is-busy', on);
 }
 
 // ---- Which photo, and what it has -------------------------------------------------------
@@ -108,37 +126,62 @@ export function clearPhotoFaces() {
     hidePersonFaces();
     faceLayer.classList.add('hidden');
     replaceContent(faceLayer);
+    if (zoomLayer()) replaceContent(zoomLayer());
 }
 
 // ---- Drawing -------------------------------------------------------------------------------
 
-/** Put the layer over the picture, exactly, and draw the icon, the boxes and the open panel. */
+/**
+ * Draw the icon, the boxes and the open panel -- over the photo in the panel, exactly, or over the zoomed picture while the
+ * zoom is open (one surface at a time: the other is emptied, so there is never a second copy of a box or a panel).
+ */
 export function redrawFaceBoxes() {
     if (!faceLayer || !imageViewer) return;
     const box = state.faceBoxes;
     const faces = drawnFaces();
-    const offered = faces.length > 0 && !isJustLooking() && !mainImage.classList.contains('hidden')
-        && Boolean(mainImage.getAttribute('src'));
+    const zoomed = zoomedPicture();
+    const shownInPanel = !mainImage.classList.contains('hidden') && Boolean(mainImage.getAttribute('src'));
+    const offered = faces.length > 0 && !isJustLooking() && (zoomed ? true : shownInPanel);
+    const layer = zoomed ? zoomed.layer : faceLayer;
+    if (zoomed) {
+        replaceContent(faceLayer);
+        faceLayer.classList.add('hidden');
+    } else if (zoomLayer()) {
+        replaceContent(zoomLayer());
+    }
     if (!offered) {
         hidePersonFaces();
         faceLayer.classList.add('hidden');
-        replaceContent(faceLayer);
+        replaceContent(layer);
         return;
     }
-    faceLayer.classList.remove('hidden');
-    faceLayer.style.left = `${mainImage.offsetLeft}px`;
-    faceLayer.style.top = `${mainImage.offsetTop}px`;
-    faceLayer.style.width = `${mainImage.clientWidth}px`;
-    faceLayer.style.height = `${mainImage.clientHeight}px`;
 
-    const focused = faceLayer.contains(document.activeElement) ? document.activeElement : null;
+    const focused = layer.contains(document.activeElement) ? document.activeElement : null;
     const focusedFace = focused && focused.dataset ? focused.dataset.faceId : null;
     const hadFocus = focused && focused.classList.contains('face-boxes-toggle');
     const typing = focused && focused.classList.contains('face-panel-input');
 
+    // Where the picture is, and the element the icon, the boxes and the panel are drawn in, positioned over it.
+    let holder = faceLayer;
+    let area;
+    if (zoomed) {
+        holder = buildElement('div', { className: 'face-zoom-picture' });
+        holder.style.left = `${zoomed.left}px`;
+        holder.style.top = `${zoomed.top}px`;
+        holder.style.width = `${zoomed.width}px`;
+        holder.style.height = `${zoomed.height}px`;
+        area = { width: zoomed.width, height: zoomed.height };
+    } else {
+        faceLayer.classList.remove('hidden');
+        faceLayer.style.left = `${mainImage.offsetLeft}px`;
+        faceLayer.style.top = `${mainImage.offsetTop}px`;
+        faceLayer.style.width = `${mainImage.clientWidth}px`;
+        faceLayer.style.height = `${mainImage.clientHeight}px`;
+        area = { width: mainImage.clientWidth, height: mainImage.clientHeight };
+    }
+
     const children = [faceToggle(faces)];
     if (box.shown) {
-        const area = { width: mainImage.clientWidth, height: mainImage.clientHeight };
         const natural = box.size ? { width: box.size[0], height: box.size[1] } : null;
         for (const face of faces) {
             const placed = natural ? boxInContainedImage(natural, area, face.box) : null;
@@ -146,14 +189,19 @@ export function redrawFaceBoxes() {
         }
         if (box.open !== null && faceById(box.open) && !faceById(box.open).excluded) children.push(facePanel(faceById(box.open)));
     }
-    replaceContent(faceLayer, ...children);
+    if (zoomed) {
+        holder.append(...children);
+        replaceContent(layer, holder);
+    } else {
+        replaceContent(faceLayer, ...children);
+    }
     if (box.open !== null && box.shown) placeFacePanel();
 
     // Drawn again, not gone: the focus stays where it was.
     if (hadFocus) toggleButton().focus({ preventScroll: true });
     else if (focusedFace && boxButton(focusedFace)) boxButton(focusedFace).focus({ preventScroll: true });
-    else if (typing && faceLayer.querySelector('.face-panel-input')) {
-        const again = faceLayer.querySelector('.face-panel-input');
+    else if (typing && layer.querySelector('.face-panel-input')) {
+        const again = layer.querySelector('.face-panel-input');
         again.focus({ preventScroll: true });
         again.setSelectionRange(again.value.length, again.value.length);
     }
@@ -221,7 +269,7 @@ export function openFacePanel(faceId, { focus = false } = {}) {
     redrawFaceBoxes();
     askSuggestions(faceId);
     if (focus) {
-        const input = faceLayer.querySelector('.face-panel-input');
+        const input = panelElement() ? panelElement().querySelector('.face-panel-input') : null;
         if (input) input.focus({ preventScroll: true });
     }
 }
@@ -410,7 +458,7 @@ function askSuggestions(faceId) {
         })
         .finally(() => {
             if (box.path && samePath(box.path, photoPath) && box.open === faceId) {
-                const where = faceLayer.querySelector('.face-panel-suggestions');
+                const where = panelElement() ? panelElement().querySelector('.face-panel-suggestions') : null;
                 if (where) {
                     replaceContent(where, ...suggestionButtons(faceById(faceId)));
                     placeFacePanel();
@@ -423,7 +471,7 @@ function askSuggestions(faceId) {
 
 function say(text) {
     state.faceBoxes.note = text;
-    const where = faceLayer ? faceLayer.querySelector('.face-panel-message') : null;
+    const where = panelElement() ? panelElement().querySelector('.face-panel-message') : null;
     if (where) where.textContent = text;
     // A face named from the strip has no panel to say it in.
     else setStatus('error', text, { transient: false });
@@ -470,7 +518,7 @@ export async function nameFaceAs(face, rawName) {
         return false;
     }
     box.busy = true;
-    faceLayer.classList.add('is-busy');
+    showBusy(true);
     setStatus('busy', `Naming ${name}...`);
     try {
         // The tag. Already on the photo: nothing to write.
@@ -511,7 +559,7 @@ export async function nameFaceAs(face, rawName) {
         return true;
     } finally {
         box.busy = false;
-        if (faceLayer) faceLayer.classList.remove('is-busy');
+        showBusy(false);
     }
 }
 
@@ -608,9 +656,19 @@ export function wireFaceBoxes() {
         if (event.key !== 'Escape' || event.defaultPrevented || state.faceBoxes.open === null) return;
         closeFacePanel();
     });
+    // The zoom covers the window: the boxes are drawn over its picture while it is open, and over the photo again when it closes.
+    onImageZoomChange(redrawFaceBoxes);
+    // Escape, or a click on the zoom's backdrop, takes a panel open over the picture away first, and the zoom after.
+    onImageZoomDismiss(() => {
+        if (state.faceBoxes.open === null || !zoomedPicture()) return false;
+        closeFacePanel({ focus: false });
+        return true;
+    });
     // A press outside the panel and the boxes puts it away.
     document.addEventListener('pointerdown', (event) => {
         if (state.faceBoxes.open === null) return;
+        // In the zoom the click that follows is the zoom's: it takes the panel away first (onImageZoomDismiss).
+        if (zoomedPicture()) return;
         const target = event.target;
         if (target && typeof target.closest === 'function' && (target.closest('.face-panel') || target.closest('.face-box'))) return;
         if (target && typeof target.closest === 'function' && target.closest('.person-faces')) return;

@@ -11,6 +11,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { boxInContainedImage } from "../../web/common/image-zoom.js";
 
 afterEach(() => closeAllApps());
 
@@ -713,5 +714,218 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
     click(ctx.window, ctx.$("btn-add-tag"));
     await flush(ctx.window, 12);
     assert.equal(asked(), before);
+  });
+});
+
+describe("in the full-window zoom (#859)", () => {
+  // The boxes and the panel are drawn over the zoomed picture by the same code as over the photo in the panel, with the
+  // zoom's own arithmetic (boxInContainedImage) and the pixel size the server gave; jsdom has no layout, so the window the
+  // picture is fitted in is given to it, as a browser would measure it.
+  const WINDOW = { width: 1200, height: 800 };
+  const PHOTO = {
+    faces: [
+      face(1, [400, 300, 800, 700], { name: "Anh Tran" }),
+      face(2, [1000, 500, 1400, 900], { suggestion: "Hazel Brookmire", similarity: 0.91 }),
+      face(3, [2000, 600, 2600, 1200]),
+    ],
+    total: 3, unmatched: 2, size: [4000, 3000], turned: false,
+  };
+
+  async function zoomed(t, options = {}) {
+    const ctx = await openPhoto(t, { photoFaces: PHOTO, photo: photoRecord({ filename: "a.jpg", tags: ["People/Anh Tran"], people: ["Anh Tran"] }), ...options });
+    const rect = (width, height) => ({ left: 0, top: 0, right: width, bottom: height, width, height });
+    ctx.$("image-zoom-img").getBoundingClientRect = () => rect(WINDOW.width, WINDOW.height);
+    ctx.$("image-zoom").getBoundingClientRect = () => rect(WINDOW.width, WINDOW.height);
+    ctx.zoomLayer = () => ctx.document.querySelector(".image-zoom-layer");
+    ctx.zoomBoxes = () => [...ctx.zoomLayer().querySelectorAll(".face-box")];
+    ctx.zoomPanel = () => ctx.zoomLayer().querySelector(".face-panel");
+    ctx.zoomIsOpen = () => !ctx.$("image-zoom").classList.contains("hidden");
+    ctx.zoomIn = () => click(ctx.window, ctx.$("main-image"));
+    return ctx;
+  }
+
+  test("every face's box is drawn on the zoomed picture, named and not named, where the zoom's arithmetic puts it", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.show();
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    assert.equal(ctx.zoomIsOpen(), true);
+    assert.equal(ctx.zoomBoxes().length, 3);
+    assert.deepEqual(ctx.zoomBoxes().map((b) => b.classList.contains("is-named")), [true, false, false]);
+    ctx.zoomBoxes().forEach((el, n) => {
+      const placed = boxInContainedImage({ width: 4000, height: 3000 }, WINDOW, PHOTO.faces[n].box);
+      assert.ok(Math.abs(px(el, "left") - placed.left) < 0.01 && Math.abs(px(el, "top") - placed.top) < 0.01
+        && Math.abs(px(el, "width") - placed.width) < 0.01, "box " + (n + 1) + " is not where the picture puts it");
+    });
+    // The same icon, in the zoom.
+    assert.match(ctx.zoomLayer().querySelector(".face-boxes-toggle").textContent, /3/);
+  });
+
+  test("one surface at a time: the photo in the panel has no second copy while the zoom is open, and has the boxes again after", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.show();
+    assert.equal(ctx.boxes().length, 3);
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    assert.equal(ctx.boxes().length, 0, "the boxes behind the zoom are a second copy");
+    assert.equal(ctx.zoomBoxes().length, 3);
+    ctx.key(ctx.document.body, "Escape");
+    await flush(ctx.window, 4);
+    assert.equal(ctx.zoomIsOpen(), false);
+    assert.equal(ctx.zoomBoxes().length, 0);
+    assert.equal(ctx.boxes().length, 3, "the boxes did not come back");
+  });
+
+  test("the icon in the zoom turns the boxes on and off, as the one in the panel does", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    assert.equal(ctx.zoomBoxes().length, 0);
+    click(ctx.window, ctx.zoomLayer().querySelector(".face-boxes-toggle"));
+    assert.equal(ctx.zoomBoxes().length, 3);
+    assert.equal(ctx.zoomIsOpen(), true, "a click on the icon closed the zoom");
+    ctx.key(ctx.document.body, "Escape");
+    assert.equal(ctx.boxes().length, 3, "what was turned on in the zoom is on in the panel");
+  });
+
+  test("a box in the zoom opens the same panel, and a click in the panel does not close the zoom", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.show();
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    click(ctx.window, ctx.zoomBoxes()[1]);
+    await flush(ctx.window, 4);
+    assert.equal(ctx.zoomIsOpen(), true, "a click on a box closed the zoom");
+    assert.ok(ctx.zoomPanel(), "no panel");
+    assert.equal(ctx.panel(), null, "a panel in the photo behind the zoom as well");
+    assert.match(ctx.zoomPanel().textContent, /Hazel Brookmire/);
+    click(ctx.window, ctx.zoomPanel().querySelector(".face-panel-title"));
+    assert.equal(ctx.zoomIsOpen(), true, "a click in the panel closed the zoom");
+  });
+
+  test("Escape takes the panel away first and the zoom after", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.show();
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    click(ctx.window, ctx.zoomBoxes()[1]);
+    await flush(ctx.window, 4);
+    ctx.key(ctx.document.body, "Escape");
+    assert.equal(ctx.zoomPanel(), null, "the panel stayed");
+    assert.equal(ctx.zoomIsOpen(), true, "Escape closed the zoom with the panel still open");
+    ctx.key(ctx.document.body, "Escape");
+    assert.equal(ctx.zoomIsOpen(), false);
+  });
+
+  test("Escape in the panel's name box takes the panel away first, too", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.show();
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    click(ctx.window, ctx.zoomBoxes()[2]);
+    await flush(ctx.window, 4);
+    const input = ctx.zoomPanel().querySelector(".face-panel-input");
+    input.focus();
+    ctx.key(input, "Escape");
+    assert.equal(ctx.zoomPanel(), null);
+    assert.equal(ctx.zoomIsOpen(), true);
+  });
+
+  test("a click on the backdrop takes the panel away first and the zoom after", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.show();
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    click(ctx.window, ctx.zoomBoxes()[1]);
+    await flush(ctx.window, 4);
+    ctx.document.dispatchEvent(new ctx.window.Event("pointerdown", { bubbles: true }));
+    click(ctx.window, ctx.$("image-zoom"));
+    assert.equal(ctx.zoomPanel(), null);
+    assert.equal(ctx.zoomIsOpen(), true);
+    click(ctx.window, ctx.$("image-zoom"));
+    assert.equal(ctx.zoomIsOpen(), false);
+  });
+
+  test("naming from the zoom: the tag first, then the face, and the box in the zoom turns named", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.show();
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    click(ctx.window, ctx.zoomBoxes()[1]);
+    await flush(ctx.window, 4);
+    click(ctx.window, ctx.zoomPanel().querySelector(".face-panel-suggestion"));
+    await flush(ctx.window, 14);
+    assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["People/Anh Tran", "People/Hazel Brookmire"]);
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire" });
+    assert.equal(ctx.zoomIsOpen(), true, "naming closed the zoom");
+    assert.match(ctx.zoomBoxes()[1].getAttribute("aria-label"), /Hazel Brookmire/);
+    assert.equal(ctx.zoomPanel(), null);
+  });
+
+  test("Not this person from the zoom takes the person off the photo too", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.show();
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    click(ctx.window, ctx.zoomBoxes()[0]);
+    await flush(ctx.window, 4);
+    click(ctx.window, [...ctx.zoomPanel().querySelectorAll("button")].find((b) => b.textContent === "Not this person"));
+    await flush(ctx.window, 12);
+    assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, []);
+    assert.match(ctx.zoomBoxes()[0].getAttribute("aria-label"), /not named/);
+  });
+
+  test("a panel open in the photo goes with it into the zoom, and back", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.show();
+    click(ctx.window, ctx.boxes()[1]);
+    await flush(ctx.window, 4);
+    assert.ok(ctx.panel());
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    assert.equal(ctx.panel(), null);
+    assert.ok(ctx.zoomPanel(), "the open panel was lost in the zoom");
+    click(ctx.window, ctx.$("image-zoom"));          // the panel first
+    click(ctx.window, ctx.$("image-zoom"));          // then the zoom
+    assert.equal(ctx.zoomIsOpen(), false);
+  });
+
+  test("a photo whose pixel size is not known has no boxes in the zoom either", async (t) => {
+    const ctx = await zoomed(t, { photoFaces: { ...PHOTO, size: null } });
+    ctx.show();
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    assert.equal(ctx.zoomBoxes().length, 0);
+  });
+
+  test("a photo stored turned keeps the documented limit in the zoom: the panel says the box may be off", async (t) => {
+    const ctx = await zoomed(t, { photoFaces: { ...PHOTO, turned: true } });
+    ctx.show();
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    click(ctx.window, ctx.zoomBoxes()[1]);
+    await flush(ctx.window, 4);
+    assert.match(ctx.zoomPanel().textContent, /may not sit on the face/);
+  });
+
+  test("the window resized: the boxes follow the picture", async (t) => {
+    const ctx = await zoomed(t);
+    ctx.show();
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    const before = px(ctx.zoomBoxes()[0], "width");
+    const rect = (width, height) => ({ left: 0, top: 0, right: width, bottom: height, width, height });
+    ctx.$("image-zoom-img").getBoundingClientRect = () => rect(600, 400);
+    ctx.$("image-zoom").getBoundingClientRect = () => rect(600, 400);
+    ctx.window.dispatchEvent(new ctx.window.Event("resize"));
+    await flush(ctx.window, 2);
+    assert.ok(px(ctx.zoomBoxes()[0], "width") < before);
+  });
+
+  test("a photo with no faces draws nothing in the zoom", async (t) => {
+    const ctx = await zoomed(t, { photoFaces: { faces: [], total: 0, unmatched: 0, size: [4000, 3000], turned: false } });
+    ctx.zoomIn();
+    await flush(ctx.window, 4);
+    assert.equal(ctx.zoomLayer().children.length, 0);
   });
 });
