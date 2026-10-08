@@ -411,6 +411,18 @@ def named_among(conn, face_ids):
     return found
 
 
+def named_by_id(conn, face_ids):
+    """{face id: name} of the faces among `face_ids` that carry a name and are not excluded: the names a job that unnames or
+    rules out faces in chunks keeps from its start (a chunk run again after a stop finds them gone)."""
+    found = {}
+    for chunk in _chunks(face_ids):
+        # By the primary key, the rest decided here: with the name and the exclusion in the WHERE the planner scans
+        # idx_faces_identify (every named face) for each chunk.
+        found.update((face_id, name) for face_id, name, excluded in conn.execute(
+            "SELECT f.id, f.name, f.excluded FROM faces f WHERE f." + _in(chunk), chunk) if name is not None and not excluded)
+    return found
+
+
 def name(conn, face_ids, person_name):
     """Name faces as a person's decision (name_source 'manual'), which re-clustering does
     not revise. Excluded faces are left alone. Returns rows named. The caller commits."""

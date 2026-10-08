@@ -28,7 +28,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.jobs import verifying as verify_jobs
-from tagpup.services import face_people
+from tagpup.services import face_assignment, face_people
 from tagpup.services import faces as faces_service
 from tagpup.services import identify as identify_service
 from tagpup.services import indexing
@@ -399,10 +399,18 @@ def faces_match_bulk():
         face_ids, person_name = [int(fid) for fid in face_ids], str(person_name).strip()
     except (ValueError, TypeError):
         abort(400, description="Invalid parameters format")
-    result = _faces_write(library, lambda lib: faces_service.name_faces(lib, face_ids, person_name))
-    return jsonify({"success": True, "matched": result.details["matched"],
-                    "matched_ids": result.details["matched_ids"],
-                    "skipped_excluded": result.details["skipped_excluded"]})
+    try:
+        plan = face_assignment.plan_name(library, face_ids, person_name)
+    except Refused as why:
+        _refuse(400, str(why))
+    outcome = face_routes.assigned(library, plan).outcome()
+    named = set(outcome["matched_ids"])
+    reply = {"success": True, "matched": len(named), "matched_ids": outcome["matched_ids"],
+             "skipped_excluded": plan["skipped_excluded"], "tags_written": outcome["tags_written"],
+             "not_named": [face_id for face_id in outcome["planned_ids"] if face_id not in named]}
+    if face_routes.trouble(outcome):
+        reply["warning"] = face_routes.trouble(outcome)
+    return jsonify(reply)
 
 
 @routes.post("/api/faces/unmatch-bulk")
@@ -417,9 +425,12 @@ def faces_unmatch_bulk():
         face_ids = [int(fid) for fid in face_ids]
     except (ValueError, TypeError):
         abort(400, description="Invalid face_ids format")
-    undo = bool(body.get("undo"))
-    _faces_write(library, lambda lib: faces_service.unname_faces(lib, face_ids, undo=undo))
-    return jsonify({"success": True})
+    plan = face_assignment.plan_unname(library, face_ids, undo=bool(body.get("undo")))
+    outcome = face_routes.assigned(library, plan).outcome()
+    reply = {"success": True, "changed": outcome["changed"], "tags_removed": outcome["tags_removed"]}
+    if face_routes.trouble(outcome):
+        reply["warning"] = face_routes.trouble(outcome)
+    return jsonify(reply)
 
 
 @routes.post("/api/photo/unmatch-all")
@@ -462,15 +473,25 @@ def folder_automatch():
         abort(400, description="Missing folder_path")
     # Anything but no flag, or a false one, rehearses: "false" as text is the safe mistake.
     rehearse = bool(body.get("dry_run"))
-    result = _faces_write(
-        library, lambda lib: faces_service.automatch_folder(lib, folder_path, _decided(lib), rehearse=rehearse))
-    details = result.details
-    answer = {"success": True, "dry_run": rehearse, "matched_count": result.changed,
-              "faces": details.get("faces", 0), "photos": details.get("photos", 0),
-              "people": details.get("people", {}), "renamed": details.get("renamed", 0)}
-    if not rehearse:
-        answer.update(remaining_counts=details.get("remaining_counts", {}),
-                      photos_named=details.get("photos_named", []))
+    if rehearse:
+        result = _faces_write(
+            library, lambda lib: faces_service.automatch_folder(lib, folder_path, _decided(lib), rehearse=True))
+        details = result.details
+        return jsonify({"success": True, "dry_run": True, "matched_count": result.changed,
+                        "faces": details.get("faces", 0), "photos": details.get("photos", 0),
+                        "people": details.get("people", {}), "renamed": details.get("renamed", 0)})
+    # Applied: the guesses AND the people's tags, as a job (#907). The faces and photos are what was written, not proposed.
+    plan = face_assignment.plan_guesses(library, folder_path, _decided(library))
+    job = face_routes.assigned(library, plan)
+    outcome = job.outcome()
+    named = outcome["matched_ids"]
+    written = faces_service.written_report(library, named, folder_path)
+    people, photos_named, remaining = written["people"], written["photos"], written["remaining_counts"]
+    answer = {"success": True, "dry_run": False, "matched_count": len(named), "faces": len(named),
+              "photos": len(photos_named), "people": people, "renamed": 0, "remaining_counts": remaining,
+              "photos_named": photos_named, "tags_written": outcome["tags_written"]}
+    if face_routes.trouble(outcome):
+        answer["warning"] = face_routes.trouble(outcome)
     return jsonify(answer)
 
 

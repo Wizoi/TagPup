@@ -247,6 +247,7 @@ export function wireNewPerson() {
             })
             .then(data => {
                 if (data.success) {
+                    if (data.warning) alert(data.warning);
                     if (newPersonModal) {
                         newPersonModal.classList.add('hidden');
                     }

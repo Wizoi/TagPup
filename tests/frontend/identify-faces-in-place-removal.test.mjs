@@ -196,6 +196,17 @@ describe("ignoring a cluster leaves the rest of the grid alone", () => {
     );
   });
 
+  test("ignoring a cluster is a job on the server (#907): it asks for it, and says what the server says did not all happen", async (t) => {
+    const { window, document, server } = await openGrid(t);
+    server.first("/api/faces/exclude", { success: true, excluded: 3, tags_removed: 1, warning: "1 photo(s) could not be written." });
+    const said = [];
+    window.alert = (text) => said.push(text);
+    await ignoreCluster(window, document, "Cluster 5");
+    assert.equal(server.lastBody("/api/faces/exclude").bulk, true);
+    assert.deepEqual(said, ["1 photo(s) could not be written."]);
+    assert.deepEqual(cards(document).map((c) => Number(c.dataset.faceId)).sort((a, b) => a - b), [10, 11, 12, 13]);
+  });
+
   test("the panel's face count follows the cards", async (t) => {
     const { window, document } = await openGrid(t);
     const count = document.getElementById("matching-person-count");

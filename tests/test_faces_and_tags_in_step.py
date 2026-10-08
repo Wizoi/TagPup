@@ -288,22 +288,21 @@ class TakingANameOffTakesThePersonOff(InStep):
         self.assertEqual(1, reply.get_json()["tags_removed"])
         self.assertEqual([], self.tags(photo))
 
-    def test_excluding_a_selection_of_named_faces_in_bulk_writes_no_photo(self):
-        # TagTuner's Exclude selected and Ignore cluster send `leave_tags`: faces only, as the docs say (#901).
-        ids = []
-        for n in range(20):
+    def test_excluding_a_selection_of_named_faces_in_bulk_takes_the_people_off_too(self):
+        # Decided 2026-10-08 (#907, reversing #901's `leave_tags`): Exclude selected and Ignore cluster are the single "Not
+        # important" for many photos, as a job (tests/test_bulk_faces_and_tags.py has the rest).
+        ids, photos_here = [], []
+        for n in range(4):
             photo = self.held("bulk_%02d.jpg" % n, [PEOPLE + WREN])
-            ids += [self.face(photo, box=(10 + 20 * m, 10, 25 + 20 * m, 25), name=WREN, name_source="manual" if m == 0 else None)
-                    for m in range(10)]
-        self.assertEqual(200, len(ids))
-        reply = self.tuner_post("faces/exclude", {"face_ids": ids, "reason": "ignored cluster", "leave_tags": True})
+            photos_here.append(photo)
+            ids += [self.face(photo, box=(10 + 20 * m, 10, 25 + 20 * m, 25), name=WREN if m == 0 else None,
+                              name_source="manual" if m == 0 else None) for m in range(3)]
+        reply = self.tuner_post("faces/exclude", {"face_ids": ids, "reason": "ignored cluster", "bulk": True})
         self.assertEqual(200, reply.status_code, reply.get_json())
-        self.assertEqual(200, reply.get_json()["excluded"])
-        self.assertEqual((0, 0), (self.files.writes, self.files.read_calls), "a photo file was read or written")
-        self.assertNotIn("untag", reply.get_json())
+        self.assertEqual(12, reply.get_json()["excluded"])
+        self.assertEqual(4, reply.get_json()["tags_removed"])
         self.assertNotIn("warning", reply.get_json())
-        self.assertEqual([], self.look("SELECT 1 FROM changes WHERE operation = 'person taken off for an unnamed face'"))
-        self.assertEqual([PEOPLE + WREN], self.tags(self.look("SELECT path FROM photos ORDER BY id")[0][0]))
+        self.assertEqual([[]] * 4, [self.tags(photo) for photo in photos_here])
 
     def test_unmatch_all_takes_off_every_person_the_names_gave(self):
         photo = self.held("off_008.jpg", [PEOPLE + WREN, PEOPLE + ODA, "Regatta"])

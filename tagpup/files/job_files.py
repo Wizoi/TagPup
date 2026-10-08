@@ -94,6 +94,23 @@ def read_state(folder, job):
     return found if isinstance(found, dict) else None
 
 
+def plan_path(folder, job):
+    return os.path.join(folder, "%d.plan.json" % job)
+
+
+def write_plan(folder, job, plan):
+    """Keep `plan`, a dict of numbers, texts, lists and dicts, as job `job`'s plan: what a job that is not safe to begin again
+    from scratch is to do (the face assignments': which faces, to be what), written once, before anything is done. Like a
+    state, whole or not there."""
+    _write(plan_path(folder, job), json.dumps(plan, separators=(",", ":")).encode("utf-8"))
+
+
+def read_plan(folder, job):
+    """Job `job`'s plan, or None when there is none or it cannot be read."""
+    found = _read(plan_path(folder, job))
+    return found if isinstance(found, dict) else None
+
+
 def write_ids(folder, job, ids):
     _write(ids_path(folder, job), json.dumps(list(ids), separators=(",", ":")).encode("utf-8"))
 
@@ -119,7 +136,7 @@ def read_ids(folder, job):
 
 def forget(folder, job):
     """Let go of everything kept of job `job`: its state and its list of photos. Missing files are no matter."""
-    for path in (state_path(folder, job), ids_path(folder, job)):
+    for path in (state_path(folder, job), ids_path(folder, job), plan_path(folder, job)):
         try:
             os.remove(path)
         except OSError:
@@ -168,7 +185,7 @@ def sweep(folder, now=None):
                     os.remove(path)
                 continue
             job, _dot, kind = name.partition(".")
-            if job.isdigit() and kind in ("ids", "state.json"):
+            if job.isdigit() and kind in ("ids", "state.json", "plan.json"):
                 entry = jobs.setdefault(int(job), {"kinds": set(), "newest": 0})
                 entry["kinds"].add(kind)
                 entry["newest"] = max(entry["newest"], os.path.getmtime(path))

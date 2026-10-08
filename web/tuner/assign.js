@@ -150,9 +150,9 @@ export function postExcludeBulk(faceIds, presetReason) {
     return api.fetch('/api/faces/exclude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // A selection is ruled out as faces only: writing a keyword out of hundreds of photo files from one click is not
-        // this button's job (the single "Not important" in a photo's panel takes the person's tag off).
-        body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim(), leave_tags: true })
+        // A selection is ruled out as a job on the server (#907): the faces, and the people they were named taken off their
+        // photos unless another face of the photo is them, a few photos at a time; this request waits for the end.
+        body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim(), bulk: true })
     })
     .then(async res => {
         if (!res.ok) throw new Error(await exclusionWhy(res));
@@ -237,6 +237,7 @@ function postUnmatchBulk(faceIds, { undo = false } = {}) {
         return res.json();
     })
     .then(data => {
+        if (data.warning) alert(data.warning);
         if (data.success && undo) {
             // Undoing an assign: the faces come back to the grid they left.
             putFacesBack(faceIds);
@@ -394,7 +395,10 @@ export function postMatchBulk(faceIds, name) {
                 : faceIds;
             const skippedIds = new Set(Array.isArray(data.skipped_excluded)
                 ? data.skipped_excluded.map(Number) : []);
-            const leavingIds = faceIds.filter(id => !skippedIds.has(id));
+            // A face the server could not name (its photo's file could not be written, or the job stopped) stays where it is.
+            const notNamed = new Set(Array.isArray(data.not_named) ? data.not_named.map(Number) : []);
+            const leavingIds = faceIds.filter(id => !skippedIds.has(id) && !notNamed.has(id));
+            if (data.warning) alert(data.warning);
             const skipped = skippedIds.size;
             if (skipped) {
                 alert(`${skipped} of these face${skipped !== 1 ? 's were' : ' was'} `
