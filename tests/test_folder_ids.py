@@ -110,7 +110,7 @@ class Case(unittest.TestCase):
     def mark(self, apply=False, library=None):
         return folder_ids.mark(library or self.library, apply=apply)
 
-    def follow(self, apply=False, tops=None, library=None, rehearse=False):
+    def follow(self, apply=False, trees=None, places=None, library=None, rehearse=False):
         truth = self.truth
 
         class Session:
@@ -128,7 +128,7 @@ class Case(unittest.TestCase):
                         for path in batch]
 
         with mock.patch("tagpup.files.exiftool_session.ExifToolSession", Session):
-            return folder_ids.follow(library or self.library, tops or [self.pictures], apply=apply,
+            return folder_ids.follow(library or self.library, places or (), trees or (), None, apply=apply,
                                      exiftool_path="exiftool", rehearse=rehearse)
 
     def query(self, sql, params=(), path=None):
@@ -646,7 +646,11 @@ class FollowingAFolder(Case):
         made = self.marked()
         os.makedirs(self.at("Archive"))
         shutil.move(self.at("2026-01-31 Parkrun"), self.at("2026-01-31 Parkrun", self.at("Archive")))
-        done = self.follow(apply=True)
+        self.assertEqual(1, self.follow(trees=[self.at("Archive")]).details["counts"]["followed"])
+        self.assertEqual(1, self.follow(places=[self.at("2026-01-31 Parkrun", self.at("Archive"))]
+                                        ).details["counts"]["followed"], "a folder a sync found files moved to")
+        self.assertEqual(1, self.follow().details["counts"]["not_found"], "beside it only, it is not at the parent")
+        done = self.follow(apply=True, trees=[self.at("Archive")])
         self.assertEqual(3, done.details["changed"]["relinked"])
         self.assertEqual({os.path.join(self.at("Archive"), "2026-01-31 Parkrun", os.path.basename(p)) for p in made},
                          set(self.paths_by_id().values()))
@@ -772,6 +776,31 @@ class FollowingAFolder(Case):
         overwrite(folder_marker.location(self.at("Harbour")), ("%s %s\n" % (self.identity(), folder_id)).encode())
         done = self.follow(apply=True)
         self.assertEqual((1, 0), (done.details["counts"]["conflicts"], done.changed))
+
+    def test_a_folder_whose_rows_cannot_go_because_its_files_have_rows_is_left_and_not_said_followed(self):
+        """The watcher queued the renamed folder as new before anything followed (no DocumentID: 97% of real rows):
+        every file there has a row of its own. Moving the folder's id would leave the old rows, and the faces named
+        on them, missing for good and say it was followed (review of 00c5d16)."""
+        made = self.marked(count=3)
+        self.face(made[0])
+        recorded, rows = self.ids(), self.paths_by_id()
+        self.rename("2026-01-31 Parkrun", "Renamed")
+        fresh = []
+        for n, path in enumerate(made, 1):
+            new = os.path.join(self.at("Renamed"), "Finish %d.jpg" % n)
+            os.rename(os.path.join(self.at("Renamed"), os.path.basename(path)), new)
+            os.utime(new, (THEN + 5, THEN + 5))
+            self.truth[os.path.basename(new)] = self.truth[os.path.basename(path)]
+            fresh.append(new)
+        self.index(*fresh)
+        done = self.follow(apply=True)
+        counts = done.details["counts"]
+        self.assertEqual((0, 1, 0), (counts["followed"], counts["left"], done.changed))
+        self.assertEqual(3, done.details["reveal"]["left"][0]["files_with_rows"])
+        self.assertEqual(recorded, self.ids(), "the folder's id moved though no row could")
+        self.assertEqual(3, len([p for p in self.paths_by_id().values() if p in made]), "an old row was moved")
+        self.assertEqual(set(rows), {i for i, p in self.paths_by_id().items() if p in made})
+        self.assertEqual([("Rowan Thackeray",)], self.query("SELECT name FROM faces"))
 
     def test_a_dry_run_of_following_writes_nothing_and_the_rehearsal_says_the_undo_is_exact(self):
         self.marked()

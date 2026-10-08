@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import roots_library  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
-from test_folder_ids import Case, slurp  # noqa: E402
+from test_folder_ids import THEN, Case, slurp  # noqa: E402
 from test_migrations import at_version, backups  # noqa: E402
 
 from tagpup import config  # noqa: E402
@@ -102,7 +102,7 @@ class TheCommand(Case):
 
 class WhenSyncMeetsAMovedFolder(Case):
 
-    def sync(self, apply=True, queued=None):
+    def sync(self, apply=True, queued=None, folder=None):
         truth = self.truth
 
         class Session:
@@ -124,7 +124,7 @@ class WhenSyncMeetsAMovedFolder(Case):
                 queued.extend(folders)
             return Result(changed=len(folders))
         with mock.patch("tagpup.files.exiftool_session.ExifToolSession", Session):
-            return sync.sync(self.library, None, apply, "exiftool", queue, roots=[self.pictures])
+            return sync.sync(self.library, folder, apply, "exiftool", queue, roots=[self.pictures])
 
     def test_a_marked_folder_renamed_and_its_photos_renamed_is_followed_and_never_indexed_as_new(self):
         made = [self.photo(self.at("2026-02-07 Parkrun"), "IMG_%04d.jpg" % n, n, doc="xmp.did:%04d" % n)
@@ -150,6 +150,60 @@ class WhenSyncMeetsAMovedFolder(Case):
         self.assertEqual([], [each for each in queued if "A different name entirely" in each],
                          "the followed folder was indexed as if it were new")
         self.assertIsNone(done.details["folder_markers"]["error"])
+
+    def renamed_and_edited(self, folder_name, new_name, count=3):
+        """A marked folder of photos with no DocumentID (97% of the real rows have none), renamed, its photos renamed
+        and touched, as an editor leaves them: no name, size and modified time pairs a row with a file, and the size
+        and Date Taken still do."""
+        made = [self.photo(self.at(folder_name), "IMG_%04d.jpg" % n, n) for n in range(1, count + 1)]
+        ids = self.index(*made)
+        self.face(made[0])
+        folder_ids.mark(self.library, apply=True)
+        os.rename(self.at(folder_name), self.at(new_name))
+        for n in range(1, count + 1):
+            old = os.path.join(self.at(new_name), "IMG_%04d.jpg" % n)
+            new = os.path.join(self.at(new_name), "Finish %d.jpg" % n)
+            os.rename(old, new)
+            os.utime(new, (THEN + 60, THEN + 60))
+            self.truth["Finish %d.jpg" % n] = self.truth["IMG_%04d.jpg" % n]
+        return made, ids
+
+    def check_followed(self, made, ids, new_name, queued):
+        self.assertEqual(set(ids.values()), set(self.paths_by_id()), "photo ids were not kept")
+        self.assertTrue(all(os.path.exists(p) for p in self.paths_by_id().values()), "a row names no file")
+        self.assertEqual(3, len([p for p in self.paths_by_id().values() if new_name in p]))
+        self.assertEqual([("Rowan Thackeray",)], self.query("SELECT name FROM faces"), "the named face went")
+        self.assertEqual({self.at(new_name)}, set(self.ids()))
+        self.assertEqual([], [each for each in queued if new_name in each], "the followed folder was queued as new")
+
+    def test_the_sync_of_the_folder_a_folder_was_renamed_in_follows_it_without_a_document_id(self):
+        # What the watcher runs for a renamed folder: the sync of its parent, not the whole library.
+        made, ids = self.renamed_and_edited("2026-02-07 Parkrun", "Renamed and edited")
+        queued = []
+        done = self.sync(queued=queued, folder=self.pictures)
+        self.assertTrue(done.ok, done.message())
+        self.assertEqual(1, done.details["folder_markers"]["counts"]["followed"])
+        self.check_followed(made, ids, "Renamed and edited", queued)
+
+    def test_the_whole_sync_does_the_same_without_a_document_id(self):
+        made, ids = self.renamed_and_edited("2026-02-07 Parkrun", "Renamed and edited")
+        queued = []
+        self.sync(queued=queued)
+        self.check_followed(made, ids, "Renamed and edited", queued)
+
+    def test_a_folder_moved_to_another_parent_is_followed_by_the_sync_that_found_its_files_there(self):
+        made = [self.photo(self.at("2026-02-07 Parkrun"), "IMG_%04d.jpg" % n, n) for n in range(1, 4)]
+        ids = self.index(*made)
+        self.face(made[0])
+        folder_ids.mark(self.library, apply=True)
+        os.makedirs(self.at("Archive"))
+        shutil.move(self.at("2026-02-07 Parkrun"), self.at("2026-02-07 Parkrun", self.at("Archive")))
+        queued = []
+        self.sync(queued=queued, folder=self.pictures)
+        self.assertEqual(set(ids.values()), set(self.paths_by_id()))
+        self.assertTrue(all(os.path.exists(p) for p in self.paths_by_id().values()))
+        self.assertEqual([("Rowan Thackeray",)], self.query("SELECT name FROM faces"))
+        self.assertEqual([], queued)
 
     def test_a_library_that_marked_nothing_is_not_touched(self):
         self.meet("2026-02-07 Parkrun")
@@ -197,7 +251,7 @@ class WithARoot(unittest.TestCase):
     def raw(self):
         return {row[0]: row[1] for row in self.side.rows("SELECT id, path FROM folder_ids")}
 
-    def follow(self, tops):
+    def follow(self, trees):
         truth = {}
 
         class Session:
@@ -214,7 +268,7 @@ class WithARoot(unittest.TestCase):
                 return [{"SourceFile": path.replace(os.sep, "/"), **truth.get(os.path.basename(path), {})}
                         for path in batch]
         with mock.patch("tagpup.files.exiftool_session.ExifToolSession", Session):
-            return folder_ids.follow(self.side.library, tops, apply=True, exiftool_path="exiftool")
+            return folder_ids.follow(self.side.library, (), trees, None, apply=True, exiftool_path="exiftool")
 
     def test_ids_are_recorded_in_the_form_the_rows_are_and_follow_a_rename(self):
         self.assertTrue(self.side.adopt().ok)
@@ -256,6 +310,75 @@ class WithARoot(unittest.TestCase):
         self.assertEqual(0, followed.details["counts"]["ambiguous"], "the mirror was taken for a copy")
         self.assertEqual(1, followed.details["counts"]["followed"])
         self.assertIn("@pictures/2024 Harbour Day", self.raw().values())
+
+
+class ThroughTheWatcher(Case):
+    """The always-on process: the folder's notifications settle and its parent is synced (tagpup.jobs.watching)."""
+
+    def test_a_marked_folder_renamed_and_edited_is_followed_by_the_sync_the_watcher_runs(self):
+        import time
+
+        from tagpup.files import images
+        from tagpup.jobs import watching
+        made = [self.photo(self.at("2026-02-07 Parkrun"), "IMG_%04d.jpg" % n, n) for n in range(1, 4)]
+        ids = self.index(*made)
+        self.face(made[0])
+        folder_ids.mark(self.library, apply=True)
+        synced, queued = [], []
+        truth = self.truth
+
+        class Session:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def get_tags(inner, batch, tags=None):
+                return [{"SourceFile": path.replace(os.sep, "/"), **truth.get(os.path.basename(path), {})}
+                        for path in batch]
+
+        def run(library, folder):
+            result = sync.sync(library, folder, True, "exiftool",
+                               lambda folders: queued.extend(folders) or Result(changed=len(folders)),
+                               roots=[self.pictures])
+            synced.append((folder, result))
+            return result
+
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", Session):
+            watcher = watching.Watcher(lambda: [self.library], lambda library: [self.pictures], run, images.is_photo,
+                                       debounce=0.5, recheck=0.5, tick=0.05)
+            self.addCleanup(watcher.stop, 20)
+            watcher.start()
+            deadline = time.time() + 30
+            while not (synced and watcher.watched()) and time.time() < deadline:
+                time.sleep(0.05)
+            self.assertEqual([None], [folder for folder, _r in synced], "the catch-up at start")
+            del synced[:], queued[:]
+            os.rename(self.at("2026-02-07 Parkrun"), self.at("Renamed and edited"))
+            for n in range(1, 4):
+                old = os.path.join(self.at("Renamed and edited"), "IMG_%04d.jpg" % n)
+                new = os.path.join(self.at("Renamed and edited"), "Finish %d.jpg" % n)
+                os.rename(old, new)
+                os.utime(new, (THEN + 60, THEN + 60))
+                self.truth["Finish %d.jpg" % n] = self.truth["IMG_%04d.jpg" % n]
+            deadline = time.time() + 30
+            while time.time() < deadline and not any(
+                    r.details.get("folder_markers") and r.details["folder_markers"]["counts"].get("followed")
+                    for _f, r in synced):
+                time.sleep(0.05)
+            time.sleep(1.5)
+        self.assertTrue(synced, "the watcher synced nothing")
+        self.assertTrue(all(folder is not None for folder, _r in synced), "a whole sync, not a folder's")
+        self.assertEqual(set(ids.values()), set(self.paths_by_id()))
+        self.assertTrue(all(os.path.exists(p) for p in self.paths_by_id().values()), "a row names no file")
+        self.assertEqual([("Rowan Thackeray",)], self.query("SELECT name FROM faces"))
+        self.assertEqual({self.at("Renamed and edited")}, set(self.ids()))
+        self.assertEqual([], [each for each in queued if "Renamed and edited" in each],
+                         "the renamed folder was queued as new")
 
 
 class DoctorAndMigration(Case):
