@@ -60,6 +60,13 @@ def names_by_face(conn, photo_path):
     return dict(conn.execute("SELECT id, name FROM faces WHERE " + where + " AND name IS NOT NULL", params).fetchall())
 
 
+def named_in_photo(conn, photo_path):
+    """[(face id, name, name_source)] of the faces of one photo that carry a name and are not ruled out, on `conn`."""
+    where, params = _on_photo(conn, photo_path)
+    return conn.execute("SELECT id, name, name_source FROM faces WHERE " + where
+                        + " AND name IS NOT NULL AND excluded = 0 ORDER BY id", params).fetchall()
+
+
 def names_given(conn, names):
     """Which of `names` some face carries now, on `conn`: one indexed query for them all.
     A name read before a write began may have been renamed, or taken off every face,

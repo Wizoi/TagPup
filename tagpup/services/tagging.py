@@ -166,9 +166,35 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         else:
             # The journaled write carried its vectors over the write already.
             photos.record_saved(library.path, new_path, recorded_tags, [title] if title else [], raw_meta)
+            # A person left off the photo is a person off its faces (#908), once the index says what the file holds.
+            if written.changed:
+                unname_taken_off(library, {new_path: [tag for tag in held if tag not in set(tags)]}, result)
     except Exception as e:
         logger.warning("Failed to update SQLite database metadata for %s: %s", new_path, e)
     return result
+
+
+def unname_taken_off(library, removed, result):
+    """The faces of the people a write took off their photos are unnamed (tagpup.services.face_people.unname_for_removed_tags,
+    #908): `removed` is {photo path: [the tags taken off it]}. What it did is in `result`'s details -- `unnamed_faces`
+    ([{"id", "name"}], for a page's Undo) and `faces_change` (the journal's id) -- and a change that could not be written is
+    logged and said in `faces_problem`: the tags are off all the same. Never raises; the file is written either way."""
+    from tagpup.services import face_people   # face_people writes through this module
+    removed = {path: list(taken) for path, taken in removed.items() if taken}
+    if not removed:
+        return
+    try:
+        done = face_people.unname_for_removed_tags(library, removed)
+    except Exception as e:
+        logger.warning("Could not unname the faces of the people taken off %d photo(s): %s", len(removed), e)
+        result.details["faces_problem"] = "The faces of the people taken off could not be unnamed: %s" % type(e).__name__
+        return
+    if done.errors:
+        logger.warning("Could not unname the faces of the people taken off: %s", done.message())
+        result.details["faces_problem"] = "The faces of the people taken off could not be unnamed."
+    if done.details.get("unnamed"):
+        result.details.setdefault("unnamed_faces", []).extend(done.details["unnamed"])
+        result.details["faces_change"] = done.details.get("change")
 
 
 def _rename_after_caption(library, photo_path, wanted, files_only):
@@ -255,6 +281,8 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
         for path, why in gone:
             result.skip(path, why)
     result.details[SKIPPED_MISSING] = len(gone)
+    if remove and not result.refused:
+        unname_taken_off(library, {path: list(remove) for path in result.details.get("written") or {}}, result)
     return result
 
 

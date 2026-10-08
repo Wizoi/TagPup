@@ -1144,7 +1144,7 @@ def photo_save_metadata():
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))
     reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(new_path),
-             "base": result.details.get("base")}
+             "base": result.details.get("base"), **_faces_unnamed(result)}
     if result.details["index_warning"]:
         reply["index_warning"] = result.details["index_warning"]
     return jsonify(reply)
@@ -1179,7 +1179,20 @@ def photos_bulk_tags():
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
     return jsonify({"success": True, "written": _written_tags(result), **_skipped_photos(result),
-                    "stamps": {path: _stamp_reply(path) for path in result.details["written"]}, **_where(result)})
+                    "stamps": {path: _stamp_reply(path) for path in result.details["written"]}, **_where(result),
+                    **_faces_unnamed(result)})
+
+
+def _faces_unnamed(result):
+    """What a write that took a person off a photo says of the faces it unnamed (#908): `unnamed_faces`, [{"id", "name"}], for
+    the page's Undo to name again; `faces_problem`, a sentence, when they could not be. Only what happened, nothing when no face
+    was touched."""
+    said = {}
+    if result.details.get("unnamed_faces"):
+        said["unnamed_faces"] = result.details["unnamed_faces"]
+    if result.details.get("faces_problem"):
+        said["faces_problem"] = result.details["faces_problem"]
+    return said
 
 
 def _where(result):

@@ -31,18 +31,21 @@ doctor line (tagpup.store.checks) counts it, and `tagpup_cli.py tags-from-faces`
 """
 import logging
 
-from tagpup.core import paths, vocabulary
+from tagpup.core import fields, paths, vocabulary
 from tagpup.core.result import Conflict, Result
 from tagpup.files import exiftool_session
 from tagpup.services import faces as faces_service
 from tagpup.services import file_changes, tagging
-from tagpup.store import db, faces, photos, taxonomy
+from tagpup.store import db, faces, file_journal, journal, person_ids, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
 #: What the journal calls the changes made here (History's `operation`).
 ADDED = "person added for a named face"
 REMOVED = "person taken off for an unnamed face"
+
+#: ... and the change that unnamed the faces of a person whose tag was taken off a photo (History's `operation`).
+UNNAMED = "face unnamed for a person taken off the photo"
 
 #: How long one ExifTool command of these writes may take, in seconds (the bulk edits' chunk's is the same).
 TIMEOUT = 60
@@ -341,6 +344,96 @@ def _names_of(library, face_ids):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         return faces.named_among(conn, face_ids)
+    finally:
+        conn.close()
+
+
+# ---- A person's tag taken off a photo --------------------------------------------------------------------------
+
+def _faces_to_unname(library, removed):
+    """[(face id, name, name_source)] of the faces whose person was taken off their photo: for each photo of `removed`
+    ({photo path: [the tags a write took off it]}), a face that carries a person one of those tags names, when the photo's
+    keywords -- as the library records them NOW, after the write -- no longer name them under any spelling. A branch of
+    the tree is never a person (person_ids.People.why_not): a tag that names one takes no face's name off. Reads only."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        known = taxonomy.read_people_vocabulary(conn)
+        tree = person_ids.read(conn)
+        named = {photo_path: faces.named_in_photo(conn, photo_path) for photo_path in removed}
+    finally:
+        conn.close()
+    now = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, list(removed))}
+    found = []
+    for photo_path, taken_off in removed.items():
+        tags_now = now.get(paths.key(photo_path), [])
+        for face_id, name, source in named[photo_path]:
+            if tree.why_not(name) == "branch":
+                continue
+            if _person_tags(taken_off, name, known) and not _person_tags(tags_now, name, known):
+                found.append((face_id, name, source))
+    return found
+
+
+def unname_for_removed_tags(library, removed):
+    """A person's tag taken off a photo takes the person's name off the photo's faces (owner, 2026-10-08, #908): the pill in the
+    pages, a tag taken off a selection, History's Undo of an add. `removed` is {photo path: [the tags that were taken off it]},
+    of the photos a write ACTUALLY wrote (a file that could not be written is not here, so its faces stay as they are).
+
+    The face is left as a decision, "this is nobody" (name_source 'manual', name NULL) -- the record that the owner took the
+    person off ON PURPOSE: automatch, Re-examine, the one-face rule of a save (tagpup.store.face_tags) and clustering never name
+    a face so decided, and `tags-from-faces` writes a tag only for a NAMED face, so none of them puts the person back. It is
+    one journaled change of the faces (UNNAMED), which History's Undo takes back, name and who decided it as they were. A face
+    renamed meanwhile is left out of it (skippable). Returns a Result: `changed` the faces unnamed; details `unnamed`
+    ([{"id", "name"}] -- never reported with the library's counts, the page keeps them for its Undo) and `change`. A change that
+    cannot be written is an error in the Result; the tag is off all the same."""
+    result = Result(attempted=len(removed))
+    result.details.update(unnamed=[], change=None)
+    if not removed:
+        return result
+    found = _faces_to_unname(library, removed)
+    if not found:
+        return result
+    edits = [journal.update("faces", (face_id,), {"name": name, "name_source": source, "excluded": 0},
+                            {"name": None, "name_source": "manual"}, kind="face unnamed", skippable=True)
+             for face_id, name, source in found]
+    try:
+        applied = journal.apply(library.path, UNNAMED, edits, summary={"faces": len(edits)})
+    except journal.Refusal as why:
+        result.fail("the faces of the photos a tag was taken off", why)
+        return result
+    still_named = set(_names_now(library, [face_id for face_id, _n, _s in found]))
+    result.details["unnamed"] = [{"id": face_id, "name": name} for face_id, name, _source in found
+                                 if face_id not in still_named]
+    result.details["change"] = applied.change_id
+    result.changed = len(result.details["unnamed"])
+    return result
+
+
+def _tags_of(held):
+    """The keyword tags of a journaled file's fields ({field: texts}, the journal's own keys)."""
+    return vocabulary.extract_tags({fields.read_key(field): texts for field, texts in held.items()})
+
+
+def unname_after_undo(library, change_id):
+    """History's Undo of a change of photo files took persons off photos (an add undone: the person the change added): their faces
+    are unnamed as a tag taken off is (unname_for_removed_tags, #908). Reads the change's files, those the undo put back; a
+    file it refused still holds what the change left, and its faces stay. A Result as unname_for_removed_tags'."""
+    removed = {}
+    for row in file_journal.files_of(library.path, change_id):
+        if row.state != "undone" or row.is_rename:
+            continue
+        put_back = set(_tags_of(row.before))
+        taken = [tag for tag in _tags_of(row.after) if tag not in put_back]
+        if taken:
+            removed[row.path] = taken
+    return unname_for_removed_tags(library, removed)
+
+
+def _names_now(library, face_ids):
+    """{face id: name} of the faces among `face_ids` that carry a name now."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return {face_id: name for face_id, (_path, name, _ex) in faces.rows(conn, face_ids).items() if name}
     finally:
         conn.close()
 

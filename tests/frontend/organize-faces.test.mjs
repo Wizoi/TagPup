@@ -723,6 +723,25 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
     assert.match(ctx.boxes()[0].getAttribute("aria-label"), /Anh Tran/, "the box did not follow the tag");
   });
 
+  test("taking the person's pill off unnames their face on the server, and the boxes follow (#908)", async (t) => {
+    const done = { faces: [face(1, [400, 300, 800, 700], { name: "Anh Tran" })], total: 1, unmatched: 0, size: [4000, 3000], turned: false };
+    const ctx = await openPhoto(t, {
+      photoFaces: done, photo: photoRecord({ filename: "a.jpg", tags: ["People/Anh Tran"], people: ["Anh Tran"] }),
+    });
+    ctx.show();
+    assert.match(ctx.boxes()[0].getAttribute("aria-label"), /Anh Tran/);
+    ctx.server.first("/api/photo/save-metadata", () => {
+      // What the server does with the tag (face_people.unname_for_removed_tags): the face is nobody's, and it says so.
+      done.faces[0].name = null;
+      return { success: true, unnamed_faces: [{ id: 1, name: "Anh Tran" }] };
+    });
+    ctx.server.first("/api/photo-faces", () => structuredClone(done));
+    const pill = [...ctx.document.querySelectorAll("#detail-people .tag-pill")].find((each) => each.textContent === "People/Anh Tran");
+    click(ctx.window, pill);
+    await flush(ctx.window, 16);
+    assert.match(ctx.boxes()[0].getAttribute("aria-label"), /not named/, "the box kept the name the server took off");
+  });
+
   test("a save of the photo's tags asks nothing of the faces when none is left to be named", async (t) => {
     const done = { faces: [face(1, [400, 300, 800, 700], { name: "Anh Tran" })], total: 1, unmatched: 0, size: [4000, 3000], turned: false };
     const ctx = await openPhoto(t, { photoFaces: done });
