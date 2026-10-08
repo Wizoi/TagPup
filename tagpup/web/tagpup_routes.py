@@ -417,7 +417,7 @@ def folder_auto_apply():
         with file_changes.exclusively():
             result = tagging_actions.apply_suggestions(library, suggestions, state.exiftool(library), threshold)
             if result.refused:
-                return responses.refused(result)
+                return _refused_after_writing(library, result)
             _records_written(library, result)
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
@@ -1163,13 +1163,7 @@ def photos_bulk_tags():
             result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
                                                  state.exiftool(library))
             if result.refused:
-                # A write stopped half-way (its roots changed) has written some files: the page is told which,
-                # and its records say so, as for a failure.
-                if result.details.get("written"):
-                    _records_written(library, result)
-                    return responses.refused(result, written=_written_tags(result),
-                                             change=result.details.get("change"))
-                return responses.refused(result)
+                return _refused_after_writing(library, result)
             _records_written(library, result)
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
@@ -1219,6 +1213,16 @@ def _written_tags(result):
     """{path: the tags it holds now} of each photo a bulk write wrote, or found holding
     them already (`written` in its details), for the page."""
     return {path: list(tags) for path, (tags, _flat, _hierarchical) in result.details["written"].items()}
+
+
+def _refused_after_writing(library, result):
+    """The reply to a bulk write that was refused. One that stopped half-way (its roots changed) has written
+    some files: the page is told which, and the cached records say so, as for a failure -- the one owner of that
+    answer for the bulk tag write and Apply All (findings #878)."""
+    if result.details.get("written"):
+        _records_written(library, result)
+        return responses.refused(result, written=_written_tags(result), change=result.details.get("change"))
+    return responses.refused(result)
 
 
 def _records_written(library, result):
