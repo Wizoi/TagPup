@@ -67,6 +67,7 @@ from tagpup.runtime import Runtime
 from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
+from tagpup.services import duplicate_rows as duplicate_rows_service
 from tagpup.services import faces_from_tags as faces_from_tags_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
@@ -1306,6 +1307,43 @@ def faces_from_tags(ctx, apply_, again):
                   markup=False, soft_wrap=True)
     # Counted again after the write: the faces just named change which photos have one face left.
     console.print("Still to be named by the rule now: %d face(s)." % result.details.get("remaining", {"faces": 0})["faces"])
+    for line in maintenance.skipped(result):
+        console.print(line, markup=False, soft_wrap=True)
+
+
+@cli.command("dedupe-spelled-rows")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Merge the rows of each file held more than once, as one change of the journal. Without it, only counts.")
+@click.pass_context
+def dedupe_spelled_rows(ctx, apply_):
+    """Find the files the library holds under more than one row -- one file reached by two spellings (a share and
+    its drive, a link) -- and merge them: what the extra rows hold (a face, a name given by hand, a vector) is moved
+    onto the row kept (the one under a root) where it lacks it, then they are deleted. Only rows PROVABLY one file
+    (the file system's own identity) are touched: a copy of a file in another folder has a row of its own and is
+    left alone. A dry run unless --apply; counts only, never a name or a path."""
+    library = _existing_library(ctx)
+    result = duplicate_rows_service.dedupe_spelled_rows(library, apply=apply_)
+    if result.refused or result.errors:
+        for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
+            console.print(line, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d file(s) are held by more than one row: %d row(s) to remove."
+                  % (counts["files_held_twice"], counts["rows_to_remove"]))
+    console.print("  kept: %d under a root, %d not under one" % (counts["kept_under_a_root"], counts["kept_not_under_a_root"]))
+    console.print("  moved onto the kept row first: %d face(s), %d decision(s) a counterpart lacked, %d vector(s)"
+                  % (counts["faces_moved"], counts["decisions_carried"], counts["vectors_carried"]))
+    console.print("  left alone: %d row(s) in %d group(s) that are copies (other files with the same name and size, each "
+                  "with its own row), %d row(s) whose file is missing, %d set(s) whose rows differ, %d set(s) disputed"
+                  % (counts["copies_left_alone"], counts["copy_groups_left_alone"], counts["missing_files_left_alone"],
+                     counts["sets_whose_rows_differ"], counts["sets_disputed"]))
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply merges them.")
+        return
+    console.print("Wrote %d row(s) (rows removed, faces moved, decisions and vectors carried). %s"
+                  % (result.changed, maintenance.recorded(result, library.path)), markup=False, soft_wrap=True)
+    console.print("Still held twice now: %d file(s)." % result.details.get("remaining", {"files_held_twice": 0})["files_held_twice"])
     for line in maintenance.skipped(result):
         console.print(line, markup=False, soft_wrap=True)
 
