@@ -52,8 +52,9 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     holding it all already is not written: `changed` is 0. A write that fails raises,
     as it did, for the page to say so.
 
-    A rename moves the photo's index row -- embedding, faces and all -- rather than
-    leaving them behind; then the row gets what the file holds now. A failure recording
+    A rename is a change of its own in the library's journal (file_changes.rename: in History, undoable), which
+    moves the photo's index row -- embedding, faces and all -- rather than leaving them behind; then the row gets
+    what the file holds now. A rename that fails leaves the file as it was: `renamed` False, `rename_failed` says why. A failure recording
     it is logged, not raised: the file is written either way. The read, the write and the
     rename hold the lock of changes of photo files (file_changes.exclusively): a write
     between the read and the write was overwritten.
@@ -132,9 +133,12 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             raise RuntimeError(written.message())
         result.changed = written.changed
         kept = now.get(names.PRESERVED_NAME) or [""]
-        new_path = paths.stored(metadata.sync_title_to_filename(photo_path, title, exiftool_path, rename_format,
-                                                                kept[0]))
+        new_path, skipped, rename_failed = _rename_after_caption(
+            library, photo_path, paths.stored(metadata.title_filename(photo_path, title, rename_format, kept[0])),
+            files_only)
         renamed = not paths.same(new_path, photo_path)
+        if rename_failed:
+            result.details["rename_failed"] = rename_failed
         result.details.update(new_path=new_path, renamed=renamed, tags=tags, flat=flat,
                               hierarchical=hierarchical, index_warning=None, change=written.details["change"],
                               base={"tags": _tags_held(after), "title": vocabulary.trimmed(title or "")})
@@ -153,7 +157,6 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         return result   # no row to tell: the index reads the file when the folder is added
     try:
         recorded_tags = vocabulary.extract_tags(raw_meta)
-        skipped = photos.move_rows(library.path, {photo_path: new_path})[1] if renamed else []
         if skipped:
             result.details["index_warning"] = (
                 "Renamed, but the index already has a photo at %s; its rows were left as they were."
@@ -164,6 +167,25 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     except Exception as e:
         logger.warning("Failed to update SQLite database metadata for %s: %s", new_path, e)
     return result
+
+
+def _rename_after_caption(library, photo_path, wanted, files_only):
+    """(the photo's path now, the (old, new) pairs whose new name the index already had, why the rename failed
+    or None). The rename of a photo of the library is a change in its journal (file_changes.rename: in
+    History, undoable, its row moving with it); a photo of a folder it does not hold is renamed alone, as Smart
+    Rename does it. A rename that fails leaves the file as it was and is reported, not raised: the fields were
+    written."""
+    if wanted == photo_path:
+        return photo_path, [], None
+    try:
+        if files_only:
+            done = file_only.rename({photo_path: wanted}, {})
+        else:
+            done = file_changes.rename(library, "rename after caption", {photo_path: wanted}, {}, summary={"photos": 1})
+    except Exception as e:
+        logger.warning("Could not rename %s after its caption: %s", photo_path, e)
+        return photo_path, [], e.message() if isinstance(e, names.RenameFailed) else str(e)
+    return paths.stored(done.done.get(photo_path, wanted)), done.skipped or [], None
 
 
 def _caption_problem(et, photo_path, caption):

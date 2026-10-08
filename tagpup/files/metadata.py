@@ -1,5 +1,5 @@
 """Reading a photo file's metadata with ExifTool, and the two file operations built on
-it: a quarter turn, and renaming a photo after its caption.
+it: a quarter turn, and the name a photo takes from its caption (the caller renames it).
 
 What the fields mean -- which hold tags, people, captions -- is tagpup.core.vocabulary's.
 What the library's tag tree says about people, and the rename format its settings name,
@@ -322,56 +322,35 @@ def rotate_image_file(photo_path: str, direction: str, exiftool_path: Optional[s
     return new
 
 
-def sync_title_to_filename(photo_path: str, new_title: str, exiftool_path: str,
-                           rename_format: str, preserved: Optional[str] = None) -> str:
-    """If the photo has an XMP-xmpMM:PreservedFileName tag set, automatically syncs
-    any changes to the title back into the filename structure, in `rename_format`
-    (the library's renaming.format setting, tagpup.services.settings).
-    Returns the new path if renamed, or the original path if not renamed. `preserved`
-    is the photo's PreservedFileName when the caller has read it ("" for none): then
-    ExifTool is not started to read it again."""
-    if not os.path.exists(photo_path):
+def title_filename(photo_path: str, new_title: str, rename_format: str, preserved: str) -> str:
+    """Where a Smart-Renamed photo goes when its caption becomes `new_title`: the path whose name
+    `rename_format` (the library's renaming.format setting, tagpup.services.settings) gives it, a free
+    name where that one is taken; or `photo_path` when nothing is to move. A photo is Smart-Renamed
+    when it holds the name it had before in `preserved` (XMP-xmpMM:PreservedFileName, "" for none).
+    Nothing is renamed here: the caller renames, through the file journal (docs/findings.md, #298)."""
+    if not preserved or not os.path.exists(photo_path):
         return photo_path
-
     try:
-        if preserved is None:
-            with ExifToolSession(executable=exiftool_path) as et:
-                meta = et.get_tags([photo_path], tags=["XMP-xmpMM:PreservedFileName", "XMP:PreservedFileName"])
-                meta_dict = meta[0] if meta else {}
-            preserved = meta_dict.get("XMP-xmpMM:PreservedFileName") or meta_dict.get("XMP:PreservedFileName")
-        if not preserved:
-            # Not renamed in this way, do nothing
-            return photo_path
-
-        # Parse current filename structure
         base_name, ext = os.path.splitext(os.path.basename(photo_path))
         parts = [p.strip() for p in base_name.split(" - ")]
-
-        if len(parts) >= 2:
-            grouping = parts[0]
-            index_str = parts[1]
-
-            new_name = renaming.file_base(rename_format, grouping, index_str, new_title) + ext
-
-            new_path = os.path.join(os.path.dirname(photo_path), new_name)
-
-            if photo_path != new_path:
-                # Handle potential collision
-                if os.path.exists(new_path):
-                    base_part, ext_part = os.path.splitext(new_name)
-                    counter = 1
-                    while os.path.exists(os.path.join(os.path.dirname(photo_path), f"{base_part}_{counter}{ext_part}")):
-                        counter += 1
-                    new_name = f"{base_part}_{counter}{ext_part}"
-                    new_path = os.path.join(os.path.dirname(photo_path), new_name)
-
-                os.rename(photo_path, new_path)
-                return new_path
-
+        if len(parts) < 2:
+            return photo_path
+        grouping, index_str = parts[0], parts[1]
+        new_name = renaming.file_base(rename_format, grouping, index_str, new_title) + ext
+        folder = os.path.dirname(photo_path)
+        new_path = os.path.join(folder, new_name)
+        if photo_path == new_path:
+            return photo_path
+        if os.path.exists(new_path):
+            base_part, ext_part = os.path.splitext(new_name)
+            counter = 1
+            while os.path.exists(os.path.join(folder, f"{base_part}_{counter}{ext_part}")):
+                counter += 1
+            new_path = os.path.join(folder, f"{base_part}_{counter}{ext_part}")
+        return new_path
     except Exception as e:
-        logging.getLogger("metadata").error(f"Error syncing title to filename: {e}")
-
-    return photo_path
+        logging.getLogger("metadata").error(f"Error working out the name for the title: {e}")
+        return photo_path
 
 
 def raw_metadata(et, photo_path, record=None):

@@ -173,7 +173,7 @@ class TestSavingTagsAndACaption(HandlerCase):
         written = {"XMP:Subject": ["Places/Harbour"], "XMP:HierarchicalSubject": ["Places/Harbour"],
                    "XMP:Description": "Harbour at dusk"}
         with patch("tagpup.files.exiftool_session.ExifToolSession", fake_exiftool([written])), \
-                patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
+                patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             result = self.call("POST", "/api/photo/save-metadata",
                                {"path": photo, "title": "Harbour at dusk",
                                 "tags": ["Places/Harbour"]})
@@ -194,14 +194,13 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
         self.seed(photo, faces=["Rowan Thackeray", "Ada Marchetti"])
         renamed_to = os.path.join(self.folder, "Parade - 1 - Finish line.jpg")
 
-        def sync_title(photo_path, title, executable, rename_format, *preserved):
-            os.rename(photo_path, renamed_to)
+        def sync_title(photo_path, title, rename_format, *preserved):
             # metadata joins onto whatever spelling it was given.
             return forward(renamed_to)
 
         with patch("tagpup.files.exiftool_session.ExifToolSession",
                    fake_exiftool([{"XMP:Description": "Finish line"}])), \
-                patch("tagpup.files.metadata.sync_title_to_filename", side_effect=sync_title):
+                patch("tagpup.files.metadata.title_filename", side_effect=sync_title):
             result = self.call("POST", "/api/photo/save-metadata",
                                {"path": forward(photo), "title": "Finish line", "tags": []})
 
@@ -229,12 +228,11 @@ class TestSavingACaptionThatRenamesThePhoto(HandlerCase):
         self.seed(renamed_to, faces=["Ada Marchetti"], embedding=b"another-photo",
                   stat_from_disk=False)
 
-        def sync_title(photo_path, title, executable, rename_format, *preserved):
-            os.rename(photo_path, renamed_to)
+        def sync_title(photo_path, title, rename_format, *preserved):
             return renamed_to
 
         with patch("tagpup.files.exiftool_session.ExifToolSession", fake_exiftool([{}])), \
-                patch("tagpup.files.metadata.sync_title_to_filename", side_effect=sync_title):
+                patch("tagpup.files.metadata.title_filename", side_effect=sync_title):
             result = self.call("POST", "/api/photo/save-metadata",
                                {"path": photo, "title": "Finish line", "tags": []})
 

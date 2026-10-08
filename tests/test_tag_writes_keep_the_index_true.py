@@ -225,7 +225,7 @@ class TestBulkWritersTellTheIndex(IndexCase):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
         with patch("tagpup.files.exiftool_session.ExifToolSession", helper), \
-                patch("tagpup.files.metadata.sync_title_to_filename", side_effect=lambda p, *rest: p):
+                patch("tagpup.files.metadata.title_filename", side_effect=lambda p, *rest: p):
             self.call("/api/photo/save-metadata", {"path": stored, "title": "", "tags": ["Beach"]})
 
         row = self.row(stored)
