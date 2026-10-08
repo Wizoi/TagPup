@@ -49,8 +49,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     undone: the photo's keyword, caption and date fields, before and after, committed
     first, and the row told what the file holds as it is marked done. It was written
     with ExifTool of its own and recorded nowhere (docs/findings.md, #266). A file
-    holding it all already is not written: `changed` is 0. A write that fails raises,
-    as it did, for the page to say so.
+    holding it all already is not written: `changed` is 0. A write that fails is in the Result's
+    errors (the route answers 500 from them); nothing is renamed.
 
     A rename is a change of its own in the library's journal (file_changes.rename: in History, undoable), which
     moves the photo's index row -- embedding, faces and all -- rather than leaving them behind; then the row gets
@@ -130,7 +130,9 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
                                                 held={paths.key(photo_path): now},
                                                 read_back_also=fields.METADATA_FIELDS)
         if not written.ok:
-            raise RuntimeError(written.message())
+            result.errors.extend(written.errors)
+            result.changed = written.changed
+            return result
         result.changed = written.changed
         kept = now.get(names.PRESERVED_NAME) or [""]
         new_path, skipped, rename_failed = _rename_after_caption(

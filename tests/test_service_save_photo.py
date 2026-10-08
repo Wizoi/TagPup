@@ -87,6 +87,15 @@ class SavingAPhoto(unittest.TestCase):
         self.assertEqual(self.lib.rows("SELECT p.path FROM faces f LEFT JOIN photos p ON p.id = f.photo_id"),
                          [(self.renamed_to,)])
 
+    def test_a_write_that_fails_is_answered_in_the_result_not_raised(self):
+        # docs/findings.md, #299: the route answers from the Result.
+        self.et.set_tags.side_effect = OSError("the share went away")
+        result = self.save()
+        self.assertFalse(result.ok)
+        self.assertIn("the share went away", result.message())
+        self.assertEqual(result.changed, 0)
+        self.assertIsNone(result.refused)
+
 
 if __name__ == "__main__":
     unittest.main()

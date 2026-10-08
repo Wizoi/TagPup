@@ -1116,6 +1116,9 @@ def photo_save_metadata():
                                             state.exiftool(library), state.rename_format(library), stamp, base)
         if result.refused:
             return responses.refused(result)
+        if not result.ok:
+            logger.error("Error saving metadata for %s: %s", photo_path, result.message())
+            return responses.error(500, result.message())
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
         # Every folder map holding the photo, found under the name it had (a rename
         # stays in the same directory).
