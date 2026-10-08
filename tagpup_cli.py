@@ -125,6 +125,15 @@ def say_if_behind(photo_index):
                       " migrations; a look does not apply them. Indexing it, or opening it in TagPup,"
                       " brings it up to date.[/yellow]")
 
+def say_not_loaded(photo_index, hint=""):
+    """A look could not load the library: it is too far behind this version to be read (say so; the note of
+    say_if_behind came just before), or it holds no index (docs/findings.md, #297)."""
+    if photo_index.behind:
+        console.print("[bold red]Error:[/bold red] This library cannot be read until it is brought up to date.")
+    else:
+        console.print("[bold red]Error:[/bold red] No photo index found." + hint)
+
+
 def get_exiftool_path(db_path, read_only=False) -> str:
     """The ExifTool the library names, else the machine's (tagpup.runtime.exiftool).
     `read_only` reads it without stamping the library (inspect)."""
@@ -931,7 +940,7 @@ def search(ctx, query: str, k: int):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
+        say_not_loaded(photo_index, " Please run 'index' first.")
         return
         
     try:
@@ -980,7 +989,7 @@ def stats(ctx):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
+        say_not_loaded(photo_index, " Please run 'index' first.")
         return
         
     try:
@@ -1728,7 +1737,7 @@ def list_index(ctx, folder):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found.")
+        say_not_loaded(photo_index)
         return
         
     try:
