@@ -7,7 +7,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, pageExports } from "./harness.mjs";
 
 const A = "D:\\p\\a.jpg";
 const B = "D:\\p\\b.jpg";
@@ -86,22 +86,68 @@ describe("Retry of a failed save", () => {
     assert.equal(activePath(document), B, "did not move on once the retried save finished");
   });
 
-  test("of a photo left meanwhile does not say done having written nothing", async (t) => {
-    const { window, document, server } = await failedSaveOnA(t);
-    // Leave the photo, discarding the text the failed save held.
+  test("of a photo left and come back to writes the text the save held (#877)", async (t) => {
+    const { window, document, server, held } = await failedSaveOnA(t);
+    const arrow = (key) => document.body.dispatchEvent(
+      new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    // Leave the photo, discarding the text the failed save held, and come back: the field is empty.
     document.activeElement && document.activeElement.blur();
-    document.body.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    arrow("ArrowDown");
     await settle(window);
     click(window, document.querySelector('.unsaved-edits-modal [data-choice="discard"]'));
     await settle(window, 60);
     assert.equal(activePath(document), B);
+    arrow("ArrowUp");
+    await settle(window, 60);
+    assert.equal(activePath(document), A);
+    assert.equal(document.getElementById("input-photo-title").value, "");
 
     const before = saves(server).length;
     click(window, document.querySelector(".write-queue-retry"));
     await settle(window, 60);
-    assert.equal(saves(server).length, before, "a retry wrote a photo that is not open");
+    assert.equal(saves(server).length, before + 1, "the retry sent nothing");
+    assert.equal(saves(server).at(-1).body.title, "Sports day", "the retry did not write the text the save held");
+    assert.ok(entries(document).every((r) => !r.startsWith("done")), "done before the server answered");
+    held.shift()();
+    await settle(window, 60);
+    assert.ok(entries(document).some((r) => r.startsWith("done")), `not done once written: ${entries(document)}`);
+  });
+
+  test("of a field reverted with Escape writes the text the save held (#877)", async (t) => {
+    const { window, document, server, held, input } = await failedSaveOnA(t);
+    input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    assert.equal(input.value, "");
+    const before = saves(server).length;
+    click(window, document.querySelector(".write-queue-retry"));
+    await settle(window, 60);
+    assert.equal(saves(server).length, before + 1, "the retry sent nothing");
+    assert.equal(saves(server).at(-1).body.title, "Sports day");
+    held.shift()();
+    await settle(window, 40);
+  });
+
+  test("of a photo no longer in the open folder fails with a reason, writing nothing", async (t) => {
+    const { window, document, server } = await failedSaveOnA(t);
+    const { state } = pageExports(window, "web/tagpup/state.js");
+    state.folderPhotos = state.folderPhotos.filter((p) => p.path !== A);
+    const before = saves(server).length;
+    click(window, document.querySelector(".write-queue-retry"));
+    await settle(window, 60);
+    assert.equal(saves(server).length, before);
     const rows = entries(document);
-    assert.ok(rows.every((r) => !r.startsWith("done")), `marked done having written nothing: ${rows.join(" | ")}`);
-    assert.ok(rows.some((r) => r.startsWith("failed")), `no failed entry: ${rows.join(" | ")}`);
+    assert.ok(rows.every((r) => !r.startsWith("done")), `marked done: ${rows}`);
+    assert.ok(rows.some((r) => r.startsWith("failed")), `no failed entry: ${rows}`);
+  });
+
+  test("a later save that worked settles the failed one, which stops offering Retry (#881)", async (t) => {
+    const { window, document, held } = await failedSaveOnA(t);
+    assert.ok(document.querySelector(".write-queue-retry"));
+    // Save again from the panel, as the leave prompt's Save does.
+    document.getElementById("btn-save-details").click();
+    await settle(window, 40);
+    held.shift()();
+    await settle(window, 60);
+    assert.equal(document.querySelector('.write-queue-entry[data-status="failed"]'), null,
+      `a failed entry is still offered: ${entries(document)}`);
   });
 });
