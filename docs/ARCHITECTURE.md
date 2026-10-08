@@ -839,6 +839,21 @@ the design assumes a GPU and more memory later and does not wait for them.
       `tagpup.files.shares`, which Verify and the damaged photos' lists both use. An unplaced root is a check result
       (`roots_placed`, its sentence in `message`) in `inspect.all_checks` / `check` / `summary` and the MCP tools, and
       the Activity page's attention list carries the sentence.
+    - **Verify reads the folder markers too** *(#984)*: for the root's folders that have a `folder_ids` row, the `.tagpup` at the
+      CANDIDATE place (the row's `@name/rel` turned into a path by the same Roots built for the candidate; the machine's map is
+      never touched, so a root kept in two places is read at the one asked about). Counted as `markers` in the answer:
+      **match** (the marker holds this library's entry for the row's id), **differs** (this library's entry for another id, or
+      only other libraries' lines: likely a different folder at that path; another library's line BESIDE ours is a match),
+      **unmarked** (no marker: the library predates marking, or the folder is new), **malformed** (a hand-edited file: counted,
+      never a reason to refuse), **unreadable** and **not there**, with `line`, one sentence for the dialog ("N of M marked
+      folders match; K differ; L not marked"; never a folder's name). A sample reads at most 300 folders within 10 s, each
+      once; a full run all of them, with the job's progress and cancel. Each read is made on the bounded thread (a share that
+      stops answering ends the run as unreachable, never as "all differ"). Any DIFFERING marker makes the result poor, so
+      Change location refuses it, with the counts, unless the owner overrides, as it does for missing files. A library with
+      no `folder_ids` row for the root (marked nothing; or behind migration 26, which has no such table: the read-only
+      connection answers empty) has `markers: null` and nothing is said. The live libraries carry no `folder_ids` table
+      today (counted 2026-10-08: three libraries, none), so nothing is shown until the owner marks. A COPY of a marked
+      folder keeps its marker and so matches: a marker proves a folder is the same folder, not that it is the original.
     - **Not built**: `roots remove` (an undo is the way back); Verify from the CLI or the MCP; moving a root while a
       run is under way (refused, by design); a library behind more than one machine map (one map per `TAGPUP_HOME`).
 - **Changing where a root lives, in TagTuner** *(owner, 2026-10-02; built, see "Stages 3 and 4")*: for now the libraries stay on
