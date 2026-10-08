@@ -50,7 +50,7 @@ def run_screenshot_flow():
         server = processes.start(
             [sys.executable, os.path.join(PROJECT_ROOT, "tagpup_web.py"), "--db", "test_photo_index",
              "--tagpup-port", str(gui_port), "--tuner-port", str(tuner_port)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment(home),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment(home, TAGPUP_NO_JOBS="1"),
         )
         for _ in range(60):
             try:

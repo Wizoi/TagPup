@@ -97,7 +97,7 @@ def start_sandbox_server(sandbox, db_path, port):
          "--tuner-port", str(port), "--tagpup-port", str(free_port()), "--warm-up"],
         cwd=sandbox,
         # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
-        env=environment(sandbox),
+        env=environment(sandbox, TAGPUP_NO_JOBS="1"),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

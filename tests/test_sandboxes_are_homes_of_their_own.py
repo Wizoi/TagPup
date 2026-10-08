@@ -67,7 +67,42 @@ def spawns_without_a_home(source):
     return found
 
 
+def servers_with_jobs(source):
+    """Each call of processes.start in `source` that starts tagpup_web.py with an environment that does not
+    set TAGPUP_NO_JOBS: [line]. A server in a sandbox would snapshot the library copy a minute in (#324)."""
+    import ast
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "start"
+                and getattr(node.func.value, "id", None) == "processes" and node.args):
+            continue
+        if "tagpup_web.py" not in ast.dump(node.args[0]):
+            continue
+        env = [kw.value for kw in node.keywords if kw.arg == "env"]
+        if not (env and isinstance(env[0], ast.Call) and any(kw.arg == "TAGPUP_NO_JOBS" for kw in env[0].keywords)):
+            found.append(node.lineno)
+    return found
+
+
 class NoSandboxIsMadeByHand(unittest.TestCase):
+    def test_a_sandbox_server_runs_no_recurring_jobs(self):
+        found = []
+        folder = os.path.join(WORKSPACE_DIR, "scripts")
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith(".py"):
+                continue
+            with open(os.path.join(folder, name), encoding="utf-8") as handle:
+                lines = servers_with_jobs(handle.read())
+            if lines:
+                found.append("%s:%s" % (name, ", ".join(map(str, lines))))
+        self.assertEqual([], found, "pass environment(sandbox, TAGPUP_NO_JOBS='1')")
+
+    def test_the_guard_sees_a_server_with_jobs(self):
+        start = "processes.start([sys.executable, os.path.join(s, 'tagpup_web.py')], env=%s)" + chr(10)
+        self.assertEqual([1], servers_with_jobs(start % "environment(s)"))
+        self.assertEqual([], servers_with_jobs(start % "environment(s, TAGPUP_NO_JOBS='1')"))
+        self.assertEqual([], servers_with_jobs("processes.start(['git', 'status'])" + chr(10)))
+
     def test_every_spawn_in_scripts_runs_in_a_home_of_its_own(self):
         found = []
         folder = os.path.join(WORKSPACE_DIR, "scripts")
