@@ -99,13 +99,13 @@ class SyncTestCase(unittest.TestCase):
             conn.close()
         return ids
 
-    def run_sync(self, apply=False, folder=None, queue=None, roots=(), ignored=()):
+    def run_sync(self, apply=False, folder=None, queue=None, roots=(), ignored=(), **more):
         self.reads = Reads(self.truth)
         with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
                         side_effect=self.reads.batch_read), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=self.reads.session):
             return sync.sync(self.library, folder=folder, apply=apply, exiftool_path="exiftool", queue=queue,
-                             roots=roots, ignored=ignored)
+                             roots=roots, ignored=ignored, **more)
 
     def rows(self):
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
@@ -296,6 +296,10 @@ class NewFiles(SyncTestCase):
         elsewhere = os.path.join(self.home.root, "Elsewhere")
         os.makedirs(elsewhere)
         self.assertTrue(sync.include(self.library, elsewhere, [], queue).refused, "a folder beside none the library holds")
+        # One the library ignores is not offered, nor taken by hand (#906: include passes the ignored list as look does).
+        self.assertTrue(sync.include(self.library, sub, [], queue, ignored=[sub]).refused)
+        asked.clear()
+        self.assertTrue(sync.include(self.library, sub, [], queue, ignored=[self.home.root + "-elsewhere"]).changed)
 
     def test_without_a_queue_new_files_are_reported(self):
         self.indexed(self.photo(self.meet, "IMG_0001.jpg"))

@@ -318,7 +318,8 @@ def sync(library, folder=None, apply=False, index_new=True):
             return indexing_jobs.queue_for(library).start(folders, index_folder(library, subfolders=False),
                                                           together=True)
     return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
-                             roots=settings.roots, ignored=settings.ignored)
+                             roots=settings.roots, ignored=settings.ignored,
+                             reread_resized=settings.reread_resized_pictures)
 
 
 def check_damaged(library, photo_paths=None):
@@ -349,7 +350,7 @@ def include(library, folder):
 
     def queue(folders):
         return indexing_jobs.queue_for(library).start(folders, index_folder(library))
-    return sync_service.include(library, folder, settings.roots, queue)
+    return sync_service.include(library, folder, settings.roots, queue, settings.ignored)
 
 
 def _frozen(settings):

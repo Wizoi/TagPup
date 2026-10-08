@@ -1,13 +1,14 @@
-"""A file whose size changed has its picture read again by sync (docs/findings.md, #336; the owner, 2026-10-08).
+"""A file whose size changed has its picture read again by sync -- only with library.reread_resized_pictures on (docs/findings.md,
+#336, #903, #904).
 
 A changed row was re-read as refresh_rows does -- tags, captions, raw metadata, stamp -- and kept its CLIP vector and face
-boxes, so a photo whose pixels were edited elsewhere kept the old image's vector and boxes. Now, when a file's SIZE changed
-(its modified time alone says the same of a metadata write), sync, applied:
+boxes. A keyword write changes a file's size too (on photo_index every size change was one), so the setting is OFF, and sync
+only counts the photos whose size changed. ON, applied:
 
-- a photo with no face a person decided: its vector, its faces and the record that they were detected are taken away, and
-  its folder is queued, so the index embeds and detects it again;
-- a photo with a decided face (named by hand, or excluded): its faces keep their names and decisions, and only the record
-  that they were detected is cleared; its vector is left to the stamp it carries.
+- a photo with no face a person decided: its vector and faces are taken away, it is marked to have its faces detected
+  (store.faces_pending: seen, and counted, until an index has run), and its folder is queued;
+- a photo with a decided face (named by hand, or excluded): its faces keep their names and decisions; its vector is taken
+  away and its folder queued, so the index makes the vector again.
 
 A rehearsal changes nothing. Rows are made as the indexer makes them (tests/photo_rows); the stand-in ExifTool is test_sync's.
 """
@@ -46,6 +47,10 @@ class ASizeChange(SyncTestCase):
             conn.close()
         self.queued = []
 
+    def run_sync(self, **more):
+        more.setdefault("reread_resized", True)
+        return super().run_sync(**more)
+
     def queue(self, folders):
         self.queued.append(sorted(folders))
         return Result(attempted=len(folders), changed=len(folders))
@@ -70,10 +75,25 @@ class ASizeChange(SyncTestCase):
         self.assertEqual((0, 0, 0), self.held(self.path))
         self.assertEqual((1, 1, 1), self.held(self.other), "a photo that did not change was touched")
         self.assertEqual([[self.meet]], self.queued)
-        self.assertEqual({"redetect": 1, "decided_kept": 0, "faces_removed": 1, "vectors_removed": 1},
+        self.assertEqual({"redetect": 1, "decided_kept": 0, "faces_removed": 1, "vectors_removed": 1, "pending": 1},
                          result.details["pictures"])
+        self.assertEqual([(self.path,)], self.query(
+            "SELECT p.path FROM faces_pending f JOIN photos p ON p.id = f.photo_id"), "an index that never runs is not seen")
 
-    def test_a_decided_face_keeps_its_name_and_only_the_record_of_detection_goes(self):
+    def test_it_is_off_unless_the_library_says_so(self):
+        self.edit(self.path, b"the picture, edited elsewhere and longer")
+        result = self.run_sync(apply=True, queue=self.queue, reread_resized=False)
+        self.assertEqual((1, 1, 1), self.held(self.path), "the picture was read again with the setting off")
+        self.assertEqual([], self.queued)
+        self.assertEqual(1, result.details["counts"]["size_changed"], "the size changes are still counted")
+        self.assertFalse(result.details["pictures_reread"])
+
+    def test_the_setting_is_a_library_setting_off_by_default(self):
+        from tagpup.services import settings
+        found = settings.read(self.library)
+        self.assertFalse(found.reread_resized_pictures)
+
+    def test_a_decided_face_keeps_its_name_and_its_vector_is_made_again(self):
         conn = db.connect(self.db_path)
         try:
             conn.execute("UPDATE faces SET name = 'Rowan Thackeray', name_source = 'manual' WHERE photo_id ="
@@ -83,11 +103,11 @@ class ASizeChange(SyncTestCase):
             conn.close()
         self.edit(self.path, b"the picture, edited elsewhere and longer")
         result = self.run_sync(apply=True, queue=self.queue)
-        self.assertEqual((1, 1, 0), self.held(self.path))
+        self.assertEqual((1, 0, 1), self.held(self.path), "its faces and the record of them stay, its vector goes")
         self.assertEqual([("Rowan Thackeray",)], self.query(
             "SELECT f.name FROM faces f JOIN photos p ON p.id = f.photo_id WHERE p.path = ?", (self.path,)))
-        self.assertEqual([], self.queued, "its folder was queued for a photo whose faces are kept")
-        self.assertEqual({"redetect": 0, "decided_kept": 1, "faces_removed": 0, "vectors_removed": 0},
+        self.assertEqual([[self.meet]], self.queued, "its folder is queued so the vector is made again")
+        self.assertEqual({"redetect": 0, "decided_kept": 1, "faces_removed": 0, "vectors_removed": 1, "pending": 0},
                          result.details["pictures"])
 
     def test_an_excluded_face_is_a_decision_too(self):
@@ -99,14 +119,14 @@ class ASizeChange(SyncTestCase):
             conn.close()
         self.edit(self.path, b"the picture, edited elsewhere and longer")
         self.run_sync(apply=True, queue=self.queue)
-        self.assertEqual((1, 1, 0), self.held(self.path))
+        self.assertEqual((1, 0, 1), self.held(self.path))
 
     def test_a_write_that_changed_the_time_and_not_the_size_leaves_the_picture_alone(self):
         self.edit(self.path, b"the picture as it was")      # the same length
         result = self.run_sync(apply=True, queue=self.queue)
         self.assertEqual(1, result.details["counts"]["changed"])
         self.assertEqual((1, 1, 1), self.held(self.path))
-        self.assertEqual({"redetect": 0, "decided_kept": 0, "faces_removed": 0, "vectors_removed": 0},
+        self.assertEqual({"redetect": 0, "decided_kept": 0, "faces_removed": 0, "vectors_removed": 0, "pending": 0},
                          result.details["pictures"])
 
     def test_a_file_that_cannot_be_read_now_keeps_its_faces_for_the_next_sync(self):
