@@ -66,8 +66,10 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
     .on("/api/face/match", () => {
       if (busy.on) return Promise.reject(new Error("the library is busy"));
       const { face_id: id, person_name: name } = written(server);
+      const was = held.faces.find((f) => f.id === id).name;
       held.faces.find((f) => f.id === id).name = name;
-      return { success: true, changed: 1 };
+      // A face that was another person's: the server says which tags go with that name (face_people.name_face).
+      return { success: true, changed: 1, untag: was && was !== name ? untag(was) : {} };
     })
     .on("/api/face/unmatch", () => {
       const was = held.faces.find((f) => f.id === written(server).face_id);
@@ -361,7 +363,7 @@ describe("naming a face names the person on the photo too", () => {
     const sent = ctx.server.calls.slice(before).filter((c) => c.method === "POST").map((c) => c.url.replace(/^.*\/api\//, ""));
     assert.deepEqual(sent, ["photo/save-metadata", "face/match"], "the tag first, then the face");
     assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["Trips", "People/Hazel Brookmire"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire" });
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire", page_writes_tags: true });
     assert.equal(ctx.panel(), null, "the panel stayed open after the face was named");
     assert.match(ctx.boxes()[1].getAttribute("aria-label"), /Face 2 of 3: Hazel Brookmire/);
     assert.match(ctx.$("detail-people").textContent, /Hazel Brookmire/, "the photo's people do not show the tag");
@@ -408,7 +410,7 @@ describe("naming a face names the person on the photo too", () => {
     ctx.key(input, "Enter");
     await flush(ctx.window, 14);
     assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["Trips", "People/Anh Tran"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 3, person_name: "Anh Tran" });
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 3, person_name: "Anh Tran", page_writes_tags: true });
   });
 
   test("a typed new name goes through the existing placement: created in the tree, then written, then the face", async (t) => {
@@ -422,7 +424,7 @@ describe("naming a face names the person on the photo too", () => {
     await flush(ctx.window, 14);
     assert.equal(ctx.posts("/api/taxonomy/create")[0].body.name, "People/Imogen Vale");
     assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["Trips", "People/Imogen Vale"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 1, person_name: "Imogen Vale" });
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 1, person_name: "Imogen Vale", page_writes_tags: true });
   });
 
   test("a placement answered Cancel adds no tag and names no face", async (t) => {
@@ -548,6 +550,22 @@ describe("taking a name off, and ruling a face out", () => {
     assert.match(ctx.$("status-text").textContent, /tag could not be taken off the photo/);
   });
 
+  test("naming a face that was another person's takes the old person off the photo as well", async (t) => {
+    const photo = photoRecord({ filename: "a.jpg", tags: ["Trips", "People/Hazel Brookmire"], people: ["Hazel Brookmire"] });
+    const ctx = await openPhoto(t, { photoFaces: NAMED, photo });
+    ctx.show();
+    click(ctx.window, ctx.boxes()[0]);
+    await flush(ctx.window, 4);
+    const input = ctx.panel().querySelector(".face-panel-input");
+    input.value = "Anh Tran";
+    click(ctx.window, ctx.panel().querySelector(".face-panel-name"));
+    await flush(ctx.window, 16);
+    const saves = ctx.posts("/api/photo/save-metadata").map((c) => c.body.tags);
+    assert.deepEqual(saves[0], ["Trips", "People/Hazel Brookmire", "People/Anh Tran"], "the new person first");
+    assert.deepEqual(saves[1], ["Trips", "People/Anh Tran"], "then the old person off");
+    assert.match(ctx.boxes()[0].getAttribute("aria-label"), /Anh Tran/);
+  });
+
   test("an unnamed face has nothing to take off", async (t) => {
     const ctx = await openPhoto(t);
     ctx.show();
@@ -622,7 +640,7 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
     click(ctx.window, card);
     await flush(ctx.window, 14);
     assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["People/Anh Tran", "People/Hazel Brookmire"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire" });
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire", page_writes_tags: true });
     assert.match(ctx.boxes()[1].getAttribute("aria-label"), /Hazel Brookmire/, "the box still said not named");
     assert.match(cards(ctx)[1].querySelector(".face-card-label").textContent, /Hazel Brookmire$/);
     assert.match(ctx.$("faces-summary").textContent, /1 unidentified/);
@@ -640,7 +658,7 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
     click(ctx.window, card);
     await flush(ctx.window, 14);
     assert.equal(ctx.posts("/api/photo/save-metadata").length, 0);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire" });
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire", page_writes_tags: true });
     assert.match(ctx.boxes()[1].getAttribute("aria-label"), /Hazel Brookmire/);
   });
 
@@ -653,7 +671,7 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
     click(ctx.window, card);
     await flush(ctx.window, 14);
     assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["People/Anh Tran"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 1, person_name: "Anh Tran" });
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 1, person_name: "Anh Tran", page_writes_tags: true });
   });
 
   test("a card that would change nothing is settled", async (t) => {
@@ -856,7 +874,7 @@ describe("in the full-window zoom (#859)", () => {
     click(ctx.window, ctx.zoomPanel().querySelector(".face-panel-suggestion"));
     await flush(ctx.window, 14);
     assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["People/Anh Tran", "People/Hazel Brookmire"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire" });
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire", page_writes_tags: true });
     assert.equal(ctx.zoomIsOpen(), true, "naming closed the zoom");
     assert.match(ctx.zoomBoxes()[1].getAttribute("aria-label"), /Hazel Brookmire/);
     assert.equal(ctx.zoomPanel(), null);

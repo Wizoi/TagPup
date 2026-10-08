@@ -215,13 +215,21 @@ def _finish_untag(library, result, items, writer):
 def name_face(library, face_id, person_name, writer):
     """Name one face AND put the person on its photo, the tag first (see the module's docstring). Everything
     faces_service.name_face refuses is refused before a tag is written. `changed` is the faces named; details
-    `tags_written` (0 when the photo named the person already) and `written`."""
+    `tags_written` (0 when the photo named the person already) and `written`. A face that carried another person's name
+    is renamed: that person's tags go from the photo unless another face is them, as unname_face's do. With no `writer`
+    the page wrote the person's tag itself (TagPup's box and strip) and writes the old person's off itself too:
+    details["untag"] says which."""
     person_name = (person_name or "").strip()
     refused = Result(attempted=1)
-    photo_path = faces_service.check_nameable(library, face_id, person_name, refused)
-    if photo_path is None:
+    found = faces_service.check_nameable(library, face_id, person_name, refused)
+    if found is None:
         return refused
-    tagged = add_people(library, [(photo_path, person_name)], writer)
+    photo_path, was = found
+    before = _names_on(library, photo_path)
+    # No writer: the page wrote the tag itself (TagPup's box and strip, first), and says so.
+    tagged = add_people(library, [(photo_path, person_name)], writer) if writer is not None else Result()
+    if tagged.ok and tagged.details.get("tags_written"):
+        _give_back_to(library, photo_path, face_id, person_name, before)
     if not tagged.ok:
         # Nothing was named: the face stays as it was.
         failed = Result(attempted=1)
@@ -241,7 +249,30 @@ def name_face(library, face_id, person_name, writer):
         result.details["changes"] = tagged.details["changes"]
     if result.refused and tagged.details.get("tags_written"):
         result.refused += " The person was added to the photo."
+    # A face renamed is a name taken off one person and given to another: the old person's tag goes unless another face is them.
+    if result.changed and was and vocabulary.key(was) != vocabulary.key(person_name):
+        _finish_untag(library, result, [(photo_path, was)], writer)
     return result
+
+
+def _names_on(library, photo_path):
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return faces.names_by_face(conn, photo_path)
+    finally:
+        conn.close()
+
+
+def _give_back_to(library, photo_path, face_id, person_name, before):
+    """The tag just written can name ANOTHER face by the one-face rule (tagpup.store.face_tags, #788): a photo whose only face
+    to be named is not the one chosen -- renaming a named face, with one face left nameless -- gives the new person to that
+    face as a guess. A person chose this face: the guess goes back (only a face that was nameless before the tag and still
+    carries the name as a guess), and the choice is named below."""
+    taken = {other: name for other, name in _names_on(library, photo_path).items()
+             if other != face_id and other not in before and vocabulary.key(name) == vocabulary.key(person_name)}
+    if taken:
+        db.write_with_connection(library.path, lambda conn: faces.revert_automatic(conn, taken),
+                                 label="give a name back to the face chosen")
 
 
 # ---- Taking names off ---------------------------------------------------------------------------------------------

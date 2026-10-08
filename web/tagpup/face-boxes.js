@@ -533,7 +533,7 @@ export async function nameFaceAs(face, rawName) {
         // The face. The person is its photo's now; whichever photo is open, this face is named.
         let res;
         try {
-            res = await post('/api/face/match', { face_id: face.id, person_name: name });
+            res = await post('/api/face/match', { face_id: face.id, person_name: name, page_writes_tags: true });
         } catch (error) {
             say(`${name} is on the photo, but the face could not be named: ${error.message}. Choose again to retry.`);
             setStatus('error', 'The face was not named');
@@ -544,8 +544,10 @@ export async function nameFaceAs(face, rawName) {
             setStatus('error', 'The face was not named');
             return false;
         }
+        // A face that was another person's: that person's tag goes with the name, unless another face is them.
+        const rest = await takeTagsOff(path, await res.json());
         forgetPersonFaces();
-        setStatus('ready', `Named ${name} and added to the photo`);
+        setStatus(rest ? 'ready' : 'error', untagged(rest, `Named ${name} and added to the photo`), { transient: rest });
         if (box.path && samePath(box.path, path)) {
             const mine = faceById(face.id);
             if (mine) mine.name = name;

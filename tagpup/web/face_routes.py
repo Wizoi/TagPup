@@ -176,7 +176,9 @@ def tags_reply(result):
 
 
 def face_match():
-    """Name one face AND put the person on its photo, the tag first (tagpup.services.face_people.name_face)."""
+    """Name one face AND put the person on its photo, the tag first (tagpup.services.face_people.name_face). TagPup's
+    page, which wrote the tag itself before it asked (`page_writes_tags`), is told which tags to take off if the face
+    was another person's."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     face_id, person_name = body.get("face_id"), body.get("person_name")
@@ -186,7 +188,7 @@ def face_match():
         face_id, person_name = int(face_id), str(person_name).strip()
     except (ValueError, TypeError):
         abort(400, description="Invalid parameters")
-    writer = writer_for(library)
+    writer = writer_for(library, body)
     result = faces_write(library, lambda lib: face_people.name_face(lib, face_id, person_name, writer))
     # What the write changed, not what was asked: naming a face the name it has is no change.
     return jsonify({"success": True, "changed": result.changed, **tags_reply(result)})

@@ -105,6 +105,42 @@ class NamingAddsThePersonToThePhoto(InStep):
         self.assertEqual(409, self.tuner_post("face/match", {"face_id": excluded, "person_name": ODA}).status_code)
         self.assertEqual(writes, self.files.writes)
 
+    def test_renaming_a_face_does_not_leave_the_one_face_rule_naming_the_other_face_instead(self):
+        # Two faces, one named: a tag for the new person is "one face to be named and one person no face carries" to the rule
+        # of #788, which would give the OTHER face the name before the face chosen is named, and refuse the choice.
+        photo = self.held("strip_008.jpg", [PEOPLE + ODA])
+        chosen = self.face(photo, name=ODA, name_source="manual")
+        other = self.face(photo, box=(70, 10, 110, 60))
+        reply = self.tuner_post("face/match", {"face_id": chosen, "person_name": WREN})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((WREN, "manual"), self.row(chosen)[:2])
+        self.assertEqual((None, None), self.row(other)[:2], "the face not chosen was given the name as a guess")
+
+    def test_a_face_renamed_takes_the_old_person_off_the_photo_unless_another_face_is_them(self):
+        photo = self.held("strip_009.jpg", [PEOPLE + ODA, "Regatta"])
+        chosen = self.face(photo, name=ODA, name_source="manual")
+        reply = self.tuner_post("face/match", {"face_id": chosen, "person_name": WREN})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual({PEOPLE + WREN, "Regatta"}, set(self.tags(photo)), "the face is Wren's now; Oda is on no face of the photo")
+        self.assertEqual(1, reply.get_json()["tags_removed"])
+
+    def test_the_old_person_stays_while_another_face_is_them(self):
+        photo = self.held("strip_010.jpg", [PEOPLE + ODA])
+        chosen = self.face(photo, name=ODA, name_source="manual")
+        self.face(photo, box=(70, 10, 110, 60), name=ODA)
+        reply = self.tuner_post("face/match", {"face_id": chosen, "person_name": WREN})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual({PEOPLE + ODA, PEOPLE + WREN}, set(self.tags(photo)))
+
+    def test_tagpups_page_that_wrote_the_tag_itself_writes_no_file_here_and_is_told_the_old_person(self):
+        photo = self.held("strip_011.jpg", [PEOPLE + ODA, PEOPLE + WREN])       # the page's save is recorded: both are on it
+        chosen = self.face(photo, name=ODA, name_source="manual")
+        reply = self.post("face/match", {"face_id": chosen, "person_name": WREN, "page_writes_tags": True})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(0, self.files.writes, "the page writes the photo's tags with its queue and its stamp")
+        self.assertEqual({photo: [PEOPLE + ODA]}, reply.get_json()["untag"])
+        self.assertEqual((WREN, "manual"), self.row(chosen)[:2])
+
     def test_the_change_is_journaled_so_history_can_take_it_back(self):
         photo = self.held("strip_006.jpg")
         self.tuner_post("face/match", {"face_id": self.face(photo), "person_name": WREN})
