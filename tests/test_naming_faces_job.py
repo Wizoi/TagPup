@@ -209,6 +209,44 @@ class WhenTheFacesChangeBeforeTheAnswer(Case789):
         self.assertEqual(naming_faces.REFUSED_SAYS, found["message"])
         self.assertEqual(before, self.names(), "all or nothing: the other face was not named either")
 
+    def test_a_tag_removed_from_a_planned_photo_meanwhile_refuses_the_whole_change(self):
+        # #869 (a): the only reason the photo names the person is the face the write would name.
+        self.seed()
+        job = self.start()
+        self.tag(self.single)                       # the person's tag taken off, while the question waits
+        before = self.names()
+        naming_faces.confirm(self.library, job.handle)
+        found = wait(job)
+        self.assertEqual(naming_faces.FAILED, found["state"])
+        self.assertEqual(naming_faces.REFUSED_SAYS, found["message"])
+        self.assertEqual(before, self.names(), "nothing was written, the comparison-named face included")
+
+    def test_another_face_named_by_hand_as_the_same_person_meanwhile_refuses_the_whole_change(self):
+        # #869 (b): two faces of a photo would carry one person, which the live save refuses.
+        self.seed()
+        job = self.start()
+        write(self.path, lambda conn: faces.name(conn, [self.crowd_faces[1]], WREN))      # a sibling of a planned face
+        before = self.names()
+        naming_faces.confirm(self.library, job.handle)
+        found = wait(job)
+        self.assertEqual(naming_faces.FAILED, found["state"])
+        self.assertEqual(before, self.names())
+
+    def test_a_change_to_a_photo_the_plan_did_not_read_does_not_refuse_it(self):
+        self.seed()
+        job = self.start()
+        self.tag(self.left, "People/" + WREN)       # not a planned photo's tags
+        naming_faces.confirm(self.library, job.handle)
+        self.assertEqual(naming_faces.DONE, wait(job)["state"])
+
+    def test_the_clis_apply_of_a_plan_read_earlier_is_guarded_the_same_way(self):
+        self.seed()
+        planned = faces_from_tags._plan(self.library)
+        self.tag(self.single)
+        result = faces_from_tags.faces_from_tags(self.library, apply=True, planned=planned)
+        self.assertTrue(result.refused)
+        self.assertEqual(0, result.changed)
+
     def test_a_plan_not_answered_in_time_is_let_go(self):
         self.seed()
         job = self.start()

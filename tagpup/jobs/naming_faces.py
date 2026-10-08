@@ -90,8 +90,8 @@ RESTARTED = ("TagPup was closed before this finished. A change of the names is e
              "Undo) or not at all; grouping either wrote its names or wrote none.")
 EXPIRED_SAYS = "The plan was not answered in %d minutes and was let go: the faces may have changed. Nothing was changed." % (
     ASK_SECONDS // 60)
-REFUSED_SAYS = ("Nothing was written: some faces changed since the question was asked (a name given in TagTuner or TagPup, "
-                "say). Start again to see what can be named now.")
+REFUSED_SAYS = ("Something changed while the question was open (a name given, or a person's tag taken off, in TagTuner or "
+                "TagPup, say): nothing was written. Ask again.")
 APPLIED_MEANWHILE = ("The names were written by another run since this plan was read (in another window or process); they are "
                      "references for this one now. Nothing was written. Start again to see what can be named now.")
 NO_FACES = "This library holds no faces yet: index photos first. Nothing was changed."

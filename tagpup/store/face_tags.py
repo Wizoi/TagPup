@@ -284,6 +284,27 @@ def _matched(unnamed, free, reached):
     return [(faces_for[0], wanted[key]) for key, faces_for in proposed.items() if len(faces_for) == 1]
 
 
+def guards(conn, choices):
+    """What the plan read of each photo it names a face of, beyond the face itself, for the write to hold the change to (#869):
+    ({photo id: its tags as stored}, {face id: name} of the photo's other faces, those the plan does not name). A person's tag
+    taken off a planned photo, or another face of it named meanwhile, is a reason the plan no longer holds: the face itself is
+    guarded by its own row (name NULL, excluded 0, name_source as read), but the photo's keyword people (its tags) and its
+    other faces' names are what made it a candidate. Read on `conn` as it stands: inside the plan's own transaction, it is the
+    state the plan read."""
+    photo_ids = sorted({choice.photo_id for choice in choices})
+    planned = {choice.face_id for choice in choices}
+    tags = {}
+    for chunk in _chunks(photo_ids):
+        for photo_id, text in conn.execute("SELECT id, tags FROM photos WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk):
+            tags[photo_id] = text
+    siblings = {}
+    for rows in _faces_of(conn, photo_ids).values():
+        for face_id, name, _source, _excluded, _box in rows:
+            if face_id not in planned:
+                siblings[face_id] = name
+    return tags, siblings
+
+
 def plan(conn, photo_ids=None, references=None, cache=None, on_step=None):
     """A Plan: which faces of `photo_ids` -- every photo, without -- a keyword person names.
     Reads only, on `conn` as it stands; the photos with such a person are found from

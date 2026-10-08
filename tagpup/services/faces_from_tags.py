@@ -12,6 +12,8 @@ and the photo's keywords name that person (tagpup.store.face_tags).
 Names are written as automatic (name_source stays NULL): clustering may revise them. A face a
 person unmatched by hand, or excluded, is never read as a candidate.
 """
+import collections
+
 from tagpup.core.result import Result
 from tagpup.services import identify, maintenance
 from tagpup.store import db, face_tags, journal
@@ -37,10 +39,17 @@ def _decided(library):
     return identify.decided_faces(library)[1]
 
 
+#: What a plan carries for the write: the faces to name, and what it read of their photos (face_tags.guards).
+Named = collections.namedtuple("Named", "choices photo_tags siblings")
+
+
 def _plan(library, on_step=None):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
+        # One read transaction: the guards are the state the plan read, not a later one.
+        conn.execute("BEGIN")
         found = face_tags.plan(conn, references=lambda: _decided(library), on_step=on_step)
+        photo_tags, siblings = face_tags.guards(conn, found.named)
     finally:
         conn.close()
     named = found.named
@@ -62,7 +71,7 @@ def _plan(library, on_step=None):
                 "background_sized_faces_passed_over": found.counts["background_sized"]},
         ids={"faces": [choice.face_id for choice in named]},
         reveal={"named": [(choice.face_id, choice.name) for choice in named]},
-        work=named)
+        work=Named(named, photo_tags, siblings))
 
 
 def plan(library, on_step=None):
@@ -75,15 +84,22 @@ def plan(library, on_step=None):
 
 def _edits(planned):
     """Each face by id, while it is still what the plan read: unnamed, not excluded, and not
-    marked nobody by hand since."""
-    return [journal.update("faces", (choice.face_id,),
-                           {"name": None, "excluded": 0, "name_source": choice.source},
-                           {"name": choice.name}, kind=KIND)
-            for choice in planned.work]
+    marked nobody by hand since. And, writing nothing, what made each a candidate (#869): its
+    photo's tags, and its photo's other faces' names, as the plan read them -- a person's tag
+    taken off, or another face of the photo named, while the question was open, refuses the
+    whole change (journal.update with no values writes nothing; its `expect` is the guard)."""
+    work = planned.work
+    edits = [journal.update("faces", (choice.face_id,),
+                            {"name": None, "excluded": 0, "name_source": choice.source},
+                            {"name": choice.name}, kind=KIND)
+             for choice in work.choices]
+    edits += [journal.update("faces", (face_id,), {"name": name}, {}) for face_id, name in work.siblings.items()]
+    edits += [journal.update("photos", (photo_id,), {"tags": tags}, {}) for photo_id, tags in work.photo_tags.items()]
+    return edits
 
 
 def _remaining(library):
-    return {"faces": len(_plan(library).work)}
+    return {"faces": len(_plan(library).work.choices)}
 
 
 def faces_from_tags(library, apply=False, again=False, planned=None):
