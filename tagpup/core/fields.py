@@ -43,6 +43,15 @@ METADATA_FIELDS = [
     # Camera
     "EXIF:Make", "Make",
     "EXIF:Model", "Model",
+    # Lens. A bare name is answered under every group that holds it (checked on 400 files of a
+    # library, 2026-10-09): LensModel brings EXIF:, XMP: and MakerNotes:LensModel, LensMake brings
+    # EXIF:LensMake, LensID brings Composite:LensID and XMP:LensID. Run without print conversion a
+    # LensID is a number for Canon and Tamron (photo_meta.gear ignores a number) and text only for
+    # Google; LensModel is the lens's own name wherever the camera writes one.
+    "EXIF:LensModel", "LensModel",
+    "XMP:LensModel",
+    "EXIF:LensMake", "LensMake",
+    "Composite:LensID", "LensID",
     # Rating
     "XMP:Rating", "Rating",
     # Identity. A path is a bad name for a photo -- rename the file and the index is
@@ -50,6 +59,27 @@ METADATA_FIELDS = [
     # standard's per-document identifier, and most photos already carry one.
     "XMP-xmpMM:DocumentID", "XMP:DocumentID", "DocumentID"
 ]
+
+
+#: The key a full read of a photo records in its raw_metadata, and the value it holds: which fields that
+#: read asked ExifTool for. 1 (no key) is the reads before the lens fields; 2 is METADATA_FIELDS as it
+#: stands with them. A photo that has no lens has no lens key either, so only this tells "read, holds
+#: none" from "read before" -- what tagpup.services.reread_fields takes rows by (docs/findings.md,
+#: #1019). Raise it when a field is added that rows already read should gain.
+READ_GENERATION_KEY = "TagPup:ReadGeneration"
+READ_GENERATION = 2
+
+
+def read_generation(raw_metadata):
+    """The generation of the read that made a photo's raw_metadata (a dict): 0 for a row never read
+    (nothing, or only what writes recorded), 1 for a read before the lens fields, else the number
+    its read recorded."""
+    if not isinstance(raw_metadata, dict):
+        return 0
+    found = raw_metadata.get(READ_GENERATION_KEY)
+    if isinstance(found, int) and not isinstance(found, bool) and found > 1:
+        return found
+    return 1 if any(":" not in key for key in raw_metadata) else 0
 
 
 def scan_reads(field):

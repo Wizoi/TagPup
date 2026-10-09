@@ -835,6 +835,19 @@ def rows_to_check(conn, folder=None):
     return store_roots.natives(conn, conn.execute(query, params).fetchall(), 0, raw=(5,))
 
 
+def raw_in_chunks(conn, size=2000):
+    """Every photo as (id, path as stored, mtime, size, raw_metadata JSON), in lists of `size`, in id
+    order: what tagpup.services.reread_fields sorts by the read each row's metadata came from. The text is
+    read a chunk at a time and not kept, since a library's rows hold 671 bytes of it on average (photo_index, counted 2026-10-09); nothing else of the
+    row is, so no BLOB."""
+    cursor = conn.execute("SELECT id, path, mtime, size, raw_metadata FROM photos ORDER BY id")
+    while True:
+        rows = cursor.fetchmany(size)
+        if not rows:
+            return
+        yield store_roots.natives(conn, rows, 1)
+
+
 def stamps(conn, folder=None):
     """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what
     sync compares with the disk (tagpup.services.sync). Nothing else of the row is read."""

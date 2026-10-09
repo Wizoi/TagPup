@@ -151,8 +151,19 @@ def photo_text(path, tags_json, captions_json, people):
 _LETTER_DIGIT = re.compile(r"(?<=[^\W\d_])(?=\d)")
 
 
+#: A decimal point that says nothing: "24.0-70.0 mm", which some bodies write as the lens's name, is the tokens 24, 0, 70, 0, so
+#: "24-70" would not find it. Not "f/2.8": only a point followed by zeros alone.
+_DOT_ZERO = re.compile(r"(?<=\d)\.0+(?!\d)")
+
+
 def _spelled_twice(text):
-    return "%s\n%s" % (text, _LETTER_DIGIT.sub(" ", text)) if text and _LETTER_DIGIT.search(text) else text or ""
+    """`text` as spelled, and again for each way a person types it that the tokenizer would not match: a blank between a
+    letter and the digit after it ("EF 24-70mm"), and without a pointless ".0" ("24-70 mm" for "24.0-70.0 mm")."""
+    if not text:
+        return ""
+    dotless = _DOT_ZERO.sub("", text)
+    spellings = [text, _LETTER_DIGIT.sub(" ", text), dotless, _LETTER_DIGIT.sub(" ", dotless)]
+    return "\n".join(dict.fromkeys(spellings))
 
 
 def gear_text(gear):
