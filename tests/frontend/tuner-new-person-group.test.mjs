@@ -97,6 +97,19 @@ describe("the Group box", () => {
     assert.ok(ctx.document.getElementById("new-person-modal").classList.contains("hidden"));
   });
 
+  test("a group that already holds a person of that name makes no second one: the faces are named as them, and the dialog says so", async (t) => {
+    const ctx = await open(t);
+    ctx.type("Sam");
+    ctx.choose("1");                       // Friends: Friends/Sam is already there
+    assert.match(ctx.document.getElementById("new-person-note").textContent, /already exists under Friends/);
+    assert.ok(!ctx.save().disabled);
+    click(ctx.window, ctx.save());
+    await wait(ctx.window, 120);
+    assert.equal(ctx.server.lastBody("/api/taxonomy/create"), undefined, "nothing is made");
+    const body = ctx.server.lastBody("/api/faces/match-bulk");
+    assert.equal(body.person_id, 40, "the EXISTING person");
+  });
+
   test("with the usual place nothing is made first and the name is sent, as before", async (t) => {
     const ctx = await open(t);
     ctx.type("Fenn Ashdown");

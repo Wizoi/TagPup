@@ -43,6 +43,12 @@ function loadGroups() {
     }).catch(err => console.error('Could not read the groups a person can go under:', err));
 }
 
+/** The person already filed at `group/name` (without case), or null: the group already holds one of that name. */
+function alreadyUnder(group, name) {
+    if (!group) return null;
+    return state.people.ofTag(`${group.tag}/${name}`);
+}
+
 /** The group chosen in the Group box ({id, tag}), or null for the usual place. */
 function chosenGroup() {
     if (!newPersonGroup || !newPersonGroup.value) return null;
@@ -191,7 +197,11 @@ function validateNewPersonName() {
     const group = chosenGroup();
     if (newPersonNote) {
         newPersonNote.classList.toggle('hidden', !(called.length && group));
-        if (called.length && group) {
+        if (called.length && group && alreadyUnder(group, val)) {
+            // Not a second person: the tag exists, and making it again makes nobody.
+            newPersonNote.textContent = `This person already exists under ${group.tag}: Create & Tag Matches names the faces as them, `
+                + 'and makes no one new.';
+        } else if (called.length && group) {
             newPersonNote.textContent = `Another person is called ${val} (${called.map(person => person.tag).join(', ')}): `
                 + `this one is filed under ${group.tag}, and both are shown with their group.`;
         }
@@ -284,7 +294,10 @@ export function wireNewPerson() {
             // its id; without one, today's rule files them (the one face root) and the name is sent.
             const group = chosenGroup();
             let createdUnder = null;
-            const made = group
+            const existing = alreadyUnder(group, name);
+            const made = existing
+                ? Promise.resolve({ id: existing.id, name: existing.name })
+                : group
                 ? api.json('/api/taxonomy/create', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name, parent_id: group.id }),

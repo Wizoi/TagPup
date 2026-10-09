@@ -2686,7 +2686,7 @@ background step**. It is listed, per library, for the owner to settle one at a t
   string, joins `group`, or compares two people by their label; they compare ids. The fixture `tests/fixtures/person_labels.json`
   (libraries of people with the labels expected) is read by `tests/test_person_labels.py` and `tests/frontend/person-labels.test.mjs`.
 - **The form** is `Sam · Thackeray` (leaf first, because lists are sorted by leaf and the leaf is what is scanned for; the group is dimmed),
-  not `Family/Thackeray/Sam`. A narrow window shortens the group from the left (`Sam · …/Cousins/Thackeray`) and never the leaf; the full
+  not `Family/Thackeray/Sam`. A narrow window cuts the group at its END (`Sam · Thackeray/Cou…`) and never the leaf -- the group is already the shortest tail that tells the sharing people apart, so its START is the discriminator and cutting it from the left made two cousins read alike (#1083); the full
   path is the element's `title` and `aria-label`. Sorting is by leaf, then by group, so two Sams sit together.
 - **Surfaces** (each reads a person item, none a bare name): TagPup's face panel (the name box's offered people, the five-nearest
   buttons, "named elsewhere"), the photo's people chips and the selection panel's people, Suggest's chips (a name-only suggestion that
@@ -2730,7 +2730,7 @@ which app to start. That is a new guard (question 7).
 | 3 | **Built (part A).** `person_labels` + `personLabel` + the fixture, and a `person` `{id, name, tag, group, shared}` on the answers that name someone (additive; pages unchanged; the list is in SPEC_TAGTUNER.md, `/api/people?records=1`). | M |
 | 4 | **Built (part B).** Writers and readers move to ids: `faces.name_as`, `person_ids.resolve`, the 158 reader lines, `counts_by_person`, identify/automatch/clustering known sets keyed by id, the wire's `person_id`; `person_ids` follows turned round; tests with two Sams in the fixture. | L |
 | 5 | **Built (part B; with 4).** (Was: until it exists, a tree edit that gives a person a child (a tag under them) silently changes the people of every photo carrying them (they become a group and leave the photos' lists, N photos, by the part A rule); the refusals of rule (a) are this phase.) Tree operations by id: rename of one node, move, merge, delete with refusal and force, the trigger on, the two rules as refusals, journal recording of `tag_id`, the lazy rule for old entries. | M |
-| 6 | **Built (part C).** The pickers show the group on every surface listed (`personLabel`; the group's span shortens from its left); the pages hold the people as a `PeopleDirectory` and send `person_id`; a name two people have asks which; the new-person Group box. | M |
+| 6 | **Built (part C).** The pickers show the group on every surface listed (`personLabel`; the group's span is cut at its end, never its start); the pages hold the people as a `PeopleDirectory` and send `person_id`; a name two people have asks which; the new-person Group box. | M |
 | 7 | **Built (part C).** Names to review: service, routes, Review People row and dialog, Activity, doctor and MCP counts, dismissals. *Not built:* the "new person with a shared name" entry (the second kind, "Later phase" above). | M |
 | 8 | **Built (part C).** Cleanup and docs: the page's `personExists` (leaf and name lists) is gone, the design marked built, DATABASE and the three SPEC documents updated. The bare-name wire (CLI, MCP, a page not reloaded) is kept, as the design says. Columns are not dropped. | S |
 Phases 1 and 3 can start at once and are worth having first (1 is an owner decision already made; 3 changes no behaviour). 4 and 5 must not
@@ -2874,7 +2874,11 @@ be split across a merge: the id is the key only when every writer writes it. Siz
   rest (all tested). *Make* is `taxonomy.add_node` under the group (so rule (a) is `refuse_child_of_person`'s), and the tree edit's own
   `follow_tree` links the name -- the one writer of that link is `person_ids._link`, which `link_added` and the owner's `link_to` share. *Link*
   gives the name's faces and listed people the person's id and name (`link_to`; for a person called otherwise, `keywords_kept` says how many photos
-  keep the old keyword in their files, and the existing tag Merge rewrites them). *Unname* uses `faces.unname` with **name_source NULL, not
+  keep the old keyword in their files, and the existing tag Merge rewrites them). **Keyword rows are never rewritten by name** (review round 1,
+  #1081): a listed row made by a keyword is its PATH's person, so `_link` and the owner's link/make touch `faces` and listed rows of source `face`
+  only and then write the touched photos' lists again by the one rule (`faces.relist`); the rows a keyword made are counted apart
+  (`keyword_photos`, not rows to settle -- the real pet and friend entry is 1 face and 12 such rows) and have their own choice, **Rebuild these
+  photos** (`people.rebuild`; derived, not journaled, and said so). A result with no journaled change does not say "Undo it in History". *Unname* uses `faces.unname` with **name_source NULL, not
   "manual"** -- *a decision, not the design's text*: "manual" is "this is nobody", which Identify Faces never offers again, and the owner's
   intent is to identify them (a person's forced delete leaves its faces the same way). *Dismiss* / *Show again* write `name_review_dismissals`
   and are not journaled (a preference; nothing of a face or photo changes). Journal operations: `PERSON_MADE`, `PERSON_LINKED` (the CLI's `people

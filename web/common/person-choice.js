@@ -13,15 +13,21 @@ import { buildElement } from './dom.js';
 import { personLabelNode } from './person-label.js';
 import { personTitle } from './vocabulary.js';
 
+// The question being asked, with the ids of the people it asks about: the same question asked again gets the same answer; a question
+// about OTHER people replaces it (the first is answered "none"), never answered by the first's choice.
 let personQuestion = null;
 
 /**
  * Ask which of `people` is meant. Resolves to the person chosen, or null. `title` and `about` are the question's words.
  */
 export function choosePerson(people, { title = 'Which person?', about = '' } = {}) {
-    if (personQuestion) return personQuestion;
     const list = Array.isArray(people) ? people : [];
-    personQuestion = new Promise((resolve) => {
+    const key = list.map(person => person.id).join(',');
+    if (personQuestion && personQuestion.key === key) return personQuestion.promise;
+    if (personQuestion) personQuestion.cancel();
+    const mine = { key, promise: null, cancel: null };
+    const opener = document.activeElement;
+    mine.promise = new Promise((resolve) => {
         let chosen = list.length ? list[0] : null;
         const choices = list.map((person, index) => buildElement('label', {
             className: 'person-choice-option', title: personTitle(person), data: { personId: person.id },
@@ -48,9 +54,11 @@ export function choosePerson(people, { title = 'Which person?', about = '' } = {
         const finish = (value) => {
             document.removeEventListener('keydown', onKey, true);
             overlay.remove();
-            personQuestion = null;
+            if (personQuestion === mine) personQuestion = null;
+            if (opener && typeof opener.focus === 'function' && opener.isConnected) opener.focus();
             resolve(value);
         };
+        mine.cancel = () => finish(null);
         const onKey = (event) => {
             if (event.key !== 'Escape') return;
             event.preventDefault();
@@ -71,5 +79,6 @@ export function choosePerson(people, { title = 'Which person?', about = '' } = {
         const first = overlay.querySelector('input');
         if (first) first.focus();
     });
-    return personQuestion;
+    personQuestion = mine;
+    return mine.promise;
 }

@@ -127,7 +127,7 @@ describe("the dialog", () => {
     const [quill, sam] = ctx.entries();
     assert.equal(quill.querySelector(".names-name").textContent, "Wren Quill");
     assert.match(quill.querySelector(".names-why").textContent, /No person tag has this name/);
-    assert.equal(quill.querySelector(".names-counts").textContent, "3 faces (2 decided by hand); listed on 2 photos, 1 from a keyword in the file");
+    assert.equal(quill.querySelector(".names-counts").textContent, "3 faces (2 decided by hand); listed on 2 photos from a face; 1 photo lists it from a keyword (the keyword's path says who it is)");
     assert.deepEqual([...quill.querySelectorAll(".names-crop")].map((img) => img.getAttribute("src")),
       ["/kr-track/api/face-crop?id=11", "/kr-track/api/face-crop?id=12"]);
     assert.match(sam.querySelector(".names-why").textContent, /Two or more people are called this/);
@@ -155,6 +155,37 @@ describe("the dialog", () => {
     await open(ctx);
     ctx.server.state.count = 0;
     assert.match(ctx.document.querySelector("#names-modal .names-empty").textContent, /No names wait/);
+  });
+
+  test("takes the focus when it opens and gives it back when it closes (it is aria-modal)", async (t) => {
+    const ctx = await openReviewPeople(t, serverWith());
+    ctx.row().focus();
+    await open(ctx);
+    assert.ok(ctx.modal().contains(ctx.document.activeElement), "the focus is in the dialog");
+    ctx.document.dispatchEvent(new ctx.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(ctx.document.activeElement, ctx.row());
+  });
+
+  test("keyword rows are counted apart and offer Rebuild these photos, which is not a journaled change", async (t) => {
+    const withKeyword = { ...SAM, faces: 1, listed: 0, keyword_photos: 12, rows: 13 };
+    const server = serverWith({ entries: [withKeyword], replies: [
+      { success: true, applied: false, faces: 1, listed: 0, changed: 0, sentence: "Write the lists of 12 photo(s) again." },
+      { success: true, applied: true, faces: 1, listed: 0, changed: 12, change: null, undo: "Derived rows" },
+    ] });
+    const ctx = await openReviewPeople(t, server);
+    await open(ctx);
+    const [sam] = ctx.entries();
+    assert.equal(sam.querySelector(".names-counts").textContent, "1 face; 12 photos list it from a keyword (the keyword's path says who it is)");
+    click(ctx.window, sam.querySelector(".names-rebuild"));
+    await flush(ctx.window, 6);
+    assert.deepEqual(ctx.resolves()[0], { key: "sam", action: "rebuild", apply: false });
+    server.state.entries = [];
+    server.state.count = 0;
+    click(ctx.window, sam.querySelector(".names-apply"));
+    await flush(ctx.window, 10);
+    const result = ctx.document.querySelector("#names-modal .names-result").textContent;
+    assert.match(result, /^Rebuilt the lists of 12 photos from their keywords\. Derived rows: not journaled\.$/);
+    assert.ok(!/History/.test(result));
   });
 
   test("Escape closes it and gives the focus back", async (t) => {

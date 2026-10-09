@@ -64,8 +64,10 @@
     overflow-wrap: anywhere;
 }
 
-/* A person's label as an element (web/common/person-label.js): the name, then the group dimmed. With no room the GROUP loses its
-   left (`Sam · ...Cousins/Thackeray`: the end of a path is what tells people apart) and the name loses nothing. */
+/* A person's label as an element (web/common/person-label.js): the name, then the group dimmed. With no room the GROUP loses its END
+   (`Sam · Thackeray/Cou...`) and the name loses nothing. The server's group is already the shortest tail of the path that tells the sharing
+   people apart, so its START is the discriminator: cutting it from the left made two cousins read alike (`Alex · ...ns`). The full tag is
+   the element's title. */
 .person-label {
     display: inline-flex;
     max-width: 100%;
@@ -83,8 +85,6 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    direction: rtl;
-    text-align: left;
     color: var(--text-muted);
 }
 

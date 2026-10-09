@@ -72,7 +72,7 @@ describe("Review People lists the two Sams as two people", () => {
     assert.deepEqual(ctx.rows().map((row) => row.title), ["Friends/Sam", "Pets/Sam", "Family/Ingersoll/Wren"]);
   });
 
-  test("a narrow window shortens the group from the left and never the name: the group has a span of its own", async (t) => {
+  test("a narrow window cuts the group at its END and never the name: the group's start is what tells people apart", async (t) => {
     const ctx = await openReviewPeople(t);
     const label = ctx.rows()[0].querySelector(".photo-title .person-label");
     assert.equal(label.querySelector(".person-label-name").textContent, "Sam · ");
@@ -81,10 +81,11 @@ describe("Review People lists the two Sams as two people", () => {
     assert.equal(ctx.rows()[2].querySelector(".person-label-group"), null, "a name nobody shares has no group");
     const css = fs.readFileSync(path.join(REPO_ROOT, "web", "common", "person-choice.css"), "utf8");
     const rule = (name) => css.match(new RegExp(`\\.${name}\\s*\\{([^}]*)\\}`))[1];
-    assert.match(rule("person-label-group"), /direction:\s*rtl/);
+    assert.doesNotMatch(rule("person-label-group"), /direction:\s*rtl/, "cutting the left would make two cousins read alike");
     assert.match(rule("person-label-group"), /text-overflow:\s*ellipsis/);
     assert.match(rule("person-label-group"), /overflow:\s*hidden/);
     assert.match(rule("person-label-name"), /flex:\s*none/, "the name keeps its room");
+    assert.equal(label.title, "Friends/Sam", "the full tag is the title");
     assert.doesNotMatch(rule("person-label-name"), /overflow|ellipsis/);
   });
 
@@ -277,6 +278,39 @@ describe("naming faces as one of two people called alike", () => {
     await wait(ctx.window);
     assert.match(prompts[0], /Rename person "Sam · Pets" to:/);
     assert.deepEqual(ctx.server.lastBody("/api/person/rename"), { person_id: 41, old_name: "Sam", new_name: "Sammy" });
+  });
+});
+
+describe("one question at a time, about the people it was asked about", () => {
+  const ALEX_T = { id: 60, name: "Alex", tag: "Family/Thackeray/Cousins/Alex", group: "Thackeray/Cousins", shared: true };
+  const ALEX_I = { id: 61, name: "Alex", tag: "Family/Ingersoll/Cousins/Alex", group: "Ingersoll/Cousins", shared: true };
+
+  test("a second question about OTHER people replaces the first, which is answered none -- never answered by its choice", async (t) => {
+    const server = reviewPeople().first("/api/people?records=1", [...RECORDS, ALEX_T, ALEX_I]);
+    const ctx = await openReviewPeople(t, server);
+    click(ctx.window, ctx.rows()[2]);
+    await flush(ctx.window, 8);
+    [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")].forEach((card) => click(ctx.window, card, { ctrlKey: true }));
+    ctx.window.confirm = () => true;
+    const assign = (text) => {
+      const input = ctx.document.getElementById("input-reassign-name");
+      input.value = text;
+      input.dispatchEvent(new ctx.window.Event("input", { bubbles: true }));
+      click(ctx.window, ctx.document.getElementById("btn-reassign-selected"));
+    };
+    assign("Sam");
+    await wait(ctx.window);
+    assign("Alex");
+    await wait(ctx.window);
+    const questions = ctx.document.querySelectorAll(".person-choice");
+    assert.equal(questions.length, 1, "one at a time");
+    assert.deepEqual([...questions[0].querySelectorAll(".person-choice-label")].map((each) => each.textContent),
+      ["Alex · Thackeray/Cousins", "Alex · Ingersoll/Cousins"]);
+    click(ctx.window, questions[0].querySelector(".btn-confirm"));
+    await wait(ctx.window, 80);
+    const bulk = ctx.server.calls.filter((call) => call.url.includes("/api/faces/match-bulk"));
+    assert.equal(bulk.length, 1, "the Sam question made no write");
+    assert.equal(bulk[0].body.person_id, 60);
   });
 });
 

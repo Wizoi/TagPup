@@ -101,9 +101,9 @@ function countsText(entry) {
     if (entry.faces) {
         parts.push(`${plural(entry.faces, 'face', 'faces')}${entry.faces_by_hand ? ` (${entry.faces_by_hand} decided by hand)` : ''}`);
     }
-    if (entry.listed) {
-        parts.push(`listed on ${plural(entry.listed, 'photo', 'photos')}${entry.keyword_photos
-            ? `, ${entry.keyword_photos} from a keyword in the file` : ''}`);
+    if (entry.listed) parts.push(`listed on ${plural(entry.listed, 'photo', 'photos')} from a face`);
+    if (entry.keyword_photos) {
+        parts.push(`${plural(entry.keyword_photos, 'photo lists', 'photos list')} it from a keyword (the keyword's path says who it is)`);
     }
     return parts.join('; ');
 }
@@ -141,6 +141,7 @@ function stated(entry, ask, data) {
     let text;
     if (ask.action === 'dismiss') text = `${entry.name} is set aside until it holds more rows than ${entry.rows}.`;
     else if (ask.action === 'restore') text = `${entry.name} is shown again.`;
+    else if (ask.action === 'rebuild') text = `Rebuilt the lists of ${plural(data.changed, 'photo', 'photos')} from their keywords. Derived rows: not journaled.`;
     else if (ask.action === 'unname') text = `Unnamed ${plural(data.changed, 'face', 'faces')} called ${entry.name}.`;
     else if (ask.action === 'make') text = `Made ${data.person_tag || entry.name}: ${plural(data.changed, 'face', 'faces')} named ${entry.name} are theirs.`;
     else text = `Linked ${entry.name} to ${ask.label}: ${plural(data.faces, 'face', 'faces')} and ${plural(data.listed, 'listed person', 'listed people')}.`;
@@ -273,6 +274,12 @@ function entryRow(entry) {
             unname.addEventListener('click', () => choose(entry, row, { action: 'unname' }, false));
             rest.append(unname);
         }
+        if (entry.keyword_photos) {
+            const rebuild = button('Rebuild these photos', 'names-rebuild',
+                'Write the lists of the photos that list this name from a keyword again by the keywords\' paths (derived; not journaled)');
+            rebuild.addEventListener('click', () => choose(entry, row, { action: 'rebuild' }, false));
+            rest.append(rebuild);
+        }
         const aside = button('Set aside', 'names-dismiss', 'Leave it as it is; it comes back if it gains rows');
         aside.addEventListener('click', () => choose(entry, row, { action: 'dismiss' }, false));
         rest.append(aside);
@@ -382,14 +389,20 @@ export function openNamesReview() {
     state.names.modal.classList.remove('hidden');
     replaceContent(state.names.results);
     say('');
+    // The dialog takes the focus (it is aria-modal) and gives it back on close.
+    state.names.modal.setAttribute('tabindex', '-1');
+    state.names.modal.focus();
     return loadNames();
 }
 
 export function closeNamesReview() {
     if (!state.names.modal) return;
     state.names.modal.classList.add('hidden');
+    // Back to what opened it; the first row is drawn again while the dialog is open, so the opener may be gone: the row that took its place.
     const opener = state.names.opener;
-    if (opener && typeof opener.focus === 'function') opener.focus();
+    const row = photoList.querySelector('.names-to-review-row');
+    if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+    else if (row) row.focus();
 }
 
 /** Opened with `?names-to-review=1` -- the Activity page's link -- the page opens the dialog as it starts. */
