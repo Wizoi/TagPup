@@ -909,7 +909,7 @@ def _person_ids(conn):
     conn.execute("ALTER TABLE photo_people ADD COLUMN tag_id INTEGER")
     conn.execute("CREATE INDEX idx_faces_person ON faces(name, tag_id)")
     from tagpup.store import person_ids   # the store imports this module
-    person_ids.sync(conn)
+    person_ids.fill(conn)
 
 
 def _person_tag_guard(conn):
@@ -1166,7 +1166,7 @@ class PersonIdsAgree(Check):
     def after(self, conn, migration, state):
         from tagpup.store import person_ids   # the store imports this module
         return ["%d row(s) of %s" % (found.rows, table) for table in person_ids.TABLES
-                for found in [person_ids.out_of_step(conn, table)] if found.rows]
+                for found in [person_ids.out_of_step(conn, table, spelling=False)] if found.rows]
 
 
 class SearchIndexAgrees(Check):

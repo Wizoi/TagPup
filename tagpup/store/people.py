@@ -39,21 +39,24 @@ CHUNK = 500
 SAME_PERSON = "(f.tag_id = pp.tag_id OR (pp.tag_id IS NULL AND f.tag_id IS NULL AND f.name = pp.name COLLATE NOCASE))"
 
 
-def _faces_named(conn, photo_ids):
-    """{photo id: the people on its faces that are not excluded, as Refs (id, name), in detection order}."""
+def _faces_named(conn, photo_ids, loose=None):
+    """{photo id: the people on its faces that are not excluded, as Refs (id, name), in detection order}. A face with a name and
+    no id is added to `loose` as (face id, name), when it is given: a name written by something that knew no ids."""
     named = collections.defaultdict(list)
     marks = ",".join("?" * len(photo_ids))
     tag_id = "tag_id" if person_ids.present(conn) else "NULL"
-    for photo_id, held, name in conn.execute(
-            "SELECT photo_id, " + tag_id + ", name FROM faces WHERE photo_id IN (%s) AND name IS NOT NULL AND name != ''"
+    for face_id, photo_id, held, name in conn.execute(
+            "SELECT id, photo_id, " + tag_id + ", name FROM faces WHERE photo_id IN (%s) AND name IS NOT NULL AND name != ''"
             " AND COALESCE(excluded, 0) = 0 ORDER BY id" % marks, photo_ids):
         named[photo_id].append(vocabulary.Ref(held, name))
+        if held is None and loose is not None:
+            loose.append((face_id, name))
     return named
 
 
-def _differences(conn, photo_ids, known):
+def _differences(conn, photo_ids, known, loose=None):
     """(photo id, its people by the rule as [(id, name, source)]) of each photo in `photo_ids`
-    -- every photo, without -- whose rows say otherwise."""
+    -- every photo, without -- whose rows say otherwise. `loose`: see _faces_named."""
     if known is None:
         from tagpup.store import taxonomy   # taxonomy imports this module
         known = taxonomy.read_people_vocabulary(conn)
@@ -63,7 +66,7 @@ def _differences(conn, photo_ids, known):
     for start in range(0, len(photo_ids), CHUNK):
         chunk = photo_ids[start:start + CHUNK]
         marks = ",".join("?" * len(chunk))
-        named = _faces_named(conn, chunk)
+        named = _faces_named(conn, chunk, loose)
         held = collections.defaultdict(list)
         for photo_id, held_id, name, source in conn.execute(
                 "SELECT photo_id, " + ("tag_id" if person_ids.present(conn) else "NULL") + ", name, source FROM photo_people"
@@ -90,9 +93,10 @@ def rebuild(conn, photo_ids=None, known=None, ids=None):
     or two keywords once, two people called alike both), and settle each row written
     (person_ids.follow_listed; every row, when every photo is rebuilt). `known` is the tree's
     PeopleVocabulary, and `ids` its person_ids.People, each read from `conn` when not given.
-    Returns how many photos' people changed. The caller commits."""
-    written = []
-    for photo_id, people in list(_differences(conn, photo_ids, known)):
+    A face of these photos with a name and no id (written by something that knew none) is given the person its name is, when
+    exactly one is called so (person_ids.follow_faces' rule). Returns how many photos' people changed. The caller commits."""
+    written, loose = [], []
+    for photo_id, people in list(_differences(conn, photo_ids, known, loose)):
         conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))
         if person_ids.present(conn):
             conn.executemany("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, ?, ?)",
@@ -101,6 +105,8 @@ def rebuild(conn, photo_ids=None, known=None, ids=None):
             conn.executemany("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, ?)",
                              [(photo_id, n, name, source) for n, (_tag_id, name, source) in enumerate(people)])
         written.append(photo_id)
+    if loose:
+        person_ids.settle_faces(conn, [face_id for face_id, _name in loose], ids)
     # Only the rows written can be without their id: a tree edit gives every other its new one
     # (tree_edit), and reading the tree for each of 5,000 one-photo rebuilds would cost them.
     person_ids.follow_listed(conn, None if photo_ids is None else written, ids)

@@ -86,18 +86,19 @@ class MigrationTwentyEight(unittest.TestCase):
     def schema_rows(self):
         return look(self.path, "SELECT type, name, tbl_name FROM sqlite_master ORDER BY type, name")
 
-    def test_a_library_at_27_gets_two_indexes_and_an_empty_table_and_nothing_else(self):
+    def test_a_library_at_27_gets_two_indexes_and_an_empty_table_and_the_trigger_of_29_and_nothing_else(self):
         before_schema = self.schema_rows()
         tables = [name for (name,) in look(self.path, "SELECT name FROM sqlite_master WHERE type = 'table' "
                                                        "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
         tables = [table for table in tables if table not in ("schema_version", "changes", "change_rows")]
         before = {table: look(self.path, "SELECT * FROM %s" % table) for table in tables}
-        self.assertEqual(migration_names.named(28), schema.ensure(self.path))
+        self.assertEqual(migration_names.after(27), schema.ensure(self.path))
         added = {row for row in self.schema_rows() if row not in before_schema}
         self.assertEqual({("index", "idx_faces_tag", "faces"), ("index", "idx_photo_people_tag", "photo_people"),
                           ("table", "name_review_dismissals", "name_review_dismissals"),
-                          ("index", "sqlite_autoindex_name_review_dismissals_1", "name_review_dismissals")}, added,
-                         "no column, no trigger, no other table")
+                          ("index", "sqlite_autoindex_name_review_dismissals_1", "name_review_dismissals"),
+                          ("trigger", "person_tag_not_deleted_while_named", "tag_taxonomy")}, added,
+                         "no column, no other table; the trigger is migration 29's")
         self.assertEqual(before, {table: look(self.path, "SELECT * FROM %s" % table) for table in tables})
         self.assertEqual([(0,)], look(self.path, "SELECT COUNT(*) FROM name_review_dismissals"))
         migration = [m for m in schema.MIGRATIONS if m.version == 28][0]
@@ -145,7 +146,7 @@ class MigrationTwentyEight(unittest.TestCase):
         self.assertNotIn("idx_faces_tag", names)
         self.assertNotIn("name_review_dismissals", names)
         schema._current.clear()
-        self.assertEqual(migration_names.named(28), schema.ensure(self.path))
+        self.assertEqual(migration_names.after(27), schema.ensure(self.path))
         self.assertIn("idx_faces_tag", [name for (_t, name, _tbl) in self.schema_rows()])
 
     def test_two_processes_opening_it_at_once_apply_it_once(self):
@@ -158,7 +159,7 @@ class MigrationTwentyEight(unittest.TestCase):
             out, err = each.communicate(timeout=120)
             self.assertEqual(0, each.returncode, err)
             answers.append(out.strip())
-        self.assertEqual(["0", "1"], sorted(answers))
+        self.assertEqual(["0", str(len(migration_names.after(27)))], sorted(answers))
         self.assertEqual(1, len(look(self.path, "SELECT 1 FROM schema_version WHERE version = 28")))
 
     def test_two_threads_opening_it_at_once_apply_it_once(self):
@@ -174,7 +175,7 @@ class MigrationTwentyEight(unittest.TestCase):
             thread.start()
         for thread in threads:
             thread.join(60)
-        self.assertEqual([0, 1], sorted(applied))
+        self.assertEqual([0, len(migration_names.after(27))], sorted(applied))
 
 
 class AnOlderAppAndALibraryItHasNotSeen(unittest.TestCase):
@@ -351,9 +352,9 @@ class TwoProcessesBringingALibraryAt26UpToDate(unittest.TestCase):
             answers.append(out.strip())
             self.assertEqual(0, each.returncode, err)
         self.assertTrue(os.path.exists(a_in) and os.path.exists(b_ready), "they overlapped")
-        self.assertEqual("0", answers[1], "the CLI run, waiting at the lock, found 27 and 28 done and applied nothing")
-        self.assertEqual([(27,), (28,)], look(path, "SELECT version FROM schema_version WHERE version >= 27 ORDER BY version"))
-        self.assertEqual(["migration 27: photos by their camera and lens", "migration 28: people read by id, and the names set aside"],
+        self.assertEqual("0", answers[1], "the CLI run, waiting at the lock, found 27 and the rest done and applied nothing")
+        self.assertEqual([(27,), (28,), (29,)], look(path, "SELECT version FROM schema_version WHERE version >= 27 ORDER BY version"))
+        self.assertEqual(migration_names.operations_after(26),
                          [row[0] for row in look(path, "SELECT operation FROM changes WHERE operation LIKE 'migration 2%' "
                                                        "AND operation >= 'migration 27' ORDER BY id")],
                          "each recorded once")

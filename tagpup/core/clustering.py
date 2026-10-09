@@ -177,21 +177,27 @@ class KnownFaces:
     def __init__(self):
         self._faces = {}     # name -> [(unit embedding, year or None, photo key or None)]
         self._arrays = {}    # name -> (matrix, years, photos), made when first asked
+        #: {name: what the caller calls that person}, for a caller that keys the people by something that is not what it shows
+        #: (a person's id): see `add`'s label.
+        self.labels = {}
 
     @classmethod
     def of(cls, rows):
-        """KnownFaces from (name, embedding, year, photo) rows; year and photo may be None."""
+        """KnownFaces from (name, embedding, year, photo) rows, or (name, embedding, year, photo, label); year and photo may
+        be None. A `name` is any hashable that tells people apart (a person's id, a name)."""
         known = cls()
-        for name, embedding, year, photo in rows:
-            known.add(name, embedding, year, photo)
+        for name, embedding, year, photo, *label in rows:
+            known.add(name, embedding, year, photo, label[0] if label else None)
         return known
 
-    def add(self, name, embedding, year=None, photo=None):
+    def add(self, name, embedding, year=None, photo=None, label=None):
         if not name or embedding is None:
             return
         self._faces.setdefault(name, []).append(
             (_unit(embedding), year, paths.key(photo) if photo else None))
         self._arrays.pop(name, None)
+        if label is not None:
+            self.labels.setdefault(name, label)
 
     def names(self):
         return list(self._faces)

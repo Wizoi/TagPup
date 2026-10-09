@@ -125,9 +125,12 @@ class Plans(unittest.TestCase):
         for statement, lines in found:
             for line in lines:
                 if line.startswith("SCAN"):
-                    # the names the person is spelled as: a pass of the name index (400 names on photo_index), covering
-                    self.assertIn("SELECT DISTINCT name FROM photo_people", statement)
-                    self.assertIn("COVERING INDEX idx_photo_people_name", line)
+                    # the names the person is spelled as: a pass of the name index (400 names on photo_index), covering;
+                    # and the tree, read whole once (person_ids.read): a table of a few hundred nodes
+                    self.assertTrue("SELECT DISTINCT name FROM photo_people" in statement or "tag_taxonomy" in statement
+                                    or "sqlite_master" in statement, statement)
+                    if "photo_people" in statement:
+                        self.assertIn("COVERING INDEX idx_photo_people_name", line)
 
     def test_the_undated_photos_come_from_the_date_index_too(self):
         cursor = store.Cursor(1, None, 0)
@@ -187,8 +190,8 @@ class Plans(unittest.TestCase):
                           ("dates", store.date_counts)):
             with self.subTest(section=name):
                 for statement, lines in self.plan_of(run):
-                    if "FROM roots" in statement:
-                        continue   # the library's roots: a row or two
+                    if "FROM roots" in statement or "FROM sqlite_master" in statement:
+                        continue   # the library's roots: a row or two; whether the tree is there
                     for line in lines:
                         if line.startswith("SCAN (subquery"):
                             continue   # the per-set count of the keywords' one pass: its inner scan is checked below

@@ -185,7 +185,7 @@ def rebuild_derived(db_path, apply=False, out=print):
     for line in tables + ids:
         out("  " + line)
     if not tables and not ids:
-        out("the derived tables are what the photos say" + (", and every person id what its name is" if has_ids else ""))
+        out("the derived tables are what the photos say" + (", and every person's name what their node is called" if has_ids else ""))
         return 0
     if not apply:
         out("a dry run: nothing was written. --apply makes them so; only derived rows and columns change")
@@ -209,7 +209,7 @@ def rebuild_derived(db_path, apply=False, out=print):
                written["word_rows"], written["gear_rows"]))
     if ids:
         changed = person_ids.repair(db_path)
-        out("person ids put right: %d face(s), %d listed person(s)" % (changed["faces"], changed["photo_people"]))
+        out("people's names and ids put right: %d face(s), %d listed person(s)" % (changed["faces"], changed["photo_people"]))
         conn = db.connect(db.readonly_uri(db_path), uri=True)
         try:
             after += _person_ids_wrong(conn)
@@ -221,8 +221,9 @@ def rebuild_derived(db_path, apply=False, out=print):
 
 
 def _person_ids_wrong(conn):
-    """A line for each table whose rows hold a person id their name does not give (tagpup.store.person_ids)."""
-    return ["%d row(s) of %s hold a person id their name does not give" % (found.rows, table)
+    """A line for each table whose rows hold a name that is not their person's (tagpup.store.person_ids: the id is the person and
+    the name a cache of the node's leaf), an id of a node that is gone, or a name that is one person's and has no id."""
+    return ["%d row(s) of %s hold a name that is not their person's" % (found.rows, table)
             for table in person_ids.TABLES for found in [person_ids.out_of_step(conn, table)] if found.rows]
 
 

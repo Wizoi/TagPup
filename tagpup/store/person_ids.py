@@ -68,7 +68,7 @@ class AmbiguousPerson(PersonProblem):
     def __init__(self, name, candidates):
         self.name = name
         self.candidates = sorted(candidates, key=lambda person: person.tag)
-        super().__init__("More than one person is called %s: %s. Name one of them by its path."
+        super().__init__("More than one person is called %s: %s. Choose one of them (a page sends their person_id)."
                          % (name, ", ".join(person.tag for person in self.candidates)))
 
 
@@ -401,6 +401,22 @@ def follow_faces(conn, photo_ids, known=None):
     return len(updates)
 
 
+def settle_faces(conn, face_ids, known=None):
+    """Settle the faces `face_ids` (People.settle): the ones rebuild found with a name and no id. Returns faces changed."""
+    if not face_ids or not present(conn):
+        return 0
+    known = known or read(conn)
+    updates = []
+    for chunk in _chunks(face_ids):
+        for face_id, name, held in conn.execute(
+                "SELECT id, name, tag_id FROM faces WHERE id IN (%s)" % _marks(chunk), chunk):
+            wanted, cached = known.settle(name, held)
+            if held != wanted or name != cached:
+                updates.append((wanted, cached, face_id))
+    conn.executemany("UPDATE faces SET tag_id = ?, name = ? WHERE id = ?", updates)
+    return len(updates)
+
+
 def follow_listed(conn, photo_ids, known=None):
     """Settle each person listed for the photos `photo_ids` (photo_people), as follow_faces does. Every photo, without
     `photo_ids`. Returns rows changed."""
@@ -437,6 +453,27 @@ def _sync_table(conn, table, known):
         if held != wanted or name != cached:
             changed += conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS ?" % table,
                                     (wanted, cached, name, held)).rowcount
+    return changed
+
+
+def fill(conn, known=None):
+    """Give every face and every listed person that has a name and no id the one person that name is -- and nothing else: no
+    cached name is rewritten, no id that is set is touched. Migration 21's backfill (it adds the column, so every id is NULL, and
+    "nothing that was there changed" is one of its checks), and what a restored snapshot from before it needs. One lookup per
+    distinct name, never per row. Returns {table: rows changed}."""
+    if not present(conn):
+        return {table: 0 for table in TABLES}
+    known = known or read(conn)
+    changed = {}
+    for table in TABLES:
+        changed[table] = 0
+        for name, held, _rows in _pairs(conn, table):
+            if held is not None:
+                continue
+            wanted = known.id_of(name)
+            if wanted is not None:
+                changed[table] += conn.execute("UPDATE %s SET tag_id = ? WHERE name = ? AND tag_id IS NULL" % table,
+                                               (wanted, name)).rowcount
     return changed
 
 
@@ -495,6 +532,30 @@ def faces_using(conn, ids):
     return found
 
 
+def put_aside(conn, face_ids):
+    """The faces `face_ids` hold no id (NULL) until the settle that follows gives them the one person their name is: a
+    change recorded before the id was recorded wrote their name alone (the journal's _named_by_name). Returns rows changed."""
+    if not face_ids or not present(conn):
+        return 0
+    changed = 0
+    for chunk in _chunks(face_ids):
+        changed += conn.execute("UPDATE faces SET tag_id = NULL WHERE id IN (%s)" % _marks(chunk), chunk).rowcount
+    return changed
+
+
+def release(conn, node_ids):
+    """The rows that name the nodes `node_ids` are left with the name alone (tag_id NULL): the journal's undo of a node's
+    insert takes the node away, and the faces and listed people it was linked to by their name go back to being that name.
+    The caller refused first for a face a person named. Returns rows changed."""
+    if not node_ids or not present(conn):
+        return 0
+    changed = 0
+    for chunk in _chunks(node_ids):
+        for table in TABLES:
+            changed += conn.execute("UPDATE %s SET tag_id = NULL WHERE tag_id IN (%s)" % (table, _marks(chunk)), chunk).rowcount
+    return changed
+
+
 def given(conn, ids):
     """Which of the person ids `ids` some face carries now, on `conn`: one indexed query for them all (idx_faces_tag). An
     id read before a write began may have been unnamed everywhere before it is written."""
@@ -510,10 +571,11 @@ def given(conn, ids):
 Disagreement = collections.namedtuple("Disagreement", "rows examples")
 
 
-def out_of_step(conn, table, examples=5):
+def out_of_step(conn, table, examples=5, spelling=True):
     """(rows of `table` that People.settle would change -- a name that is not its node's, an id of a node gone, a name
     that is one person's and holds no id -- and a few of their ids: face ids, or photo ids for photo_people). Reads
-    only."""
+    only. Without `spelling`, the cached name's spelling is let be: only an id that is missing, or of a node gone (migration
+    21's own post-condition, which changes no name)."""
     if not present(conn):
         return Disagreement(0, [])
     known = read(conn)
@@ -521,7 +583,7 @@ def out_of_step(conn, table, examples=5):
     key = "id" if table == "faces" else "photo_id"
     for name, held, count in _pairs(conn, table):
         wanted, cached = known.settle(name, held)
-        if held != wanted or name != cached:
+        if held != wanted or (spelling and name != cached):
             rows += count
             if len(found) < examples:
                 found += [row_id for (row_id,) in conn.execute(

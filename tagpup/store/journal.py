@@ -108,11 +108,16 @@ DERIVED_COLUMNS = {"photos": ("taken", "year")}
 
 
 def cache_columns(table, values):
-    """The columns of a recorded row that only repeat another recorded column, so a change is not held to them: a face's
-    `name` beside the `tag_id` of its person -- the cache of the node's leaf, which a rename of the node changes without
-    changing the face. A row recorded without a `tag_id`, or with none (NULL: an unresolved name), is held to its name."""
-    if table == "faces" and values.get("tag_id") is not None:
+    """The columns of a recorded row that only repeat another, so a change is not held to them: a face's `name` beside the
+    `tag_id` of its person -- the cache of the node's leaf, which a rename of the node changes without changing the face --
+    and, in a row recorded with a name and no `tag_id`, the `tag_id`: it is what the name is, given by the settle that follows
+    a write (person_ids). A row recorded with neither, or with a `tag_id`, is held to what it says."""
+    if table != "faces":
+        return ()
+    if values.get("tag_id") is not None:
         return ("name",)
+    if "tag_id" in values and values.get("name") is not None:
+        return ("tag_id",)
     return ()
 
 RECORDED, REBUILT, FORBIDDEN = "recorded", "rebuilt", "forbidden"
@@ -410,6 +415,11 @@ def _resolve(conn, edits):
             if changed:
                 top.append(RowChange("update", edit.table, key, {c: row[c] for c in changed}, changed, edit.kind))
                 rewritten[(edit.table, key)] = set(changed)
+            continue
+        if edit.table == "tag_taxonomy" and person_ids.present(conn) and conn.execute(
+                "SELECT 1 FROM faces WHERE tag_id = ? LIMIT 1", (key[0],)).fetchone():
+            refusals.append("%s is the person of faces: unname them first (or merge it into the person they are)"
+                            % _named(edit.table, key))
             continue
         change = RowChange("delete", edit.table, key, row, None, edit.kind)
         top.append(change)
@@ -721,6 +731,12 @@ def _not_as_left(conn, change_id, changes):
                 if conn.execute('SELECT 1 FROM "%s" WHERE "%s" = ? LIMIT 1' % (child, column),
                                 (change.new[KEYS[parent][0]],)).fetchone():
                     reasons.append("%s has rows in %s made since" % (_named(change.table, change.key), child))
+            if change.table == "tag_taxonomy" and person_ids.present(conn) and conn.execute(
+                    "SELECT 1 FROM faces WHERE tag_id = ? AND name_source = 'manual' LIMIT 1", (change.key[0],)).fetchone():
+                # The faces linked to it by their name, or named by a guess, go back to the name alone; a face a person named
+                # is theirs (docs/ARCHITECTURE.md, "People by id, stage 2").
+                reasons.append("%s is the person of faces a person named: unname them first"
+                               % _named(change.table, change.key))
     return reasons
 
 
@@ -803,15 +819,8 @@ def _named_by_name(conn, changes):
         values = [d for d in (change.old, change.new) if d]
         if any("name" in d and "tag_id" not in d for d in values):
             ids.add(change.key[0])
-    if ids and person_ids.present(conn):
-        for chunk in _id_chunks(sorted(ids)):
-            conn.execute("UPDATE faces SET tag_id = NULL WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk)
+    person_ids.put_aside(conn, sorted(ids))
     return ids
-
-
-def _id_chunks(items):
-    for start in range(0, len(items), CHUNK):
-        yield items[start:start + CHUNK]
 
 
 def _derive(conn, changes):
@@ -1101,6 +1110,9 @@ def _undo_rows(conn, change_id):
     if reasons:
         raise Refusal(reasons)
     try:
+        # A node the undo takes away leaves its faces with the name alone (they were linked to it by it, or by a guess).
+        person_ids.release(conn, [change.key[0] for change in inverse if change.table == "tag_taxonomy"
+                                  and change.action == "delete" and change.key is not None])
         _write(conn, inverse)
     except sqlite3.IntegrityError as e:
         raise _integrity(e) from e
