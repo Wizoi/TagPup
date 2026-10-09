@@ -2859,7 +2859,7 @@ be split across a merge: the id is the key only when every writer writes it. Siz
 - **Left for part C** (done: see "Part C as built"): the pages' own leaf-based "already has" rules and duplicate checks, the pickers that send ids
   from every surface, the names-to-review service, and the shared-leaf specs of the navigator.
 
-**Part C as built** *(2026-10-09; phases 6, 7 and 8)*, and what was decided in building it:
+**Part C as built** *(2026-10-09; phases 6, 7 and 8; findings #1074-#1080)*, and what was decided in building it:
 - **The names-to-review list** is `person_ids.review_pairs(conn)`: two grouped reads (`faces` by `idx_faces_person`, `SEARCH ... (name>?)`, and
   `photo_people` by `idx_photo_people_name`) of the names that hold NO id, one `Review` per name key (all its spellings together; `why` none,
   several, one or branch; faces, those decided by hand, listed people, those from a keyword), never stored. **Counted read-only on the live
