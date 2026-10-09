@@ -444,6 +444,6 @@ describe("TagPup's folder view", () => {
   test("the button sits in the folder view's header with its reach in the title", async (t) => {
     const ctx = await openFrom("tagpup", t);
     assert.ok(ctx.button.closest(".folder-view-actions"));
-    assert.match(ctx.button.title, /whole library, not only this folder/);
+    assert.match(ctx.button.title, /only this folder and its subfolders \(the default\), or the whole library, as you choose/);
   });
 });
