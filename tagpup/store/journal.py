@@ -91,7 +91,8 @@ KEYS = {
 NAMED = ("settings", "folder_ids")
 
 #: Derived tables: never journaled, rebuilt from what a change touched (`_derive`).
-DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta", "search_words", "search_names")
+DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta", "search_words", "search_names",
+           "search_gear")
 
 #: Derived columns of journaled tables, rebuilt from the row's other columns after each
 #: write (a photo's dates, from its metadata and path: store.photos.date_photos; a face's
@@ -122,6 +123,7 @@ CASCADES = {
     # search_goes_with_its_photo and made again by _derive's refresh of the photo.
     ("photos", "search_words"): ("rowid", REBUILT),
     ("photos", "search_names"): ("rowid", REBUILT),
+    ("photos", "search_gear"): ("rowid", REBUILT),
     ("tag_taxonomy", "photo_tags"): ("tag_id", REBUILT),
     ("tag_taxonomy", "tag_taxonomy"): ("parent_id", FORBIDDEN),
 }

@@ -12,7 +12,7 @@ import {
 } from './elements.js';
 import { flagField } from './status.js';
 import { clearSelection, keepOnly } from './selected.js';
-import { CACHE_TTL_MS, folderCacheKey, saveToLocalStorageCache } from './cache.js';
+import { CACHE_TTL_MS, CACHE_VERSION, folderCacheKey, saveToLocalStorageCache } from './cache.js';
 import { updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { discardDetailEdits, hasUnsavedEdits, leavePhotoThen, openPhotoWrite } from './edits.js';
 import { libraryPosition } from './library-source.js';
@@ -240,7 +240,7 @@ export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
             try {
                 const cacheEntry = JSON.parse(rawCache);
                 const age = Date.now() - cacheEntry.timestamp;
-                if (age < CACHE_TTL_MS) {
+                if (age < CACHE_TTL_MS && cacheEntry.version === CACHE_VERSION) {
                     const previous = state.scannedFolder;
                     state.scannedFolder = path;
                     updateCurrentFolderLabel();

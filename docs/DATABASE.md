@@ -360,7 +360,17 @@ The file name and the folders of each photo, for a search's words found inside a
 | `name` | TEXT | FTS5 | The file name (`IMG_0412.jpg`). |
 | `folders` | TEXT | FTS5 | Of a root-relative row every folder below the root (`@pictures/2024/Coast` holds `2024/Coast`: the root's name is never a word); of a native row the one folder it is directly in. |
 
-### 27. `faces_detected` Table
+### 27. `search_gear` Table
+The camera and the lens of each photo, for a search's words (`tagpup/store/search_index.py`, migration 27; docs/ARCHITECTURE.md, "Backlog: which photo fields are searchable"): an FTS5 virtual table, `tokenize = 'unicode61 remove_diacritics 2'`, prefixes of 2 and 3 indexed, CONTENTLESS as `search_words` is, its rowid the photo's id, a row for every photo (empty text for a photo whose metadata names no camera: a scan, a screenshot; 3,456 of photo_index's 68,324 photos have neither make nor model, counted 2026-10-09), kept by `derived` in the same transaction as the photo's other derived rows and taken with it by the trigger `search_gear_goes_with_its_photo`. Shadow tables `search_gear_data`, `search_gear_idx`, `search_gear_docsize`, `search_gear_config`. Derived, never journaled (`journal.DERIVED`).
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `camera` | TEXT | FTS5 | `photo_meta.camera_name` of the make and model: the model alone when it holds a whole word of the make, without case (`Canon EOS R6m2`; `KODAK CX4310 DIGITAL CAMERA` of make `EASTMAN KODAK COMPANY`), else the make and the model (`Google Pixel 8 Pro`). This is the one name of a camera: Image Details, the search and Shift Date Taken's list of cameras (`fields.camera_of`) use it; 13,542 of the 62,877 photos holding both have a model that lacks its make. |
+| `lens` | TEXT | FTS5 | The lens (`EXIF:LensModel`, `XMP:LensModel`, a text `Composite:LensID`, with `EXIF:LensMake` before a name that lacks it). **No row of photo_index holds a lens field** (0 of 68,324, counted 2026-10-09): the indexer does not ask ExifTool for one (`fields.METADATA_FIELDS`), so the column is empty until a photo is read with the fields asked for, which changes what every read records and is the owner's to decide. |
+
+Each column holds its text as spelled and, when a letter is followed by a digit, once more with a blank between them (`EF24-70mm` also as `EF 24-70mm`), so that `24-70` finds the lens. Not columns of `photo_meta`: no view filters on them. Migration 27 makes the camera from `photo_meta`'s make and model (no photo's metadata is read); the lens, and anything `photo_meta` is out of step on, come with `tools/doctor.py --rebuild-derived --apply` (a dry run says what is due; the rebuild is one transaction, so an interrupted one changes nothing). The library's own copy of the check is `search_index.stale_gear`.
+
+### 28. `faces_detected` Table
 The photos whose faces were detected (`tagpup.store.faces_detected`, migration 25; findings #773): one row for each photo a face detector ran on, faces found or not. A photo in which the index found no face had nothing in the library, so Suggest could not tell it from one never looked at, and detected it again on the graphics card each time (10,732 of photo_index's 68,324 photos have no face row, counted 2026-10-04). Written by the indexer (`faces.record_batch`) and by Suggest (`faces.record_detected`) for every photo they detect -- not for a detection that failed (`tagpup.ml.faces.NotDetected`); read by Suggest before it detects, under the detector it would run (other face settings detect again). A photo marked as having faces still to detect (`faces_pending`) has its row taken away. Photos indexed before migration 25 have no row and are detected once more, by the next Suggest that looks at them: nothing in the library proves the index detected a photo's faces (`index --skip-faces` makes vectors without, and Suggest makes vectors too). No foreign key and no trigger, as `faces_pending`: a row whose photo is gone is read as none, so deleting a photo takes nothing the journal must account for. Not journaled, as indexing is not.
 
 | Column | Type | Constraints | Description |
@@ -372,7 +382,7 @@ The photos whose faces were detected (`tagpup.store.faces_detected`, migration 2
 | `found` | INTEGER | NOT NULL | How many faces it found. |
 | `at` | TEXT | NOT NULL | Local time it was recorded, `YYYY-MM-DD HH:MM:SS`. |
 
-### 28. `library_identity` Table
+### 29. `library_identity` Table
 The library's own identifier (`tagpup.store.folder_ids`, migration 26; findings #924, #933; docs/ARCHITECTURE.md, "Folder ids"): at most one row, a random UUID, which the marker files (`.tagpup`) in the library's folders carry beside each folder's id so that a folder in several libraries holds one line for each. **Opening a library never fills it, and neither does indexing, sync or the watcher**: only the first explicit `folder-ids mark --apply` that records an id stamps it, in the same transaction, since an identifier handed out in files cannot be taken back. A snapshot restored keeps it (it is that library); a library file copied for a trial carries the same one, which `folder-ids mark` refuses and `tools/doctor.py` names. Not journaled: stamping is not a change an undo takes back.
 
 | Column | Type | Constraints | Description |
@@ -381,7 +391,7 @@ The library's own identifier (`tagpup.store.folder_ids`, migration 26; findings 
 | `id` | TEXT | NOT NULL | The identifier, a lowercase UUID. |
 | `stamped` | TEXT | NOT NULL | Local time it was stamped, `YYYY-MM-DD HH:MM:SS`. |
 
-### 29. `folder_ids` Table
+### 30. `folder_ids` Table
 The folders the library has marked (`tagpup.store.folder_ids`, `tagpup.services.folder_ids`, migration 26): one row for each folder whose `.tagpup` marker holds an id for this library. Empty until the owner runs `folder-ids mark --apply`. Journaled (`tagpup.store.journal.KEYS`; a change inserts rows, `follow_folder_markers` moves them), keyed by the id, which is a name that means the same row whenever it is used. It is the key folder tags come to hang on: the derived `folders` table is rebuilt from the photos and its integer ids change with them. A row whose folder is gone, and a marker elsewhere under a folder the library walks that carries its id, is a renamed or moved folder: the next sync points the photos' rows, this row, the root and ignored-folder settings and the folders added at the new folder.
 
 | Column | Type | Constraints | Description |

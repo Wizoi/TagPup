@@ -293,7 +293,7 @@ class TheCameraOfATimeShift(unittest.TestCase):
 
     def test_the_server_names_it(self):
         from tagpup.core import fields
-        self.assertEqual("X100V", fields.camera_of({"Model": "X100V", "EXIF:Make": "Fujifilm"}))
+        self.assertEqual("Fujifilm X100V", fields.camera_of({"Model": "X100V", "EXIF:Make": "Fujifilm"}))
         self.assertEqual("Fujifilm", fields.camera_of({"EXIF:Make": "Fujifilm", "Model": ""}))
         self.assertEqual(fields.UNKNOWN_CAMERA, fields.camera_of({}))
         self.assertEqual(fields.UNKNOWN_CAMERA, fields.camera_of(None))
@@ -301,12 +301,37 @@ class TheCameraOfATimeShift(unittest.TestCase):
         self.assertTrue(fields.on_camera({"EXIF:Model": "X100V"}, "X100V"))
         self.assertFalse(fields.on_camera({"EXIF:Model": "X100V"}, "Pixel 8"))
 
+    def test_the_server_the_panel_and_the_search_name_a_camera_by_one_rule(self):
+        """The shapes photo_index holds: a model that lacks its make, one that holds it, a make alone, a model alone, none.
+        Shift Date Taken chooses the photos of "Google Pixel 8 Pro" and not those of a model that is only "Pixel 8 Pro"."""
+        from tagpup.core import fields, photo_meta
+        from tagpup.services.photos import page_record
+        shapes = {
+            "Google Pixel 8 Pro": {"EXIF:Make": "Google", "EXIF:Model": "Pixel 8 Pro"},
+            "Canon EOS R6m2": {"EXIF:Make": "Canon", "EXIF:Model": "Canon EOS R6m2"},
+            "KODAK CX4310 DIGITAL CAMERA": {"EXIF:Make": "EASTMAN KODAK COMPANY", "EXIF:Model": "KODAK CX4310 DIGITAL CAMERA"},
+            "SONY DSC-X8": {"Make": "SONY", "Model": "DSC-X8"},
+            "Lanternfly": {"EXIF:Make": "Lanternfly"},
+            "Pixel 8 Pro": {"EXIF:Model": "Pixel 8 Pro"},
+            fields.UNKNOWN_CAMERA: {"XMP:Subject": ["a"]},
+        }
+        for name, raw in shapes.items():
+            with self.subTest(name=name):
+                self.assertEqual(name, fields.camera_of(raw))
+                record = page_record("D:/a.jpg", {"raw_metadata": raw})
+                self.assertEqual(name, record["camera"] or fields.UNKNOWN_CAMERA, "the page's name")
+                self.assertEqual(photo_meta.gear(raw).camera or fields.UNKNOWN_CAMERA, name, "the search's and the panel's")
+                chosen = [other for other, theirs in shapes.items() if fields.on_camera(theirs, name)]
+                self.assertEqual([name], chosen, "a shift for this camera selects its photos and no other camera's")
+
     def test_the_page_names_it_as_the_server_does(self):
+        """The page keeps no copy of the rule: it takes the name from the record (`camera`, made by page_record from
+        photo_meta.gear), so the labels of its list and the photos a shift selects (fields.on_camera) are by one rule."""
         from tagpup.core import fields
         page = self.page()
-        listed = re.search(r"const CAMERA_FIELDS = \[([^\]]*)\];", page)
-        self.assertIsNotNone(listed, "the page's copy of the camera fields moved")
-        self.assertEqual(fields.CAMERA_FIELDS, tuple(re.findall(r"'([^']*)'", listed.group(1))))
+        self.assertNotIn("CAMERA_FIELDS", page)
+        self.assertNotIn("raw_metadata", page, "the page does not read the metadata to name a camera")
+        self.assertIn("photo.camera", page)
         self.assertIn("const UNKNOWN_CAMERA = '%s';" % fields.UNKNOWN_CAMERA, page)
         self.assertIn("const ALL_CAMERAS = '%s';" % fields.ALL_CAMERAS, page)
 

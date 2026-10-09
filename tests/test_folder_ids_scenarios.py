@@ -447,7 +447,7 @@ class DoctorAndMigration(Case):
         path = self.home.library("harbour.db")
         at_version(path, 25)
         applied = schema.ensure(path)
-        self.assertEqual(1, len(applied))
+        self.assertEqual(schema.LATEST - 25, len(applied), "26 and every migration after it")
         self.assertEqual([], backups(path), "an additive migration takes no backup")
         conn = db.connect(db.readonly_uri(path), uri=True)
         try:

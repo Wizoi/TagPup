@@ -103,6 +103,8 @@ export const facesSection = document.getElementById('faces-section');
 
 export const detailPath = document.getElementById('detail-path');
 export const detailDateTaken = document.getElementById('detail-date-taken');
+export const detailCamera = document.getElementById('detail-camera');
+export const detailCameraItem = document.getElementById('detail-camera-item');
 export const inputPhotoTitle = document.getElementById('input-photo-title');
 export const btnSaveTitle = document.getElementById('btn-save-title');
 export const btnSaveDetails = document.getElementById('btn-save-details');

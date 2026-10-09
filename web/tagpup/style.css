@@ -558,6 +558,9 @@ body {
 }
 
 .detail-item {
+    /* A grid item is as wide as its widest content unless told it may shrink: a camera and lens line that cannot wrap made
+       the grid scroll sideways (#720's cause; tests/frontend/photo-camera.test.mjs reads this rule). */
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -578,6 +581,13 @@ body {
 .detail-value {
     font-size: 14px;
     color: var(--text-primary);
+}
+
+/* One line however narrow the panel is: the rest is in the tooltip (the camera and lens, photo.js). */
+.detail-value.one-line {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .detail-value.font-bold {

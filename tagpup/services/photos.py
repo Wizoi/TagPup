@@ -3,7 +3,7 @@ import json
 import logging
 import os
 
-from tagpup.core import dates, fields, paths, renaming, validation, vocabulary
+from tagpup.core import dates, fields, paths, photo_meta, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin, shares
 from tagpup.services import file_changes, file_only, libraries, thumbnails
@@ -32,6 +32,7 @@ def page_record(path, meta, mtime=0.0, size=0):
     raw_meta = meta.get("raw_metadata", {})
     captions = meta.get("captions", [])
     year = meta["year"] if "year" in meta else dates.photo_year(raw_meta, path)
+    gear = photo_meta.gear(raw_meta)
     record = {
         "path": path,
         "filename": os.path.basename(path),
@@ -43,6 +44,10 @@ def page_record(path, meta, mtime=0.0, size=0):
         "year": dates.shown_year(None if year is None else str(year)),
         "taken": dates.date_taken(raw_meta),
         "raw_metadata": raw_meta,
+        # The camera and lens it was taken with, named as a search finds them (photo_meta.gear): "" for what the
+        # metadata does not say, which the panel shows as nothing.
+        "camera": gear.camera or "",
+        "lens": gear.lens or "",
     }
     if meta.get("read_error"):
         # ExifTool could not read it: it shows as holding nothing, which a save must not take for what the file holds.

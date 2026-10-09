@@ -2330,8 +2330,8 @@ Server and store only; the page's search box and picker are 9e-2's, and this is 
   page shows the sentence and asks again after `Retry-After` seconds, a few times (a migration that fails keeps answering it;
   after about a minute the page leaves the sentence and stops asking).
 - **Known limits.** A term is matched within one column of one table: "rowan coast" is two terms, each found anywhere, but a
-  quoted phrase typed as one term ("rowan_coast") must be in one column. Camera make
-  and model and the author are not words yet (the owner's call). The words of a photo's people are the names as `photo_people`
+  quoted phrase typed as one term ("rowan_coast") must be in one column. The camera and the lens
+  are words since migration 27 (`search_gear`; below); the author is not (the owner's call). The words of a photo's people are the names as `photo_people`
   holds them, so a rename shows in a search as it shows in the navigator. CLIP (semantic) search is not 9e.
 
 ### Phase 9e-2: the search page *(built 2026-10-04; branch `arch/phase-9e2-search-page`)*
@@ -2750,12 +2750,31 @@ photo open and the browser's Back left the page; after, the button 43 ms, Escape
 painted grid, the same row at the top, the same selection and address in 3 of 3. A People jump, click to the People view painted: 130 to
 171 ms.
 
+### Camera and lens words *(built 2026-10-09; migration 27)*
+A term typed in the search is also looked for as a prefix in the photo's camera and lens (`search_index`'s third table,
+`search_gear(camera, lens)`; docs/DATABASE.md): "canon", "r6", "eos r6", "pixel" and "24-70", "ef24", "f/2.8" (a letter-digit
+run is also indexed split, so a lens spelled `EF24-70mm` is found by `24-70`). **Search only**: the views' navigator has no
+place for a camera or a lens (Folders, dates, Keywords, People), so there is no facet and `photo_meta` gains no column.
+The words are made from the photo's raw metadata by the one extractor (`photo_meta.gear`) in the transaction of every write of
+it (`derived._put`, the index's record, bulk tag writes, sync, the journal's undo) and by `derived.rebuild_all`, the
+doctor's `--rebuild-derived`. **Migration 27 reads no photo's JSON**: it makes the camera from `photo_meta`'s make and model
+(photo_index copy: 1.0 s with its checks; the fill 0.5 s), and the lens comes with the rebuild (whole rebuild of a photo_index
+copy: 21 s, one transaction, nothing changed if interrupted). **The lens is empty on the live libraries**: the indexer asks for
+no lens field (0 of 68,324 rows hold one). Asking (`LensModel`, `LensMake`, `LensID` in `fields.METADATA_FIELDS`) changes what
+every read records, as the size does, and is the owner's to decide; until then only a photo read with the fields has a lens.
+**One name for a camera** (`photo_meta.camera_name`; findings #1003): `fields.camera_of`, by which Shift Date Taken's list
+and the photos a shift takes are chosen, is the same rule, and the page takes the name from the record's `camera` and keeps no
+copy of it. Image Details shows `camera · lens` on one line (`record.camera`, `record.lens` from `photos.page_record`; hidden for a photo
+that names neither). A search of a term costs one more FTS5 probe: "canon" (48,824 photos) 67 ms, "r6" 17 ms on a copy.
+
 ### Backlog: which photo fields are searchable *(owner, 2026-10-04; after phase 9)*
 A later review of which metadata fields search offers, as members (all of / any of / none of) and as words. Named
 so far: **camera make and model** (already columns of `photo_meta`, phase 9a-1), so a time shift can be aimed at
 one camera's photos (a camera whose clock was wrong); **lens** (not in `photo_meta` yet: a column made from the
 file's metadata as the others are, read from `raw_metadata` by the derived-table rebuild, no file re-read if the
-indexer already keeps the lens tag -- check first). Author is not used and stays out. Not part of 9e.
+indexer already keeps the lens tag -- check first). Author is not used and stays out. Not part of 9e. *Camera make and model, and the lens, are searchable words since
+2026-10-09 (above); a members filter (all of / any of / none of) by camera is not built, and a time shift aimed at one camera
+still takes its cameras from the folder's own photos, by the same name.*
 
 ### The owner's decisions for the three big projects *(2026-10-07; after waves 1-5)*
 **AI pipeline** (reports/TagPup AI pipeline optimization.md):

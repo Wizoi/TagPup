@@ -21,6 +21,9 @@ from unittest import mock
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import photo_rows  # noqa: E402
 
 from tagpup.core.dates import record_year
 from tagpup.core.suggesting import caption_from_tags as _derive_caption
@@ -323,6 +326,18 @@ class TestBuildPhotoUIRecord(unittest.TestCase):
         self.assertEqual(rec["mtime"], 123.0)
         self.assertEqual(rec["size"], 456)
         self.assertEqual(rec["year"], "2014")
+
+    def test_the_camera_and_the_lens_are_named_as_a_search_finds_them(self):
+        read = photo_rows.as_read(r"D:\Library\a.jpg", {
+            "EXIF:Make": "Lanternfly", "EXIF:Model": "Pixel 8 Pro", "EXIF:LensModel": "Objectif Elan 35mm"})
+        rec = page_record(r"D:\Library\a.jpg", read)
+        self.assertEqual(("Lanternfly Pixel 8 Pro", "Objectif Elan 35mm"), (rec["camera"], rec["lens"]))
+
+    def test_a_photo_that_names_no_camera_has_empty_text_not_none(self):
+        """The page joins what there is: a scan, and a record built of a row never read."""
+        for meta in ({}, {"raw_metadata": {"XMP:Subject": ["a"]}}):
+            rec = page_record(r"D:\Library\a.jpg", meta)
+            self.assertEqual(("", ""), (rec["camera"], rec["lens"]))
 
     def test_year_is_the_string_unknown_when_undatable(self):
         """Callers compare this field, so it must never be None or an int."""

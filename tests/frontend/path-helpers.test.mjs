@@ -239,7 +239,7 @@ describe("TagPup: a folder typed two ways is one folder", () => {
     const ctx = await load(t);
     ctx.window.localStorage.setItem(
       `tagpup_cache_${FOLDER}`,
-      JSON.stringify({ timestamp: Date.now(), photos: [photoRecord({ filename: "a.jpg" })] })
+      JSON.stringify({ version: 2, timestamp: Date.now(), photos: [photoRecord({ filename: "a.jpg" })] })
     );
     await openFolder(ctx, FOLDER);
     assert.equal(scans(ctx), 0, "the existing cache entry was ignored");

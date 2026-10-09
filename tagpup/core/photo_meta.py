@@ -12,6 +12,16 @@ photo_index's 68,466 rows on 2026-10-02:
   name is the same value again, and in no row is it the only one.
 * Make and Model: text, EXIF:Make in 65,012 rows and EXIF:Model in 63,020; XMP:Make and XMP:Model
   beside them in 228. One Make is the empty text.
+* The lens: NONE. Not one of photo_index's 68,324 rows holds a lens field (counted 2026-10-09): the indexer asks ExifTool
+  for no LensModel, LensMake or LensID (tagpup.core.fields.METADATA_FIELDS), so a library's rows name no lens until a photo
+  is read with those fields asked for -- which changes what every read records and is the owner's to decide, as the size's
+  is. `gear` reads them where a row has them: ExifTool's names EXIF:LensModel (the lens's own name, "EF24-70mm f/2.8L II
+  USM"), XMP:LensModel and Composite:LensID, with EXIF:LensMake ("Canon", "Sigma") before a name that does not say it. Run
+  without print conversion a LensID is a number, and a number is no lens.
+* Make and Model, as a photo is called by them (`gear`'s camera): the model of a Canon says the make ("Canon EOS R6m2"),
+  that of a Pixel or a Sony does not ("Pixel 8 Pro" of "Google", "DSC-X8" of "SONY"); 13,542 of the 62,877 photos
+  holding both have a model that lacks its make. The camera is the model alone when it starts with the make's first word or holds a whole word of the make
+  that names a maker, else the make and the model; it is the one name of a camera everywhere (`tagpup.core.fields.camera_of` is this).
 * GPS: ExifTool answers numbers (it is run without print conversion). Composite:GPSLatitude and
   Composite:GPSLongitude are signed decimal degrees -- west and south are negative; EXIF:GPSLatitude
   is the magnitude alone, its sign in a Ref field the indexer does not ask for -- so only the
@@ -35,6 +45,7 @@ Pure: this reads a dict and touches nothing.
 import collections
 import json
 import math
+import re
 
 Meta = collections.namedtuple("Meta", "rating make model width height latitude longitude")
 
@@ -49,6 +60,16 @@ RATINGS = range(-1, 6)
 #: The camera: the first of each that holds text.
 MAKE_FIELDS = ("EXIF:Make", "XMP:Make", "Make")
 MODEL_FIELDS = ("EXIF:Model", "XMP:Model", "Model")
+
+#: The lens: the first of these that holds text, and the make of the lens (put before a name that does not say it).
+LENS_FIELDS = ("EXIF:LensModel", "XMP:LensModel", "LensModel", "Composite:LensID", "LensID")
+LENS_MAKE_FIELDS = ("EXIF:LensMake", "XMP:LensMake", "LensMake")
+
+#: The camera and the lens a photo was taken with, as they are named and searched (tagpup.store.search_index): not columns of
+#: `photo_meta`, which a facet would read; there is no facet, and the words of them are the derived table. None for either
+#: the metadata does not say.
+Gear = collections.namedtuple("Gear", "camera lens")
+NO_GEAR = Gear(None, None)
 
 #: The size, as (width field, height field) pairs, the first pair that holds two positive whole
 #: numbers: the picture's own size, then the size the EXIF block declares. The pair is read
@@ -115,6 +136,39 @@ def _text(value):
     return value.replace("\x00", " ").strip() or None
 
 
+#: What a make says of no maker: "Corp.", "Company", "Imaging", "Digital Camera". A model holding one is not holding the make.
+GENERIC = frozenset(("company", "corp", "corporation", "co", "ltd", "inc", "digital", "camera", "cameras", "electronics",
+                     "imaging", "technologies", "technology", "international", "group"))
+
+
+def _words(text):
+    return [word.lower() for word in re.findall(r"[^\W_]+", text)]
+
+
+def camera_name(make, model):
+    """The camera as a person calls it, the one name of it (Image Details, the search, Shift Date Taken's list of cameras):
+    the model alone when it STARTS with the make's first word, without case ("Canon EOS R6m2" of "Canon"; "HTCONE" of "HTC";
+    "LG-TP260" of "LG Electronics"), or holds a whole word of the make that names a maker -- not under three letters, not a
+    GENERIC one -- ("KODAK CX4310 DIGITAL CAMERA" of "EASTMAN KODAK COMPANY"); else the make and the model ("Google Pixel
+    8 Pro", "OLYMPUS IMAGING CORP. FE45,X40"); else whichever there is, else None."""
+    if not make or not model:
+        return make or model or None
+    made = _words(make)
+    if made and model.lower().startswith(made[0]):
+        return model
+    named = {word for word in made if len(word) >= 3 and word not in GENERIC}
+    return model if named & set(_words(model)) else "%s %s" % (make, model)
+
+
+def _lens(raw):
+    """The lens a photo was taken with, or None: its name, with the lens maker's before it when the name lacks it."""
+    name = _first(raw, LENS_FIELDS, _text)
+    if name is None:
+        return None
+    maker = _first(raw, LENS_MAKE_FIELDS, _text)
+    return name if not maker or maker.lower() in name.lower() else "%s %s" % (maker, name)
+
+
 def _rating(value):
     found = _whole(value)
     return found if found in RATINGS else None
@@ -152,12 +206,25 @@ def extract(raw):
                 _first(raw, MODEL_FIELDS, _text), width, height, latitude, longitude)
 
 
+def gear(raw):
+    """The Gear of a photo's raw metadata (the dict a row holds). NO_GEAR for anything that is not a dict."""
+    if not isinstance(raw, dict):
+        return NO_GEAR
+    return Gear(camera_name(_first(raw, MAKE_FIELDS, _text), _first(raw, MODEL_FIELDS, _text)), _lens(raw))
+
+
+def load(text):
+    """The dict a row's raw_metadata column holds: the JSON text, or None. {} for a row with none, or whose text is
+    not JSON (extract and gear say nothing of it)."""
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        return {}
+
+
 def from_json(text):
     """The Meta of a row's raw_metadata as the column holds it: the JSON text, or None. EMPTY
     for a row with none, or whose text is not JSON."""
-    if not text:
-        return EMPTY
-    try:
-        return extract(json.loads(text))
-    except (TypeError, ValueError):
-        return EMPTY
+    return extract(load(text))
