@@ -8,6 +8,8 @@ a removed tag came back from it.
 import json
 import re
 
+from tagpup.core import photo_meta
+
 # Define target fields mapped to keys we want to return
 # ExifTool output keys can be namespaced or bare (without prefix).
 # We check both to be safe.
@@ -64,12 +66,6 @@ def scan_reads(field):
     return key in METADATA_FIELDS or bare in METADATA_FIELDS
 
 
-#: The fields a photo's camera is named from, the first it has: what Shift Date Taken
-#: chooses photos by. The TagPup page names cameras the same way, to offer them and to
-#: show which photos a shift is about, from a copy of these that
-#: tests/test_rules_have_one_owner.py holds to them (docs/findings.md, #74).
-CAMERA_FIELDS = ("EXIF:Model", "Model", "EXIF:Make", "Make")
-
 #: The camera of a photo that names none.
 UNKNOWN_CAMERA = "Unknown Camera"
 
@@ -78,10 +74,10 @@ ALL_CAMERAS = "All Cameras"
 
 
 def camera_of(raw_metadata):
-    """The camera a photo came from, by its metadata: the first of CAMERA_FIELDS it has,
-    else UNKNOWN_CAMERA."""
-    raw = raw_metadata or {}
-    return next((raw[field] for field in CAMERA_FIELDS if raw.get(field)), UNKNOWN_CAMERA)
+    """The camera a photo came from, by its metadata: its one name (tagpup.core.photo_meta.camera_name, which Image
+    Details and the search use), else UNKNOWN_CAMERA. What Shift Date Taken chooses photos by; the TagPup page gets the
+    same name in the photo's record (`camera`) and keeps no copy of the rule (docs/findings.md, #74, #994)."""
+    return photo_meta.gear(raw_metadata).camera or UNKNOWN_CAMERA
 
 
 def on_camera(raw_metadata, camera):

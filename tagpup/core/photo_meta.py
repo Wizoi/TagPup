@@ -20,8 +20,8 @@ photo_index's 68,466 rows on 2026-10-02:
   without print conversion a LensID is a number, and a number is no lens.
 * Make and Model, as a photo is called by them (`gear`'s camera): the model of a Canon says the make ("Canon EOS R6m2"),
   that of a Pixel or a Sony does not ("Pixel 8 Pro" of "Google", "DSC-X8" of "SONY"); 13,542 of the 62,877 photos
-  holding both have a model that lacks its make. The camera is the model alone when it begins with the make's first word,
-  else the make and the model.
+  holding both have a model that lacks its make. The camera is the model alone when it holds a whole word of the make, else the make and
+  the model; it is the one name of a camera everywhere (`tagpup.core.fields.camera_of` is this).
 * GPS: ExifTool answers numbers (it is run without print conversion). Composite:GPSLatitude and
   Composite:GPSLongitude are signed decimal degrees -- west and south are negative; EXIF:GPSLatitude
   is the magnitude alone, its sign in a Ref field the indexer does not ask for -- so only the
@@ -45,6 +45,7 @@ Pure: this reads a dict and touches nothing.
 import collections
 import json
 import math
+import re
 
 Meta = collections.namedtuple("Meta", "rating make model width height latitude longitude")
 
@@ -135,12 +136,18 @@ def _text(value):
     return value.replace("\x00", " ").strip() or None
 
 
+def _words(text):
+    return {word.lower() for word in re.findall(r"[^\W_]+", text)}
+
+
 def camera_name(make, model):
-    """The camera as a person calls it: the model when it begins with the make's first word ("Canon EOS R6m2" of
-    "Canon"), else the make and the model ("Google Pixel 8 Pro"), else whichever there is, else None."""
+    """The camera as a person calls it, the one name of it (Image Details, the search, Shift Date Taken's list of cameras):
+    the model alone when it holds a whole word of the make, without case ("Canon EOS R6m2" of "Canon"; "KODAK CX4310
+    DIGITAL CAMERA" of "EASTMAN KODAK COMPANY"), else the make and the model ("Google Pixel 8 Pro"), else whichever there
+    is, else None."""
     if not make or not model:
         return make or model or None
-    return model if model.lower().startswith(make.split()[0].lower()) else "%s %s" % (make, model)
+    return model if _words(make) & _words(model) else "%s %s" % (make, model)
 
 
 def _lens(raw):

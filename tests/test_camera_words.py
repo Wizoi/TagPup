@@ -181,6 +181,28 @@ class TheDoctor(Cameras):
         derived.repair(self.vl.path)
         self.assertEqual([self.big], self.found("24-70"))
 
+    def test_the_rebuild_reports_the_word_rows_and_the_camera_rows_it_wrote(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import doctor
+        self.vl.conn.execute("DELETE FROM search_gear WHERE rowid = ?", (self.big,))
+        self.vl.conn.commit()
+        lines = []
+        doctor.rebuild_derived(self.vl.path, apply=True, out=lines.append)
+        said = "\n".join(lines)
+        self.assertIn("5 word row(s), 5 camera and lens row(s)", said)
+        self.assertEqual([self.big], self.found("24-70"))
+
+    def test_the_rows_of_an_id_with_no_photo_are_taken_as_the_other_words_are(self):
+        # A row for an id no photo has (a photo another program deleted with its trigger absent, a stale id handed to a
+        # writer): refresh_photos takes it, as it takes the word index's.
+        self.vl.conn.execute("INSERT INTO search_gear (rowid, camera, lens) VALUES (9999, 'Ghost Camera', '')")
+        self.vl.conn.commit()
+        self.assertEqual([9999], search_index.stale(self.vl.conn, sample=None))
+        derived.refresh_photos(self.vl.conn, [9999])
+        self.vl.conn.commit()
+        self.assertEqual([], search_index.stale(self.vl.conn, sample=None))
+        self.assertEqual([], self.found("ghost"))
+
     def test_the_rebuild_is_one_transaction_and_an_interrupted_one_changes_nothing(self):
         def halfway(conn):
             raise RuntimeError("the power went")

@@ -183,12 +183,14 @@ def _write(conn, found):
                      [(photo_id,) + names for photo_id, (_words, names) in found.items()])
 
 
-def write_gear(conn, gears):
+def write_gear(conn, gears, gone=()):
     """Make the GEAR rows of the photos in `gears` ({photo id: photo_meta.Gear}) what their metadata says: a row for
-    each, empty for a photo that names no camera. In the caller's transaction; the caller read the metadata. Returns how
-    many photos; 0 for a library without the table."""
+    each, empty for a photo that names no camera; and take the rows of the ids in `gone` (photos with none). In the
+    caller's transaction; the caller read the metadata. Returns how many photos were written; 0 for a library without
+    the table."""
     if not gear_present(conn):
         return 0
+    conn.executemany("DELETE FROM %s WHERE rowid = ?" % GEAR, [(photo_id,) for photo_id in gone])
     conn.executemany("INSERT OR REPLACE INTO %s (rowid, camera, lens) VALUES (?, ?, ?)" % GEAR,
                      [(photo_id,) + gear_text(gear) for photo_id, gear in gears.items()])
     return len(gears)

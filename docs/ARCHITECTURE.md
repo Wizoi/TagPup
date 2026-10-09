@@ -2761,7 +2761,9 @@ doctor's `--rebuild-derived`. **Migration 27 reads no photo's JSON**: it makes t
 copy: 21 s, one transaction, nothing changed if interrupted). **The lens is empty on the live libraries**: the indexer asks for
 no lens field (0 of 68,324 rows hold one). Asking (`LensModel`, `LensMake`, `LensID` in `fields.METADATA_FIELDS`) changes what
 every read records, as the size does, and is the owner's to decide; until then only a photo read with the fields has a lens.
-Image Details shows `camera · lens` on one line (`record.camera`, `record.lens` from `photos.page_record`; hidden for a photo
+**One name for a camera** (`photo_meta.camera_name`; findings #994): `fields.camera_of`, by which Shift Date Taken's list
+and the photos a shift takes are chosen, is the same rule, and the page takes the name from the record's `camera` and keeps no
+copy of it. Image Details shows `camera · lens` on one line (`record.camera`, `record.lens` from `photos.page_record`; hidden for a photo
 that names neither). A search of a term costs one more FTS5 probe: "canon" (48,824 photos) 67 ms, "r6" 17 ms on a copy.
 
 ### Backlog: which photo fields are searchable *(owner, 2026-10-04; after phase 9)*
@@ -2771,7 +2773,7 @@ one camera's photos (a camera whose clock was wrong); **lens** (not in `photo_me
 file's metadata as the others are, read from `raw_metadata` by the derived-table rebuild, no file re-read if the
 indexer already keeps the lens tag -- check first). Author is not used and stays out. Not part of 9e. *Camera make and model, and the lens, are searchable words since
 2026-10-09 (above); a members filter (all of / any of / none of) by camera is not built, and a time shift aimed at one camera
-still uses the folder's own camera list.*
+still takes its cameras from the folder's own photos, by the same name.*
 
 ### The owner's decisions for the three big projects *(2026-10-07; after waves 1-5)*
 **AI pipeline** (reports/TagPup AI pipeline optimization.md):

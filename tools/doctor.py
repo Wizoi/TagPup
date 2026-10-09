@@ -177,8 +177,10 @@ def rebuild_derived(db_path, apply=False, out=print):
     after = []
     if tables:
         _before, written, after = derived.repair(db_path)
-        out("rebuilt from %d photo(s): %d keyword row(s), %d folder(s), %d photo(s) in one, %d metadata row(s)"
-            % (written["photos"], written["tag_rows"], written["folders"], written["in_a_folder"], written["meta_rows"]))
+        out("rebuilt from %d photo(s): %d keyword row(s), %d folder(s), %d photo(s) in one, %d metadata row(s), "
+            "%d word row(s), %d camera and lens row(s)"
+            % (written["photos"], written["tag_rows"], written["folders"], written["in_a_folder"], written["meta_rows"],
+               written["word_rows"], written["gear_rows"]))
     if ids:
         changed = person_ids.repair(db_path)
         out("person ids put right: %d face(s), %d listed person(s)" % (changed["faces"], changed["photo_people"]))

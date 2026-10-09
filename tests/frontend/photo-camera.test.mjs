@@ -7,6 +7,7 @@
  */
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { loadApp, FakeServer, closeAllApps, openFolder, click } from "./harness.mjs";
 
 const BASE = { tags: [], people: [], captions: [], title: "", camera: "", lens: "" };
@@ -55,4 +56,43 @@ test("the panel shows the camera and the lens on one line, and nothing for a pho
   assert.deepEqual(shown(), { text: "", title: "", hidden: true }, "a scan has no camera: no line, no stale one from the photo before");
   await open("e.jpg");
   assert.equal(shown().hidden, true, "a record from a server that does not say it");
+});
+
+test("Shift Date Taken's list of cameras is by the record's camera, the name Image Details shows", async (t) => {
+  const named = (filename, camera) => ({ ...BASE, path: "D:\\Pictures\\Shift\\" + filename, filename, camera });
+  const fake = new FakeServer()
+    .on("/api/folder/scan", [named("a.jpg", "Google Pixel 8 Pro"), named("b.jpg", "Pixel 8 Pro"), named("c.jpg", "Google Pixel 8 Pro"),
+                             named("d.jpg", ""), { path: "D:\\Pictures\\Shift\\e.jpg", filename: "e.jpg", tags: [], people: [], captions: [], title: "" }])
+    .on("/api/taxonomy/tree", [])
+    .on("/api/people", [])
+    .on("/api/tags", [])
+    .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
+    .on("/api/folder/suggest-status", { status: "idle" });
+  const { window, document } = await loadApp("tagpup", { server: fake, t });
+  await openFolder({ document, window }, "D:\\Pictures\\Shift");
+  await settle(window, 60);
+  const options = [...document.getElementById("timeshift-camera-select").options].map((o) => [o.value, o.textContent]);
+  assert.deepEqual(options, [
+    ["All Cameras", "All Cameras (5 photos)"],
+    ["Google Pixel 8 Pro", "Google Pixel 8 Pro (2 photos)"],
+    ["Pixel 8 Pro", "Pixel 8 Pro (1 photos)"],
+    ["Unknown Camera", "Unknown Camera (2 photos)"],
+  ], "a make-less model and the same model with its make are two cameras, as the server's shift takes them");
+});
+
+// jsdom does not lay a page out, so what keeps the camera line from widening the details grid (a grid item is as wide as its
+// content unless it may shrink: the grid scrolled sideways, as #720's did) is read from the stylesheet. The long live strings
+// ('KODAK CX4310 DIGITAL CAMERA' with a lens; the camera and lens line of a phone) are cut with an ellipsis and in the tooltip.
+test("the grid item may shrink and the camera line is cut with an ellipsis, not wrapped or widening", () => {
+  const css = readFileSync(new URL("../../web/tagpup/style.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = (selector) => {
+    const found = css.split("}").map((block) => block.split("{")).find(([head]) => head.trim() === selector);
+    assert.ok(found, `${selector} has a rule`);
+    return found[1];
+  };
+  assert.match(rule(".detail-item"), /min-width:\s*0\b/);
+  const line = rule(".detail-value.one-line");
+  assert.match(line, /overflow:\s*hidden/);
+  assert.match(line, /text-overflow:\s*ellipsis/);
+  assert.match(line, /white-space:\s*nowrap/);
 });

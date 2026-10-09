@@ -236,7 +236,7 @@ def _put(conn, states, batch, gone=()):
     # The word index, for every photo asked about: its captions and people are in no table of these, so what changed
     # here says nothing of whether its words did. The camera and lens words too: a lens is in no column of photo_meta.
     search_index.refresh(conn, list(states) + list(gone))
-    search_index.write_gear(conn, {photo_id: state[3] for photo_id, state in states.items()})
+    search_index.write_gear(conn, {photo_id: state[3] for photo_id, state in states.items()}, gone)
     return len(changed) + len(gone)
 
 
@@ -434,8 +434,9 @@ def rebuild_all(conn):
     folders, in_a_folder = _write_folders(conn, placed, _wanted(set(f for f in placed.values() if f is not None)))
     words = search_index.rebuild(conn)
     search_index.optimize_gear(conn)
+    gear_rows = conn.execute("SELECT COUNT(*) FROM search_gear_docsize").fetchone()[0] if search_index.gear_present(conn) else 0
     return {"photos": len(placed), "tag_rows": len(tag_rows), "folders": folders, "in_a_folder": in_a_folder,
-            "meta_rows": len(meta_rows), "word_rows": words}
+            "meta_rows": len(meta_rows), "word_rows": words, "gear_rows": gear_rows}
 
 
 def listing(conn, photo_ids, node_ids=()):

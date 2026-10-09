@@ -88,6 +88,15 @@ class TheCameraAsItIsCalled(unittest.TestCase):
         self.assertEqual("Harbourlight HL 400", photo_meta.camera_name("Harbourlight Imaging Corp.", "Harbourlight HL 400"),
                          "a make of several words is compared by its first")
 
+    def test_a_model_holding_a_word_of_the_make_anywhere_is_the_name(self):
+        # Live shapes (photo_index, counted 2026-10-09).
+        self.assertEqual("KODAK CX4310 DIGITAL CAMERA",
+                         photo_meta.camera_name("EASTMAN KODAK COMPANY", "KODAK CX4310 DIGITAL CAMERA"))
+        self.assertEqual("Canon PowerShot ELPH 100 HS", photo_meta.camera_name("Canon", "Canon PowerShot ELPH 100 HS"))
+        self.assertEqual("Tidewater Skiff 8", photo_meta.camera_name("Tidewater", "Skiff 8"), "a word inside another is not one")
+        self.assertEqual("Tidewater Tidewatering Skiff 8", photo_meta.camera_name("Tidewater", "Tidewatering Skiff 8"))
+        self.assertEqual("Fjord X-T4", photo_meta.camera_name("FJORD", "Fjord X-T4"), "without case")
+
     def test_a_model_that_does_not_is_put_after_the_make(self):
         self.assertEqual("Tidewater Skiff 8", photo_meta.camera_name("Tidewater", "Skiff 8"))
         self.assertEqual("SONY DSC-X8", photo_meta.camera_name("SONY", "DSC-X8"))

@@ -127,10 +127,9 @@ export function wireRenameAndTimeShift() {
     });
 }
 
-// The camera a photo came from, as tagpup.core.fields names it for the server's
-// time shift (tests/test_rules_have_one_owner.py holds this copy to it): the first
-// of CAMERA_FIELDS the photo has, else UNKNOWN_CAMERA. ALL_CAMERAS asks for every one.
-export const CAMERA_FIELDS = ['EXIF:Model', 'Model', 'EXIF:Make', 'Make'];
+// The camera a photo came from is named by the server (tagpup.core.photo_meta.camera_name, the photo record's `camera`),
+// as it chooses the photos of a time shift by it (tagpup.core.fields.camera_of): the page keeps no copy of the rule.
+// UNKNOWN_CAMERA is the name of a photo that has none; ALL_CAMERAS asks for every one.
 export const UNKNOWN_CAMERA = 'Unknown Camera';
 export const ALL_CAMERAS = 'All Cameras';
 
@@ -174,9 +173,7 @@ export function populateCameraModelsDropdown() {
 
 /** The camera a photo came from, as the time-shift dropdown labels it. */
 export function cameraModelOf(photo) {
-    const raw = (photo && photo.raw_metadata) || {};
-    const field = CAMERA_FIELDS.find(name => raw[name]);
-    return field ? raw[field] : UNKNOWN_CAMERA;
+    return (photo && photo.camera) || UNKNOWN_CAMERA;
 }
 
 /** Is `photo` one a time shift for `camera` is about? As the server decides it. */
