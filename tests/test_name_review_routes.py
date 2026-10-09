@@ -91,6 +91,18 @@ class Routes(TwoSams, unittest.TestCase):
             self.assertEqual(200, self.post(key=QUILL, action="unname").status_code, "a rehearsal reads")
         self.assertEqual((None, QUILL, "manual"), self.face(self.faces[0]))
 
+    def test_activity_says_how_many_wait_and_where_to_open_them(self):
+        app = web.create_app("tagpup", startup=self.library, ports={"tagpup": 8090, "tuner": 8080})
+        app.testing = True
+        found = app.test_client().get("/api/activity/attention").get_json()
+        mine = next(each for each in found["libraries"] if each["name"] == "harbour")
+        self.assertEqual((2, 2), (mine["names_to_review"], found["names_to_review"]))
+        self.assertEqual("http://localhost:8080/harbour/?names-to-review=1", mine["names_url"])
+        self.post(key=QUILL, action="dismiss", apply=True)
+        self.post(key="Sam", action="dismiss", apply=True)
+        found = app.test_client().get("/api/activity/attention").get_json()
+        self.assertEqual((0, None), (found["names_to_review"], found["libraries"][0]["names_url"]))
+
     def test_it_answers_this_pc_only(self):
         far = self.clients["tuner"].get(LIST, environ_overrides={"REMOTE_ADDR": "10.1.2.3"})
         self.assertEqual(403, far.status_code)
