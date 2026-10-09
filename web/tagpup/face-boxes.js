@@ -47,7 +47,7 @@ import { state } from './state.js';
 import { faceLayer, imageViewer, mainImage } from './elements.js';
 import { isJustLooking } from './looking.js';
 import { setStatus } from './status.js';
-import { namesAPerson } from './tags.js';
+import { fetchKnownTagsAndPeople, namesAPerson } from './tags.js';
 
 /** How many suggestions the panel lists, and the room it keeps from the window's edge. */
 const FACE_SUGGESTIONS = 5;
@@ -577,6 +577,8 @@ export async function nameFaceAs(face, who) {
             return false;
         }
         if (!res.ok) {
+            // A person merged or deleted in another window (404): what this page holds of the people is out of date.
+            if (res.status === 404) fetchKnownTagsAndPeople();
             say(`${shown} is on the photo, but the face was not named: ${await whyRefused(res)}`);
             setStatus('error', 'The face was not named');
             return false;

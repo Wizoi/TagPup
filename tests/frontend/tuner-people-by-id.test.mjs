@@ -236,6 +236,36 @@ describe("naming faces as one of two people called alike", () => {
     assert.ok(said.some((text) => text.includes("has not read the people")), said.join("|"));
   });
 
+  test("a person merged or deleted in another window (404) is told in the server's words and the people are read again", async (t) => {
+    const ctx = await withGrid(t);
+    ctx.window.confirm = () => true;
+    const said = [];
+    ctx.window.alert = (text) => said.push(String(text));
+    ctx.server.first("/api/faces/match-bulk", { success: false, error: "That person is no longer in the tag tree (they may have been merged or removed in another window): reload the page." }, { status: 404 });
+    const asked = (what) => ctx.server.urls().filter((url) => url.includes(what)).length;
+    const before = [asked("/api/people?records=1"), asked("/api/people-with-counts")];
+    type(ctx, "Sam · Pets");
+    click(ctx.window, ctx.document.getElementById("btn-reassign-selected"));
+    await wait(ctx.window, 120);
+    assert.match(said[0], /no longer in the tag tree/);
+    assert.equal(asked("/api/people?records=1"), before[0] + 1, "the people are read again");
+    assert.equal(asked("/api/people-with-counts"), before[1] + 1, "so is the list");
+  });
+
+  test("a refused rename says why, in the server's words", async (t) => {
+    const ctx = await openReviewPeople(t);
+    click(ctx.window, ctx.rows()[1]);
+    await flush(ctx.window, 8);
+    ctx.server.first("/api/person/rename", { success: false, error: "Sammy is already filed there: merge them instead." }, { status: 400 });
+    const said = [];
+    ctx.window.alert = (text) => said.push(String(text));
+    ctx.window.prompt = () => "Sammy";
+    ctx.window.confirm = () => true;
+    click(ctx.window, ctx.document.getElementById("btn-rename-person"));
+    await wait(ctx.window, 100);
+    assert.match(said[0], /merge them instead/);
+  });
+
   test("renaming the second Sam renames that person: the id travels with the old name", async (t) => {
     const ctx = await openReviewPeople(t);
     click(ctx.window, ctx.rows()[1]);

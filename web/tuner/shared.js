@@ -3,6 +3,7 @@ import { api } from './common/api.js';
 import { choosePerson } from './common/person-choice.js';
 import { GROUP_SEPARATOR, PeopleDirectory, personLabel, personTitle, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
+import { upper } from './hooks.js';
 import { modeSelect, showMatchedToggle } from './elements.js';
 
 // ------------------------------------------------------------------ paths --
@@ -96,6 +97,17 @@ export function resolveTyped(text, title = 'Which person?') {
         }).then(person => (person ? { person } : null));
     }
     return Promise.resolve(null);
+}
+
+/**
+ * A write refused with 404 says the person it named is gone (merged or deleted in another window; identity by id never makes
+ * anyone of a stale id): what this page holds of the people is out of date, so it reads the lists again. The refusal's own words
+ * are the caller's to show.
+ */
+export function personGone(status) {
+    if (status !== 404) return;
+    fetchKnownPeople();
+    if (upper.fetchPeopleWithCounts) upper.fetchPeopleWithCounts(true, true);
 }
 
 /** The label of the person a list row names (its nested `person`, else the id looked up, else the name). */

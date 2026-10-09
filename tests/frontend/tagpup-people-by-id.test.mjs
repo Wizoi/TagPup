@@ -187,6 +187,18 @@ describe("the panel of the second face", () => {
     assert.equal(ctx.posts("/api/face/match")[0].body.person_id, 41);
   });
 
+  test("a person merged or deleted in another window (404) is told, and the people are read again", async (t) => {
+    const ctx = await openPhoto(t, { extra: (server) => server.first("/api/face/match",
+      { success: false, error: "That person is no longer in the tag tree: reload the page." }, { status: 404 }) });
+    await ctx.openFace(1);
+    const asked = () => ctx.server.urls().filter((url) => url.includes("/api/people?records=1")).length;
+    const before = asked();
+    click(ctx.window, ctx.panel().querySelector(".face-panel-suggestion"));
+    await ctx.wait(100);
+    assert.match(ctx.panel().querySelector(".face-panel-message").textContent, /no longer in the tag tree/);
+    assert.ok(asked() > before, "what the page holds of the people is read again");
+  });
+
   test("declining the question writes nothing", async (t) => {
     const ctx = await openPhoto(t);
     await ctx.openFace(1);

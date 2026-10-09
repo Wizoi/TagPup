@@ -10,7 +10,7 @@ import {
     panelContent,
 } from './elements.js';
 import { upper } from './hooks.js';
-import { fetchKnownPeople, resolveTyped, updateURLParams } from './shared.js';
+import { fetchKnownPeople, personGone, resolveTyped, updateURLParams } from './shared.js';
 import { clearFaceDetails, updateMatchingSelectionUI } from './selection.js';
 import { putFacesBack, removeFacesFromGrid, updateTabLabels } from './grid-parts.js';
 
@@ -432,7 +432,9 @@ export function postMatchBulk(faceIds, who) {
                 const errData = await res.json();
                 if (errData && errData.error) errMsg = errData.error;
             } catch(e) {}
-            throw new Error(errMsg);
+            const failure = new Error(errMsg);
+            failure.status = res.status;
+            throw failure;
         }
         return res.json();
     })
@@ -508,6 +510,7 @@ export function postMatchBulk(faceIds, who) {
     .catch(err => {
         console.error('Error in bulk reassign:', err);
         alert('Error reassigning faces: ' + err.message);
+        personGone(err.status);
         return null;
     })
     .finally(() => {
@@ -535,8 +538,18 @@ function postRenamePerson(oldName, newName, personId = null) {
         },
         body: JSON.stringify(personId !== null ? { person_id: personId, old_name: oldName, new_name: newName } : { old_name: oldName, new_name: newName })
     })
-    .then(res => {
-        if (!res.ok) throw new Error('Rename operation failed');
+    .then(async res => {
+        if (!res.ok) {
+            // The server's own words: "merge them instead", a stale person.
+            let said = 'Rename operation failed';
+            try {
+                const body = await res.json();
+                if (body && (body.error || body.description)) said = body.error || body.description;
+            } catch (e) { /* the generic sentence */ }
+            const failure = new Error(said);
+            failure.status = res.status;
+            throw failure;
+        }
         return res.json();
     })
     .then(data => {
@@ -558,6 +571,7 @@ function postRenamePerson(oldName, newName, personId = null) {
     .catch(err => {
         console.error('Error renaming person:', err);
         alert('Error renaming person: ' + err.message);
+        personGone(err.status);
     })
     .finally(() => {
         if (btnRenamePerson) {

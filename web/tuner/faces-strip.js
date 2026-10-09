@@ -9,7 +9,7 @@ import {
 import { state } from './state.js';
 import { emptyState, panelContent, photoList } from './elements.js';
 import { UNKNOWN_YEAR } from './rules.js';
-import { resolveTyped, updateURLParams } from './shared.js';
+import { personGone, resolveTyped, updateURLParams } from './shared.js';
 import { openNewPersonModal } from './new-person.js';
 
 const mainImage = document.getElementById('main-image');
@@ -478,7 +478,9 @@ function postMatch(faceId, who) {
                 const errData = await res.json();
                 if (errData && errData.error) errMsg = errData.error;
             } catch(e) {}
-            throw new Error(errMsg);
+            const failure = new Error(errMsg);
+            failure.status = res.status;
+            throw failure;
         }
         return res.json();
     })
@@ -495,6 +497,7 @@ function postMatch(faceId, who) {
     .catch(err => {
         console.error('Error matching face:', err);
         alert('Error matching face: ' + err.message);
+        personGone(err.status);
     });
 }
 

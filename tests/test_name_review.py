@@ -21,7 +21,7 @@ from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, WREN, TwoSams, look,
 from tagpup.core.result import NotFound, Refused  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import inspect, name_review  # noqa: E402
-from tagpup.store import journal, people  # noqa: E402
+from tagpup.store import journal, people, taxonomy  # noqa: E402
 
 QUILL = "Wren Quill"          # a name no tag has
 SLIP = "Wren Halowway"        # a slip of the pen for WREN's name
@@ -239,6 +239,15 @@ class NamesToReview(TwoSams, unittest.TestCase):
         self.assertEqual(1, name_review.count(self.library))
         self.assertEqual(0, name_review.count(other), "another library holds none of this library's names")
         self.assertEqual([], look(other_path, "SELECT * FROM name_review_dismissals"))
+
+    def test_a_person_renamed_while_the_list_is_open_is_still_the_one_chosen(self):
+        wren = self.node(WREN)
+        name_review.entries(self.library)               # the dialog is open, and offers Wren Halloway
+        write(self.path, lambda conn: taxonomy.move_branch(conn, WREN, "People/Wren Ashdown"))      # renamed in another window
+        done = name_review.resolve(self.library, QUILL, name_review.LINK, person_id=wren, apply=True)
+        self.assertTrue(done.ok, done.message())
+        self.assertIn("People/Wren Ashdown", done.details["sentence"], "the sentence says who they are now")
+        self.assertEqual((wren, "Wren Ashdown"), self.face(self.faces[0])[:2])
 
     # ---- how it fails ----------------------------------------------------------------------------
 
