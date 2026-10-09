@@ -70,6 +70,7 @@ from tagpup.services import faces as face_records
 from tagpup.services import duplicate_rows as duplicate_rows_service
 from tagpup.services import faces_from_tags as faces_from_tags_service
 from tagpup.services import tags_from_faces as tags_from_faces_service
+from tagpup.services import reread_fields as reread_fields_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import damaged_photos
@@ -1594,6 +1595,89 @@ def tags_from_faces(ctx, apply_, guesses, folder):
         for why, count in sorted(reasons.items(), key=lambda pair: -pair[1])[:5]:
             console.print("  %d x %s" % (count, why), markup=False, soft_wrap=True)
     if result.refused or result.errors:
+        raise SystemExit(1)
+
+
+def _duration(seconds):
+    """A number of seconds as a person reads it: "45 s", "12 min", "1 h 20 min"."""
+    if seconds < 90:
+        return "%d s" % seconds
+    if seconds < 5400:
+        return "%d min" % round(seconds / 60.0)
+    return "%d h %d min" % divmod(round(seconds / 60.0), 60)
+
+
+@cli.command("reread-fields")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Read the files and record what they hold, a chunk of photos to a change of the journal. Without it, "
+                   "only counts, and times a sample of 100 files.")
+@click.option("--folder", default=None, type=click.Path(file_okay=False),
+              help="Only the photos under this folder, at any depth (a second location of a root works). Naming a folder "
+                   "on a network share is what allows its files to be read. A folder the library holds no photo under is "
+                   "refused.")
+@click.option("--shares", "shares_named", is_flag=True,
+              help="Also read photos on a network share, whichever folder. Without --folder or this, they are counted and "
+                   "left alone.")
+@click.pass_context
+def reread_fields(ctx, apply_, folder, shares_named):
+    """Read again, for the metadata fields asked for now (the camera's LENS), the photos read before they were. The
+    lens is in no row yet: ExifTool was asked for the make and model only.
+
+    Reads metadata with ExifTool and nothing else: no picture is decoded, no model or graphics card is used, no photo
+    file is written, and faces, names and embeddings are not touched. The rows read are recorded as one change of the
+    journal each 2,000 photos (`history`, `undo` take them back), and the camera and lens words of search are rebuilt for
+    exactly those photos as they are written -- no `tools/doctor.py --rebuild-derived` needed.
+
+    A dry run unless --apply: counts, and the time a sample of 100 files took with an estimate for the rest. Safe to stop
+    and run again: a photo read is not read twice. Files that are missing, unreadable, changed on disk since they were
+    indexed (`sync` reads those), or on a network share nobody named are counted and left. Close the apps first or not:
+    a photo saved in the app while it is read is skipped and read by the next run."""
+    library = _existing_library(ctx)
+    exiftool = get_exiftool_path(library.path, read_only=not apply_)
+
+    def progress(stage, counts):
+        if stage == "chunk":
+            console.print("  %d of %d photo(s) read, %d written" % (counts["done"], counts["total"], counts["written"]),
+                          markup=False)
+
+    result = reread_fields_service.reread_fields(library, exiftool, apply=apply_, folder=folder,
+                                                 shares_named=shares_named, progress=progress)
+    if result.refused or result.errors:
+        for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
+            console.print(line, markup=False, soft_wrap=True)
+        if result.refused or not result.details["counts"]:
+            raise SystemExit(1)
+    counts = result.details["counts"]
+    if folder:
+        console.print("Only the photos under the folder given, and its subfolders.")
+    console.print("%d photo(s) in scope; %d already read with the fields; %d never read (indexing reads those)."
+                  % (counts["rows"], counts["current"], counts["never_read"]))
+    console.print("%d photo(s) to read again." % counts["to_read"])
+    for what, text in (("missing", "file(s) not found (a folder on an unplugged drive looks the same): left"),
+                       ("changed", "file(s) changed on disk since indexed: left for `sync`, which reads them with these fields"),
+                       ("on_shares", "photo(s) on a network share nobody named: left (--folder or --shares names it)"),
+                       ("share_away", "photo(s) on a network share that did not answer: left")):
+        if counts.get(what):
+            console.print("  %d %s" % (counts[what], text), markup=False, soft_wrap=True)
+    if not apply_:
+        sample = result.details["sample"]
+        if sample and sample["per_second"]:
+            console.print("Timed %d file(s): %.1f a second, %d unreadable; %d of them hold a lens."
+                          % (sample["read"], sample["per_second"], sample["unreadable"], sample["with_lens"]))
+            console.print("About %s to read the %d photo(s)." % (_duration(result.details["estimate_seconds"]),
+                                                                counts["to_read"]))
+        console.print("Nothing changed. --apply reads them and writes the rows; stop and run it again any time.")
+        return
+    console.print("Wrote %d row(s) in %d change(s) of the journal (`history` lists them; `undo <id> --apply` takes one back)."
+                  % (result.changed, len(result.details["changes"])), markup=False, soft_wrap=True)
+    for what in ("unreadable", "changed_while_read", "gone_while_read"):
+        if counts.get(what):
+            console.print("  %d file(s) %s: left" % (counts[what], what.replace("_", " ")))
+    if result.skipped:
+        console.print("  %d row(s) saved in the app, or by another run, while their files were read: left for the next run"
+                      % len(result.skipped))
+    console.print("Still to read: %d photo(s)." % result.details["remaining"])
+    if result.errors:
         raise SystemExit(1)
 
 
