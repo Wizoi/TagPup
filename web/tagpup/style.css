@@ -580,6 +580,13 @@ body {
     color: var(--text-primary);
 }
 
+/* One line however narrow the panel is: the rest is in the tooltip (the camera and lens, photo.js). */
+.detail-value.one-line {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .detail-value.font-bold {
     font-weight: 600;
 }

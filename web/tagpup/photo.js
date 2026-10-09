@@ -11,7 +11,7 @@ import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
 import {
     btnCancelDateModal, btnCarryForward, btnCloseDateModal, btnEditDateTaken, btnSaveDateModal,
-    dateTakenModal, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
+    dateTakenModal, detailCamera, detailCameraItem, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
     emptyState, facesSection, facesStrip, facesSummary, folderViewContent, folderViewHeader,
     folderViewStats, inputAddPerson, inputAddTag, inputDateTaken,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
@@ -309,6 +309,7 @@ export function showPhoto(path) {
     const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
     if (shownDate) dateVal = formatFriendlyDateSingle(shownDate, getFolderDateStats());
     detailDateTaken.textContent = dateVal;
+    showCamera(photo);
     // The same photo shown again -- a refresh -- keeps a title being typed.
     const typing = state.titleShown.path === path && inputPhotoTitle.value !== state.titleShown.title;
     if (!typing) inputPhotoTitle.value = photo.title || '';
@@ -317,6 +318,17 @@ export function showPhoto(path) {
 
     renderTags(photo.tags);
     upper.renderSuggestionsPanel(photo.path);
+}
+
+/**
+ * The camera and the lens a photo was taken with, on one line ("Tidewater TX R6m2 · TX24-70mm f/2.8L"), as the server names
+ * them (photo_meta.gear); the line is not shown for a photo whose metadata names neither (a scan, a screenshot).
+ */
+export function showCamera(photo) {
+    const line = [photo.camera, photo.lens].filter(Boolean).join(' · ');
+    detailCamera.textContent = line;
+    detailCamera.title = line;
+    detailCameraItem.classList.toggle('hidden', !line);
 }
 
 /**
