@@ -2976,7 +2976,7 @@ doctor's `--rebuild-derived`. **Migration 27 reads no photo's JSON**: it makes t
 copy: 21 s, one transaction, nothing changed if interrupted). **The lens fields are asked for now** (2026-10-09, owner's
 decision): `fields.METADATA_FIELDS` holds `LensModel`, `LensMake` and `LensID` (and `EXIF:`/`XMP:`/`Composite:` forms), so every
 read records them -- 0 of 68,324 rows of photo_index held one before. **A row says which read it comes from**:
-`TagPup:ReadGeneration` in its `raw_metadata` (`fields.READ_GENERATION`, 2 = the lens fields are read; findings #1012), written
+`TagPup:ReadGeneration` in its `raw_metadata` (`fields.READ_GENERATION`, 2 = the lens fields are read; findings #1019), written
 by every full read (the indexer's, sync's, refresh_rows', a save's read back) and absent from a row read before: a photo with no
 lens has no lens key either way, and only this tells "read, holds none" from "read before". No migration, no stamp on existing
 rows. **The re-read** of the rows read before is `tagpup_cli.py reread-fields` (`tagpup.services.reread_fields`, on the
@@ -2984,11 +2984,19 @@ refresh's own reading and edits): metadata only (ExifTool; no picture decoded, n
 faces, names, embeddings untouched), a dry run by default that counts and times a 100-file sample, `--apply` writing 2,000
 photos to a change of the journal (so it is resumable and undoable chunk by chunk; the derived tables, `photo_meta` and the
 camera and lens words, are rebuilt for exactly those photos by the journal's own write, so no doctor run is needed),
-`--folder` for one folder first. Left alone and counted: rows never read, files missing or unreadable, files changed since
-indexed (sync reads those with the same fields and sees the size change `library.reread_resized_pictures` is about; this
-never writes a new stamp over it), photos on a network share nobody named (`--folder` or `--shares` names it), a row the app
-saved meanwhile (read by the next run). Two runs at once, or one beside the app, are held apart by the journal's expected
-values: the second to write finds the row changed and skips it. Raise `READ_GENERATION` when a field is added that rows
+`--folder` for one folder first. **It writes a row's `raw_metadata` only** (and a `document_id` where the row has none): never
+tags, captions, people, modified time or size, and prints per chunk how many rows differ from their file in each field. A row
+whose tags, captions or people differ from the file's is "disagrees" and left for sync or refresh_rows (findings #1024). Left
+alone and counted: rows never read, rows found damaged before (`ExifTool:Error` in their raw_metadata: not tried on every run),
+files missing or unreadable, files changed since indexed (sync reads those with the same fields and sees the size change
+`library.reread_resized_pictures` is about; this never writes a new stamp over it), photos on a network share nobody named
+(`--folder` or `--shares` names it; every look at a share is bounded, and after the first that does not answer in 10 s the rest
+of its rows are left), a row the app saved meanwhile (read by the next run). **Stops** over the whole run, not per chunk: at a
+chunk whose every file is gone (a drive unplugged, said once, not 34 times), and when a run that has read none of 10 or more
+files finds ExifTool cannot be started; merely unreadable files are counted and the run ends as it began (findings #1023). Two
+runs at once, or one beside the app, are held apart by the journal's expected values: the second to write finds the row changed
+and skips it. The camera's placeholder lens `24.0-70.0 mm` (167 of 1,499 kr-track photos) is kept as the lens and found by
+`24-70` (the words also hold a spelling without a pointless `.0`; findings #1027). Raise `READ_GENERATION` when a field is added that rows
 already read should gain, and the same command reads them.
 **One name for a camera** (`photo_meta.camera_name`; findings #1003): `fields.camera_of`, by which Shift Date Taken's list
 and the photos a shift takes are chosen, is the same rule, and the page takes the name from the record's `camera` and keeps no
