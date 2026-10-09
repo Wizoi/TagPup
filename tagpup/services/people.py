@@ -75,7 +75,7 @@ def link_name(library, name, apply=False):
         if person is None:
             result.refuse("No person is called %s: there is no one to link the name to." % name)
             return result
-        counts = _unlinked(conn, name)
+        counts = person_ids.unlinked_counts(conn, name)
     finally:
         conn.close()
     result.details.update(faces_by_hand=counts[0], faces_by_guess=counts[1], listed=counts[2], applied=False)
@@ -100,15 +100,6 @@ def link_name(library, name, apply=False):
     result.changed = done[0]
     result.details.update(applied=True, change=done[1])
     return result
-
-
-def _unlinked(conn, name):
-    """(faces decided by hand, other faces, listed people) called `name` (without case) that hold no id."""
-    by_hand, by_guess = conn.execute(
-        "SELECT COALESCE(SUM(name_source = 'manual'), 0), COALESCE(SUM(COALESCE(name_source, '') <> 'manual'), 0)"
-        " FROM faces WHERE tag_id IS NULL AND name = ? COLLATE NOCASE", (name,)).fetchone()
-    listed = conn.execute("SELECT COUNT(*) FROM photo_people WHERE tag_id IS NULL AND name = ? COLLATE NOCASE", (name,)).fetchone()[0]
-    return by_hand, by_guess, listed
 
 
 def tags_by_id(library):

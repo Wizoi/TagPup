@@ -694,6 +694,16 @@ def unresolved(conn):
     return Unresolved(dict(none), dict(several), branch, counted)
 
 
+def unlinked_counts(conn, name):
+    """(faces decided by hand, other faces, listed people) called `name` (without case) that hold no id: what `link_added` for
+    that name would link, counted for the owner's dry run."""
+    by_hand, by_guess = conn.execute(
+        "SELECT COALESCE(SUM(name_source = 'manual'), 0), COALESCE(SUM(COALESCE(name_source, '') <> 'manual'), 0)"
+        " FROM faces WHERE tag_id IS NULL AND name = ? COLLATE NOCASE", (name,)).fetchone()
+    listed = conn.execute("SELECT COUNT(*) FROM photo_people WHERE tag_id IS NULL AND name = ? COLLATE NOCASE", (name,)).fetchone()[0]
+    return by_hand, by_guess, listed
+
+
 def unlinked_faces(conn, name):
     """The ids of the faces called `name` (without case) that hold no id: what the owner's action `link_added(conn, {key(name)})`
     -- the CLI's `people link-name`, the names to review -- would link, read first so the change can be journaled."""
