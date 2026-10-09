@@ -116,6 +116,10 @@ class MetadataExtractor:
     def _structure(self, path, meta, people):
         """Turn one ExifTool record into the shape the rest of the pipeline expects."""
         cleaned = structured(meta)
+        # An empty answer or an error is not a read of the fields (and an empty raw_metadata is how a
+        # file that could not be read is told, tagpup.services.refresh_rows.reread).
+        if cleaned and not any(cleaned.get(key) for key in READ_ERROR_KEYS):
+            cleaned[fields.READ_GENERATION_KEY] = fields.READ_GENERATION
 
         tags = vocabulary.extract_tags(cleaned)
 
@@ -361,6 +365,11 @@ def raw_metadata(et, photo_path, record=None):
     only those the scan reads (fields.scan_reads) are kept."""
     if record is None:
         found = et.get_tags([photo_path], tags=METADATA_FIELDS)
-        return structured(found[0] if found else {})
-    return structured({key: value for key, value in record.items()
-                       if key == "SourceFile" or fields.scan_reads(key)})
+        cleaned = structured(found[0] if found else {})
+    else:
+        cleaned = structured({key: value for key, value in record.items()
+                              if key == "SourceFile" or fields.scan_reads(key)})
+    # Both are a read of every field in METADATA_FIELDS (the save asks its read back for them all), and
+    # replace the row's raw_metadata whole.
+    cleaned[fields.READ_GENERATION_KEY] = fields.READ_GENERATION
+    return cleaned

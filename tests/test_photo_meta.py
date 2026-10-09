@@ -161,6 +161,16 @@ class TheLens(unittest.TestCase):
         self.assertEqual("A name", gear_of(**{"Composite:LensID": 61182, "EXIF:LensModel": "A name"}).lens)
         self.assertIsNone(gear_of(**{"EXIF:LensModel": "  "}).lens)
 
+    def test_a_lens_id_that_is_hex_bytes_is_no_name(self):
+        # Without print conversion a Nikon's Composite:LensID is the lens's eight bytes (docs/findings.md, #1013).
+        self.assertIsNone(gear_of(**{"Composite:LensID": "A1 40 18 37 2C 34 A4 06"}).lens)
+        self.assertIsNone(gear_of(**{"LensID": "137"}).lens)
+        self.assertEqual("A name", gear_of(**{"Composite:LensID": "A1 40 18 37 2C 34 A4 06", "EXIF:LensModel": "A name"}).lens)
+        # A hex-looking name in the lens's own field is still the lens's name.
+        self.assertEqual("ADE", gear_of(**{"EXIF:LensModel": "ADE"}).lens)
+        self.assertEqual("Pixel 8 Pro back camera 6.9mm f/1.68",
+                         gear_of(**{"Composite:LensID": "Pixel 8 Pro back camera 6.9mm f/1.68"}).lens)
+
     def test_the_lens_maker_goes_before_a_name_that_lacks_it(self):
         self.assertEqual("Tidewater 24-70mm F2.8",
                          gear_of(**{"EXIF:LensModel": "24-70mm F2.8", "EXIF:LensMake": "Tidewater"}).lens)

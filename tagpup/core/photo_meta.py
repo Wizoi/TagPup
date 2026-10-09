@@ -12,12 +12,13 @@ photo_index's 68,466 rows on 2026-10-02:
   name is the same value again, and in no row is it the only one.
 * Make and Model: text, EXIF:Make in 65,012 rows and EXIF:Model in 63,020; XMP:Make and XMP:Model
   beside them in 228. One Make is the empty text.
-* The lens: NONE. Not one of photo_index's 68,324 rows holds a lens field (counted 2026-10-09): the indexer asks ExifTool
-  for no LensModel, LensMake or LensID (tagpup.core.fields.METADATA_FIELDS), so a library's rows name no lens until a photo
-  is read with those fields asked for -- which changes what every read records and is the owner's to decide, as the size's
-  is. `gear` reads them where a row has them: ExifTool's names EXIF:LensModel (the lens's own name, "EF24-70mm f/2.8L II
+* The lens: NONE in the libraries as they stand. Not one of photo_index's 68,324 rows holds a lens field (counted 2026-10-09):
+  the indexer asked ExifTool for no LensModel, LensMake or LensID before then. It asks now (tagpup.core.fields.METADATA_FIELDS),
+  so a photo read from now on has them, and `tagpup_cli.py reread-fields` (tagpup.services.reread_fields) reads the photos read
+  before. `gear` reads them where a row has them: ExifTool's names EXIF:LensModel (the lens's own name, "EF24-70mm f/2.8L II
   USM"), XMP:LensModel and Composite:LensID, with EXIF:LensMake ("Canon", "Sigma") before a name that does not say it. Run
-  without print conversion a LensID is a number, and a number is no lens.
+  without print conversion a LensID is a number (Canon, Tamron: 137, 61182), the lens's eight bytes as hex pairs (Nikon) or
+  readable text (Google: "Pixel 8 Pro back camera 6.9mm f/1.68", on 13 of 1,499 kr-track photos); the first two are no lens.
 * Make and Model, as a photo is called by them (`gear`'s camera): the model of a Canon says the make ("Canon EOS R6m2"),
   that of a Pixel or a Sony does not ("Pixel 8 Pro" of "Google", "DSC-X8" of "SONY"); 13,542 of the 62,877 photos
   holding both have a model that lacks its make. The camera is the model alone when it starts with the make's first word or holds a whole word of the make
@@ -63,6 +64,9 @@ MODEL_FIELDS = ("EXIF:Model", "XMP:Model", "Model")
 
 #: The lens: the first of these that holds text, and the make of the lens (put before a name that does not say it).
 LENS_FIELDS = ("EXIF:LensModel", "XMP:LensModel", "LensModel", "Composite:LensID", "LensID")
+#: Of those, the ones that name a lens only sometimes: a LensID is text for Google, a number for Canon and Tamron, and for
+#: Nikon the lens's eight bytes as hex pairs ("A1 40 18 37 2C 34 A4 06"), which is no name.
+LENS_ID_FIELDS = ("Composite:LensID", "LensID")
 LENS_MAKE_FIELDS = ("EXIF:LensMake", "XMP:LensMake", "LensMake")
 
 #: The camera and the lens a photo was taken with, as they are named and searched (tagpup.store.search_index): not columns of
@@ -160,9 +164,21 @@ def camera_name(make, model):
     return model if named & set(_words(model)) else "%s %s" % (make, model)
 
 
+def _only_hex(text):
+    """Is `text` hex pairs or digits and blanks alone -- a lens's id bytes, not its name?"""
+    return all(part.isalnum() and all(c in "0123456789abcdefABCDEF" for c in part) for part in text.split())
+
+
 def _lens(raw):
     """The lens a photo was taken with, or None: its name, with the lens maker's before it when the name lacks it."""
-    name = _first(raw, LENS_FIELDS, _text)
+    name = None
+    for field in LENS_FIELDS:
+        if field in raw:
+            name = _text(raw[field])
+            if name is not None and field in LENS_ID_FIELDS and _only_hex(name):
+                name = None
+            if name is not None:
+                break
     if name is None:
         return None
     maker = _first(raw, LENS_MAKE_FIELDS, _text)
