@@ -44,6 +44,11 @@ def forget(conn, key):
     return conn.execute("DELETE FROM %s WHERE name_key = ?" % TABLE, (key,)).rowcount
 
 
+def rows_of(review):
+    """Every row that holds the name: faces, the people a face listed, and those a keyword listed (counted apart)."""
+    return review.faces + review.listed + review.from_keyword
+
+
 def split(reviews, aside):
     """(waiting, set aside, stale group rows) of `reviews` (person_ids.review_pairs): THE rule of what the owner has to settle. A name
     set aside stays hidden until it holds more rows than when it was (`aside`: dismissed()); a group tag's listed-only rows are not a
@@ -52,8 +57,8 @@ def split(reviews, aside):
     waiting, hidden, stale = [], [], 0
     for review in reviews:
         if review.why == "branch" and not review.faces:
-            stale += review.listed
-        elif review.key in aside and review.faces + review.listed <= aside[review.key]:
+            stale += review.listed + review.from_keyword
+        elif review.key in aside and rows_of(review) <= aside[review.key]:
             hidden.append(review)
         else:
             waiting.append(review)

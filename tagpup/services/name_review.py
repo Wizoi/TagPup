@@ -18,6 +18,10 @@ not linked to them, "branch" a group has it):
   For any entry. When the person is called otherwise, the photos' files keep the old keyword: `keywords_kept` says how many photos.
 - `unname`: the name's faces become unnamed, to be identified again (not "nobody": name_source is NULL, as a person's forced deletion
   leaves them); the photos' keywords are untouched. Only when faces hold the name.
+- `rebuild`: the photos that list the name from a keyword (not a face) have their lists written again by the one rule
+  (`people.rebuild`): a keyword is its PATH's person, so a row left from before the ids becomes that person, and one whose keyword
+  names no person stays a name. Derived rows: not journaled (nothing to undo; run it again any time). Link and make never touch
+  such a row by name.
 - `dismiss` / `restore`: set the name aside until it gains rows / show it again. Not a change of a photo or face; not journaled.
 
 The name is told to the page; the MCP and the doctor give counts, and names only on request (reveal).
@@ -27,19 +31,19 @@ import difflib
 from tagpup.core import validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.services import people as people_service
-from tagpup.store import db, faces, journal, person_ids, taxonomy
+from tagpup.store import db, faces, journal, people, person_ids, taxonomy
 from tagpup.store import name_review as store
 
 #: The choices.
-MAKE, LINK, UNNAME, DISMISS, RESTORE = "make", "link", "unname", "dismiss", "restore"
-ACTIONS = (MAKE, LINK, UNNAME, DISMISS, RESTORE)
+MAKE, LINK, UNNAME, DISMISS, RESTORE, REBUILD = "make", "link", "unname", "dismiss", "restore", "rebuild"
+ACTIONS = (MAKE, LINK, UNNAME, DISMISS, RESTORE, REBUILD)
 
 #: How many people an entry offers as "it could mean", and how close a spelling must be.
 CANDIDATES, CLOSE = 5, 0.78
 
 
 def _rows(review):
-    return review.faces + review.listed
+    return store.rows_of(review)
 
 
 def _read(library):
@@ -106,6 +110,9 @@ def count(library):
 def _sentence(action, review, person=None, group=None, made=None):
     name, faces, listed = review.name, review.faces, review.listed
     rows = "%d face(s) and %d listed person(s)" % (faces, listed)
+    if action == REBUILD:
+        return ("Write the lists of %d photo(s) that list %s from a keyword again by their keywords' paths: a keyword that names a "
+                "person becomes that person; the rest stay as they are. Derived rows, not journaled." % (review.from_keyword, name))
     if action == MAKE:
         return "Make %s under %s: %s would be that person." % (made, group["tag"], rows)
     if action == LINK:
@@ -156,6 +163,9 @@ def _settle(library, key, action, person_id, group_id, conn):
             result.refuse("Nothing is left to settle for that name: it was settled in another window. Reload the list.")
             return result
         result.details.update(faces=review.faces, listed=review.listed, applied=False, change=None, keywords_kept=0)
+        if action == REBUILD and not review.from_keyword:
+            result.refuse("No photo lists %s from a keyword: nothing to rebuild." % review.name)
+            return result
         writing = conn is not own
         person = group = None
         if action == LINK:
@@ -205,11 +215,24 @@ def _write(library, conn, result, review, action, person, group):
             return result
         result.details.update(applied=True, undo="Show the set-aside names again from the list.")
         return result
+    if action == REBUILD:
+        before = review.from_keyword
+        people.rebuild(conn, person_ids.keyword_photos(conn, review.key), ids=person_ids.read(conn))
+        left = next(iter(person_ids.review_pairs(conn, review.key)), None)
+        result.changed = before - (left.from_keyword if left else 0)
+        result.details.update(applied=True, change=None, undo=(
+            "Derived rows, written again from the photos' keywords: not journaled, nothing to undo."
+            + (" %d photo(s) list a keyword that names no person: make the person or correct the tag." % left.from_keyword
+               if left and left.from_keyword else "")))
+        if not left:
+            store.forget(conn, review.key)
+        return result
     face_ids = person_ids.unlinked_faces(conn, review.name) if len(review.spellings) == 1 else [
         face_id for name in review.spellings for face_id in person_ids.unlinked_faces(conn, name)]
     before = journal.read_faces(conn, set(face_ids))
     if action == LINK:
         changed = person_ids.link_to(conn, review.key, person)
+        faces.relist(conn, face_ids)   # the listed rows follow the faces' ids, by the one rule
         operation = journal.PERSON_LINKED
     elif action == MAKE:
         tag = vocabulary.SEPARATOR.join([group["tag"], review.name])
@@ -219,6 +242,7 @@ def _write(library, conn, result, review, action, person, group):
         made = person_ids.read(conn).by_tag.get(vocabulary.normalize(tag).lower())
         changed = person_ids.faces_using(conn, [made.id]).get(made.id, 0) if made else 0
         result.details["person_tag"] = tag
+        faces.relist(conn, face_ids)
         operation = journal.PERSON_MADE
     else:
         changed = faces.unname(conn, set(face_ids), source=None) if face_ids else 0
@@ -226,7 +250,10 @@ def _write(library, conn, result, review, action, person, group):
     result.changed = changed
     result.details["change"] = journal.record_faces(conn, operation, before)
     store.forget(conn, review.key)
-    result.details.update(applied=True, undo=("Undo it in History: the faces return as unresolved names"
-                                              + ("; the person's tag stays in the tree." if action == MAKE else ".")))
+    if result.details["change"] is None:
+        result.details.update(applied=True, undo="No face changed, so nothing was journaled and there is nothing to undo.")
+    else:
+        result.details.update(applied=True, undo=("Undo it in History: the faces return as unresolved names"
+                                                  + ("; the person's tag stays in the tree." if action == MAKE else ".")))
     return result
 

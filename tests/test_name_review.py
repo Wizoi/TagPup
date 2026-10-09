@@ -249,6 +249,82 @@ class NamesToReview(TwoSams, unittest.TestCase):
         self.assertIn("People/Wren Ashdown", done.details["sentence"], "the sentence says who they are now")
         self.assertEqual((wren, "Wren Ashdown"), self.face(self.faces[0])[:2])
 
+    # ---- keyword rows: their identity is the path ------------------------------------------------
+
+    def keyword_photo(self, keyword, name="Sam", filename="regatta_003.jpg"):
+        """A photo whose keyword is `keyword`, listing `name` with no id from that keyword: what a library read before the ids
+        holds (the real pet and friend entry: 1 face and 12 such rows)."""
+        import photo_rows
+        path = os.path.join(os.path.dirname(self.photo), filename)
+
+        def seed(conn):
+            photo_rows.add_read(conn, path, {"XMP:Subject": [keyword]})
+            photo_id = conn.execute("SELECT id FROM photos WHERE path = ?", (path,)).fetchone()[0]
+            conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))
+            conn.execute("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, 0, ?, 'keyword', NULL)",
+                         (photo_id, name))
+        write(self.path, seed)
+        return path
+
+    def test_keyword_rows_are_counted_apart_they_are_not_rows_to_settle(self):
+        self.keyword_photo(SAM_I)
+        sam = self.listed_entry("Sam")
+        self.assertEqual((1, 0, 1), (sam["faces"], sam["listed"], sam["keyword_photos"]))
+        self.assertEqual(2, sam["rows"])
+
+    def test_link_does_not_give_the_photos_a_keyword_names_to_the_person_picked(self):
+        path = self.keyword_photo(SAM_I)
+        sam_t, sam_i = self.node(SAM_T), self.node(SAM_I)
+        done = name_review.resolve(self.library, "Sam", name_review.LINK, person_id=sam_t, apply=True)
+        self.assertTrue(done.ok, done.message())
+        self.assertEqual((sam_t, "Sam"), self.face(self.faces[1])[:2], "the face is the person's")
+        rows = self.listed(path)
+        self.assertNotIn((sam_t, "Sam", "keyword"), rows, "a keyword names the other Sam by its path")
+        self.assertEqual([(None, "Sam", "keyword")], rows, "untouched: only the owner's rebuild writes it, by the path")
+        name_review.resolve(self.library, "Sam", name_review.REBUILD, apply=True)
+        self.assertEqual([(sam_i, "Sam", "keyword")], self.listed(path), "the photo lists who its keyword says, by the one rule")
+
+    def test_a_link_with_only_the_face_changed_does_not_promise_an_undo_it_did_not_journal(self):
+        self.keyword_photo(SAM_I)
+        write(self.path, lambda conn: conn.execute("UPDATE faces SET name = NULL, tag_id = NULL WHERE id = ?", (self.faces[1],)))
+        self.assertIsNotNone(self.listed_entry("Sam"), "the keyword row still waits")
+        done = name_review.resolve(self.library, "Sam", name_review.LINK, person_id=self.node(SAM_T), apply=True)
+        self.assertIsNone(done.details["change"])
+        self.assertNotIn("History", done.details["undo"])
+
+    def test_rebuild_these_photos_lists_by_the_path_rule_and_says_it_is_not_journaled(self):
+        path = self.keyword_photo(SAM_I)
+        sam_i = self.node(SAM_I)
+        rehearsal = name_review.resolve(self.library, "Sam", name_review.REBUILD)
+        self.assertFalse(rehearsal.details["applied"])
+        self.assertEqual([(None, "Sam", "keyword")], self.listed(path))
+        done = name_review.resolve(self.library, "Sam", name_review.REBUILD, apply=True)
+        self.assertTrue(done.ok, done.message())
+        self.assertEqual(1, done.changed)
+        self.assertEqual([(sam_i, "Sam", "keyword")], self.listed(path))
+        self.assertIsNone(done.details["change"])
+        self.assertIn("not journaled", done.details["undo"])
+        self.assertEqual(0, self.listed_entry("Sam")["keyword_photos"])
+
+    def test_a_misspelt_keyword_beside_a_correct_person_is_left_for_the_owner(self):
+        path = self.keyword_photo("Samm", name="Samm")
+        done = name_review.resolve(self.library, "Samm", name_review.REBUILD, apply=True)
+        self.assertEqual(1, done.changed, "the stale row of a keyword that is no person's is dropped by the rule")
+        self.assertEqual([], self.listed(path))
+        self.assertIsNone(self.listed_entry("Samm"))
+        # A Make by the owner must not write a keyword row by name either.
+        write(self.path, lambda conn: name_without_a_person(conn, [self.faces[1]], "Samm", None))
+        write(self.path, lambda conn: conn.execute(
+            "INSERT INTO photo_people (photo_id, position, name, source, tag_id) SELECT id, 0, 'Samm', 'keyword', NULL FROM photos WHERE path = ?",
+            (path,)))
+        self.assertEqual(1, self.listed_entry("Samm")["keyword_photos"])
+        write(self.path, lambda conn: name_without_a_person(conn, [self.faces[1]], "Samm", None))
+        made = name_review.resolve(self.library, "Samm", name_review.MAKE, group_id=self.node("Friends"), apply=True)
+        self.assertTrue(made.ok, made.message())
+        friend = self.node("Friends/Samm")
+        self.assertEqual((friend, "Samm"), self.face(self.faces[1])[:2])
+        self.assertEqual([(friend, "Samm", "keyword")], self.listed(path), "the tree edit's rebuild gave it, by the rule: a bare keyword one person has")
+
     # ---- how it fails ----------------------------------------------------------------------------
 
     def test_a_name_settled_in_another_window_is_refused_the_second_time_and_nothing_is_done_twice(self):

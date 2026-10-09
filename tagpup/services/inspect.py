@@ -311,12 +311,13 @@ def _names_to_review(conn, reveal=False):
         by_reason[review.why] = by_reason.get(review.why, 0) + 1
     entries = []
     for number, review in enumerate(waiting, 1):
-        entry = {"entry": number, "why": review.why, "faces": review.faces, "listed": review.listed}
+        entry = {"entry": number, "why": review.why, "faces": review.faces, "listed": review.listed,
+                 "from_keyword": review.from_keyword}
         if reveal:
             entry["name"] = review.name
         entries.append(entry)
     return {"waiting": len(waiting), "set_aside": len(hidden), "stale_group_rows": stale, "by_reason": by_reason,
-            "rows": sum(review.faces + review.listed for review in waiting), "entries": entries}
+            "rows": sum(name_review.rows_of(review) for review in waiting), "entries": entries}
 
 
 # ---- Rows whose file is gone ------------------------------------------------------------

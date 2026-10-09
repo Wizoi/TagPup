@@ -565,8 +565,11 @@ def link_added(conn, keys, known=None):
 
 
 def _link(conn, table, name, person):
-    """THE statement that gives the rows of `table` called `name` (exactly, and holding no id) the Person's id and name."""
-    return conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS NULL" % table,
+    """THE statement that gives the rows of `table` called `name` (exactly, and holding no id) the Person's id and name. Of the
+    listed people only those a FACE made: a keyword's row is its PATH's person (vocabulary.people_rows; people.rebuild writes it
+    so every time), never a name's."""
+    only = " AND source = 'face'" if table == "photo_people" else ""
+    return conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS NULL%s" % (table, only),
                         (person.id, person.name, name)).rowcount
 
 
@@ -715,8 +718,9 @@ def unresolved(conn):
 #: One unresolved name, as the names to review list it (all its spellings together): `name` the spelling with the most rows,
 #: `why` "none" (no person tag has it), "several" (two or more do), "one" (exactly one person has it, but these rows are not
 #: linked to them) or "branch" (only a group has it), `person` the one person for "one" (a Person) else None, `faces` the rows
-#: of faces and `by_hand` how many of them were decided by hand, `listed` the rows of photo_people (`from_keyword` of them from
-#: a keyword or the metadata, not a face), `spellings` the names as the rows hold them.
+#: of faces and `by_hand` how many of them were decided by hand, `listed` the rows of photo_people a FACE made, `from_keyword` the rows
+#: a keyword or the metadata made, counted APART: such a row is its path's person (people.rebuild), not a row to settle by name,
+#: `spellings` the names as the rows hold them.
 Review = collections.namedtuple("Review", "key name why person faces by_hand listed from_keyword spellings")
 
 
@@ -758,7 +762,7 @@ def review_pairs(conn, key=None):
             " WHERE name IS NOT NULL AND tag_id IS NULL" + only + " GROUP BY name", marks):
         row = row_of(name)
         row["spellings"][name] = row["spellings"].get(name, 0) + rows
-        row["listed"] += rows
+        row["listed"] += rows - keyword
         row["from_keyword"] += keyword
     reviews = []
     for each, row in found.items():
@@ -767,6 +771,16 @@ def review_pairs(conn, key=None):
         reviews.append(Review(each, name, why, known.by_id.get(known.id_of(name)) if why == "one" else None, row["faces"],
                               row["by_hand"], row["listed"], row["from_keyword"], sorted(row["spellings"])))
     return sorted(reviews, key=lambda review: (vocabulary.tag_sort_key(review.name), review.key))
+
+
+def keyword_photos(conn, key):
+    """The ids of the photos that list the name whose key is `key` with no id from a keyword or the metadata (not a face): what the
+    owner's "rebuild these photos" rebuilds by the path rule."""
+    found = set()
+    for name in _spellings(conn, key, "photo_people"):
+        found.update(photo_id for (photo_id,) in conn.execute(
+            "SELECT DISTINCT photo_id FROM photo_people WHERE name = ? AND tag_id IS NULL AND source <> 'face'", (name,)))
+    return sorted(found)
 
 
 def samples(conn, key, limit=4):
