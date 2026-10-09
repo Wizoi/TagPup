@@ -186,6 +186,12 @@ def cli(ctx, db, test):
     ctx.ensure_object(dict)
     ctx.obj["test"] = test
     ctx.obj["db"] = db
+    if db or os.environ.get("TAGPUP_DB_PATH"):
+        # A library made by a newer TagPup is not opened by this one, whatever the command: it would misread
+        # it (tagpup.store.schema.NewerLibrary). A sentence and exit 1, not a traceback.
+        problem = library_actions.newer_problem(get_db_path(test, db))
+        if problem:
+            raise click.ClickException(problem)
 
 def _resolve_directories(library, kwargs):
     """A folder typed in an old place's spelling is the first place's folder: spelled so before the command
@@ -2276,5 +2282,9 @@ def cluster_faces(ctx, reset: bool, max_iterations: int):
         photo_index.close()
 
 if __name__ == "__main__":
-    cli()
+    try:
+        cli()
+    except library_actions.NewerLibrary as e:   # one a command opened without the group having seen it
+        console.print(str(e), markup=False, soft_wrap=True)
+        raise SystemExit(1) from None
 

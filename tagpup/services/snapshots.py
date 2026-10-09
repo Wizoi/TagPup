@@ -62,8 +62,9 @@ def restore(library, name, apply=False, now=None):
     result = Result(attempted=1, details={
         "dry_run": not apply, "snapshot": snapshot.name, "bytes": snapshot.size,
         "lost": [{"id": cid, "created": created, "operation": operation} for cid, created, operation in lost]})
-    if snapshots.schema_version(snapshot.path) > schema.LATEST:
-        result.refuse("The snapshot %s was made by a newer version of TagPup; this one cannot open it." % name)
+    made_at = snapshots.schema_version(snapshot.path)
+    if made_at > schema.LATEST:
+        result.refuse(schema.newer_sentence("The snapshot " + name, made_at, schema.LATEST))
         return result
     needs, free = snapshots.restore_needs(library.path)
     result.details.update({"needs": needs, "free": free})

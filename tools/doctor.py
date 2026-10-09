@@ -46,10 +46,18 @@ from tagpup.store import checks, db, derived, embeddings, people, person_ids, sc
 from tagpup.store import folder_ids  # noqa: E402
 
 
+def _refuse_newer(db_path):
+    """A library made by a newer TagPup than this tool's is not read: its rules are the newer one's."""
+    problem = schema.newer_problem(db_path)
+    if problem:
+        raise SystemExit(problem)
+
+
 def report(db_path, show=0, out=print):
     """Report on the library at `db_path`. Returns the number of rules broken."""
     if not os.path.exists(db_path):
         raise SystemExit("There is no library at %s." % db_path)
+    _refuse_newer(db_path)
     # The library's CLIP model, read without writing: a library never stamped reads as
     # stamping would make it.
     # A library holding a root this machine does not place cannot spell its paths: what needs
@@ -155,6 +163,7 @@ def rebuild_derived(db_path, apply=False, out=print):
     them what the photos say. Returns 0 when they are (now) right, 1 when they are not. Counts only."""
     if not os.path.exists(db_path):
         raise SystemExit("There is no library at %s." % db_path)
+    _refuse_newer(db_path)
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         version = schema.version(conn)

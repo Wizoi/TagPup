@@ -32,6 +32,7 @@ from tagpup.core import library as libraries
 from tagpup.core.library import Library
 from tagpup.core.result import NotFound, Refused
 from tagpup.services import duplicate_faces, inspect, person_tags, refresh_rows
+from tagpup.services import libraries as library_service
 from tagpup.services import roots as roots_service
 from tagpup.services import sync as sync_service
 from tagpup.services import journal as library_journal
@@ -119,6 +120,9 @@ def find_library(name, photos=True):
     if not name or name not in library_names():
         raise ToolError("There is no library called %r; `libraries` lists them." % (name,))
     found = Library(config.library_path(name + ".db"))
+    newer = library_service.newer_problem(found.path)
+    if newer:
+        raise ToolError(newer)   # a library of a newer TagPup: this version would misread it
     if photos:
         unplaced = roots_service.problem(found)
         if unplaced:

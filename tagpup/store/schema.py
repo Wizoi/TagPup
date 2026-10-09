@@ -77,6 +77,48 @@ class TooOld(Exception):
     """A library older than the tables of 2026-09, which TagPup no longer converts."""
 
 
+class NewerLibrary(Exception):
+    """A library whose schema is newer than this version of TagPup knows (`LATEST`): an older app
+    that opened it would misread what the newer one wrote and write it back wrong (identity stage 2:
+    names without ids, which the newer doctor then overwrites). Refused wherever a library is opened;
+    `str(e)` is the sentence to show the owner, never a traceback. `found` is the library's version,
+    `known` this app's."""
+
+    def __init__(self, name, found, known):
+        self.name, self.found, self.known = name, found, known
+        super().__init__(newer_sentence(name, found, known))
+
+
+def newer_sentence(what, found, known):
+    """The one sentence for something made by a newer TagPup than this one: a library (`what` is its file
+    name) or a snapshot of one (snapshots.restore uses it). It says which app to start."""
+    return ("%s was made by a newer version of TagPup (its schema is %d; this version knows up to %d), so this "
+            "version will not open it: it would misread it and write it wrong. Start the newest TagPup you have "
+            "installed (its launchers, TagPup.cmd and TagTuner.cmd, install and start the current version)."
+            % (what, found, known))
+
+
+def newer_problem(db_path):
+    """The sentence (NewerLibrary's) when the library at `db_path` is newer than this version knows, else
+    None, also for a file that is not there or not a library yet. Reads only: for an entry point that
+    looks at a library without opening it through `ensure` (the MCP's tools, the CLI's group, the doctor).
+    A file that cannot be read just now (locked, not a database) is not decided here: it says None, and the
+    open that follows says why; `ensure` refuses a newer library whatever this answered."""
+    if not os.path.exists(db_path):
+        return None
+    try:
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            found = version(conn)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    if found > LATEST:
+        return newer_sentence(os.path.basename(db_path), found, LATEST)
+    return None
+
+
 def _tables(conn):
     """The tables of 2026-09, and their indexes. A library that already has tables must
     have their columns: it is refused, not converted, when it does not."""
@@ -781,6 +823,21 @@ def _caption_index(conn):
                  % (library_view.CAPTION_INDEX, library_view.caption_sql("captions")))
 
 
+def _person_indexes(conn):
+    """The indexes a person is read by id with, and the table of names set aside (docs/ARCHITECTURE.md, "People by id,
+    stage 2"; docs/findings.md, #1013): `idx_faces_tag` on faces(tag_id) and `idx_photo_people_tag` on
+    photo_people(tag_id, photo_id) -- `WHERE tag_id = ?` scanned idx_faces_person (name, tag_id) whole and had no
+    index at all on photo_people -- and `name_review_dismissals`, empty: a name the owner set aside from the list of
+    names to review, until it holds more rows than `rows_seen`. No row of any table changes, so nothing is recorded
+    in the journal and no backup is needed; the table is new, so no change can have recorded a row of it."""
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_tag ON faces(tag_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_photo_people_tag ON photo_people(tag_id, photo_id)")
+    conn.execute("CREATE TABLE IF NOT EXISTS name_review_dismissals ("
+                 " name_key TEXT PRIMARY KEY,"
+                 " rows_seen INTEGER NOT NULL,"
+                 " decided TEXT NOT NULL)")
+
+
 def _person_ids(conn):
     """Each face and each photo's listed person name the node of the tag tree that is that person:
     `faces.tag_id` and `photo_people.tag_id`, beside `name` (docs/ARCHITECTURE.md, "Identity by id",
@@ -1410,6 +1467,12 @@ MIGRATIONS = (
               "and the lens comes with the doctor's --rebuild-derived",
               ("search_gear",),
               (RowsKept(), GearAgrees()) + STANDARD),
+    Migration(28, "people read by id, and the names set aside", _person_indexes, ADDITIVE,
+              "adds idx_faces_tag and idx_photo_people_tag, the indexes a person is read by id with, and "
+              "name_review_dismissals, empty; no row of any table changes, and a change journaled before it can "
+              "still be undone",
+              ("name_review_dismissals",),
+              (RowsKept(),) + STANDARD),
 )
 
 #: The columns a migration adds to a table the journal keys that the journal derives
@@ -1518,7 +1581,10 @@ def _drop_legacy_counters(db_path, conn):
 def _ensure(db_path):
     conn = db.connect(db_path, timeout=30.0)
     try:
-        if version(conn) >= LATEST:
+        found = version(conn)
+        if found > LATEST:
+            raise NewerLibrary(os.path.basename(db_path), found, LATEST)
+        if found == LATEST:
             _drop_legacy_counters(db_path, conn)
             return []
         with db.lock_for(db_path):
