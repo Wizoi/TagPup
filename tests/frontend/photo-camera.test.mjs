@@ -80,6 +80,50 @@ test("Shift Date Taken's list of cameras is by the record's camera, the name Ima
   ], "a make-less model and the same model with its make are two cameras, as the server's shift takes them");
 });
 
+test("a folder kept in this browser by the page before the cameras were named is scanned again, not listed as Unknown Camera", async (t) => {
+  const record = (filename, camera) => ({ ...BASE, path: "D:\\Pictures\\Old\\" + filename, filename, camera });
+  const scanned = [record("a.jpg", "Google Pixel 8 Pro"), record("b.jpg", "Google Pixel 8 Pro"), record("c.jpg", ""), record("d.jpg", "Lanternfly Kite 2")];
+  const fake = new FakeServer()
+    .on("/api/folder/scan", scanned)
+    .on("/api/taxonomy/tree", [])
+    .on("/api/people", [])
+    .on("/api/tags", [])
+    .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
+    .on("/api/folder/suggest-status", { status: "idle" });
+  const { window, document } = await loadApp("tagpup", { server: fake, t });
+  // The entry the page before this one saved: records as it made them (no `camera`), and no version.
+  const trunkShaped = scanned.map(({ camera, ...rest }) => ({ ...rest, raw_metadata: { "EXIF:Model": "Pixel 8 Pro" } }));
+  const KEY = ["tagpup_cache_d:", "pictures", "old"].join(String.fromCharCode(92));   // pathKey: lower case, backslashes
+  window.localStorage.setItem(KEY, JSON.stringify({ timestamp: Date.now(), photos: trunkShaped, suggestions: {}, inMemory: false }));
+  await openFolder({ document, window }, "D:\\Pictures\\Old");
+  await settle(window, 60);
+  assert.equal(fake.urls().filter((u) => u.includes("/api/folder/scan")).length, 1, "scanned again, the old entry not used");
+  const options = [...document.getElementById("timeshift-camera-select").options].map((o) => o.textContent);
+  assert.deepEqual(options, ["All Cameras (4 photos)", "Google Pixel 8 Pro (2 photos)", "Lanternfly Kite 2 (1 photos)", "Unknown Camera (1 photos)"]);
+  const kept = JSON.parse(window.localStorage.getItem(KEY));
+  assert.equal(kept.version, 2, "the scan kept now is of the shape this page reads");
+  // And an entry of this shape is used: opening the folder again scans nothing.
+  await openFolder({ document, window }, "D:\\Pictures\\Old");
+  await settle(window, 60);
+  assert.equal(fake.urls().filter((u) => u.includes("/api/folder/scan")).length, 1, "a current entry is used");
+});
+
+test("a time shift for a camera the server found no photo of says so, and does not say photos could not be written", async (t) => {
+  const fake = server()
+    .on("/api/folder/time-shift", { success: true, message: "No photos matched the camera model" });
+  const { window, document } = await loadApp("tagpup", { server: fake, t });
+  window.confirm = () => true;
+  await openFolder({ document, window }, "D:\\Pictures\\Run");
+  await settle(window, 60);
+  click(window, document.getElementById("btn-toggle-timeshift"));
+  document.getElementById("timeshift-minutes-input").value = "30";
+  click(window, document.getElementById("btn-apply-timeshift"));
+  await settle(window, 80);
+  const said = document.getElementById("status-text").textContent;
+  assert.match(said, /No photos matched that camera: reload the page and try again/);
+  assert.doesNotMatch(said, /could not be written/);
+});
+
 // jsdom does not lay a page out, so what keeps the camera line from widening the details grid (a grid item is as wide as its
 // content unless it may shrink: the grid scrolled sideways, as #720's did) is read from the stylesheet. The long live strings
 // ('KODAK CX4310 DIGITAL CAMERA' with a lens; the camera and lens line of a phone) are cut with an ellipsis and in the tooltip.

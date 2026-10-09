@@ -6,9 +6,15 @@ import { state } from './state.js';
 // Browser local storage cache configuration (30 minutes timeout)
 export const CACHE_TTL_MS = 30 * 60 * 1000;
 
+// The shape of the photo records an entry holds. An entry saved by a page that made records of another shape (no version at
+// all, or an older one) is not used: the folder is scanned again. Raise it whenever a record gains a field a page reads
+// (2: `camera`, which Shift Date Taken's list of cameras is made of: a record without it is "Unknown Camera").
+export const CACHE_VERSION = 2;
+
 export function saveToLocalStorageCache() {
     if (!state.scannedFolder) return;
     const cacheEntry = {
+        version: CACHE_VERSION,
         timestamp: Date.now(),
         photos: state.folderPhotos,
         suggestions: state.folderSuggestions,

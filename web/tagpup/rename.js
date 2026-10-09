@@ -223,6 +223,12 @@ export function applyTimeShift() {
         })
     })
     .then(data => {
+        if (data.success && data.updated_count === undefined) {
+            // The server found no photo of that camera: a page left open since before the cameras were named as the
+            // server names them asks for a name it no longer knows.
+            setStatus('error', 'No photos matched that camera: reload the page and try again', { transient: false });
+            return;
+        }
         if (data.success) {
             if (data.updated_photos) {
                 state.folderPhotos = data.updated_photos;

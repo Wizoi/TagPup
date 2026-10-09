@@ -93,8 +93,29 @@ class TheCameraAsItIsCalled(unittest.TestCase):
         self.assertEqual("KODAK CX4310 DIGITAL CAMERA",
                          photo_meta.camera_name("EASTMAN KODAK COMPANY", "KODAK CX4310 DIGITAL CAMERA"))
         self.assertEqual("Canon PowerShot ELPH 100 HS", photo_meta.camera_name("Canon", "Canon PowerShot ELPH 100 HS"))
-        self.assertEqual("Tidewater Skiff 8", photo_meta.camera_name("Tidewater", "Skiff 8"), "a word inside another is not one")
-        self.assertEqual("Tidewater Tidewatering Skiff 8", photo_meta.camera_name("Tidewater", "Tidewatering Skiff 8"))
+        self.assertEqual("Tidewater Skiff 8", photo_meta.camera_name("Tidewater", "Skiff 8"))
+        self.assertEqual("Tidewater Fishtidewater 8", photo_meta.camera_name("Tidewater", "Fishtidewater 8"),
+                         "a word inside another, not at its start, is not a word of the make")
+
+    def test_the_live_pairs(self):
+        """Make and model pairs photo_index holds (counted 2026-10-09): the name each is called by."""
+        pairs = (("Canon", "Canon EOS R6m2", "Canon EOS R6m2"),
+                 ("Apple", "iPhone 12", "Apple iPhone 12"),
+                 ("NIKON", "COOLPIX P1", "NIKON COOLPIX P1"),
+                 ("LG Electronics", "LG-TP260", "LG-TP260"),
+                 ("EASTMAN KODAK COMPANY", "KODAK CX4310 DIGITAL CAMERA", "KODAK CX4310 DIGITAL CAMERA"),
+                 ("HTC", "HTCONE", "HTCONE"),
+                 ("OLYMPUS IMAGING CORP.", "FE45,X40", "OLYMPUS IMAGING CORP. FE45,X40"),
+                 ("Google", "Pixel 8 Pro", "Google Pixel 8 Pro"),
+                 ("SONY", "DSC-P8", "SONY DSC-P8"))
+        for make, model, name in pairs:
+            with self.subTest(make=make, model=model):
+                self.assertEqual(name, photo_meta.camera_name(make, model))
+
+    def test_a_word_of_the_make_that_names_no_maker_does_not_make_the_model_the_name(self):
+        self.assertEqual("Tidewater Imaging Digital Camera Mk2", photo_meta.camera_name("Tidewater Imaging", "Digital Camera Mk2"))
+        self.assertEqual("XY Corp. Corp Box", photo_meta.camera_name("XY Corp.", "Corp Box"), "generic")
+        self.assertEqual("Zeta HQ HQ 5", photo_meta.camera_name("Zeta HQ", "HQ 5"), "under three letters")
         self.assertEqual("Fjord X-T4", photo_meta.camera_name("FJORD", "Fjord X-T4"), "without case")
 
     def test_a_model_that_does_not_is_put_after_the_make(self):
