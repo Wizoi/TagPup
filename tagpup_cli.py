@@ -1637,8 +1637,10 @@ def reread_fields(ctx, apply_, folder, shares_named):
 
     def progress(stage, counts):
         if stage == "chunk":
-            console.print("  %d of %d photo(s) read, %d written" % (counts["done"], counts["total"], counts["written"]),
-                          markup=False)
+            differing = ", ".join("%s %d" % pair for pair in sorted(counts["fields"].items()))
+            console.print("  %d of %d photo(s) read, %d written; rows differing from their file in: %s"
+                          % (counts["done"], counts["total"], counts["written"], differing or "nothing"),
+                          markup=False, soft_wrap=True)
 
     result = reread_fields_service.reread_fields(library, exiftool, apply=apply_, folder=folder,
                                                  shares_named=shares_named, progress=progress)
@@ -1655,6 +1657,7 @@ def reread_fields(ctx, apply_, folder, shares_named):
     console.print("%d photo(s) to read again." % counts["to_read"])
     for what, text in (("missing", "file(s) not found (a folder on an unplugged drive looks the same): left"),
                        ("changed", "file(s) changed on disk since indexed: left for `sync`, which reads them with these fields"),
+                       ("damaged", "photo(s) found unreadable when they were read: left (the Activity page lists them)"),
                        ("on_shares", "photo(s) on a network share nobody named: left (--folder or --shares names it)"),
                        ("share_away", "photo(s) on a network share that did not answer: left")):
         if counts.get(what):
@@ -1662,17 +1665,23 @@ def reread_fields(ctx, apply_, folder, shares_named):
     if not apply_:
         sample = result.details["sample"]
         if sample and sample["per_second"]:
-            console.print("Timed %d file(s): %.1f a second, %d unreadable; %d of them hold a lens."
-                          % (sample["read"], sample["per_second"], sample["unreadable"], sample["with_lens"]))
+            console.print("Timed %d file(s): %.1f a second, %d unreadable; %d of them hold a lens; %d would be left because "
+                          "their tags, captions or people differ from the file."
+                          % (sample["read"], sample["per_second"], sample["unreadable"], sample["with_lens"],
+                             sample["disagrees"]))
             console.print("About %s to read the %d photo(s)." % (_duration(result.details["estimate_seconds"]),
                                                                 counts["to_read"]))
         console.print("Nothing changed. --apply reads them and writes the rows; stop and run it again any time.")
+        if result.errors:
+            raise SystemExit(1)
         return
     console.print("Wrote %d row(s) in %d change(s) of the journal (`history` lists them; `undo <id> --apply` takes one back)."
                   % (result.changed, len(result.details["changes"])), markup=False, soft_wrap=True)
-    for what in ("unreadable", "changed_while_read", "gone_while_read"):
+    for what in ("disagrees", "unreadable", "changed_while_read", "gone_while_read", "share_away"):
         if counts.get(what):
-            console.print("  %d file(s) %s: left" % (counts[what], what.replace("_", " ")))
+            console.print("  %d file(s) %s: left%s" % (counts[what], what.replace("_", " "),
+                          " (tags, captions or people differ from the file: `sync` or refresh_rows settle those)"
+                          if what == "disagrees" else ""), markup=False, soft_wrap=True)
     if result.skipped:
         console.print("  %d row(s) saved in the app, or by another run, while their files were read: left for the next run"
                       % len(result.skipped))
