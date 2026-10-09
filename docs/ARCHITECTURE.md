@@ -2759,9 +2759,23 @@ The words are made from the photo's raw metadata by the one extractor (`photo_me
 it (`derived._put`, the index's record, bulk tag writes, sync, the journal's undo) and by `derived.rebuild_all`, the
 doctor's `--rebuild-derived`. **Migration 27 reads no photo's JSON**: it makes the camera from `photo_meta`'s make and model
 (photo_index copy: 1.0 s with its checks; the fill 0.5 s), and the lens comes with the rebuild (whole rebuild of a photo_index
-copy: 21 s, one transaction, nothing changed if interrupted). **The lens is empty on the live libraries**: the indexer asks for
-no lens field (0 of 68,324 rows hold one). Asking (`LensModel`, `LensMake`, `LensID` in `fields.METADATA_FIELDS`) changes what
-every read records, as the size does, and is the owner's to decide; until then only a photo read with the fields has a lens.
+copy: 21 s, one transaction, nothing changed if interrupted). **The lens fields are asked for now** (2026-10-09, owner's
+decision): `fields.METADATA_FIELDS` holds `LensModel`, `LensMake` and `LensID` (and `EXIF:`/`XMP:`/`Composite:` forms), so every
+read records them -- 0 of 68,324 rows of photo_index held one before. **A row says which read it comes from**:
+`TagPup:ReadGeneration` in its `raw_metadata` (`fields.READ_GENERATION`, 2 = the lens fields are read; findings #1012), written
+by every full read (the indexer's, sync's, refresh_rows', a save's read back) and absent from a row read before: a photo with no
+lens has no lens key either way, and only this tells "read, holds none" from "read before". No migration, no stamp on existing
+rows. **The re-read** of the rows read before is `tagpup_cli.py reread-fields` (`tagpup.services.reread_fields`, on the
+refresh's own reading and edits): metadata only (ExifTool; no picture decoded, no model, no graphics card, no file written;
+faces, names, embeddings untouched), a dry run by default that counts and times a 100-file sample, `--apply` writing 2,000
+photos to a change of the journal (so it is resumable and undoable chunk by chunk; the derived tables, `photo_meta` and the
+camera and lens words, are rebuilt for exactly those photos by the journal's own write, so no doctor run is needed),
+`--folder` for one folder first. Left alone and counted: rows never read, files missing or unreadable, files changed since
+indexed (sync reads those with the same fields and sees the size change `library.reread_resized_pictures` is about; this
+never writes a new stamp over it), photos on a network share nobody named (`--folder` or `--shares` names it), a row the app
+saved meanwhile (read by the next run). Two runs at once, or one beside the app, are held apart by the journal's expected
+values: the second to write finds the row changed and skips it. Raise `READ_GENERATION` when a field is added that rows
+already read should gain, and the same command reads them.
 **One name for a camera** (`photo_meta.camera_name`; findings #1003): `fields.camera_of`, by which Shift Date Taken's list
 and the photos a shift takes are chosen, is the same rule, and the page takes the name from the record's `camera` and keeps no
 copy of it. Image Details shows `camera · lens` on one line (`record.camera`, `record.lens` from `photos.page_record`; hidden for a photo
