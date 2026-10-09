@@ -214,6 +214,45 @@ class Operations(TwoSams, unittest.TestCase):
         usage = tags_service.usage(self.library, self.sam_i)
         self.assertEqual(2, usage["faces_named"], "the editor is told before it asks")
 
+    def test_a_force_delete_is_one_journaled_change_of_the_faces_and_history_puts_them_back(self):
+        """Fix round 1 (the single owner of an undoable record of a face's identity change is the journal): the faces a force
+        delete unnames are ONE change in the same transaction as the node goes; History puts their names and decisions back,
+        and with the node gone they are an unresolved name -- never the other person called alike."""
+        from tagpup.services import journal as journal_service
+        from tagpup.store import journal
+        written = look(self.path, "SELECT id, name, name_source FROM faces ORDER BY id")
+        decided = [row for row in written if row[0] in (self.faces[1], self.faces[2])]
+        self.assertTrue(all(row[2] == "manual" for row in decided), decided)
+        self.assertTrue(tags_service.delete(self.library, self.sam_i, "remove", None, "exiftool", force=True).ok)
+        changes = look(self.path, "SELECT id, summary FROM changes WHERE operation = ?", (journal.PERSON_DELETED,))
+        self.assertEqual(1, len(changes))
+        self.assertEqual({"faces": 2, "rows": {"faces": 2}}, json.loads(changes[0][1]), "counts only")
+        # The other Sam is called the same: undoing would give the two faces to them, so it is refused, and nothing changes.
+        refused = journal_service.undo(self.library, changes[0][0], apply=True, exiftool_path="exiftool")
+        self.assertTrue(refused.errors or refused.refused, "undo of a person's faces onto another person is refused")
+        self.assertEqual([(None, None, None)] * 2, [self.face(self.faces[1]), self.face(self.faces[2])])
+
+    def test_the_undo_of_a_force_delete_nobody_else_shares_puts_the_decision_back_as_a_name(self):
+        from tagpup.services import journal as journal_service
+        from tagpup.store import journal
+        wren = self.node("People/Wren Halloway")
+        face = write(self.path, lambda conn: faces.insert(conn, self.other, [40, 0, 50, 10], b"\x05" * 8))
+        write(self.path, lambda conn: faces.name(conn, [face], wren))
+        self.assertEqual((wren, "Wren Halloway", "manual"), self.face(face))
+        self.assertTrue(tags_service.delete(self.library, wren, "remove", None, "exiftool", force=True).ok)
+        change = look(self.path, "SELECT id FROM changes WHERE operation = ?", (journal.PERSON_DELETED,))[0][0]
+        undone = journal_service.undo(self.library, change, apply=True, exiftool_path="exiftool")
+        self.assertEqual([], undone.errors)
+        self.assertEqual((None, "Wren Halloway", "manual"), self.face(face), "the decision is back, a name no person is filed under")
+        write(self.path, lambda conn: taxonomy.add_path(conn, "People/Wren Halloway"))
+        # (a node made for the name links it: tests/test_tree_edit_links_only_what_it_adds.py)
+
+    def test_a_merge_records_the_faces_it_gave_to_the_other_person(self):
+        from tagpup.store import journal
+        self.assertTrue(self.merge(SAM_I, SAM_T, apply=True).ok)
+        changes = look(self.path, "SELECT summary FROM changes WHERE operation = ?", (journal.PERSON_MERGED,))
+        self.assertEqual([{"faces": 2, "rows": {"faces": 2}}], [json.loads(each[0]) for each in changes])
+
     def test_force_unnames_the_faces_in_the_same_transaction_and_they_are_not_nobody(self):
         result = tags_service.delete(self.library, self.sam_i, "remove", None, "exiftool", force=True)
         self.assertTrue(result.ok, result.message())

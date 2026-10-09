@@ -259,12 +259,15 @@ def merge_person(conn, from_id, to_id):
     if target is None:
         raise person_ids.PersonInUse(conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id = ?", (from_id,)).fetchone()[0],
                                      [known.node_names.get(from_id, "a person")])
+    from tagpup.store import journal   # the journal imports this module; not at import
     photos = {photo_id for (photo_id,) in conn.execute("SELECT DISTINCT photo_id FROM faces WHERE tag_id = ?", (from_id,))}
     photos |= {photo_id for (photo_id,) in conn.execute("SELECT DISTINCT photo_id FROM photo_people WHERE tag_id = ?", (from_id,))}
+    before = journal.read_faces(conn, [face_id for (face_id,) in conn.execute("SELECT id FROM faces WHERE tag_id = ?", (from_id,))])
     moved = 0
     for table in person_ids.TABLES:
         moved += conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE tag_id = ?" % table,
                               (to_id, target.name, from_id)).rowcount
+    journal.record_faces(conn, journal.PERSON_MERGED, before)   # only a face whose name changed has anything to put back
     return moved, photos
 
 

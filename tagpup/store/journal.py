@@ -740,6 +740,27 @@ def _not_as_left(conn, change_id, changes):
     return reasons
 
 
+def _person_gone(conn, inverse):
+    """Why an undo would give a face to the wrong person: it puts back a face's person (`tag_id`) whose node is gone (a force
+    delete, a merge) while ANOTHER person is called what the face is called -- the settle that follows would link the face to
+    them. [] when the node is there, or nobody else has the name (the face is then an unresolved name, and relinks to a person
+    made for it)."""
+    wanted = [change for change in inverse if change.table == "faces" and change.action == "update" and change.new
+              and change.new.get("tag_id") is not None and change.new.get("name") is not None]
+    if not wanted or not person_ids.present(conn):
+        return []
+    known = person_ids.read(conn)
+    reasons = []
+    for change in wanted:
+        if change.new["tag_id"] in known.node_names:
+            continue
+        other = known.id_of(change.new["name"])
+        if other is not None:
+            reasons.append("face %d named a person who is gone, and %s is called the same: undoing would give the face to them"
+                           % (change.key[0], known.node_names.get(other, "another person")))
+    return reasons
+
+
 def _newer_overlapping(conn, change_id):
     """(id, operation) of each change after `change_id`, applied and not undone, that
     touched a row it touched."""
@@ -911,6 +932,43 @@ def record(conn, operation, changes, summary=None, schema_version=None):
          json.dumps(dict(summary or {}, rows=dict(rows)), sort_keys=True))).lastrowid
     _record(conn, change_id, changes)
     return change_id
+
+
+#: What the journal calls the face rows a tree edit changed (taxonomy.delete_branch with force; people.merge_person).
+PERSON_DELETED = "person deleted (force): faces unnamed"
+PERSON_MERGED = "person merged: faces renamed"
+
+
+def read_faces(conn, face_ids):
+    """{face id: (name, name_source, tag_id)} of `face_ids` as they stand, to be handed to record_faces after the write. Chunked."""
+    found = {}
+    ids = sorted(face_ids)
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        found.update((face_id, (name, source, person)) for face_id, name, source, person in conn.execute(
+            "SELECT id, name, name_source, tag_id FROM faces WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk))
+    return found
+
+
+def record_faces(conn, operation, before):
+    """Record, in the caller's transaction, the face rows a tree edit has just changed -- `before` is read_faces' answer from
+    before the write -- as ONE applied change `operation` (counts only in its summary), so History can put the faces' names and
+    who decided them back as they were. The person's id is recorded with them (cache_columns): an undo puts the id back, and when the node is gone (a
+    force delete, a merge) the settle that follows drops it and keeps the name -- an unresolved name for the owner to settle,
+    never another person called alike. The tree rows themselves are not journaled (as before). Nothing when no face changed or the library has
+    no journal. Returns the change's id or None. The caller commits."""
+    if not before or not has_journal(conn):
+        return None
+    now = read_faces(conn, before)
+    changes = []
+    columns = ("name", "name_source", "tag_id")
+    for face_id, was in sorted(before.items()):
+        left = now.get(face_id)
+        if left is None or left == was:
+            continue
+        changes.append(RowChange("update", "faces", (face_id,), dict(zip(columns, was)), dict(zip(columns, left)),
+                                 "face identity"))
+    return record(conn, operation, changes, {"faces": len(changes)}) if changes else None
 
 
 def apply(db_path, operation, edits, summary=None, also=None):
@@ -1106,7 +1164,7 @@ def _undo_rows(conn, change_id):
     reasons = _not_as_left(conn, change_id, changes)
     inverse = [_inverse(change) for change in reversed(changes)]
     if not reasons:
-        reasons = _blocked(conn, inverse)
+        reasons = _person_gone(conn, inverse) or _blocked(conn, inverse)
     if reasons:
         raise Refusal(reasons)
     try:

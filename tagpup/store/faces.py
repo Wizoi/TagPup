@@ -633,13 +633,18 @@ def unname_person(conn, tag_ids, source=None):
     the faces become unnamed and unreviewed -- name_source `source`, NULL by default, so they are not "nobody" for good --
     and the photos they were in are rebuilt, in the same transaction as the tree row goes. By the node's index. Returns rows
     changed. The caller commits."""
-    photo_ids, changed = set(), 0
+    from tagpup.store import journal   # the journal imports the people; not at import
+    photo_ids, changed, before = set(), 0, {}
     for chunk in _chunks(sorted(set(tag_ids))):
         marks = ",".join("?" * len(chunk))
-        photo_ids |= {photo_id for (photo_id,) in conn.execute(
-            "SELECT DISTINCT photo_id FROM faces WHERE tag_id IN (%s)" % marks, chunk)}
+        for face_id, photo_id, name, held_source, held_person in conn.execute(
+                "SELECT id, photo_id, name, name_source, tag_id FROM faces WHERE tag_id IN (%s)" % marks, chunk):
+            photo_ids.add(photo_id)
+            before[face_id] = (name, held_source, held_person)
         changed += conn.execute("UPDATE faces SET " + _unassign(conn) + ", name_source = ? WHERE tag_id IN (%s)" % marks,
                                 [source] + chunk).rowcount
+    # One journaled change of the faces' identity, in this transaction (History puts their names and decisions back).
+    journal.record_faces(conn, journal.PERSON_DELETED, before)
     return _rebuilt(conn, photo_ids, changed)
 
 
