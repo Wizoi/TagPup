@@ -405,7 +405,7 @@ The folders the library has marked (`tagpup.store.folder_ids`, `tagpup.services.
 | `marked` | TEXT | NOT NULL | Local time the id was recorded, `YYYY-MM-DD HH:MM:SS`. |
 
 ### 31. `name_review_dismissals` Table
-The names the owner set aside from the list of names to review (migration 28; ARCHITECTURE.md, "People by id, stage 2", "Names to review", #985): a name on a face or in a photo's people that no person tag has. **Empty until the list is built (phase 7)**: a library that was migrated has none. A dismissed name stays hidden until it holds more rows than `rows_seen`. Not derived: it is the owner's decision. Not journaled yet.
+The names the owner set aside from the list of names to review (migration 28; ARCHITECTURE.md, "People by id, stage 2", "Names to review", #985): a name on a face or in a photo's people that no person tag has. Written by `tagpup.store.name_review` (`dismiss`, `forget`) for the owner's **Set aside** and **Show again** in TagTuner's names-to-review dialog; empty until the owner sets a name aside. `name_key` is `vocabulary.key` of the name (all its spellings are one entry), `rows_seen` the faces and listed people that held the name when it was set aside; a name stays hidden until it holds MORE rows than that (a name that gains rows is new work), and the row is removed when the name is settled or shown again. Not derived: it is the owner's decision. Not journaled: it is a preference, not a change of any face or photo (the choices that change faces -- make a person, link, unname -- are journaled changes of the faces, `journal.PERSON_MADE`, `PERSON_LINKED`, `NAME_UNNAMED`).
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |

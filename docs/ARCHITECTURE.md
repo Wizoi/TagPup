@@ -2531,13 +2531,13 @@ node an integer id and a parent id, and a person is a node with `has_face` set. 
   id across libraries. Ids are AUTOINCREMENT, never given again, so an id left behind by a node deleted
   by an older writer names nothing rather than someone else.
 
-**Stage 2** *(designed 2026-10-09; not built; asked about before it runs)*: the id becomes the key and the name a cache of the
+**Stage 2** *(designed and built 2026-10-09, in three parts; the owner's answers are at the end of the design)*: the id becomes the key and the name a cache of the
 tree's, the same name can be two people under two groups, and a picker shows the group when a leaf is shared. The design, the counted
 numbers, the phases and the owner's questions are in "People by id, stage 2" below. It replaces this section's earlier plan, whose
 decisions it keeps: a branch tag cannot be a person, the two rules are refusals, deleting a person tag that faces use is refused with a
 force that unnames them, old history stays undoable, and (#985) a name without a person tag is listed for the owner, never unnamed.
 
-### People by id, stage 2 *(design, 2026-10-09; part A, phases 1-3, and part B, phases 4-5, built 2026-10-09; part C not built; the questions at its end were the owner's, answered below)*
+### People by id, stage 2 *(design, 2026-10-09; built 2026-10-09: part A, phases 1-3, part B, phases 4-5, and part C, phases 6-8; the questions at its end were the owner's, answered below)*
 Stage 1 put the id beside the name and kept it derived from the name. Stage 2 makes the **id the person** and the name
 what the tree calls them. Two things the owner added on 2026-10-09 shape it: the same NAME can be two people when their
 tags sit in different groups (two cousins called Sam under `Family/Thackeray` and `Family/Ingersoll`; a dog and a friend
@@ -2730,9 +2730,9 @@ which app to start. That is a new guard (question 7).
 | 3 | **Built (part A).** `person_labels` + `personLabel` + the fixture, and a `person` `{id, name, tag, group, shared}` on the answers that name someone (additive; pages unchanged; the list is in SPEC_TAGTUNER.md, `/api/people?records=1`). | M |
 | 4 | **Built (part B).** Writers and readers move to ids: `faces.name_as`, `person_ids.resolve`, the 158 reader lines, `counts_by_person`, identify/automatch/clustering known sets keyed by id, the wire's `person_id`; `person_ids` follows turned round; tests with two Sams in the fixture. | L |
 | 5 | **Built (part B; with 4).** (Was: until it exists, a tree edit that gives a person a child (a tag under them) silently changes the people of every photo carrying them (they become a group and leave the photos' lists, N photos, by the part A rule); the refusals of rule (a) are this phase.) Tree operations by id: rename of one node, move, merge, delete with refusal and force, the trigger on, the two rules as refusals, journal recording of `tag_id`, the lazy rule for old entries. | M |
-| 6 | The pickers show the group on every surface listed; narrow-window checks; the new-person Group box. | M |
-| 7 | Names to review: service, routes, Review People row and dialog, Activity and doctor counts, dismissals, the "new person with a shared name" entry. | M |
-| 8 | `idx_faces_name` / `idx_faces_person` read by nothing but the review's pair query; docs; the doctor's stage-2 lines. Columns are not dropped. | S |
+| 6 | **Built (part C).** The pickers show the group on every surface listed (`personLabel`; the group's span shortens from its left); the pages hold the people as a `PeopleDirectory` and send `person_id`; a name two people have asks which; the new-person Group box. | M |
+| 7 | **Built (part C).** Names to review: service, routes, Review People row and dialog, Activity, doctor and MCP counts, dismissals. *Not built:* the "new person with a shared name" entry (the second kind, "Later phase" above). | M |
+| 8 | **Built (part C).** Cleanup and docs: the page's `personExists` (leaf and name lists) is gone, the design marked built, DATABASE and the three SPEC documents updated. The bare-name wire (CLI, MCP, a page not reloaded) is kept, as the design says. Columns are not dropped. | S |
 Phases 1 and 3 can start at once and are worth having first (1 is an owner decision already made; 3 changes no behaviour). 4 and 5 must not
 be split across a merge: the id is the key only when every writer writes it. Sizes are worker rounds: S about half a day, M one to two days, L three.
 
@@ -2812,7 +2812,7 @@ be split across a merge: the id is the key only when every writer writes it. Siz
   (`faces.rename_unresolved`; a name two people have is refused). A name that is exactly one person's but whose rows are linked to nobody (a
   same-named person left) is REPORTED -- `person_ids.unresolved()` bucket `one`, the doctor, `checks.names_without_a_person` -- and linked
   only by the owner: `people link-name <name> [--apply]` (`services.people.link_name`; a dry run; one journaled change of the faces,
-  undoable). The refusal of an undo (`_person_gone`) is gone with the fill it guarded against. The page action comes with part C's review list.
+  undoable). The refusal of an undo (`_person_gone`) is gone with the fill it guarded against. The page action is the names to review's **Link to this person** (part C).
 - **Review round 2 (2026-10-09).** The ownership question of round 1, answered: see "`person_ids.link_added`" above. `settle` filled any
   unresolved name that was unique NOW, so a rename of one of two same-named people and then any rebuild of the photo, face write or journal
   replay linked a hand-decided face to the other; it no longer fills. `person_ids.repair` and the doctor put names and dead ids right and
@@ -2856,9 +2856,53 @@ be split across a merge: the id is the key only when every writer writes it. Siz
   `person_ids.unresolved` 50 ms (4 names with no person, 1 with several, 4 that are a branch), a whole settle with nothing to change 54 ms,
   migrating 26 to 29 1.4 s, and **renaming a person 1.05 s**. Every lookup by id plans as `SEARCH ... USING COVERING INDEX idx_faces_tag` or
   `idx_photo_people_tag`; the only temp b-trees are the grouping of one pass over `photo_people` (as before) and the distinct unresolved names.
-- **Left for part C:** the pages' own leaf-based "already has" rules and duplicate checks, the pickers that send ids from every surface, the
-  names-to-review service, and the shared-leaf specs of the navigator. The pages still send names; with two people called alike they get the
-  refusal that names the candidates.
+- **Left for part C** (done: see "Part C as built"): the pages' own leaf-based "already has" rules and duplicate checks, the pickers that send ids
+  from every surface, the names-to-review service, and the shared-leaf specs of the navigator.
+
+**Part C as built** *(2026-10-09; phases 6, 7 and 8)*, and what was decided in building it:
+- **The names-to-review list** is `person_ids.review_pairs(conn)`: two grouped reads (`faces` by `idx_faces_person`, `SEARCH ... (name>?)`, and
+  `photo_people` by `idx_photo_people_name`) of the names that hold NO id, one `Review` per name key (all its spellings together; `why` none,
+  several, one or branch; faces, those decided by hand, listed people, those from a keyword), never stored. **Counted read-only on the live
+  libraries this task (each read 0.03 s, and none has migration 28 yet, so none has a name set aside):** photo_index 9 names -- 4 with no person
+  tag (80 rows: 40 faces, 27 of them decided by hand, and 40 listed), 1 with two (13 rows), 4 that are only a group (65 listed rows, no face) -- so **5 names wait** and
+  the 4 group names are `stale_group_rows` (the rebuild drops them, #986); kr-track 12 names with no tag (186 faces, all decided by hand, and 188 listed); renton_parkrun none. The one
+  rule of what waits is `store.name_review.split`: a group tag's listed-only rows are not a name to settle; a name set aside is hidden until it
+  holds MORE rows than `rows_seen`; the service, the doctor and the MCP all use it.
+- **The service** `tagpup.services.name_review` (`entries`, `count`, `resolve`): four choices, each a rehearsal unless `apply`, each ONE write
+  that reads the name, the person and the group again under the write lock (`BEGIN IMMEDIATE`) -- a name settled in another window is refused in
+  words, a person or group gone is a 404, two windows choosing at once leave one change, a failure in the middle rolls the tree row back with the
+  rest (all tested). *Make* is `taxonomy.add_node` under the group (so rule (a) is `refuse_child_of_person`'s), and the tree edit's own
+  `follow_tree` links the name -- the one writer of that link is `person_ids._link`, which `link_added` and the owner's `link_to` share. *Link*
+  gives the name's faces and listed people the person's id and name (`link_to`; for a person called otherwise, `keywords_kept` says how many photos
+  keep the old keyword in their files, and the existing tag Merge rewrites them). *Unname* uses `faces.unname` with **name_source NULL, not
+  "manual"** -- *a decision, not the design's text*: "manual" is "this is nobody", which Identify Faces never offers again, and the owner's
+  intent is to identify them (a person's forced delete leaves its faces the same way). *Dismiss* / *Show again* write `name_review_dismissals`
+  and are not journaled (a preference; nothing of a face or photo changes). Journal operations: `PERSON_MADE`, `PERSON_LINKED` (the CLI's `people
+  link-name` writes the same), `NAME_UNNAMED`, each one change of the faces with the undo's note in History.
+- **The routes** (`web/name_review_routes.py`, both apps, this PC only): `GET /api/names-to-review` (`?count=1`, `?dismissed=1`) and `POST
+  /api/names-to-review/resolve`; 409 while the faces are clustered or named from tags, as every write of faces. The count is on the Activity page's
+  attention answer (`names_to_review`, `names_url`), in `tools/doctor.py` ("names to review: N waiting, M set aside") and in the MCP's `checks`
+  (`names_to_review`: counts by reason; a name only with `reveal`).
+- **The pages.** `web/common/vocabulary.js` holds the one `PeopleDirectory` (`/api/people?records=1`: a tag path names exactly one person, a bare name
+  one only when nobody else has it, a label names the person it shows), `sameRecord`, `sameTagPerson`, `sameNamed`, `personFields` (the id when
+  there is one) and `photoAlreadyHas(photo, tag, isPersonTag, directory)`; with no people read, a library with no person tags, they are the old
+  leaf rules -- the one fallback kept, since a leaf is all such a library has. `person-choice.js` asks "which one?" and never takes the first.
+  Surfaces changed: TagTuner's Review People and Identify lists (rows by `person_id`, label, search by label, `person_id` in the address), the
+  Assign box / cluster guess / Assign Cluster popup / face card Match / badges (a badge holds the LABEL, which finds its person again), rename,
+  the faces strip and details, the New Person Group box; TagPup's face boxes, panel, strip, Suggest chips (a name two people have is two
+  chips), the add-person list, the in-page and library tallies and their pill edits (`add_ids` / `remove_ids`), the navigator, the search's
+  chips and a view's words, and the person-faces hover (by `id:<id>`). The label as an element (`person-label.js`) shortens the GROUP from its
+  left with CSS (`direction: rtl` on the group's span) and never the name.
+- **Decisions the design did not state.** (1) New Person with a group makes the tag first through the tag editor's create and names the faces by
+  the id it answers with (two requests; if the second fails the dialog says the person was made) -- the assignment job's plan carries a name, and
+  teaching it a group would have been a larger change of the job than the owner asked for. (2) A name no tag has but the faces hold is "exists", not
+  new, in the pickers (hidden people stay people). (3) The in-page tally keys a person by id and the suggestion tally by tag only for a person who
+  shares a name, so an unshared person's bare-leaf write is unchanged. (4) Names to review is Review People's, as decided; the Identify queue has no
+  such row.
+- **Not done, and why.** The second kind of entry ("a new person with a name another person has", later phase). `other_names` in Identify's "also
+  names X" notes and a photo details' `people` (names, no ids) are names the server sends without ids: they cannot say which Sam. The History
+  dialog never shows a person's name, so there was nothing to label. A leaf-keyed `/api/people-faces` entry is still sent for a person with a node when
+  nobody shares the name, for an open page from before the update.
 
 #### How it fails (each is a test before it is built)
 - **Interrupted.** The migration is additive and one transaction: a crash leaves 27 and the next start runs it again. A tree operation is one
