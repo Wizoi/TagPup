@@ -2729,7 +2729,7 @@ which app to start. That is a new guard (question 7).
 | 2 | **Built (part A).** Migration 28 (`idx_faces_tag`, `idx_photo_people_tag`, the empty `name_review_dismissals`), and the newer-library guard (`schema.NewerLibrary`, every entry point), measured on a copy. | S |
 | 3 | **Built (part A).** `person_labels` + `personLabel` + the fixture, and a `person` `{id, name, tag, group, shared}` on the answers that name someone (additive; pages unchanged; the list is in SPEC_TAGTUNER.md, `/api/people?records=1`). | M |
 | 4 | Writers and readers move to ids: `faces.name_as`, `person_ids.resolve`, the 158 reader lines, `counts_by_person`, identify/automatch/clustering known sets keyed by id, the wire's `person_id`; `person_ids` follows turned round; tests with two Sams in the fixture. | L |
-| 5 | Tree operations by id: rename of one node, move, merge, delete with refusal and force, the trigger on, the two rules as refusals, journal recording of `tag_id`, the lazy rule for old entries. | M |
+| 5 | **Until it exists, a tree edit that gives a person a child (a tag under them) silently changes the people of every photo carrying them (they become a group and leave the photos' lists, N photos, by the part A rule); the refusals of rule (a) are this phase.** Tree operations by id: rename of one node, move, merge, delete with refusal and force, the trigger on, the two rules as refusals, journal recording of `tag_id`, the lazy rule for old entries. | M |
 | 6 | The pickers show the group on every surface listed; narrow-window checks; the new-person Group box. | M |
 | 7 | Names to review: service, routes, Review People row and dialog, Activity and doctor counts, dismissals, the "new person with a shared name" entry. | M |
 | 8 | `idx_faces_name` / `idx_faces_person` read by nothing but the review's pair query; docs; the doctor's stage-2 lines. Columns are not dropped. | S |
@@ -2759,10 +2759,16 @@ be split across a merge: the id is the key only when every writer writes it. Siz
   function that opens through it refuse too. Reads through `readonly_uri` do not pass `ensure`, so each entry point also asks `schema.newer_problem`
   (read-only; a file it cannot read is not called newer): the server's library middleware answers **409** with the sentence (JSON `{success, error}`
   under `/api/`, plain text for a page) for a library under its address, `/api/server` -- which a hand-over waits for -- still answers; the picker's
-  Create answers 400; the CLI's group refuses before any command (exit 1); the MCP's `find_library` raises a ToolError; the doctor exits with the
-  sentence; a snapshot restore's refusal is the same words (`schema.newer_sentence`). **What it cannot do:** the hand-over starts the old
-  version again when the new one does not answer; if the new one had migrated the library by then, the old one is refused, with the sentence, until
-  the new one is started (a rollback of the code needs the snapshot restored: `snapshots restore`, which a newer app can do).
+  Create answers 400; the CLI's group refuses before any writing command (exit 1); the MCP's writing tools raise a ToolError; the doctor's
+  `--rebuild-derived` exits with the sentence. The sentence names where the backups are (data/backups, the snapshots under it) and how to go back.
+  **Recovery is not blocked** *(review round 1)*: an older checkout is how the owner goes back, so ONE owner, `schema.reading_newer()`, says which
+  operations may open a newer library, as it is, with a one-line note and nothing migrated, settled or written: the CLI's `history` and
+  `snapshots` (list and restore; `schema.RECOVERY_COMMANDS`), the doctor's report, the MCP's read tools (their answers carry a `note`), and the
+  server's `/api/server`. Everything that writes through the app stays outside it and refused. **When it first bites:** not for the app
+  installed today -- its `_ensure` is `if version >= LATEST: return` and it opens a 28 library like any -- but for an app that has this
+  guard, that is from the update after this one is installed. Until then the owner must not start an older checkout against a migrated
+  library. **What it cannot do:** the hand-over starts the old version again when the new one does not answer; if the new one had migrated
+  the library by then, an old version that has the guard is refused until the new one is started (a rollback of the code needs a snapshot restored).
 - **The labels.** `vocabulary.person_labels` is one decision over every person of the library; the same *length* of tail for each person who
   shares a leaf; groups differing only in case fall back to the whole parent. `Directory` (`person_ids`) tells a person to the pages and is read
   from the tree inside the answer, never kept. **Decision:** the fields are one nested `person` on each carrying record, not flat beside `name`, since the
