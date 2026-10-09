@@ -72,6 +72,9 @@ export const state = {
     detailPhotoSize: null,
     activeTab: 'matches', // 'matches' or 'outliers'
     modalSelectedFaceIds: [],
+    //: The places a new person can be made (New Person's Group box): the tree's face roots and the groups under them,
+    //: [{id, tag}], read when the dialog opens.
+    newPersonGroups: [],
 
     // Abort controllers for ongoing fetch requests
     sidebarAbortController: null,
