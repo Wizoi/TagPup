@@ -2778,6 +2778,12 @@ be split across a merge: the id is the key only when every writer writes it. Siz
 9. **A dismissed name** comes back when it gains rows. Recommended: yes.
 10. **Where the list opens**: Review People (a first row, shown only when there is something) with the count in Activity. Recommended as written.
 
+**Decided (owner, 2026-10-09): every recommendation above, as written.** The owner answered 1 (person tags only), 4 (the short label), 8
+(Rename Person means the one picked) and 7 (refuse a library newer than the app) directly, and accepted the recommended answers to 2, 3, 5, 6, 9
+and 10 by not changing them. Build order: part A = phases 1-3 (the group tag is not a person; migration 28 with the newer-library
+guard; the labels and their shared fixture), part B = phases 4 and 5 together (writers and readers to ids; tree operations, refusals, trigger and
+journal), part C = phases 6-8 (the pickers show the group; the names-to-review list; cleanup). Each part is reviewed and merged before the next.
+
 ### Ideas taken from Windows Live Photo Gallery's database *(2026-10-02)*
 The owner's WLPG index (`Pictures.pd6`, a SQL Server Compact 3.1 file: 73,184 files, 836
 hierarchical tags, 159,325 tag uses, a 1.3-million-row word index, 17,486 face regions) was
