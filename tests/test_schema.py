@@ -102,7 +102,7 @@ class ANewLibrary(SchemaTestCase):
                           "change_files", "job_runs", "sync_runs", "added_folders", "damaged_files",
                           "faces_pending", "faces_detected", "roots", "photo_tags", "folders", "photo_folder",
                           "photo_meta", "library_identity", "folder_ids",
-                          "search_words", "search_names", "search_gear"}
+                          "search_words", "search_names", "search_gear", "name_review_dismissals"}
                          | {"search_%s_%s" % (table, shadow) for table in ("words", "names", "gear")
                             for shadow in ("data", "idx", "docsize", "config")},
                          tables(conn))

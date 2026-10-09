@@ -14,11 +14,12 @@ broken (the tree is the owner's, and indexing never adds to it).
 
     .venv/Scripts/python.exe tools/doctor.py --db data/photo_index.db --rebuild-derived [--apply]
 
-makes the derived tables (photo_tags, folders, photo_folder, photo_meta) what the photos say, and each
-face's and listed person's id (faces.tag_id, photo_people.tag_id) the node their name is: a dry run that
-says what is wrong, and with --apply a write under the library's write lock that makes them so and
-verifies it. Only derived rows and columns are written -- no name, photo, tag or file -- so no backup
-is taken.
+makes the derived tables (photo_tags, folders, photo_folder, photo_meta) what the photos say, each
+photo's list of people (photo_people) what its keywords, faces and the tag tree make it -- a group tag is
+not a person (#986) -- and each face's and listed person's id (faces.tag_id, photo_people.tag_id) the node
+their name is: a dry run that says what is wrong, and with --apply a write under the library's write lock
+that makes them so and verifies it. Only derived rows and columns are written -- no name, photo, tag or
+file -- so no backup is taken.
 
 The names faces and photos' people hold that no person node is called, or that two are, are reported
 by count, and by name with --show: they have no id, and the tree is the owner's to settle. So are the
@@ -41,14 +42,25 @@ sys.path.insert(0, ROOT)
 from tagpup import runtime  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.store import checks, db, derived, embeddings, person_ids, schema, search_index  # noqa: E402
+from tagpup.store import checks, db, derived, embeddings, people, person_ids, schema, search_index  # noqa: E402
 from tagpup.store import folder_ids  # noqa: E402
+
+
+def _refuse_newer(db_path):
+    """A library made by a newer TagPup than this tool's is not written: its rules are the newer one's. (The
+    report, which only reads, is let through with a note: it is what an older checkout has for recovery.)"""
+    problem = schema.newer_problem(db_path)
+    if problem:
+        raise SystemExit(problem)
 
 
 def report(db_path, show=0, out=print):
     """Report on the library at `db_path`. Returns the number of rules broken."""
     if not os.path.exists(db_path):
         raise SystemExit("There is no library at %s." % db_path)
+    note = schema.newer_note(db_path)   # the report only reads: a newer library is shown as it is, with a note
+    if note:
+        out(note)
     # The library's CLIP model, read without writing: a library never stamped reads as
     # stamping would make it.
     # A library holding a root this machine does not place cannot spell its paths: what needs
@@ -154,6 +166,7 @@ def rebuild_derived(db_path, apply=False, out=print):
     them what the photos say. Returns 0 when they are (now) right, 1 when they are not. Counts only."""
     if not os.path.exists(db_path):
         raise SystemExit("There is no library at %s." % db_path)
+    _refuse_newer(db_path)
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         version = schema.version(conn)
@@ -162,10 +175,13 @@ def rebuild_derived(db_path, apply=False, out=print):
                 "TagPup or the CLI applies" % version)
             return 1
         tables = derived.problems(conn)
+        listed = people.stale(conn)   # photo_people is migration 6's; this tool starts at 19
         ids = _person_ids_wrong(conn)
         has_ids = person_ids.present(conn)
     finally:
         conn.close()
+    if listed:
+        tables = tables + ["%d photo(s) list people the rule makes otherwise (photo_people)" % len(listed)]
     for line in tables + ids:
         out("  " + line)
     if not tables and not ids:
@@ -175,8 +191,18 @@ def rebuild_derived(db_path, apply=False, out=print):
         out("a dry run: nothing was written. --apply makes them so; only derived rows and columns change")
         return 1
     after = []
-    if tables:
-        _before, written, after = derived.repair(db_path)
+    if listed:
+        out("photos' people rebuilt: %d photo(s) changed" % people.repair(db_path, listed))
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            left = len(people.stale(conn))
+        finally:
+            conn.close()
+        if left:
+            after.append("%d photo(s) still list people the rule makes otherwise" % left)
+    if len(tables) > bool(listed):
+        _before, written, after_tables = derived.repair(db_path)
+        after += after_tables
         out("rebuilt from %d photo(s): %d keyword row(s), %d folder(s), %d photo(s) in one, %d metadata row(s), "
             "%d word row(s), %d camera and lens row(s)"
             % (written["photos"], written["tag_rows"], written["folders"], written["in_a_folder"], written["meta_rows"],
@@ -213,7 +239,8 @@ def main(argv=None):
         parser.error("--apply goes with --rebuild-derived")
     if args.rebuild_derived:
         return rebuild_derived(args.db, args.apply)
-    return 1 if report(args.db, args.show) else 0
+    with schema.reading_newer():   # the report reads only; the writer above is refused by rebuild_derived
+        return 1 if report(args.db, args.show) else 0
 
 
 if __name__ == "__main__":

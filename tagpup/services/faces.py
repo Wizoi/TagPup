@@ -22,7 +22,7 @@ from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Result
 from tagpup.services import photos as photo_files
 from tagpup.services import thumbnails
-from tagpup.store import db, face_tags, faces, faces_detected, faces_pending, photos, removals
+from tagpup.store import db, face_tags, faces, faces_detected, faces_pending, person_ids, photos, removals
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import folders as store_folders
 
@@ -529,8 +529,8 @@ def _library_there(library):
 def panel(library, photo_path):
     """The faces detected on one photo, for the strip under its details and the boxes over
     it: {"faces", "total", "unmatched", "size", "turned"}, each face with its box, area, name,
-    prob, exclusion, and for an unnamed one the closest name elsewhere in the library and how
-    alike. `size` is [width, height] of the pixels the boxes are in, or None, and `turned`
+    the `person` that name is (tagpup.services.people), prob, exclusion, and for an unnamed one the
+    closest name elsewhere in the library (and `suggestion_person`, the same of it) and how alike. `size` is [width, height] of the pixels the boxes are in, or None, and `turned`
     says the photo declares an EXIF Orientation its boxes do not follow (photos.box_shape).
 
     TagPup ran face recognition invisibly: the suggester matched faces and surfaced
@@ -548,6 +548,7 @@ def panel(library, photo_path):
         rows = faces.in_photo_for_panel(conn, photo_path)
         if not rows:
             return {"faces": [], "total": 0, "unmatched": 0}
+        everyone = person_ids.Directory.read(conn)
         known_names, known_vectors = [], []
         for name, emb in faces.named_embeddings_elsewhere(conn, photo_path):
             vec = _unit(emb)
@@ -574,8 +575,10 @@ def panel(library, photo_path):
         found.append({
             "id": face_id, "box": box,
             "area": (box[2] - box[0]) * (box[3] - box[1]) if len(box) >= 4 else 0,
-            "name": name, "prob": prob, "excluded": bool(excluded), "excluded_reason": reason,
+            "name": name, "person": everyone.of_name(name), "prob": prob, "excluded": bool(excluded),
+            "excluded_reason": reason,
             "suggestion": suggestion if name is None else None,
+            "suggestion_person": everyone.of_name(suggestion) if name is None else None,
             "similarity": similarity if name is None else None,
         })
     found.sort(key=lambda f: (f["name"] is None, -(f["similarity"] or 0.0), -f["area"]))

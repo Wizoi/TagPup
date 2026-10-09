@@ -341,7 +341,8 @@ def folder_suggest_status():
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
     # Under the spellings this server's scan gave the page (tagpup.jobs.suggestions).
-    return jsonify(suggestion_jobs.runs_for(library).status(folder, folders.of(library).get(folder)))
+    status = suggestion_jobs.runs_for(library).status(folder, folders.of(library).get(folder))
+    return jsonify(people_service.annotate_suggestions(library, status))
 
 
 @routes.post("/api/folder/suggest-start")
@@ -1271,8 +1272,12 @@ def tags():
 
 @routes.get("/api/people")
 def people():
-    """The people offered while a name is typed (tagpup.services.people.names)."""
+    """The people offered while a name is typed (tagpup.services.people.names). ?records=1 answers the people with a
+    person tag instead, each `{id, name, tag, group, shared}` (tagpup.services.people.records)."""
     try:
-        return jsonify(people_service.names(state.require()))
+        library = state.require()
+        if request.args.get("records") == "1":
+            return jsonify(people_service.records(library, include_hidden=request.args.get("include_hidden") == "1"))
+        return jsonify(people_service.names(library))
     except Exception as e:
         return responses.error(500, str(e))

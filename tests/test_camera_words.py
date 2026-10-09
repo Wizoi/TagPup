@@ -227,7 +227,7 @@ class MigrationTwentySeven(unittest.TestCase):
         try:
             conn.execute("DROP TRIGGER search_gear_goes_with_its_photo")
             conn.execute("DROP TABLE search_gear")
-            conn.execute("DELETE FROM schema_version WHERE version = 27")
+            conn.execute("DELETE FROM schema_version WHERE version >= 27")   # 28's indexes stay: IF NOT EXISTS
             conn.commit()
         finally:
             conn.close()
@@ -243,7 +243,7 @@ class MigrationTwentySeven(unittest.TestCase):
         tables = [table for table in tables if table not in ("schema_version", "changes", "change_rows")
                   and not table.startswith("search_")]
         before = {table: look(self.path, "SELECT * FROM %s" % table) for table in tables}
-        self.assertEqual(migration_names.named(27), schema.ensure(self.path))
+        self.assertEqual(migration_names.after(26), schema.ensure(self.path))
         added = sorted(row for row in self.schema_rows() if row not in before_schema)
         expected = sorted([("table", name, name) for name in (search_index.GEAR,) + search_index.GEAR_SHADOWS]
                           + [("trigger", "search_gear_goes_with_its_photo", "photos")])
@@ -313,7 +313,7 @@ class MigrationTwentySeven(unittest.TestCase):
         self.assertEqual(26, look(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
         self.assertEqual([], look(self.path, "SELECT name FROM sqlite_master WHERE name LIKE 'search_gear%'"))
         schema._current.clear()
-        self.assertEqual(migration_names.named(27), schema.ensure(self.path))
+        self.assertEqual(migration_names.after(26), schema.ensure(self.path))
         self.assertEqual(2, look(self.path, "SELECT COUNT(*) FROM search_gear")[0][0])
 
     def test_a_library_below_27_is_matched_in_the_two_tables_of_24_alone(self):

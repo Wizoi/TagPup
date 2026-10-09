@@ -58,6 +58,7 @@ KINDS = {
     25: schema.ADDITIVE,     # the faces_detected table, empty
     26: schema.ADDITIVE,     # library_identity and folder_ids, empty
     27: schema.ADDITIVE,     # search_gear: the camera and lens words a search matches (derived)
+    28: schema.ADDITIVE,     # idx_faces_tag, idx_photo_people_tag and name_review_dismissals (empty)
 }
 
 

@@ -22,6 +22,7 @@ from tagpup.core.result import Refused
 from tagpup.files import recycle_bin
 from tagpup.services import library_view
 from tagpup.store import library_view as store
+from tagpup.store import person_ids
 from tagpup.store import selection_folders as store_folders
 
 #: The most ids a selection lists (`ids`, or `excluded`).
@@ -80,7 +81,7 @@ MAX_FOLDERS_LISTED = 10
 
 def tally(library, selection):
     """What the photos of `selection` hold: {"total" (the photos that exist), "tags": [{"tag", "count"}], "people":
-    [{"name", "count", "has_node"}], "more_tags", "more_people", "folders": {"count", "listed": [{"path", "name", "photos"}]}} -- the
+    [{"name", "count", "has_node", "person"}], "more_tags", "more_people", "folders": {"count", "listed": [{"path", "name", "photos"}]}} -- the
     folders the selection is in, counted, and named (native path, the folder's own name, its photos selected) only when
     there are MAX_FOLDERS_LISTED or fewer, by name (#675: what the panel offers to open in Organize; 68,000 photos are
     one grouped read of photo_folder, never 68,000 paths); and the tags and people the selection carries, each with the number of
@@ -96,6 +97,7 @@ def tally(library, selection):
         found = store.tally(conn, selection.ids, selection.source, selection.excluded)
         # In the tally's read transaction: the folders are of the photos just counted.
         folders = _folders(conn, selection)
+        everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
     tags = _kept([(tag, count) for tag, count in found["tags"]])
@@ -103,7 +105,8 @@ def tally(library, selection):
     nameless = set(found["nameless"])
     return {"total": found["total"],
             "tags": [{"tag": tag, "count": count} for tag, count in tags[0]], "more_tags": tags[1],
-            "people": [{"name": name, "count": count, "has_node": name not in nameless} for name, count in people[0]],
+            "people": [{"name": name, "count": count, "has_node": name not in nameless, "person": everyone.of_name(name)}
+                       for name, count in people[0]],
             "more_people": people[1],
             "folders": folders}
 

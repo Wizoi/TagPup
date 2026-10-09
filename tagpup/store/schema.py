@@ -23,6 +23,8 @@ A table is rebuilt only through `rebuild_table`, SQLite's twelve steps.
 one. After the first time in a process it costs a stat.
 """
 import collections
+import contextlib
+import contextvars
 import logging
 import os
 import re
@@ -75,6 +77,103 @@ REQUIRED_COLUMNS = {
 
 class TooOld(Exception):
     """A library older than the tables of 2026-09, which TagPup no longer converts."""
+
+
+class NewerLibrary(Exception):
+    """A library whose schema is newer than this version of TagPup knows (`LATEST`): an older app
+    that opened it would misread what the newer one wrote and write it back wrong (identity stage 2:
+    names without ids, which the newer doctor then overwrites). Refused wherever a library is opened;
+    `str(e)` is the sentence to show the owner, never a traceback. `found` is the library's version,
+    `known` this app's."""
+
+    def __init__(self, name, found, known):
+        self.name, self.found, self.known = name, found, known
+        super().__init__(newer_sentence(name, found, known))
+
+
+#: Where a library's backups are, for the owner who has to go back to an older checkout.
+BACKUPS_NOTE = ("Your backups are in data/backups (the library's snapshots in data/backups/<library>/daily, weekly "
+                "and monthly, the copies taken before a bulk change beside them as <library>.before-...db). To go "
+                "back to an older TagPup, prefer to list and restore a snapshot with this version "
+                "(`tagpup_cli.py --db <library> snapshots list`, `snapshots restore <name> --apply`). If you copy a "
+                "backup over the library file by hand instead: stop every TagPup and delete <library>.db-wal and "
+                "<library>.db-shm beside the library first, or the newer version's write-ahead log is replayed over the "
+                "older copy and the library is a mixture of both.")
+
+
+def newer_sentence(what, found, known, recover=True):
+    """The one sentence for something made by a newer TagPup than this one: a library (`what` is its file
+    name) or a snapshot of one (snapshots.restore uses it). It says which app to start, and, for a library
+    (`recover`), where the backups are and how to go back."""
+    said = ("%s was made by a newer version of TagPup (its schema is %d; this version knows up to %d), so this "
+            "version will not open it: it would misread it and write it wrong. Start the newest TagPup you have "
+            "installed (its launchers, TagPup.cmd and TagTuner.cmd, install and start the current version)."
+            % (what, found, known))
+    return said + " " + BACKUPS_NOTE if recover else said
+
+
+# ---- What may open a library newer than this version -----------------------------------------
+#
+# ONE owner of which operations may: `reading_newer()`. Inside it `ensure` lets a newer library through
+# without migrating, settling or writing anything, so the recovery tools of an older checkout still work:
+# listing and restoring snapshots, reading the journal, the doctor's report, the MCP's read tools. An entry point
+# enters it only for an operation of RECOVERY (the CLI's commands by name; the MCP's read tools; the doctor's
+# report); everything that writes through the app is outside it, and `ensure` refuses.
+
+#: The CLI commands that may open a newer library: the journal's read and the snapshots (list and restore).
+RECOVERY_COMMANDS = ("history", "snapshots")
+
+_reading_newer = contextvars.ContextVar("tagpup_reading_newer", default=False)
+
+
+@contextlib.contextmanager
+def reading_newer():
+    """Within it, `ensure` lets a library newer than this version through, changing nothing."""
+    token = _reading_newer.set(True)
+    try:
+        yield
+    finally:
+        _reading_newer.reset(token)
+
+
+def newer_note(db_path):
+    """One line saying the library at `db_path` is newer than this version and is being read as it is, or None."""
+    sentence = newer_problem(db_path)
+    if sentence is None:
+        return None
+    found = version_of(db_path)
+    return ("Note: %s is from a newer TagPup (schema %d; this version knows %d): it is only read, nothing is written."
+            % (os.path.basename(db_path), found, LATEST))
+
+
+def version_of(db_path):
+    """The schema version of the library file at `db_path`, read only; 0 for none."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return version(conn)
+    finally:
+        conn.close()
+
+
+def newer_problem(db_path):
+    """The sentence (NewerLibrary's) when the library at `db_path` is newer than this version knows, else
+    None, also for a file that is not there or not a library yet. Reads only: for an entry point that
+    looks at a library without opening it through `ensure` (the MCP's tools, the CLI's group, the doctor).
+    A file that cannot be read just now (locked, not a database) is not decided here: it says None, and the
+    open that follows says why; `ensure` refuses a newer library whatever this answered."""
+    if not os.path.exists(db_path):
+        return None
+    try:
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            found = version(conn)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    if found > LATEST:
+        return newer_sentence(os.path.basename(db_path), found, LATEST)
+    return None
 
 
 def _tables(conn):
@@ -781,6 +880,21 @@ def _caption_index(conn):
                  % (library_view.CAPTION_INDEX, library_view.caption_sql("captions")))
 
 
+def _person_indexes(conn):
+    """The indexes a person is read by id with, and the table of names set aside (docs/ARCHITECTURE.md, "People by id,
+    stage 2"; docs/findings.md, #1013): `idx_faces_tag` on faces(tag_id) and `idx_photo_people_tag` on
+    photo_people(tag_id, photo_id) -- `WHERE tag_id = ?` scanned idx_faces_person (name, tag_id) whole and had no
+    index at all on photo_people -- and `name_review_dismissals`, empty: a name the owner set aside from the list of
+    names to review, until it holds more rows than `rows_seen`. No row of any table changes, so nothing is recorded
+    in the journal and no backup is needed; the table is new, so no change can have recorded a row of it."""
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_tag ON faces(tag_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_photo_people_tag ON photo_people(tag_id, photo_id)")
+    conn.execute("CREATE TABLE IF NOT EXISTS name_review_dismissals ("
+                 " name_key TEXT PRIMARY KEY,"
+                 " rows_seen INTEGER NOT NULL,"
+                 " decided TEXT NOT NULL)")
+
+
 def _person_ids(conn):
     """Each face and each photo's listed person name the node of the tag tree that is that person:
     `faces.tag_id` and `photo_people.tag_id`, beside `name` (docs/ARCHITECTURE.md, "Identity by id",
@@ -1410,6 +1524,12 @@ MIGRATIONS = (
               "and the lens comes with the doctor's --rebuild-derived",
               ("search_gear",),
               (RowsKept(), GearAgrees()) + STANDARD),
+    Migration(28, "people read by id, and the names set aside", _person_indexes, ADDITIVE,
+              "adds idx_faces_tag and idx_photo_people_tag, the indexes a person is read by id with, and "
+              "name_review_dismissals, empty; no row of any table changes, and a change journaled before it can "
+              "still be undone",
+              ("name_review_dismissals",),
+              (RowsKept(),) + STANDARD),
 )
 
 #: The columns a migration adds to a table the journal keys that the journal derives
@@ -1476,7 +1596,12 @@ def ensure(db_path):
     with _current_guard:
         if identity is not None and _current.get(key) == identity:
             return []
-    applied = _ensure(db_path)
+    try:
+        applied = _ensure(db_path)
+    except NewerLibrary:
+        if _reading_newer.get():
+            return []   # reading_newer(): as it is, nothing migrated, settled or remembered
+        raise
     from tagpup.store import journal   # the journal imports this module
     journal.settle_once(db_path)
     with _current_guard:
@@ -1518,7 +1643,10 @@ def _drop_legacy_counters(db_path, conn):
 def _ensure(db_path):
     conn = db.connect(db_path, timeout=30.0)
     try:
-        if version(conn) >= LATEST:
+        found = version(conn)
+        if found > LATEST:
+            raise NewerLibrary(os.path.basename(db_path), found, LATEST)
+        if found == LATEST:
             _drop_legacy_counters(db_path, conn)
             return []
         with db.lock_for(db_path):

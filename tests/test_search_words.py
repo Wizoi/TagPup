@@ -346,7 +346,10 @@ class MigrationTwentyFour(unittest.TestCase):
         self.assertEqual(1, len(library_view.ids(library.library, "search", words("beach"))["ids"]))
 
     def test_a_change_made_at_23_is_still_undoable_after_it(self):
-        applied = journal.apply(self.path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
+        # Made at 23, by the version of the app that knew 23: the journal opens the library through schema.ensure.
+        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:23]), mock.patch.object(schema, "LATEST", 23):
+            applied = journal.apply(self.path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
+        schema._current.clear()
         self.migrate()
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:

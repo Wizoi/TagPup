@@ -91,6 +91,31 @@ export function samePerson(a, b) {
     return Boolean(left) && left === leafOf(b).toLowerCase();
 }
 
+// ---- How a person is labelled -------------------------------------------------------
+//
+// Where two people share a leaf (two cousins called Sam under Family/Thackeray and Family/Ingersoll), every
+// list, chip and hover shows the group too, and only then. The server decides who shares and which tail of
+// the path tells them apart (tagpup.core.vocabulary.person_labels, over everyone in the library) and sends each
+// person as {id, name, tag, group, shared}; the page only joins them, here, and no page builds the string
+// itself or compares two people by it: they compare ids. tests/fixtures/person_labels.json is the table
+// this and the server are held to (tests/frontend/person-labels.test.mjs, tests/test_person_labels.py).
+
+/** What stands between a person's name and their group: "Sam · Thackeray". */
+export const GROUP_SEPARATOR = ' \u00b7 ';
+
+/** What is shown for a person: their name, and, when another person has it too, the group that tells them apart. */
+export function personLabel(person) {
+    if (!person) return '';
+    const name = String(person.name ?? '');
+    return person.shared && person.group ? `${name}${GROUP_SEPARATOR}${person.group}` : name;
+}
+
+/** The full tag of a person, for the element's title and the screen reader: where they are filed. */
+export function personTitle(person) {
+    if (!person) return '';
+    return String(person.tag || person.name || '');
+}
+
 /**
  * Does this photo already carry this tag, or this same person under another name?
  *

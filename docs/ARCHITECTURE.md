@@ -144,7 +144,7 @@ nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
 | `photos` | file copy | `id` INTEGER PRIMARY KEY; `path` UNIQUE, compared without case, native in a library with no roots and `@root/relative` for a file under one of its roots (the same for every other column of paths: `change_files`, `added_folders`, `damaged_files`, the two folder settings, the paths inside `raw_metadata` and `suggestions.raw`); `document_id`; `mtime`, `size`; `keywords`, `captions`, `raw_metadata`, `taken_at`, `orientation` as read from the file; `indexed_at`, NULL until indexed. Every photo the apps have looked at has a row, because faces need one to point at (today the suggester saves faces for photos with no row). |
 | `faces` | decision | `id`; `photo_id` → `photos.id`; `box`; `embedding`; `name`; `name_source`; `excluded`; `excluded_reason`. |
 | `face_crops` | derived | `face_id` → `faces.id`; the JPEG. Kept out of `faces`, so reading faces never drags 6 KB crops along. |
-| `photo_people` | derived | `photo_id`, `name`, `source` (keyword or face). Rebuilt for a photo by one function whenever its keywords, its faces or the tag tree change. Replaces the `photos.people` JSON column. |
+| `photo_people` | derived | `photo_id`, `name`, `source` (keyword or face); a group tag names nobody. Rebuilt for a photo by one function whenever its keywords, its faces or the tag tree change. Replaces the `photos.people` JSON column. |
 | `photo_tags` | derived | `photo_id`, `tag_id` (the tag-tree node's id). Made by `tagpup.store.derived` from `photos.tags` and the tree, kept by every write of a photo's keywords and by the tree's edits; a keyword with no node has no row and makes none (migration 19). |
 | `folders`, `photo_folder` | derived | The folder tree of the photos' paths (`folders`: `id`, `parent_id`, `path` in row form, `name`) and the folder each photo is directly in (migration 19). A folder has a row for each ancestor of a folder holding a photo, and goes with its last one. The adoption of a root rebuilds them. |
 | `photo_meta` | derived | `photo_id`, `rating`, `make`, `model`, `width`, `height`, `latitude`, `longitude`, from `photos.raw_metadata` (migration 19); width and height are empty until the indexer reads the size. |
@@ -2537,7 +2537,7 @@ numbers, the phases and the owner's questions are in "People by id, stage 2" bel
 decisions it keeps: a branch tag cannot be a person, the two rules are refusals, deleting a person tag that faces use is refused with a
 force that unnames them, old history stays undoable, and (#985) a name without a person tag is listed for the owner, never unnamed.
 
-### People by id, stage 2 *(design, 2026-10-09; not built; the questions at its end are the owner's, asked before the build)*
+### People by id, stage 2 *(design, 2026-10-09; part A, phases 1-3, built 2026-10-09; parts B and C not built; the questions at its end were the owner's, answered below)*
 Stage 1 put the id beside the name and kept it derived from the name. Stage 2 makes the **id the person** and the name
 what the tree calls them. Two things the owner added on 2026-10-09 shape it: the same NAME can be two people when their
 tags sit in different groups (two cousins called Sam under `Family/Thackeray` and `Family/Ingersoll`; a dog and a friend
@@ -2725,16 +2725,58 @@ which app to start. That is a new guard (question 7).
 
 | Phase | What | Size |
 |---|---|---|
-| 1 | The group tag is not a person (#986): `PeopleVocabulary` rows carry ids, `people_in_photo` returns references and drops branches, dedupes by id, `people_out_of_date`; the doctor's rebuild counts. No schema. | M |
-| 2 | Migration 28 (the two indexes, the dismissals table), the newer-library guard, measured on a copy. | S |
-| 3 | `person_labels` + `personLabel` + the fixture, and `{id, name, tag, group, shared}` on every people answer (additive fields, pages unchanged). | M |
+| 1 | **Built (part A).** The group tag is not a person (#986): `PeopleVocabulary` is given the tree's groups (`taxonomy.group_tags`), `extract_people` drops a group's keyword (path or bare leaf), `people_out_of_date` agrees, `tools/doctor.py --rebuild-derived` rebuilds the photos' people (`people.repair`; it did not before). Not done here, left for phase 4 with the references: `PeopleVocabulary` rows carrying ids, `people_in_photo` returning references and deduping by id. No schema. | M |
+| 2 | **Built (part A).** Migration 28 (`idx_faces_tag`, `idx_photo_people_tag`, the empty `name_review_dismissals`), and the newer-library guard (`schema.NewerLibrary`, every entry point), measured on a copy. | S |
+| 3 | **Built (part A).** `person_labels` + `personLabel` + the fixture, and a `person` `{id, name, tag, group, shared}` on the answers that name someone (additive; pages unchanged; the list is in SPEC_TAGTUNER.md, `/api/people?records=1`). | M |
 | 4 | Writers and readers move to ids: `faces.name_as`, `person_ids.resolve`, the 158 reader lines, `counts_by_person`, identify/automatch/clustering known sets keyed by id, the wire's `person_id`; `person_ids` follows turned round; tests with two Sams in the fixture. | L |
-| 5 | Tree operations by id: rename of one node, move, merge, delete with refusal and force, the trigger on, the two rules as refusals, journal recording of `tag_id`, the lazy rule for old entries. | M |
+| 5 | **Until it exists, a tree edit that gives a person a child (a tag under them) silently changes the people of every photo carrying them (they become a group and leave the photos' lists, N photos, by the part A rule); the refusals of rule (a) are this phase.** Tree operations by id: rename of one node, move, merge, delete with refusal and force, the trigger on, the two rules as refusals, journal recording of `tag_id`, the lazy rule for old entries. | M |
 | 6 | The pickers show the group on every surface listed; narrow-window checks; the new-person Group box. | M |
 | 7 | Names to review: service, routes, Review People row and dialog, Activity and doctor counts, dismissals, the "new person with a shared name" entry. | M |
 | 8 | `idx_faces_name` / `idx_faces_person` read by nothing but the review's pair query; docs; the doctor's stage-2 lines. Columns are not dropped. | S |
 Phases 1 and 3 can start at once and are worth having first (1 is an owner decision already made; 3 changes no behaviour). 4 and 5 must not
 be split across a merge: the id is the key only when every writer writes it. Sizes are worker rounds: S about half a day, M one to two days, L three.
+
+**Part A as built** *(2026-10-09; branch worktree-agent-aae3c5e71aecc6882)*, and what was decided in building it:
+- **The group tag.** A face node with a node under it is a *group* (`taxonomy.group_tags`, the same reading as `person_ids.People`'s branches).
+  `PeopleVocabulary.from_rows` is given them: a group's keyword -- spelled as a path, with a backslash or a bare leaf -- names nobody, and is in
+  no `by_keyword`, so `extract_people`, `face_people._person_tags` (faces-from-tags), `people_paths` and `people_filing` (where a name is filed,
+  hence what a click on a chip writes) all drop it by the one rule. A bare keyword that equals a group's
+  leaf still names a *person* of that name elsewhere. `people._touched` compares the groups too, so a person given a tag under them leaves their
+  photos' lists in the same transaction (`tree_edit`). **A face's name and a person field of the metadata are names, not tags, and stay listed**
+  even when they spell a group (none exists on photo_index: the 7 faces were unnamed on 2026-10-09; they would be the review list's, #985).
+  Counted read-only on 2026-10-09: photo_index 9 face groups, 4 carried by photos, **65 photos** whose people the rule now changes
+  (`people.stale`, 10.8 s); kr-track and renton_parkrun none. The 12 photos of the shared-leaf keyword are phase 4's (ids), not 65 + 12 yet.
+  *The doctor's `--rebuild-derived` did not rebuild `photo_people` at all*, only the derived tables and the ids: it does now (a dry run counts the
+  photos; `--apply` rebuilds those photos only, outside the write lock for the reading).
+- **Migration 28** is `idx_faces_tag` on `faces(tag_id)`, `idx_photo_people_tag` on `photo_people(tag_id, photo_id)` and the empty
+  `name_review_dismissals`; additive, `touches` is the new table alone (so `schema_gap_blocker` is unchanged and a change made at 27 is undoable
+  after 28; no `faces` quick_check is run, which migration 21's cost 6.5 s). **Measured** on a copy of photo_index (2,615 MB, copied by
+  `db.copy_database` into a home of its own, then deleted): the copy was at schema 26 (the live library has not had 27 yet), 27 and 28 together
+  took 0.8 s of which **28 is 0.6 s**; the planner then answers `WHERE tag_id = ?` as `SEARCH ... USING COVERING INDEX idx_faces_tag` and
+  `idx_photo_people_tag`. Interrupted, it leaves 27 and runs again; two processes apply it once (both tested).
+- **The newer-library guard.** `schema.ensure` raises `schema.NewerLibrary` (its text names the library by file name, its schema and this app's, and
+  says to start the newest TagPup) for a version above `LATEST`, before it writes anything, so the journal, settings, snapshots and every store
+  function that opens through it refuse too. Reads through `readonly_uri` do not pass `ensure`, so each entry point also asks `schema.newer_problem`
+  (read-only; a file it cannot read is not called newer): the server's library middleware answers **409** with the sentence (JSON `{success, error}`
+  under `/api/`, plain text for a page) for a library under its address, `/api/server` -- which a hand-over waits for -- still answers; the picker's
+  Create answers 400; the CLI's group refuses before any writing command (exit 1); the MCP's writing tools raise a ToolError; the doctor's
+  `--rebuild-derived` exits with the sentence. The sentence names where the backups are (data/backups, the snapshots under it) and how to go back.
+  **Recovery is not blocked** *(review round 1)*: an older checkout is how the owner goes back, so ONE owner, `schema.reading_newer()`, says which
+  operations may open a newer library, as it is, with a one-line note and nothing migrated, settled or written: the CLI's `history` and
+  `snapshots` (list and restore; `schema.RECOVERY_COMMANDS`), the doctor's report, the MCP's read tools (their answers carry a `note`), and the
+  server's `/api/server`. Everything that writes through the app stays outside it and refused. **When it first bites:** not for the app
+  installed today -- its `_ensure` is `if version >= LATEST: return` and it opens a 28 library like any -- but for an app that has this
+  guard, that is from the update after this one is installed. Until then the owner must not start an older checkout against a migrated
+  library. **What it cannot do:** the hand-over starts the old version again when the new one does not answer; if the new one had migrated
+  the library by then, an old version that has the guard is refused until the new one is started (a rollback of the code needs a snapshot restored).
+- **The labels.** `vocabulary.person_labels` is one decision over every person of the library; the same *length* of tail for each person who
+  shares a leaf; groups differing only in case fall back to the whole parent. `Directory` (`person_ids`) tells a person to the pages and is read
+  from the tree inside the answer, never kept. **Decision:** the fields are one nested `person` on each carrying record, not flat beside `name`, since the
+  navigator's people already have a `group` of their own (the branch they are filed in) and the tally's `tag` means a tag. A row keyed by a
+  name two people share has `person: {id: null, tag: null, group: "", shared: true}`, since part A cannot say which; part B keys the rows by id.
+  The photos' `people` lists of names and the dicts keyed by name get nothing now (a card list of thousands would carry a parallel array for
+  every photo): the page keeps `/api/people?records=1`, where a name is looked up. The cached Identify queue and the saved suggestions are
+  labelled when they are served, never inside the cache.
 
 #### How it fails (each is a test before it is built)
 - **Interrupted.** The migration is additive and one transaction: a crash leaves 27 and the next start runs it again. A tree operation is one

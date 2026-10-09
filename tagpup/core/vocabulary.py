@@ -16,6 +16,7 @@ Reading the metadata out of a file is tagpup.files.metadata's; what a library's 
 tree says about people is read by tagpup.store.taxonomy and passed in. Everything here
 works on what they hand over, and touches neither.
 """
+import collections
 import unicodedata
 
 SEPARATOR = "/"
@@ -169,6 +170,45 @@ def person_tag(name, filed, roots):
     return None
 
 
+#: What a person's label needs beyond their name: `shared` -- another person of the library has the same leaf --
+#: and `group`, the part of the path that tells them apart ("" when not shared).
+PersonLabel = collections.namedtuple("PersonLabel", "shared group")
+
+
+def person_labels(people):
+    """{id: PersonLabel} for each of `people`, [(id, tag)] -- EVERY person of the library, not the ones
+    being listed, so a filtered list of one Sam still says which Sam (docs/ARCHITECTURE.md, "People by
+    id, stage 2", "Showing the group"; the page's string is web/common/vocabulary.js personLabel, and
+    tests/fixtures/person_labels.json holds the two to one table).
+
+    Two people share a leaf when their tags end in the same segment, compared without case (`key`).
+    Only then does a person have a group: the shortest tail of their parent path that tells the sharing
+    people apart -- one segment ("Thackeray") when it is enough for all of them, two when two groups end
+    alike ("Thackeray/Cousins"), the whole parent when only the root differs. The same length for each
+    of the people sharing, so their labels read alike. Groups that differ only in case cannot be told
+    apart by any tail, and are the whole parent as filed. Nobody else is shared, and has no group."""
+    by_leaf = {}
+    for person_id, tag in people:
+        parts = segments(tag)
+        if parts:
+            by_leaf.setdefault(key(parts[-1]), []).append((person_id, parts[:-1]))
+    labels = {}
+    for members in by_leaf.values():
+        if len(members) == 1:
+            labels[members[0][0]] = PersonLabel(False, "")
+            continue
+        longest = max(len(parents) for _id, parents in members)
+        length = longest
+        for tried in range(1, longest + 1):
+            tails = [tuple(key(part) for part in parents[-tried:]) for _id, parents in members]
+            if len(set(tails)) == len(tails):
+                length = tried
+                break
+        for person_id, parents in members:
+            labels[person_id] = PersonLabel(True, SEPARATOR.join(parents[-length:]) if length else "")
+    return labels
+
+
 def hidden_by(tag, hidden):
     """Is the tag, or any path above it, in `hidden`? (A hidden branch hides its leaves.)"""
     return any(path in hidden for path in lineage(tag))
@@ -310,14 +350,20 @@ class PeopleVocabulary:
     library. extract_people used to read both from the database for every photo and
     scan the whole tree per keyword -- 30s over 68,000 photos -- so anything resolving
     many photos reads this once and passes it.
+
+    `groups` are the keywords (keyword_key) of the face nodes that have tags under them --
+    Family/Thackeray beside Family/Thackeray/Sam. A group tag is legitimate on a photo and is
+    not a person (owner, 2026-10-09; docs/findings.md, #986): it names nobody here, and is
+    in neither `by_keyword` nor anyone's offer, so a bare keyword spelled like it names nobody.
     """
 
     #: What a photo read without its library assumes (NEW_LIBRARY_FACE_ROOT).
     DEFAULT_ROOTS = frozenset({NEW_LIBRARY_FACE_ROOT.lower()})
 
-    def __init__(self, roots, by_keyword):
+    def __init__(self, roots, by_keyword, groups=()):
         self.roots = set(roots)
         self.by_keyword = by_keyword
+        self.groups = frozenset(groups)
 
     @classmethod
     def defaults(cls):
@@ -325,12 +371,16 @@ class PeopleVocabulary:
         return cls(cls.DEFAULT_ROOTS, {})
 
     @classmethod
-    def from_rows(cls, root_names, face_rows):
-        """From a tag tree: the names of its face roots, and (tag, name) of every face node.
-        The tree's roots only: a root it does not flag holds no faces."""
+    def from_rows(cls, root_names, face_rows, group_tags=()):
+        """From a tag tree: the names of its face roots, (tag, name) of every face node, and the
+        tags of those that have tags under them (`group_tags`: a group is not a person, so it is
+        left out of `by_keyword`). The tree's roots only: a root it does not flag holds no faces."""
         roots = {name.lower().strip() for name in root_names if name}
+        groups = {keyword_key(tag) for tag in group_tags if tag and SEPARATOR in tag}
         by_keyword = {}
         for tag, name in face_rows:
+            if tag and keyword_key(tag) in groups:
+                continue
             # A face ROOT (People, Family, Pets, ...) is a category, not a person, so
             # a photo tagged plainly "Family" must not gain a name.
             if name and name.lower() in roots and "/" not in tag:
@@ -341,7 +391,7 @@ class PeopleVocabulary:
                 by_keyword.setdefault(tag.lower(), name)
             if name:
                 by_keyword.setdefault(name.lower(), name)
-        return cls(roots, by_keyword)
+        return cls(roots, by_keyword, groups)
 
 
 def extract_people(meta, tags, known=None):
@@ -349,13 +399,14 @@ def extract_people(meta, tags, known=None):
 
     A keyword names a person when it sits under one of the face roots in `known` (a
     PeopleVocabulary; without one, the usual roots), or when `known` has it as a face
-    node of its own -- "Cora Ingersoll" with no hierarchy, filed as a person.
+    node of its own -- "Cora Ingersoll" with no hierarchy, filed as a person. A group
+    tag (a face node with tags under it) names nobody (#986).
     """
     known = known or PeopleVocabulary.defaults()
     people = _values(meta, PERSON_FIELDS)
     for tag in tags:
         parts = segments(tag)
-        if len(parts) >= 2 and parts[0].lower() in known.roots:
+        if len(parts) >= 2 and parts[0].lower() in known.roots and keyword_key(tag) not in known.groups:
             people.append(parts[-1])
     for tag in tags:
         name = known.by_keyword.get(keyword_key(tag))

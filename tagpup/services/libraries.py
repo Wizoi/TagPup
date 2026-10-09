@@ -26,10 +26,28 @@ logger = logging.getLogger(__name__)
 
 
 
+#: Raised for a library made by a newer version of TagPup than this one (tagpup.store.schema.NewerLibrary):
+#: its text is the sentence to show the owner. Every entry point answers it with that sentence.
+NewerLibrary = schema.NewerLibrary
+
+
 def bring_up_to_date(db_path):
     """The library's tables, made or migrated (tagpup.store.schema.ensure). Returns the
-    names of the migrations applied: none, usually."""
+    names of the migrations applied: none, usually. NewerLibrary for a library made by a newer
+    version of TagPup than this one."""
     return schema.ensure(db_path)
+
+
+reading_newer = schema.reading_newer
+newer_note = schema.newer_note
+RECOVERY_COMMANDS = schema.RECOVERY_COMMANDS
+
+
+def newer_problem(db_path):
+    """The sentence saying the library at `db_path` is newer than this version of TagPup, or None
+    (tagpup.store.schema.newer_problem). Reads only: for an entry point that does not open it
+    through bring_up_to_date."""
+    return schema.newer_problem(db_path)
 
 
 #: How many libraries the startup thread has still to bring up to date (bring_up_to_date_in_background):
@@ -95,7 +113,11 @@ def create(db_path):
         return result
     existed = os.path.exists(db_path)
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-    bring_up_to_date(db_path)
+    try:
+        bring_up_to_date(db_path)
+    except NewerLibrary as e:
+        result.refuse(str(e))   # a library of that name is there, from a newer TagPup: not touched
+        return result
     taxonomy.seed(db_path)
     if not existed:
         # A new library holds the defaults from the start (tagpup.services.settings): it
