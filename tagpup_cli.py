@@ -1130,6 +1130,11 @@ def history(ctx, change_id, limit, reveal):
             ", undone %s" % entry["undone"] if entry["undone"] else "", entry["schema_version"],
             _rows_line(entry["rows"]) if entry["rows"] or not entry.get("files") else "",
             _files_line(entry.get("files"))), markup=False, soft_wrap=True)
+    for entry in found["changes"]:
+        scope = entry["summary"].get("scope")
+        if scope and change_id is not None:
+            console.print("  scope: %s%s" % (scope, ": " + entry["summary"]["folder"] if entry["summary"].get("folder") else ""),
+                          markup=False, soft_wrap=True)
     if change_id is not None:
         entry = found["changes"][0]
         for table, keys in sorted(entry.get("keys", {}).items()):
@@ -1505,7 +1510,8 @@ def faces_from_tags(ctx, apply_, again, folder):
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
         if result.details.get("earlier_apply"):
-            console.print("Applied before: " + faces_from_tags_service.AGAIN, markup=False, soft_wrap=True)
+            console.print("Applied before: " + faces_from_tags_service.AGAIN + " " + faces_from_tags_service.earlier_sentence(
+                faces_from_tags_service.earlier_applies(library)), markup=False, soft_wrap=True)
         console.print("Nothing changed. --apply names them%s."
                       % (" (with --again)" if result.details.get("earlier_apply") else ""))
         return
