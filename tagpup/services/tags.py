@@ -348,15 +348,9 @@ def rename_person(library, person, new_name, exiftool_path):
 
 def _faces_of(library, person_ids_, named=None):
     """How many faces name any of the people `person_ids_` -- and, with `named`, now carry that name -- read now."""
-    if not person_ids_:
-        return 0
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        marks = ",".join("?" * len(person_ids_))
-        if named is None:
-            return conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id IN (%s)" % marks, list(person_ids_)).fetchone()[0]
-        return conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id IN (%s) AND name = ?" % marks,
-                            list(person_ids_) + [named]).fetchone()[0]
+        return faces.count_of_people(conn, person_ids_, named)
     finally:
         conn.close()
 

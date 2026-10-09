@@ -912,6 +912,18 @@ def count_named(conn, person):
     return conn.execute("SELECT COUNT(*) FROM faces WHERE " + where, params).fetchone()[0]
 
 
+def count_of_people(conn, person_ids_, named=None):
+    """How many faces name any of the people `person_ids_` (their nodes' ids; idx_faces_tag) -- and, with `named`, now carry that
+    name: what a rename reports, counted after the write."""
+    ids = list(person_ids_)
+    if not ids:
+        return 0
+    marks = ",".join("?" * len(ids))
+    if named is None:
+        return conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id IN (%s)" % marks, ids).fetchone()[0]
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id IN (%s) AND name = ?" % marks, ids + [named]).fetchone()[0]
+
+
 def person_embeddings(conn, person):
     """(embedding, mtime, year, photo_path) of each of a person's faces that
     has an embedding: what their era-aware centroids are made from."""
