@@ -2805,6 +2805,20 @@ be split across a merge: the id is the key only when every writer writes it. Siz
   decided as nobody) and then deletes. **The two rules.** (a) *no children under a person that faces or photos carry* -- for person tags only (owner's
   answer to question 1): refused for an owner's action (the tree view's add, a move under a person, the keyword writer's new tag); never for what a
   file holds (the indexer reads a path as it finds it). (b) *a group tag is never a person* (part A) is refused where an owner would set it.
+- **Review round 1 (2026-10-09), what changed.** (1) *One rule for linking an unresolved name after a tree edit*
+  (`person_ids.follow_tree`): only the rows of a name NO ONE had before the edit and a person has after it (a node made, moved or renamed
+  into it) are linked; a name that became one person's because a same-named node LEFT (rename away, merge, force delete) was ambiguous
+  before and its rows -- a hand decision too -- stay unresolved for the review list. (2) *Every refusal of a merge or move comes before the
+  first file is written* (`tags._tree_refusal` rehearses the tree edit in a rolled-back transaction, so the rule is the tree's own).
+  (3) *Reads fall back, writes do not:* `person-faces`, `person-matches`, `build-status` and `people-faces` accept a name two people have
+  and answer for all of them (`person_ids.SharedName`, `people.for_reading`; nothing is created or linked); a write with it is still a 400
+  naming the candidates, and the page shows that text. (4) *The single owner of an undoable record of a face's identity change is the
+  journal* (`journal.record_faces`): a force delete (`taxonomy.delete_branch` / `faces.unname_person`) and a merge (`people.merge_person`)
+  write ONE change of the face rows (name, name_source, tag_id; counts only in its summary) in the same transaction as the tree edit, so
+  History can put the faces back; an undo that would give a face whose person is gone to ANOTHER person called alike is refused. **The tree
+  rows themselves are still not journaled** (as before part B; finding). (5) `faces_renamed` is counted after the write, a group counts the
+  faces under it. (6) `removals.removed_people` carries the id the change recorded. (7) The navigator keys a person by id (`p:<id>`) and opens a
+  shared name by its tag path. (8) Two real processes editing the tree: `tests/test_people_by_id_at_once.py`.
 - **The trigger** `person_tag_not_deleted_while_named` (**migration 29**, additive, triggers only) aborts the DELETE of a node a face names on any
   connection; `generation_faces_update` now also fires on `tag_id`.
 - **The journal.** A change records `faces.tag_id` and `photo_people.tag_id` as columns of their own (`journal.cache_columns`; `DERIVED_COLUMNS`

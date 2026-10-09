@@ -5,7 +5,7 @@ photo files rewritten by the keyword writer's own machinery (here stood in for, 
 checked is what each edit does to the tree, the faces and the lists, and what it asks to have rewritten). Two cousins called Sam
 under two groups, a dog and a friend called Max.
 
-The failure modes: interrupted (the rename's files), two at once (threads; processes in tests/test_people_by_id_at_once.py), a read
+The failure modes: interrupted (the rename's files), two at once (threads here; two real processes in tests/test_people_by_id_at_once.py), a read
 that fails in the middle of an edit, the owner's rapid clicks, the old page that sends names.
 """
 import json
