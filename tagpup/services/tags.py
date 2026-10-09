@@ -408,6 +408,14 @@ def _retag(library, old, new, carrying, exiftool_path, result, always_move=False
     for photos not rewritten. Returns whether the tree was changed.
     """
     rewritten = unwritten = 0
+    if new and (carrying or always_move):
+        # Every refusal of the tree edit comes BEFORE the first file is written: a photo rewritten to a tag the tree then
+        # refuses (a person onto something that is no person) is a file and an index that disagree with the tree.
+        why = _tree_refusal(library, old, new, make_target=bool(carrying))
+        if why is not None:
+            result.refuse(str(why))
+            result.details["faces_named"] = getattr(why, "faces", 0)
+            return False
     if carrying:
         if new:
             db.write_with_connection(library.path, lambda conn: taxonomy.add_node(conn, new),
@@ -434,6 +442,29 @@ def _retag(library, old, new, carrying, exiftool_path, result, always_move=False
     result.changed = 1
     _tree_changed(library)
     return True
+
+
+class _Rehearsed(Exception):
+    """The edit rehearsed went through; it is rolled back."""
+
+
+def _tree_refusal(library, old, new, make_target):
+    """The PersonInUse the tree edit of `old` onto `new` would raise (the target made first when `make_target`, as _retag does),
+    or None: the edit is run in a transaction that is rolled back, so the rule that refuses is the one rule, the tree's
+    (taxonomy.move_branch, people.merge_person), and nothing is left behind."""
+    def rehearse(conn):
+        if make_target:
+            taxonomy.add_node(conn, new)
+        taxonomy.move_branch(conn, old, new)
+        raise _Rehearsed
+
+    try:
+        db.write_with_connection(library.path, rehearse, label="tag tree: rehearse %s" % old)
+    except _Rehearsed:
+        return None
+    except person_ids.PersonInUse as why:
+        return why
+    return None
 
 
 def _rename_in_place(library, old, new, exiftool_path, result, add_up=False):

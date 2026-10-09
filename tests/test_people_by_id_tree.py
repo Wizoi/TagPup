@@ -169,6 +169,33 @@ class Operations(TwoSams, unittest.TestCase):
         self.assertEqual(self.sam_t, self.node(SAM_T))
         self.assertEqual(self.sam_t, self.face(self.faces[0])[0])
 
+    def the_state(self):
+        """Everything a refused edit must leave alone: the tree, the faces, the photos' index rows, the lists."""
+        return (look(self.path, "SELECT id, tag, parent_id, has_face FROM tag_taxonomy ORDER BY id"),
+                look(self.path, "SELECT id, tag_id, name, name_source FROM faces ORDER BY id"),
+                look(self.path, "SELECT path, tags FROM photos ORDER BY path"),
+                look(self.path, "SELECT photo_id, position, tag_id, name, source FROM photo_people ORDER BY photo_id, position"))
+
+    def test_a_merge_or_a_move_onto_a_tag_that_is_no_person_is_refused_before_a_file_is_written(self):
+        """Fix round 1: the refusal came after the photos were rewritten and the target made, so the files carried a tag the tree
+        then refused, and the retry found nothing carrying the old one. Every refusal is now before the first write."""
+        before = self.the_state()
+        for target in ("Places/Coast", "Places/NewShore", "Family/Thackeray", "Family", "Places"):
+            with self.subTest(target=target):
+                result = self.merge(SAM_T, target, apply=True)
+                self.assertFalse(result.ok)
+                self.assertEqual([], self.rewrites, "no file was written")
+                self.assertEqual(before, self.the_state(), "the tree, the faces and the index are as they were")
+        moved = tags_service.delete(self.library, self.sam_t, "move", "Places/Coast", "exiftool")
+        self.assertFalse(moved.ok)
+        self.assertEqual([], self.rewrites)
+        self.assertEqual(before, self.the_state())
+
+    def test_a_merge_onto_a_person_still_goes_through(self):
+        result = self.merge(SAM_T, SAM_I, apply=True)
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual(1, len(self.rewrites), "the photo carrying the tag was rewritten once")
+
     # ---- delete ----------------------------------------------------------------------------------
 
     def test_deleting_a_person_faces_name_is_refused_with_the_count(self):
