@@ -76,7 +76,7 @@ ALL_CAMERAS = "All Cameras"
 def camera_of(raw_metadata):
     """The camera a photo came from, by its metadata: its one name (tagpup.core.photo_meta.camera_name, which Image
     Details and the search use), else UNKNOWN_CAMERA. What Shift Date Taken chooses photos by; the TagPup page gets the
-    same name in the photo's record (`camera`) and keeps no copy of the rule (docs/findings.md, #74, #994)."""
+    same name in the photo's record (`camera`) and keeps no copy of the rule (docs/findings.md, #74, #1003)."""
     return photo_meta.gear(raw_metadata).camera or UNKNOWN_CAMERA
 
 

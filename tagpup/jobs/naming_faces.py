@@ -13,10 +13,18 @@ was asked, and the page asks how it is getting on. Nothing is run on the owner's
    (faces_from_tags.faces_from_tags, `planned=`): one journaled change of the library, which History undoes. It is
    all or nothing: a face named or ruled out since the plan was read refuses the whole change and nothing is written. A second
    apply of a library is the CLI's `--again` (#840): the question says "applied before", and the Yes is that.
-3. **Group** (if the owner ticked it; off by default). tagpup.services.identities.resolve: the faces of the whole library
+3. **Group** (if the owner ticked it; off by default; never for a folder). tagpup.services.identities.resolve: the faces of the whole library
    are grouped by who they look like and each group is named from its photos' tags. It re-derives every automatic name in the
    library, keeps the names given by hand, and is not journaled, so History cannot take it back. It uses no model and no
    graphics card.
+
+**Only this folder (#994).** `start(only_folder=True)` limits the plan, and so the apply, to the photos under the folder the page
+has open and its subfolders (tagpup.services.folder_scope): the plan is the whole-library plan restricted to those photos, the
+people's decided faces are still the library's, and the plan the owner said Yes to is exactly what is applied, with the guards
+unchanged. The scope is fixed at the start and shown in the question. Grouping (`identities.resolve`) re-derives the automatic
+names of the WHOLE library and cannot be limited, so a folder-scoped job refuses it (GROUP_SAYS) and the dialog does not offer
+it. A plan already waiting in the library for another scope is not handed back as if it were this one: the click is answered
+`AlreadyWorking` with that plan's status, which says its own scope.
 
 **What Cancel does.** In the plan: stops it, nothing changed. In the question: No, nothing changed. At the write of step 2:
 the write is one SQLite transaction and cannot be stopped once begun; Cancel asked before it stops the job with nothing
@@ -46,7 +54,8 @@ from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import bulk_edits
 from tagpup.services import bulk_edit
 from tagpup.services import faces as face_service
-from tagpup.services import faces_from_tags, identities, search
+from tagpup.services import faces_from_tags, folder_scope, identities, search
+from tagpup.services import roots as roots_service
 from tagpup.services import job_runs as runs_service
 from tagpup.services import journal as journal_service
 
@@ -102,6 +111,10 @@ AGAIN_SAYS = ("Names were given from tags in this library before, and not undone
 UNDO_LOST = ("Grouping rewrote names of faces that change wrote, so History can no longer be counted on to undo it "
              "(and it cannot undo grouping).")
 NO_FACES = "This library holds no faces yet: index photos first. Nothing was changed."
+NO_FACES_HERE = "This folder holds no faces yet: index its photos first. Nothing was changed."
+#: Why a job for one folder does not group (the dialog says it beside the box that is not offered).
+GROUP_SAYS = ("Grouping re-derives the automatic names of every face in the library and cannot be limited to a folder: it is not "
+              "done for a folder. Choose the whole library for it.")
 
 _jobs = {}            # {library.key: {handle: Job}}
 _lock = threading.Lock()
@@ -130,9 +143,11 @@ def _plural(count, one, many=None):
 class Job:
     """One run of the button: what it is for, where it has got to, what it counted."""
 
-    def __init__(self, library, handle, folder, hold):
+    def __init__(self, library, handle, folder, hold, only_folder=False):
         self.library, self.handle = library, handle
         self.folder, self.hold = folder, hold
+        #: The plan and the apply are limited to `folder` and its subfolders (see the module's docstring).
+        self.only_folder = bool(only_folder and folder is not None)
         self.cancel = threading.Event()
         self.lock = threading.Lock()
         self.thread = None
@@ -175,7 +190,8 @@ class Job:
 
     def status(self):
         """For the page: {job, state, phase, stage, label, percent, done, total, elapsed, cancelling, can_cancel, message,
-        plan, group, applied, grouped, in_folder, folder, library, started, finished}. An in-memory read; nothing is
+        plan, group, applied, grouped, in_folder, folder, only_folder, library, started, finished}. `folder`: a folder was
+        named; `only_folder`: the job is limited to it. An in-memory read; nothing is
         asked of the library. Counts only, never a name or a path."""
         with self.lock:
             self._expire()
@@ -193,11 +209,13 @@ class Job:
                     "can_cancel": self.state == ASKING or (working and not self.writing),
                     "message": self.message, "plan": self.plan, "group": self.group, "applied": self.applied,
                     "grouped": self.grouped, "in_folder": self.in_folder, "folder": self.folder is not None,
-                    "ask_seconds": ASK_SECONDS if self.state == ASKING else None}
+                    "only_folder": self.only_folder, "ask_seconds": ASK_SECONDS if self.state == ASKING else None}
 
     def counts(self, what):
         """What the library's record of a run holds: numbers and one sentence, never a name."""
         found = {"what": what, "state": self.state, "job": self.handle}
+        if self.only_folder:
+            found["in_a_folder"] = True
         if self.plan:
             found.update(faces=self.plan["faces"], photos=self.plan["photos"], left=self.plan["left"])
         if self.applied:
@@ -258,8 +276,16 @@ class Job:
                     return self._finish(DONE, NO_FACES, what)
                 self.library_before = library_counts
                 self.in_folder = {"before": self._library_folder()}
-                planned = faces_from_tags.plan(self.library, on_step=self._step)
+                if self.only_folder and self.in_folder["before"] is not None and not any(self.in_folder["before"].values()):
+                    self.in_folder = None
+                    return self._finish(DONE, NO_FACES_HERE, what)
+                planned = faces_from_tags.plan(self.library, on_step=self._step,
+                                               **({"folder": self.folder} if self.only_folder else {}))
+                if planned.refused:
+                    self.in_folder = None
+                    return self._finish(FAILED, planned.refused, what, failed=True)
                 earlier = faces_from_tags.earlier_apply(self.library)
+                where = faces_from_tags.earlier_sentence(faces_from_tags.earlier_applies(self.library), how="page") if earlier else ""
                 counts = planned.counts
                 by_tag = counts["named_by_the_tag_alone"]
                 with self.lock:
@@ -267,7 +293,7 @@ class Job:
                     self.plan = {"faces": planned.size, "by_tag": by_tag, "by_comparison": planned.size - by_tag,
                                  "photos": by_tag + counts["photos_named_by_comparison"],
                                  "left": counts["photos_left_for_identify_faces"], "earlier_apply": earlier,
-                                 "again": AGAIN_SAYS if earlier else None}
+                                 "again": (AGAIN_SAYS + " " + where).strip() if earlier else None}
                     self.state, self.asked = ASKING, time.time()
                     self.done = self.total = 1
                 self._end_run(what)
@@ -293,7 +319,7 @@ class Job:
                     if result.refused or result.errors:
                         logger.warning("Name faces from tags in %s: the change was not written: %s", self.library.name,
                                        result.refused or result.errors)
-                        return self._finish(FAILED, APPLIED_MEANWHILE if result.refused == faces_from_tags.AGAIN else
+                        return self._finish(FAILED, APPLIED_MEANWHILE if result.refused.startswith(faces_from_tags.AGAIN) else
                                             REFUSED_SAYS if result.refused else
                                             "The change could not be written; the server's log says why. Nothing was written.",
                                             what, failed=True)
@@ -352,12 +378,13 @@ class Job:
         if self.in_folder is not None and self.in_folder.get("before") is not None:
             self.in_folder["after"] = self._library_folder()
         parts = []
+        where = " in the open folder" if self.only_folder else ""
         if self.applied and self.grouped and not self._undo_still_works():
             parts.append("%s given from the photos' tags (one change in History). %s"
                          % (_plural(self.applied["changed"], "face name"), UNDO_LOST))
         elif self.applied:
-            parts.append("%s given from the photos' tags (one change in History, which Undo takes back%s)."
-                         % (_plural(self.applied["changed"], "face name"),
+            parts.append("%s given from the photos' tags%s (one change in History, which Undo takes back%s)."
+                         % (_plural(self.applied["changed"], "face name"), where,
                             "; History cannot undo grouping" if self.grouped else ""))
         if self.grouped:
             delta = self.grouped["named_more"]
@@ -439,9 +466,17 @@ def _refuse_if_busy(library, busy):
                        "that to finish (it needs no graphics card)." % (library.name, "; ".join(said)))
 
 
-def start(library, folder=None, hold=None, busy=None):
+def _same_scope(job, folder, only_folder):
+    """Is `job` limited to what a start asks for: the whole library, or this folder?"""
+    if job.only_folder != only_folder:
+        return False
+    return not only_folder or paths.same(job.folder, folder)
+
+
+def start(library, folder=None, hold=None, busy=None, only_folder=False):
     """Begin the plan, on a thread of its own, and return the Job (its status is the page's). `folder`: the folder the page
-    has open, whose faces are counted before and after. `hold`: a context manager held from the Yes to the end, keeping
+    has open, whose faces are counted before and after. `only_folder`: and the plan and the apply are limited to it and its
+    subfolders (#994; Refused when no folder is given or the library holds no photo under it, nothing begun). `hold`: a context manager held from the Yes to the end, keeping
     writes of faces out (the web layer's clustering flag). `busy`: a function giving the sentences for what runs in the
     library that this module cannot see (indexing, Suggest, a sync, a Verify, the flag).
 
@@ -449,13 +484,17 @@ def start(library, folder=None, hold=None, busy=None):
     Conflict, nothing begun, when one is planning, writing or grouping, or when the library is busy (here or in another
     process: the claim in the library says so before anything is read)."""
     if folder is not None:
-        folder = paths.stored(folder)
+        folder = paths.stored(roots_service.canonical(library, folder))
+    if only_folder:
+        if folder is None:
+            raise Refused("Say which folder: naming faces in one folder needs the folder the page has open.")
+        folder_scope.resolve(library, folder)       # NoPhotosThere (a Refused) before any claim is taken
     hold = hold or contextlib.nullcontext
     with _lock:
         _refuse_if_working(library)
         waiting = _waiting(library)
         if waiting is not None:
-            return waiting
+            return _the_waiting_one(waiting, folder, only_folder)
     _refuse_if_busy(library, busy)
     claim = _claim(library)
     job = None
@@ -465,8 +504,8 @@ def start(library, folder=None, hold=None, busy=None):
             waiting = _waiting(library)
             if waiting is not None:
                 _give_back(library, claim)
-                return waiting
-            job = Job(library, claim.run_id, folder, hold)
+                return _the_waiting_one(waiting, folder, only_folder)
+            job = Job(library, claim.run_id, folder, hold, only_folder)
             _register(library, job)
         job._record("name faces from tags: plan")
         job.thread = threading.Thread(target=job.run_plan, name="NameFaces", daemon=True)
@@ -477,6 +516,19 @@ def start(library, folder=None, hold=None, busy=None):
         _give_back(library, claim)
         raise
     return job
+
+
+def _the_waiting_one(waiting, folder, only_folder):
+    """The plan already waiting for its answer, when it is the scope asked for; else AlreadyWorking, whose status is that plan
+    (it says its own scope): a question for the whole library is not handed back as the answer to "only this folder"."""
+    if _same_scope(waiting, folder, only_folder):
+        return waiting
+    if waiting.only_folder and only_folder:
+        raise AlreadyWorking("A plan for ANOTHER folder is waiting for its answer in this library (the status is counts only and "
+                             "does not name it). Answer it (Yes or No) before reading one for this folder.", waiting.status())
+    raise AlreadyWorking("A plan for %s is waiting for its answer in this library. Answer it (Yes or No) before reading one for "
+                         "%s." % ("one folder" if waiting.only_folder else "the whole library",
+                                  "this folder" if only_folder else "the whole library"), waiting.status())
 
 
 def _register(library, job):
@@ -511,8 +563,12 @@ def confirm(library, handle, group=False, busy=None):
         raise Refused(EXPIRED_SAYS)
     if status["state"] != ASKING:
         raise Conflict("This plan is not waiting for an answer (it is %s)." % status["state"])
+    if group and job.only_folder:
+        raise Refused(GROUP_SAYS)
     if not job.plan["faces"] and not group:
-        raise Refused("There is nothing to write: no face can be named from its tag. Tick the grouping to try the rest.")
+        raise Refused("There is nothing to write: no face %scan be named from its tag.%s"
+                      % ("in this folder " if job.only_folder else "",
+                         "" if job.only_folder else " Tick the grouping to try the rest."))
     _refuse_if_busy(library, busy)
     claim = _claim(library)
     try:
@@ -591,7 +647,7 @@ def stored_status(library, handle):
             "finished": None, "elapsed": None, "cancelling": False, "can_cancel": False,
             "message": RESTARTED if state == ABANDONED else counts.get("what"),
             "plan": None, "group": False, "applied": None, "grouped": None, "in_folder": None, "folder": False,
-            "ask_seconds": None}
+            "only_folder": bool(counts.get("in_a_folder")), "ask_seconds": None}
 
 
 def current(library):
@@ -600,6 +656,24 @@ def current(library):
     with _lock:
         found = _working(library) or _waiting(library)
     return found.status() if found is not None else None
+
+
+def scope(library, folder):
+    """What the dialog's choice shows before a job is started (#994), counts only: the library's named and unnamed faces, and
+    those under `folder` (and its photos), or `folder: None` with `why` when the library holds no photo under it; and `job`,
+    the job a page opening the dialog should pick up (as `current`), which the choice does not hide. Reads only."""
+    folder = paths.stored(roots_service.canonical(library, folder)) if folder else None
+    found = {"library": face_service.named_counts(library), "folder": None, "why": None, "job": current(library)}
+    if folder is None:
+        found["why"] = "No folder is open."
+        return found
+    try:
+        photos = len(folder_scope.resolve(library, folder).photo_ids)
+    except folder_scope.NoPhotosThere as why:
+        found["why"] = str(why)
+        return found
+    found["folder"] = dict(face_service.named_counts(library, folder), photos=photos)
+    return found
 
 
 def writing(library):
