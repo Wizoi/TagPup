@@ -37,6 +37,9 @@ metadata that does not go through here.
 
 The word index a search's words are matched in (tagpup.store.search_index, migration 24) is kept from here too: every
 photo refreshed here has its rows of it made again, whatever of its rows changed (a caption is in no table of these four).
+So are the camera and lens words (`search_gear`, migration 27), the one table made from a photo's raw metadata that is
+not one of the four: written from the same read of it (`photo_meta.gear`) by `_put` and `rebuild_all`, which is why a
+library's lens words come with `tools/doctor.py --rebuild-derived --apply` and not with the migration.
 
 The caller commits. Every function does nothing, and says 0, on a library that has not had
 migration 19 yet: the migrations before it write photos too.
@@ -129,9 +132,10 @@ def keywords_of(tags_json):
 
 # ---- One photo's rows ------------------------------------------------------------------------
 
-def _state(path, keywords, meta, tree):
-    """(node ids, folder or None, Meta) of a photo: the three things its rows say."""
-    return tree.ids(keywords), paths.row_parent(path), meta
+def _state(path, keywords, raw, tree):
+    """(node ids, folder or None, Meta, Gear) of a photo: the things its rows say. `raw` is the dict its raw_metadata
+    column holds (photo_meta.load)."""
+    return tree.ids(keywords), paths.row_parent(path), photo_meta.extract(raw), photo_meta.gear(raw)
 
 
 def _fold(folder):
@@ -197,7 +201,7 @@ def _put(conn, states, batch, gone=()):
             "SELECT photo_id, rating, make, model, width, height, latitude, longitude FROM photo_meta"
             " WHERE photo_id IN (%s)" % _marks(ids), ids)}
     drop, add, left, changed = [], [], set(), set()
-    for photo_id, (tag_ids, folder, meta) in states.items():
+    for photo_id, (tag_ids, folder, meta, _gear) in states.items():
         have = held_tags.get(photo_id, set())
         drop += [(photo_id, tag_id) for tag_id in have - tag_ids]
         add += [(photo_id, tag_id) for tag_id in tag_ids - have]
@@ -230,8 +234,9 @@ def _put(conn, states, batch, gone=()):
     if pruned:
         batch.folders.clear()   # an id found before may be one pruned now
     # The word index, for every photo asked about: its captions and people are in no table of these, so what changed
-    # here says nothing of whether its words did.
+    # here says nothing of whether its words did. The camera and lens words too: a lens is in no column of photo_meta.
     search_index.refresh(conn, list(states) + list(gone))
+    search_index.write_gear(conn, {photo_id: state[3] for photo_id, state in states.items()})
     return len(changed) + len(gone)
 
 
@@ -251,7 +256,7 @@ def refresh_photos(conn, photo_ids, batch=None):
         states = {}
         for photo_id, path, tags_json, raw_json in conn.execute(
                 "SELECT id, path, tags, raw_metadata FROM photos WHERE id IN (%s)" % _marks(chunk), chunk):
-            states[photo_id] = _state(path, keywords_of(tags_json), photo_meta.from_json(raw_json), batch.tree)
+            states[photo_id] = _state(path, keywords_of(tags_json), photo_meta.load(raw_json), batch.tree)
         changed += _put(conn, states, batch, [photo_id for photo_id in chunk if photo_id not in states])
     return changed
 
@@ -263,10 +268,9 @@ def record(conn, photo_id, path, tags, raw_metadata, batch=None):
     if not present(conn):
         return 0
     batch = batch or Batch(conn)
-    meta = photo_meta.extract(raw_metadata)
     # What record_indexed wrote is what keywords_of reads back: tags that are None or not a list say nothing.
     keywords = [tag for tag in tags if isinstance(tag, str)] if isinstance(tags, (list, tuple)) else []
-    return _put(conn, {photo_id: _state(path, keywords, meta, batch.tree)}, batch)
+    return _put(conn, {photo_id: _state(path, keywords, raw_metadata, batch.tree)}, batch)
 
 
 # ---- Folders no photo is in ------------------------------------------------------------------
@@ -405,8 +409,9 @@ def rebuild_all(conn):
     migration's and the repair's. Reads each photo once. Returns {photos, tag_rows, folders,
     in_a_folder, meta_rows}."""
     tree = Tree.read(conn)
-    placed, tag_rows, meta_rows = {}, [], []
+    placed, tag_rows, meta_rows, gears = {}, [], [], {}
     last = -1
+    search_index.clear_gear(conn)
     while True:
         chunk = conn.execute("SELECT id, path, tags, raw_metadata FROM photos WHERE id > ? ORDER BY id LIMIT ?",
                              (last, 2000)).fetchall()
@@ -414,10 +419,13 @@ def rebuild_all(conn):
             break
         last = chunk[-1][0]
         for photo_id, path, tags_json, raw_json in chunk:
-            tag_ids, folder, meta = _state(path, keywords_of(tags_json), photo_meta.from_json(raw_json), tree)
+            tag_ids, folder, meta, gear = _state(path, keywords_of(tags_json), photo_meta.load(raw_json), tree)
             placed[photo_id] = folder
             tag_rows += [(photo_id, tag_id) for tag_id in tag_ids]
             meta_rows.append((photo_id,) + tuple(meta))
+            gears[photo_id] = gear
+        search_index.write_gear(conn, gears)   # a chunk at a time: the metadata read is not kept
+        gears.clear()
     conn.execute("DELETE FROM photo_tags")
     conn.executemany("INSERT INTO photo_tags (photo_id, tag_id) VALUES (?, ?)", tag_rows)
     conn.execute("DELETE FROM photo_meta")
@@ -425,6 +433,7 @@ def rebuild_all(conn):
                      " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", meta_rows)
     folders, in_a_folder = _write_folders(conn, placed, _wanted(set(f for f in placed.values() if f is not None)))
     words = search_index.rebuild(conn)
+    search_index.optimize_gear(conn)
     return {"photos": len(placed), "tag_rows": len(tag_rows), "folders": folders, "in_a_folder": in_a_folder,
             "meta_rows": len(meta_rows), "word_rows": words}
 

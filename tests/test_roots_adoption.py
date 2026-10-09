@@ -45,7 +45,8 @@ WINDOWS = os.name == "nt"
 #: the rows say is search_index.stale's question: a row for every photo after an adoption (WhatItDoes), and words found
 #: below the root and not by its name (tests/test_search_words.py).
 WORD_INDEX = ("search_words", "search_names", "search_words_data", "search_words_idx", "search_words_docsize",
-              "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config")
+              "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config",
+              "search_gear", "search_gear_data", "search_gear_idx", "search_gear_docsize", "search_gear_config")
 NOT_COMPARED = ("generations", "changes", "change_rows", "roots", "schema_version", "photo_people",
                 "folders", "photo_folder") + WORD_INDEX
 
@@ -262,7 +263,8 @@ class WhatItDoes(AdoptionCase):
         after = self.side.dump()
         self.assertEqual(counts["roots"] + 1, len(after["roots"]))
         # The word index's blocks are laid out anew by its rebuild; its rows, one a photo, are counted by docsize.
-        uncounted = ("roots", "changes", "search_words_data", "search_words_idx", "search_names_data", "search_names_idx")
+        uncounted = ("roots", "changes", "search_words_data", "search_words_idx", "search_names_data", "search_names_idx",
+                     "search_gear_data", "search_gear_idx")
         self.assertEqual({table: n for table, n in counts.items() if table not in uncounted},
                          {table: len(rows) for table, rows in after.items() if table not in uncounted})
         self.assertEqual([], self.side.rows("SELECT 1 FROM photos WHERE id NOT IN (SELECT id FROM search_names_docsize)"))

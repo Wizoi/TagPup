@@ -74,6 +74,80 @@ class TheCamera(unittest.TestCase):
         self.assertEqual("Harbourlight", photo_meta.extract({"Make": ["Harbourlight"]}).make)
 
 
+def gear_of(**fields):
+    return photo_meta.gear(photo_rows.as_read(PHOTO, fields)["raw_metadata"])
+
+
+class TheCameraAsItIsCalled(unittest.TestCase):
+    """photo_index's models: Canon's say the make, a Pixel's and a Sony's do not (13,542 of 62,877 photos holding both)."""
+
+    def test_a_model_that_begins_with_its_make_is_the_name(self):
+        self.assertEqual("Harbourlight HL 400", photo_meta.camera_name("Harbourlight", "Harbourlight HL 400"))
+        self.assertEqual("Harbourlight HL 400", photo_meta.camera_name("HARBOURLIGHT", "Harbourlight HL 400"),
+                         "without case")
+        self.assertEqual("Harbourlight HL 400", photo_meta.camera_name("Harbourlight Imaging Corp.", "Harbourlight HL 400"),
+                         "a make of several words is compared by its first")
+
+    def test_a_model_that_does_not_is_put_after_the_make(self):
+        self.assertEqual("Tidewater Skiff 8", photo_meta.camera_name("Tidewater", "Skiff 8"))
+        self.assertEqual("SONY DSC-X8", photo_meta.camera_name("SONY", "DSC-X8"))
+
+    def test_one_alone_is_the_name_and_none_is_none(self):
+        self.assertEqual("Skiff 8", photo_meta.camera_name(None, "Skiff 8"))
+        self.assertEqual("Tidewater", photo_meta.camera_name("Tidewater", None))
+        self.assertIsNone(photo_meta.camera_name(None, None))
+        self.assertIsNone(photo_meta.camera_name("", ""))
+
+    def test_the_camera_is_made_of_the_fields_make_and_model_are_read_from(self):
+        self.assertEqual("Tidewater Skiff 8", gear_of(**{"EXIF:Make": "Tidewater", "EXIF:Model": "Skiff 8"}).camera)
+        self.assertEqual("Tidewater Skiff 8", photo_meta.gear({"Make": "Tidewater", "Model": "Skiff 8"}).camera,
+                         "a row holding only the bare names")
+        self.assertEqual("Tidewater Skiff 8", gear_of(**{"XMP:Make": "Tidewater", "XMP:Model": "Skiff 8"}).camera)
+
+    def test_a_scan_or_a_screenshot_has_no_camera_and_no_lens(self):
+        self.assertEqual(photo_meta.NO_GEAR, gear_of(**{"XMP:Subject": ["Trips/Coast"]}))
+        self.assertEqual(photo_meta.NO_GEAR, photo_meta.gear({}))
+        for damaged in (None, "text", [], 5):
+            self.assertEqual(photo_meta.NO_GEAR, photo_meta.gear(damaged))
+
+
+class TheLens(unittest.TestCase):
+    """The lens fields are ExifTool's names: not one of photo_index's rows holds one (the indexer does not ask), so these
+    are the records a library read with them asked for would hold, made as the index makes a read."""
+
+    def test_the_lens_model_is_read_under_its_group_and_bare(self):
+        self.assertEqual("EF24-70mm f/2.8L II USM", gear_of(**{"EXIF:LensModel": "EF24-70mm f/2.8L II USM  "}).lens)
+        self.assertEqual("EF24-70mm f/2.8L II USM", photo_meta.gear({"LensModel": "EF24-70mm f/2.8L II USM"}).lens,
+                         "a row holding only the bare name")
+
+    def test_the_groups_the_lens_may_come_in_are_all_read_in_order(self):
+        self.assertEqual("In EXIF", gear_of(**{"EXIF:LensModel": "In EXIF", "XMP:LensModel": "In XMP"}).lens)
+        self.assertEqual("In XMP", gear_of(**{"XMP:LensModel": "In XMP", "Composite:LensID": "An id"}).lens)
+        self.assertEqual("An id", gear_of(**{"Composite:LensID": "An id"}).lens)
+
+    def test_a_number_is_no_lens(self):
+        # Run without print conversion, a LensID is a number.
+        self.assertIsNone(gear_of(**{"Composite:LensID": 61182}).lens)
+        self.assertEqual("A name", gear_of(**{"Composite:LensID": 61182, "EXIF:LensModel": "A name"}).lens)
+        self.assertIsNone(gear_of(**{"EXIF:LensModel": "  "}).lens)
+
+    def test_the_lens_maker_goes_before_a_name_that_lacks_it(self):
+        self.assertEqual("Tidewater 24-70mm F2.8",
+                         gear_of(**{"EXIF:LensModel": "24-70mm F2.8", "EXIF:LensMake": "Tidewater"}).lens)
+        self.assertEqual("Tidewater 24-70mm F2.8",
+                         gear_of(**{"EXIF:LensModel": "Tidewater 24-70mm F2.8", "EXIF:LensMake": "tidewater"}).lens)
+        self.assertIsNone(gear_of(**{"EXIF:LensMake": "Tidewater"}).lens, "a maker alone is no lens")
+
+    def test_unicode_is_kept(self):
+        self.assertEqual("Objectif Élan 35mm", gear_of(**{"EXIF:LensModel": "Objectif Élan 35mm"}).lens)
+
+    def test_load_reads_a_column_and_says_nothing_of_a_damaged_one(self):
+        self.assertEqual({"Make": "A"}, photo_meta.load('{"Make": "A"}'))
+        self.assertEqual({}, photo_meta.load(None))
+        self.assertEqual({}, photo_meta.load("not json"))
+        self.assertEqual(photo_meta.EMPTY, photo_meta.from_json("not json"))
+
+
 class TheSize(unittest.TestCase):
     """No row of photo_index holds a size (the fields are not asked for): these are the records a
     library read with ImageWidth, ImageHeight, ExifImageWidth and Orientation would hold."""

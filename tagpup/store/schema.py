@@ -811,6 +811,19 @@ def _search_index(conn):
     search_index.rebuild(conn)
 
 
+def _camera_words(conn):
+    """The camera and lens words a search matches (tagpup.store.search_index; docs/ARCHITECTURE.md, "Backlog: which photo
+    fields are searchable"): one contentless FTS5 table, `search_gear`, with its shadow tables and the trigger that takes a
+    deleted photo's row. Filled from `photo_meta`'s make and model alone -- 68,324 rows read from a table, not a photo's
+    metadata read from its JSON, which a migration on open must not do --; the lens, and anything photo_meta is out of step
+    on, come with `tools/doctor.py --rebuild-derived --apply`, which the doctor says is due. Nothing that was there
+    changes: derived, never journaled, no backup. A crash leaves the library at 26 and the next open runs it again."""
+    from tagpup.store import search_index   # the store imports this module
+    for statement in search_index.CREATE_GEAR:
+        conn.execute(statement)
+    search_index.rebuild_gear_from_meta(conn)
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -822,7 +835,8 @@ RUNNER_TABLES = ("schema_version", "changes", "change_rows")
 #: for them (tagpup.store.search_index), which SQLite writes and on a virtual one of which no trigger can be made.
 UNWATCHED = ("generations", "photo_people", "photo_tags", "folders", "photo_folder", "photo_meta",
              "search_words", "search_names", "search_words_data", "search_words_idx", "search_words_docsize",
-             "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config")
+             "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config",
+             "search_gear", "search_gear_data", "search_gear_idx", "search_gear_docsize", "search_gear_config")
 
 
 class CheckFailed(RuntimeError):
@@ -1031,6 +1045,17 @@ class SearchIndexAgrees(Check):
     def after(self, conn, migration, state):
         from tagpup.store import search_index   # the store imports this module
         return search_index.problems(conn)
+
+
+class GearAgrees(Check):
+    """The camera words (tagpup.store.search_index) have a row for every photo and none other, and a sample of photos' cameras
+    -- read from their metadata -- are found in their rows. The lens is not checked: this migration makes no lens words."""
+    name = "camera words agree with the photos"
+
+    def after(self, conn, migration, state):
+        from tagpup.store import search_index   # the store imports this module
+        return ["%d photo(s) have camera words that are not what their rows give" % len(wrong)
+                for wrong in [search_index.stale_gear(conn, lens=False)] if wrong]
 
 
 STANDARD = (ForeignKeys(), Integrity())
@@ -1379,6 +1404,12 @@ MIGRATIONS = (
               "marked until the owner runs folder-ids mark --apply",
               ("library_identity",),
               (RowsKept(),) + STANDARD),
+    Migration(27, "photos by their camera and lens", _camera_words, ADDITIVE,
+              "adds the camera and lens words a search matches (search_gear and its FTS5 shadow tables) and the trigger "
+              "that takes a deleted photo's row, made from photo_meta's make and model; nothing that was there changes, "
+              "and the lens comes with the doctor's --rebuild-derived",
+              ("search_gear",),
+              (RowsKept(), GearAgrees()) + STANDARD),
 )
 
 #: The columns a migration adds to a table the journal keys that the journal derives

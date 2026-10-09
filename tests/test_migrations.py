@@ -57,6 +57,7 @@ KINDS = {
     24: schema.ADDITIVE,     # search_words, search_names: the word index a search matches words in (derived)
     25: schema.ADDITIVE,     # the faces_detected table, empty
     26: schema.ADDITIVE,     # library_identity and folder_ids, empty
+    27: schema.ADDITIVE,     # search_gear: the camera and lens words a search matches (derived)
 }
 
 
