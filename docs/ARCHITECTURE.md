@@ -854,9 +854,11 @@ the design assumes a GPU and more memory later and does not wait for them.
       stops answering ends the run as unreachable, never as "all differ"). Any DIFFERING marker makes the result poor, so
       Change location refuses it, with the counts, unless the owner overrides, as it does for missing files. A library with
       no `folder_ids` row for the root (marked nothing; or behind migration 26, which has no such table: the read-only
-      connection answers empty) has `markers: null` and nothing is said. The live libraries have both tables
-      (counted 2026-10-09: three libraries, migration 26 applied by opening them, both tables empty, unstamped), so
-      nothing is shown until the owner marks. A COPY of a marked
+      connection answers empty) has `markers: null` and nothing is said. The live libraries are marked
+      (the owner marked all three on 2026-10-09; the `folder-ids mark` dry run counted photo_index 2,672 of 2,673 leaf
+      folders, kr-track 20 of 20, renton_parkrun 8 of 8, 16 folders of photo_index and 16 of kr-track holding another
+      library's line too), so Verify and Change location read markers for real: 300 in a sample, every marked folder in a
+      full run. A COPY of a marked
       folder keeps its marker and so matches: a marker proves a folder is the same folder, not that it is the original.
     - **Not built**: `roots remove` (an undo is the way back); Verify from the CLI or the MCP; moving a root while a
       run is under way (refused, by design); a library behind more than one machine map (one map per `TAGPUP_HOME`).

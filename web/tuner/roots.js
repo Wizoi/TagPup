@@ -91,8 +91,12 @@ function rootElement(name) {
 function showProgress(element, status) {
     const box = element.querySelector('.roots-progress');
     box.classList.remove('hidden');
-    box.querySelector('.roots-progress-text').textContent =
-        `Looking at every row: ${count(status.checked)} of ${count(status.rows)} (${count(status.folders)} folders)` +
+    // The folder markers are read before the rows, and the rows do not move meanwhile: say what is being done.
+    const markers = status.markers_of > 0 && status.markers_read < status.markers_of && !status.checked && !status.folders;
+    box.querySelector('.roots-progress-text').textContent = markers
+        ? `Reading folder markers: ${count(status.markers_read)} of ${count(status.markers_of)}`
+            + (status.cancelling ? ', stopping...' : '...')
+        : `Looking at every row: ${count(status.checked)} of ${count(status.rows)} (${count(status.folders)} folders)` +
         (status.cancelling ? ', stopping...' : '...');
 }
 

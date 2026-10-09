@@ -307,7 +307,10 @@ class _Marks:
         self.partial = False
 
     def line(self):
-        """One line for a person; never a folder's name."""
+        """One line for a person; never a folder's name. '' when nothing was read (a cancel, a share that did not
+        answer, a bound already reached): "0 of 0 marked folders match" says nothing."""
+        if not self.checked:
+            return ""
         counts = self.counts
         text = "%d of %d marked folders match; %d differ; %d not marked" % (
             counts["match"], self.checked, counts["differs"], counts["unmarked"])
@@ -321,27 +324,30 @@ class _Marks:
         return dict(self.counts, rows=self.rows, checked=self.checked, partial=self.partial, line=self.line())
 
 
-def _marker_run(location, folders, library_id, marks, cancel, progress, deadline, seconds, tally, total):
+def _marker_run(location, folders, library_id, marks, cancel, progress, deadline, seconds, tally, total,
+                marker_progress):
     """Read the marker of each of `folders` [(folder id, folder)] once, on the bounded thread; stops for a cancel
     or a share that does not answer (tally.stopped), or the deadline (marks.partial)."""
     for folder_id, folder in folders:
         if cancel():
-            tally.stopped = "cancelled"
+            tally.stopped, marks.partial = "cancelled", True
             return
         if deadline is not None and time.monotonic() >= deadline:
             marks.partial = True
             return
         state, value = _bounded(location, functools.partial(_marker_state, folder, folder_id, library_id), seconds)
         if state == "away":
-            tally.stopped = "unreachable"
+            tally.stopped, marks.partial = "unreachable", True
             return
         marks.counts["unreadable" if state == "error" else value] += 1
         marks.checked += 1
         # The folder count is the listings' (the markers come first and are not listed folders): it never goes back.
         progress(tally.checked, total, tally.folders)
+        marker_progress(marks.checked, marks.rows)
 
 
-def _markers(library, name, roots, location, full, tally, cancel, progress, budget, seconds, total=0):
+def _markers(library, name, roots, location, full, tally, cancel, progress, budget, seconds, total=0,
+             marker_progress=None):
     """The markers of the root's marked folders at `location`, as `_Marks.answer()`; None when the library has no
     marked folder of the root."""
     library_id, folders, bad = _marked_folders(library, name, roots)
@@ -355,7 +361,9 @@ def _markers(library, name, roots, location, full, tally, cancel, progress, budg
         folders = chosen[:MARKER_SAMPLE]
     # The deadline is asked between reads: the worst case is MARKER_BUDGET plus one look (`seconds`), not MARKER_BUDGET.
     deadline = None if budget is None or full else time.monotonic() + MARKER_BUDGET
-    _marker_run(location, folders, library_id, marks, cancel, progress, deadline, seconds, tally, total)
+    marker_progress = marker_progress or (lambda read, of: None)
+    marker_progress(marks.checked, marks.rows)      # the number to read is known before the first read
+    _marker_run(location, folders, library_id, marks, cancel, progress, deadline, seconds, tally, total, marker_progress)
     return marks.answer()
 
 
@@ -486,7 +494,7 @@ def _full_run(location, by_folder, tally, cancel, progress, total, seconds):
 
 
 def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=None, progress=None,
-           budget=None, seconds=None):
+           budget=None, seconds=None, marker_progress=None):
     """How well `location` holds the files of root `name`'s rows: a sample (`sample` rows, one of
     them from every folder at least), or with `full` every row and the photos no row has.
 
@@ -503,7 +511,9 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
 
     `cancel()` is asked between folders; `progress(checked, rows, folders)` is called as it goes,
     on this thread. `budget` seconds, when given, end a sample with what it has (SAMPLE_BUDGET is
-    the web route's); `seconds` is how long one look at the disk is waited for (LIST_SECONDS)."""
+    the web route's); `seconds` is how long one look at the disk is waited for (LIST_SECONDS).
+    `marker_progress(read, of)` is called as the markers are read, which come before the rows: the rows' `progress`
+    does not move meanwhile."""
     cancel = cancel or (lambda: False)
     progress = progress or (lambda checked, total, folders: None)
     seconds = LIST_SECONDS if seconds is None else seconds
@@ -532,7 +542,8 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
     tally = _Tally()
     # The markers are read BEFORE the rows: a sample that runs out of its row budget must not drop the check (at most
     # MARKER_SAMPLE stats and reads, or every marked folder in a full run).
-    answer["markers"] = _markers(library, name, roots, location, full, tally, cancel, progress, budget, seconds, total)
+    answer["markers"] = _markers(library, name, roots, location, full, tally, cancel, progress, budget, seconds, total,
+                                 marker_progress)
     if tally.stopped:
         pass
     elif full:

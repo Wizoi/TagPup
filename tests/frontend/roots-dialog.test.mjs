@@ -270,6 +270,32 @@ describe("Verify", () => {
     assert.match(text(dialog.querySelector(".roots-result")), /under way already/);
   });
 
+  test("while the folder markers are read the progress says so, not '0 of 68,466' (#984)", async (t) => {
+    const ctx = await tuner(t);
+    ctx.server.routes.length = 0;
+    ctx.server
+      .on("/api/roots/verify", { success: true, started: true,
+        status: { root: "pictures", state: "running", checked: 0, rows: 68466, folders: 0, markers_read: 0, markers_of: 2672 } })
+      .on("/api/roots", () => listing([entry({ verifying: { root: "pictures", state: "running", checked: 0, rows: 68466,
+        folders: 0, markers_read: 1200, markers_of: 2672, cancelling: false } })]));
+    const dialog = await openFromGear(ctx);
+    click(ctx.window, dialog.querySelector(".roots-verify-all"));
+    await flush(ctx.window, 4);
+    await wait(ctx.window, 60);
+    assert.equal(text(dialog.querySelector(".roots-progress-text")), "Reading folder markers: 1,200 of 2,672...");
+  });
+
+  test("markers that were not read (a cancel, a share away) show no '0 of 0' line (#984)", async (t) => {
+    const ctx = await tuner(t);
+    ctx.server.first("/api/roots/verify", { success: true, started: false, verify: { ...VERIFY, markers: {
+      rows: 40, checked: 0, match: 0, differs: 0, unmarked: 0, partial: true, line: "" } } });
+    const dialog = await openFromGear(ctx);
+    click(ctx.window, dialog.querySelector(".roots-verify"));
+    await flush(ctx.window, 6);
+    assert.equal(dialog.querySelectorAll(".roots-result p").length, 1);
+    assert.doesNotMatch(text(dialog.querySelector(".roots-result")), /marked folders/);
+  });
+
   test("all rows is a job: progress is followed, and the result is shown when it ends", async (t) => {
     const ctx = await tuner(t);
     let polls = 0;

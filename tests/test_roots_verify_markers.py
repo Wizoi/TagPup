@@ -232,6 +232,8 @@ class ReachingTheLocation(MarkedCase):
             found = self.verify(copy, seconds=0.3)
         self.assertEqual("unreachable", found["stopped"])
         self.assertEqual((1, 0), (found["markers"]["checked"], found["markers"]["differs"]))
+        self.assertTrue(found["markers"]["partial"])
+        self.assertEqual(0, found["checked"], "no row was looked at: the markers come first")
         self.assertTrue(found["partial"])
 
     def test_a_cancel_part_way_keeps_what_was_counted(self):
@@ -246,12 +248,31 @@ class ReachingTheLocation(MarkedCase):
             found = self.verify(full=True, cancel=lambda: len(reads) >= 1)
         self.assertEqual("cancelled", found["stopped"])
         self.assertEqual(1, found["markers"]["checked"])
+        self.assertTrue(found["markers"]["partial"], "the markers were not all read")
+        self.assertEqual(0, found["checked"], "the rows come after the markers: a cancel here looked at none")
         self.assertTrue(found["partial"])
 
-    def test_cancel_before_the_markers_are_read_counts_none(self):
+    def test_cancel_before_the_markers_are_read_counts_none_and_says_no_line(self):
         found = self.verify(full=True, cancel=lambda: True)
         self.assertEqual("cancelled", found["stopped"])
-        self.assertEqual(0, found["markers"]["checked"])
+        self.assertEqual((0, True, ""), (found["markers"]["checked"], found["markers"]["partial"],
+                                         found["markers"]["line"]), "no '0 of 0 marked folders match' line")
+        self.assertNotIn("marked folders", found["summary"])
+
+    def test_the_markers_report_how_far_they_are_in_a_field_of_their_own(self):
+        seen, rows = [], []
+        self.verify(full=True, marker_progress=lambda read, of: seen.append((read, of)),
+                    progress=lambda checked, total, folders: rows.append((checked, folders)))
+        self.assertEqual([(each, LEAVES) for each in range(LEAVES + 1)], seen)
+        first_listing = next(i for i, each in enumerate(rows) if each[1] > 0)
+        self.assertTrue(all(each == (0, 0) for each in rows[:first_listing]), "the rows' own count moved while markers were read")
+
+    def test_the_job_carries_the_marker_count_for_the_dialog(self):
+        from tagpup.jobs import verifying
+        run = verifying.Run(self.library, "pictures", self.side.pictures)
+        run.update_markers(5, 40)
+        status = run.status()
+        self.assertEqual((5, 40), (status["markers_read"], status["markers_of"]))
 
     def test_a_sample_reads_at_most_its_bound_and_each_folder_once(self):
         reads = []
