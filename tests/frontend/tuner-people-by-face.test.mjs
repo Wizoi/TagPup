@@ -16,11 +16,11 @@ const PEOPLE = [
 ];
 const FACES = { "Wren Halloway": 101, "Bao Lindqvist": 303 }; // Ines has no readable face
 
-const base = (faces = FACES) => new FakeServer()
+const base = (faces = FACES, people = PEOPLE) => new FakeServer()
   .on("/api/databases", { databases: ["kr-track"], selected: "kr-track" })
   .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
   .on("/api/photos", [])
-  .on("/api/people-with-counts", PEOPLE)
+  .on("/api/people-with-counts", people)
   .on("/api/people-faces", faces)
   .on("/api/people", [])
   .on("/api/tags/list", { tags: [], buckets: {} });
@@ -86,6 +86,17 @@ describe("by face", () => {
     assert.equal(img.getAttribute("loading"), "lazy");
     assert.equal(first.querySelector(".person-face-crop .photo-badge").textContent, "8");
     assert.equal(first.querySelector(".photo-title").textContent, "Wren Halloway");
+  });
+
+  test("two people called alike each get their own crop, by the id the server keys them under", async (t) => {
+    // /api/people-faces keys a name two people have only as id:<id>; the list's rows carry person_id.
+    const server = base({ "id:7": 701, "id:9": 901 }, [
+      { name: "Sam", count: 4, person_id: 7 },
+      { name: "Sam", count: 2, person_id: 9 },
+    ]);
+    const { ctx } = await open(t, { server, view: "face" });
+    assert.deepEqual(items(ctx).map((li) => li.querySelector("img").getAttribute("src")),
+      ["/kr-track/api/face-crop?id=701", "/kr-track/api/face-crop?id=901"]);
   });
 
   test("a person with no face gets a placeholder, not an image", async (t) => {
