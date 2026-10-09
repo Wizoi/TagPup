@@ -103,6 +103,16 @@ class Routes(TwoSams, unittest.TestCase):
         found = app.test_client().get("/api/activity/attention").get_json()
         self.assertEqual((0, None), (found["names_to_review"], found["libraries"][0]["names_url"]))
 
+    def test_activity_says_so_when_the_names_could_not_be_counted_it_never_says_none(self):
+        from unittest import mock
+        app = web.create_app("tagpup", startup=self.library, ports={"tagpup": 8090, "tuner": 8080})
+        app.testing = True
+        with mock.patch("tagpup.services.name_review.count", side_effect=RuntimeError("the library is locked")):
+            found = app.test_client().get("/api/activity/attention").get_json()
+        mine = next(each for each in found["libraries"] if each["name"] == "harbour")
+        self.assertIn("could not be counted: the library is locked", mine["names_error"])
+        self.assertEqual((0, None), (mine["names_to_review"], mine["names_url"]))
+
     def test_it_answers_this_pc_only(self):
         far = self.clients["tuner"].get(LIST, environ_overrides={"REMOTE_ADDR": "10.1.2.3"})
         self.assertEqual(403, far.status_code)

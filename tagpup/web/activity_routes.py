@@ -376,12 +376,15 @@ def attention():
         except Exception as e:
             logger.warning("Could not count the photos of %s whose faces are to be detected: %s", library.name, e)
             to_detect = 0
+        names, names_error = 0, None
         try:
             names = name_review.count(library)
         except Exception as e:
+            # Said, never "none": a library that could not be read is not a library with nothing to settle.
             logger.warning("Could not count the names to review of %s: %s", library.name, e)
-            names = 0
+            names_error = "The names to review could not be counted: %s" % e
         listed.append({"name": library.name, "photos": photos, "faces_to_detect": to_detect, "names_to_review": names,
+                       "names_error": names_error,
                        "names_url": _app_url("tuner", library.name, "?names-to-review=1") if names else None})
     return jsonify({"libraries": listed, **totals, "names_to_review": sum(each.get("names_to_review", 0) for each in listed)})
 

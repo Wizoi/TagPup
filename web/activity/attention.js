@@ -108,6 +108,7 @@ function libraryCard(library) {
     return buildElement('div', { className: 'card', data: { library: library.name } }, [
         buildElement('h3', { text: library.name }),
         namesNote(library),
+        library.names_error ? buildElement('p', { className: 'error names-error', text: library.names_error }) : null,
         photos.length ? buildElement('p', { className: 'detail', text: 'Restore each from a backup; nothing was written to them. '
             + 'A photo replaced by a good copy leaves this list by itself, and is indexed.' }) : null,
         photos.length ? buildElement('table', { className: 'attention-table' }, [
@@ -130,7 +131,7 @@ export function renderAttention() {
     const data = state.attention;
     if (!data) return;
     const cards = (data.libraries || [])
-        .filter(library => (library.photos || []).length || library.faces_to_detect || library.names_to_review || library.error)
+        .filter(library => (library.photos || []).length || library.faces_to_detect || library.names_to_review || library.names_error || library.error)
         .map(libraryCard);
     const count = (data.unreadable || 0) + (data.incomplete || 0) + (data.names_to_review || 0);
     const link = document.querySelector('a[href="#attention"]');
