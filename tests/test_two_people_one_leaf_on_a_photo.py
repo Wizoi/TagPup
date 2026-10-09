@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_faces_and_tags_in_step import InStep  # noqa: E402
 
 from tagpup.services import inspect  # noqa: E402
-from tagpup.store import db, people, taxonomy  # noqa: E402
+from tagpup.core.vocabulary import Ref  # noqa: E402
+from tagpup.store import db, people, removals, taxonomy  # noqa: E402
 
 SAM_T, SAM_I = "Family/Thackeray/Sam", "Family/Ingersoll/Sam"
 
@@ -133,6 +134,22 @@ class TwoSamsOnAPhoto(InStep):
         self.assertEqual(2, inspect.photos(self.library, person="Sam")["count"], "a name is everyone called it")
         self.assertEqual(0, inspect.photos(self.library, person="Family/Nowhere/Sam")["count"],
                          "a path no node holds is nobody filed: only rows with no id, spelled as its leaf, would answer")
+
+    def test_a_person_taken_off_a_photo_is_remembered_by_their_id_not_by_their_name(self):
+        """Fix round 1: the record of a removal carried the name alone, so taking the first Sam off a photo blocked guessing the
+        other Sam on it. It reads the id the journaled change recorded."""
+        self.match(self.first, person_id=self.sam_t)
+        reply = self.client.post("/library/api/photo/save-metadata", json={"path": self.photo_path, "title": "", "tags": []})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual((None, "manual"), self.row(self.first)[:2])
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        try:
+            gone = removals.removed_people(conn, [self.first])[self.first]
+        finally:
+            conn.close()
+        self.assertEqual(Ref(self.sam_t, "Sam"), gone)
+        self.assertTrue(removals.same_person(gone, Ref(self.sam_t, "Sam")))
+        self.assertFalse(removals.same_person(gone, Ref(self.sam_i, "Sam")), "the other Sam is not blocked")
 
     def test_the_queue_and_the_grid_tell_the_two_apart(self):
         """The queue lists a person by their node: two Sams are two rows, each opening its own grid."""
