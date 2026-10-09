@@ -172,8 +172,7 @@ def rebuild_derived(db_path, apply=False, out=print):
                 "TagPup or the CLI applies" % version)
             return 1
         tables = derived.problems(conn)
-        listed = people.stale(conn) if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photo_people'").fetchone() else []
+        listed = people.stale(conn)   # photo_people is migration 6's; this tool starts at 19
         ids = _person_ids_wrong(conn)
         has_ids = person_ids.present(conn)
     finally:
