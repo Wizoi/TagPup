@@ -11,11 +11,16 @@ and the photo's keywords name that person (tagpup.store.face_tags).
 
 Names are written as automatic (name_source stays NULL): clustering may revise them. A face a
 person unmatched by hand, or excluded, is never read as a candidate.
+
+With `folder` (tagpup.services.folder_scope) the plan reads only the photos under that folder, at any depth. Nothing else changes:
+the people their tags name, the decided faces a face is compared with and the gate of a person with no decided face (#839) stay
+the whole library's, so the folder's plan is the whole-library plan restricted to the folder's photos, and the write is as
+guarded. A folder with no photo of the library under it is refused, not read as "nothing to do".
 """
 import collections
 
 from tagpup.core.result import Result
-from tagpup.services import identify, maintenance
+from tagpup.services import folder_scope, identify, maintenance
 from tagpup.store import db, face_tags, journal
 
 #: The journal kind of each face named.
@@ -43,12 +48,18 @@ def _decided(library):
 Named = collections.namedtuple("Named", "choices photo_tags siblings")
 
 
-def _plan(library, on_step=None):
+def _plan(library, on_step=None, folder=None):
+    photo_ids = None
+    if folder is not None:
+        try:
+            photo_ids = folder_scope.resolve(library, folder).photo_ids
+        except folder_scope.NoPhotosThere as why:
+            return maintenance.Plan(refused=str(why))
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         # One read transaction: the guards are the state the plan read, not a later one.
         db.begin(conn)
-        found = face_tags.plan(conn, references=lambda: _decided(library), on_step=on_step)
+        found = face_tags.plan(conn, photo_ids=photo_ids, references=lambda: _decided(library), on_step=on_step)
         photo_tags, siblings = face_tags.guards(conn, found.named)
     finally:
         conn.close()
@@ -74,12 +85,13 @@ def _plan(library, on_step=None):
         work=Named(named, photo_tags, siblings))
 
 
-def plan(library, on_step=None):
+def plan(library, on_step=None, folder=None):
     """The plan alone, for a caller that shows it before anything is written (the job behind the apps' button, which asks
     first): a maintenance.Plan -- `size` the faces it would name, `counts` as faces_from_tags' details, `work` what
     `faces_from_tags(..., planned=)` applies. `on_step(stage, done, total)` hears the plan's progress and may raise to stop
-    it (tagpup.store.face_tags.plan). Reads only."""
-    return _plan(library, on_step)
+    it (tagpup.store.face_tags.plan). With `folder`, the photos under it only; the plan is `refused` (with a sentence) when the
+    library holds none there. Reads only."""
+    return _plan(library, on_step, folder)
 
 
 def _edits(planned):
@@ -98,11 +110,11 @@ def _edits(planned):
     return edits
 
 
-def _remaining(library):
-    return {"faces": len(_plan(library).work.choices)}
+def _remaining(library, folder=None):
+    return {"faces": len(_plan(library, folder=folder).work.choices)}
 
 
-def faces_from_tags(library, apply=False, again=False, planned=None):
+def faces_from_tags(library, apply=False, again=False, planned=None, folder=None):
     """Plan, and with `apply` make, the naming of every face a keyword person of its photo
     names (see the module's docstring). A Result on the maintenance scaffold: `changed` is the
     face rows written; details `counts` as _plan's, and `earlier_apply`. A second apply is refused
@@ -111,16 +123,20 @@ def faces_from_tags(library, apply=False, again=False, planned=None):
     With `planned`, a plan read earlier (`plan`), that plan is what is applied -- the faces a person was
     asked about -- instead of one read again, which took 13.6 s on photo_index and could name other faces
     than the question said; the counts after the write are not read again either. The write is as
-    guarded as ever: each face must still be what the plan read, or nothing is written."""
+    guarded as ever: each face must still be what the plan read, or nothing is written.
+
+    With `folder`, the plan reads (and, read again after the write, counts what is still to be named in) the photos under that
+    folder only; a folder the library holds no photo under is refused. A second apply needs `again` whichever folder the
+    first was for (#988): the faces it named are references for the next."""
     earlier = earlier_apply(library)
-    plan_of = _plan if planned is None else (lambda _library: planned)
+    plan_of = (lambda _library: _plan(_library, folder=folder)) if planned is None else (lambda _library: planned)
     if apply and earlier and not again:
         planned = plan_of(library)
         result = Result(attempted=planned.size, details={"dry_run": True, "change": None, "counts": dict(planned.counts),
-                                                         "ids": dict(planned.ids), "reveal": {}, "earlier_apply": True})
-        result.refuse(AGAIN)
+                                                         "ids": dict(planned.ids), "reveal": {}, "earlier_apply": not planned.refused})
+        result.refuse(planned.refused or AGAIN)     # a folder with no photo is the first thing to say
         return result
     result = maintenance.run(library, "faces_from_tags", plan_of, _edits, apply=apply,
-                             remaining=_remaining if planned is None else None)
+                             remaining=(lambda _library: _remaining(_library, folder)) if planned is None else None)
     result.details["earlier_apply"] = earlier
     return result
