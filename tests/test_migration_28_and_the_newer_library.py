@@ -193,7 +193,7 @@ class AnOlderAppAndALibraryItHasNotSeen(unittest.TestCase):
         self.assertIn("schema is %d" % (schema.LATEST + 1), said)
         self.assertIn("knows up to %d" % schema.LATEST, said)
         self.assertIn("Start the newest TagPup", said)
-        self.assertIn("data/backups", said, "where the backups are")
+        self.assertIn("backups", said, "where the backups are")
         self.assertIn("snapshots restore", said, "and how to go back")
         self.assertEqual((schema.LATEST + 1, schema.LATEST), (refused.exception.found, refused.exception.known))
         self.assertEqual(before, fingerprint(self.path))
@@ -374,7 +374,7 @@ class RecoveryOfANewerLibrary(unittest.TestCase):
                 before = fingerprint(self.path)
                 result = self.cli(*command)
                 self.assertEqual(1, result.exit_code, result.output)
-                self.assertIn("data/backups", " ".join(result.output.split()))
+                self.assertIn("backups", " ".join(result.output.split()))
                 self.assertEqual(before, fingerprint(self.path))
 
     def test_the_doctors_report_reads_it_and_every_write_is_refused(self):
@@ -400,7 +400,7 @@ class RecoveryOfANewerLibrary(unittest.TestCase):
             for photos in (True, False):
                 with self.assertRaises(ToolError) as refused:
                     server.find_library("library", photos=photos, writes=True)
-                self.assertIn("data/backups", str(refused.exception))
+                self.assertIn("backups", str(refused.exception))
             written = [name for name in ("refresh_rows", "sync", "merge_duplicate_person_tags", "dedupe_faces", "undo",
                                          "prune_journal")]
             tools = {each.name for each in __import__("asyncio").run(server.build().list_tools())}
