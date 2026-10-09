@@ -47,7 +47,8 @@ from tagpup.store import folder_ids  # noqa: E402
 
 
 def _refuse_newer(db_path):
-    """A library made by a newer TagPup than this tool's is not read: its rules are the newer one's."""
+    """A library made by a newer TagPup than this tool's is not written: its rules are the newer one's. (The
+    report, which only reads, is let through with a note: it is what an older checkout has for recovery.)"""
     problem = schema.newer_problem(db_path)
     if problem:
         raise SystemExit(problem)
@@ -57,7 +58,9 @@ def report(db_path, show=0, out=print):
     """Report on the library at `db_path`. Returns the number of rules broken."""
     if not os.path.exists(db_path):
         raise SystemExit("There is no library at %s." % db_path)
-    _refuse_newer(db_path)
+    note = schema.newer_note(db_path)   # the report only reads: a newer library is shown as it is, with a note
+    if note:
+        out(note)
     # The library's CLIP model, read without writing: a library never stamped reads as
     # stamping would make it.
     # A library holding a root this machine does not place cannot spell its paths: what needs
@@ -236,7 +239,8 @@ def main(argv=None):
         parser.error("--apply goes with --rebuild-derived")
     if args.rebuild_derived:
         return rebuild_derived(args.db, args.apply)
-    return 1 if report(args.db, args.show) else 0
+    with schema.reading_newer():   # the report reads only; the writer above is refused by rebuild_derived
+        return 1 if report(args.db, args.show) else 0
 
 
 if __name__ == "__main__":

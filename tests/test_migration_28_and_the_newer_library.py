@@ -193,11 +193,16 @@ class AnOlderAppAndALibraryItHasNotSeen(unittest.TestCase):
         self.assertIn("schema is %d" % (schema.LATEST + 1), said)
         self.assertIn("knows up to %d" % schema.LATEST, said)
         self.assertIn("Start the newest TagPup", said)
+        self.assertIn("data/backups", said, "where the backups are")
+        self.assertIn("snapshots restore", said, "and how to go back")
         self.assertEqual((schema.LATEST + 1, schema.LATEST), (refused.exception.found, refused.exception.known))
         self.assertEqual(before, fingerprint(self.path))
 
     def test_the_app_before_migration_28_refuses_a_library_that_has_it(self):
-        # The real case: 28 is in the library, and the app asking is the one that knows 27.
+        # 28 is in the library, and the app asking is one that knows 27. NOT the installed app of today: its `_ensure`
+        # is `if version >= LATEST: return`, so it opens a 28 library as it opens any; the guard first bites at the
+        # update AFTER this one is installed (an app that has it), which is why it must not stand in the way of
+        # recovery (RecoveryOfANewerLibrary).
         path = self.home.library("older.db")
         library_actions.create(path)
         with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:27]), mock.patch.object(schema, "LATEST", 27):
@@ -264,7 +269,7 @@ class EveryEntryPointSaysItInWords(unittest.TestCase):
     def test_the_cli_says_it_and_exits_1_for_any_command(self):
         before = fingerprint(self.path)
         from tagpup_cli import cli
-        for command in (["stats"], ["list-index"], ["history"], ["snapshots", "list"]):
+        for command in (["stats"], ["list-index"], ["sync"], ["undo", "1"]):
             with self.subTest(command=command[0]):
                 result = CliRunner().invoke(cli, ["--db", self.path] + command)
                 self.assertEqual(1, result.exit_code, result.output)
@@ -284,15 +289,127 @@ class EveryEntryPointSaysItInWords(unittest.TestCase):
         with mock.patch.object(server.config, "data_dir", return_value=os.path.dirname(self.path)), \
                 mock.patch.object(server.config, "library_path", side_effect=lambda f: os.path.join(os.path.dirname(self.path), f)):
             with self.assertRaises(ToolError) as refused:
-                server.find_library("library")
+                server.find_library("library", writes=True)
         self.assertEqual(self.sentence, str(refused.exception))
 
     def test_the_doctor_says_it_in_both_its_modes(self):
         import doctor
-        for run in (lambda: doctor.report(self.path), lambda: doctor.rebuild_derived(self.path, apply=True)):
+        for run in (lambda: doctor.rebuild_derived(self.path), lambda: doctor.rebuild_derived(self.path, apply=True)):
             with self.assertRaises(SystemExit) as refused:
                 run()
             self.assertEqual(self.sentence, str(refused.exception))
+
+
+class TwoProcessesBringingALibraryAt26UpToDate(unittest.TestCase):
+    def test_the_servers_startup_thread_and_a_cli_run_migrate_27_then_28_once(self):
+        home = own_home.for_test(self)
+        path = home.library("harbour.db")
+        at_version(path, 26)
+        server = ("import sys; sys.path.insert(0, %r); from tagpup.core.library import Library; "
+                  "from tagpup.services import libraries; "
+                  "libraries.bring_up_to_date_in_background([Library(%r)]).join(); print('server')" % (ROOT, path))
+        cli = ("import sys; sys.path.insert(0, %r); from tagpup.services import libraries; "
+               "print(len(libraries.bring_up_to_date(%r)))" % (ROOT, path))
+        env = dict(os.environ, TAGPUP_HOME=home.root)
+        running = [processes.start([sys.executable, "-c", code], env=env, stdout=-1, stderr=-1, text=True)
+                   for code in (server, cli)]
+        for each in running:
+            out, err = each.communicate(timeout=180)
+            self.assertEqual(0, each.returncode, err)
+        self.assertEqual([(27,), (28,)], look(path, "SELECT version FROM schema_version WHERE version >= 27 ORDER BY version"))
+        self.assertEqual(["migration 27: photos by their camera and lens", "migration 28: people read by id, and the names set aside"],
+                         [row[0] for row in look(path, "SELECT operation FROM changes WHERE operation LIKE 'migration 2%' "
+                                                       "AND operation >= 'migration 27' ORDER BY id")],
+                         "each recorded once")
+        self.assertEqual(schema.LATEST, look(path, "SELECT MAX(version) FROM schema_version")[0][0])
+
+
+class RecoveryOfANewerLibrary(unittest.TestCase):
+    """An older checkout is how the owner goes back; it must still list and restore snapshots, read the journal, run the
+    doctor's report and the MCP's reads on a library from a newer TagPup (schema 99 here), and every writer is refused.
+    ONE owner of which may: schema.reading_newer()."""
+
+    def setUp(self):
+        self.app, self.home = web_client.app_for(self, "tagpup")
+        self.path = self.home.library("library.db")
+        from tagpup.store import snapshots
+        snapshots.take(self.path, now=1_800_000_000)
+        self.snapshot = snapshots.listed(self.path, "daily")[0].name
+        make_newer(self.path, by=99 - schema.LATEST)
+        self.assertEqual(99, schema.version_of(self.path))
+
+    def cli(self, *command):
+        from tagpup_cli import cli
+        return CliRunner().invoke(cli, ["--db", self.path] + list(command))
+
+    def test_ensure_lets_it_through_only_inside_reading_newer_and_changes_nothing(self):
+        before = fingerprint(self.path)
+        with self.assertRaises(schema.NewerLibrary):
+            schema.ensure(self.path)
+        with schema.reading_newer():
+            self.assertEqual([], schema.ensure(self.path))
+        with self.assertRaises(schema.NewerLibrary):
+            schema.ensure(self.path)
+        self.assertEqual(before, fingerprint(self.path))
+
+    def test_the_cli_lists_and_restores_snapshots_and_reads_the_journal_with_a_note(self):
+        for command in (["history"], ["snapshots", "list"], ["snapshots", "restore", self.snapshot]):
+            with self.subTest(command=command):
+                result = self.cli(*command)
+                self.assertEqual(0, result.exit_code, result.output)
+                self.assertIn("is from a newer TagPup", result.output)
+                self.assertNotIn("Traceback", result.output)
+        self.assertIn(self.snapshot, self.cli("snapshots", "list").output)
+
+    def test_a_snapshot_restore_applied_puts_the_older_library_back_and_it_opens_again(self):
+        result = self.cli("snapshots", "restore", self.snapshot, "--apply")
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual(schema.LATEST, schema.version_of(self.path))
+        schema._current.clear()
+        self.assertEqual([], schema.ensure(self.path))
+
+    def test_every_cli_writer_is_refused_with_the_backups_named(self):
+        for command in (["undo", "1", "--apply"], ["sync", "--apply"], ["prune-journal", "--apply"], ["stats"]):
+            with self.subTest(command=command):
+                before = fingerprint(self.path)
+                result = self.cli(*command)
+                self.assertEqual(1, result.exit_code, result.output)
+                self.assertIn("data/backups", " ".join(result.output.split()))
+                self.assertEqual(before, fingerprint(self.path))
+
+    def test_the_doctors_report_reads_it_and_every_write_is_refused(self):
+        import doctor
+        said = []
+        doctor.report(self.path, out=said.append)
+        self.assertTrue(said[0].startswith("Note:") and "newer TagPup" in said[0], said[:1])
+        before = fingerprint(self.path)
+        for kwargs in ({}, {"apply": True}):
+            with self.assertRaises(SystemExit):
+                doctor.rebuild_derived(self.path, **kwargs)
+        self.assertEqual(before, fingerprint(self.path))
+
+    def test_the_mcp_reads_with_a_note_and_refuses_each_writer(self):
+        from mcp.server.fastmcp.exceptions import ToolError
+        from tagpup.mcp import server
+        folder = os.path.dirname(self.path)
+        with mock.patch.object(server.config, "data_dir", return_value=folder), \
+                mock.patch.object(server.config, "library_path", side_effect=lambda f: os.path.join(folder, f)):
+            answer = server._answer(lambda: (server.find_library("library", photos=False), {"ok": 1})[1])
+            self.assertEqual(1, answer["ok"])
+            self.assertIn("newer TagPup", answer["note"])
+            for photos in (True, False):
+                with self.assertRaises(ToolError) as refused:
+                    server.find_library("library", photos=photos, writes=True)
+                self.assertIn("data/backups", str(refused.exception))
+            written = [name for name in ("refresh_rows", "sync", "merge_duplicate_person_tags", "dedupe_faces", "undo",
+                                         "prune_journal")]
+            tools = {each.name for each in __import__("asyncio").run(server.build().list_tools())}
+            self.assertLessEqual(set(written), tools)
+
+    def test_the_server_still_answers_its_status_and_refuses_the_library(self):
+        client = self.app.test_client()
+        self.assertEqual(200, client.get("/api/server").status_code)
+        self.assertEqual(409, client.get("/library/api/people").status_code)
 
 
 class ASnapshotFromANewerVersion(unittest.TestCase):
@@ -314,7 +431,7 @@ class ASnapshotFromANewerVersion(unittest.TestCase):
             conn.close()
         before = fingerprint(library.path)
         result = snapshot_service.restore(library, daily.name, apply=True)
-        self.assertEqual(schema.newer_sentence("The snapshot " + daily.name, schema.LATEST + 1, schema.LATEST),
+        self.assertEqual(schema.newer_sentence("The snapshot " + daily.name, schema.LATEST + 1, schema.LATEST, recover=False),
                          result.refused)
         self.assertIn("Start the newest TagPup", result.refused)
         self.assertEqual((0, before), (result.changed, fingerprint(library.path)))

@@ -42,7 +42,10 @@ def annotate_suggestions(library, status):
     chips = [chip for entry in (found or {}).values() if isinstance(entry, dict)
              for chip in entry.get("people") or [] if isinstance(chip, dict)]
     if chips:
-        annotate(library, chips)
+        # The suggester writes the person's TAG PATH in `name` (suggester.py: item["tag"]); a bare name too.
+        everyone = directory(library)
+        for chip in chips:
+            chip["person"] = everyone.of_reference(chip.get("name"))
     return status
 
 

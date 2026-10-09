@@ -64,7 +64,7 @@ def restore(library, name, apply=False, now=None):
         "lost": [{"id": cid, "created": created, "operation": operation} for cid, created, operation in lost]})
     made_at = snapshots.schema_version(snapshot.path)
     if made_at > schema.LATEST:
-        result.refuse(schema.newer_sentence("The snapshot " + name, made_at, schema.LATEST))
+        result.refuse(schema.newer_sentence("The snapshot " + name, made_at, schema.LATEST, recover=False))
         return result
     needs, free = snapshots.restore_needs(library.path)
     result.details.update({"needs": needs, "free": free})

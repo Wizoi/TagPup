@@ -5,7 +5,7 @@ read `person` from part C); a name two people are called is `shared` with no id 
 which; a name no person tag has, a group tag and a bucket are None.
 
 Photos are rows as the indexer records them (tests/view_library.py); the tree's nodes are made by taxonomy.add_path.
-Fictional names: two cousins called Sam under two groups, and a group of people (Idzi) with someone under it.
+Fictional names: two cousins called Sam under two groups, and a group of people (Marlowe) with someone under it.
 """
 import os
 import sys
@@ -25,7 +25,7 @@ from tagpup.services import people as people_service  # noqa: E402
 from tagpup.store import person_ids, taxonomy  # noqa: E402
 
 SAM_T, SAM_I = "Family/Thackeray/Sam", "Family/Ingersoll/Sam"
-WREN, CORA, IDZI = "Family/Thackeray/Wren", "Family/Idzi/Cora Idzi", "Family/Idzi"
+WREN, CORA, GROUP = "Family/Thackeray/Wren", "Family/Marlowe/Tamsin Marlowe", "Family/Marlowe"
 
 
 def unit(*values):
@@ -66,15 +66,15 @@ class TheDirectory(Library):
         return person_ids.Directory.read(self.vl.conn)
 
     def test_everyone_is_told_with_the_group_when_a_leaf_is_shared_and_only_then(self):
-        self.assertEqual([self.person(CORA), self.person("Friends/Max"), self.sam_ingersoll(), self.sam_thackeray(),
+        self.assertEqual([self.person("Friends/Max"), self.sam_ingersoll(), self.sam_thackeray(), self.person(CORA),
                           self.person(WREN)], self.read().records(), "by name, then by group")
 
     def test_a_group_of_people_is_nobody(self):
         names = [each["tag"] for each in self.read().records()]
-        self.assertNotIn(IDZI, names)
+        self.assertNotIn(GROUP, names)
         self.assertNotIn("Family", names, "nor is a root")
-        self.assertIsNone(self.read().of_name("Idzi"))
-        self.assertIsNone(self.read().of_tag(IDZI))
+        self.assertIsNone(self.read().of_name("Marlowe"))
+        self.assertIsNone(self.read().of_tag(GROUP))
 
     def test_a_name_is_the_person_two_people_or_nobody(self):
         found = self.read()
@@ -180,12 +180,15 @@ class TheAnswers(Library):
     def test_suggest_chips(self):
         status = {"status": "completed", "suggestions": {
             self.path: {"tags": [{"tag": "Trips/Coast", "score": 0.9}], "people": [
-                {"name": "Wren", "score": 0.8}, {"name": "Sam", "score": 0.7}, {"name": "A New Face", "score": 0.6}]},
+                # As offered() writes them: the person's TAG PATH in `name` (suggester.py item['tag']); a bare name too.
+                {"name": WREN, "score": 0.8}, {"name": SAM_I, "score": 0.7}, {"name": "Family/Nobody/A New Face", "score": 0.6},
+                {"name": "Sam", "score": 0.5}]},
             "failed.jpg": {"tags": [], "people": [], "error": "unreadable"}, "odd.jpg": "not a dict"}}
         people_service.annotate_suggestions(self.library, status)
         chips = status["suggestions"][self.path]["people"]
-        self.assertEqual([self.person(WREN), self.shared_sam(), None], [each["person"] for each in chips])
-        self.assertEqual([0.8, 0.7, 0.6], [each["score"] for each in chips])
+        self.assertEqual([self.person(WREN), self.sam_ingersoll(), None, self.shared_sam()],
+                         [each["person"] for each in chips], "a path is exact even for a shared leaf")
+        self.assertEqual([0.8, 0.7, 0.6, 0.5], [each["score"] for each in chips])
         self.assertNotIn("person", status["suggestions"][self.path]["tags"][0])
         self.assertEqual({"status": "idle"}, people_service.annotate_suggestions(self.library, {"status": "idle"}))
 

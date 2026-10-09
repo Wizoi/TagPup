@@ -23,6 +23,8 @@ A table is rebuilt only through `rebuild_table`, SQLite's twelve steps.
 one. After the first time in a process it costs a stat.
 """
 import collections
+import contextlib
+import contextvars
 import logging
 import os
 import re
@@ -89,13 +91,66 @@ class NewerLibrary(Exception):
         super().__init__(newer_sentence(name, found, known))
 
 
-def newer_sentence(what, found, known):
+#: Where a library's backups are, for the owner who has to go back to an older checkout.
+BACKUPS_NOTE = ("Your backups are in data/backups (the library's snapshots in data/backups/<library>/daily, weekly "
+                "and monthly, the copies taken before a bulk change beside them as <library>.before-...db). To go "
+                "back to an older TagPup: stop every TagPup, copy a backup over the library file in data, or list "
+                "and restore a snapshot with this version (`tagpup_cli.py --db <library> snapshots list`, "
+                "`snapshots restore <name> --apply`).")
+
+
+def newer_sentence(what, found, known, recover=True):
     """The one sentence for something made by a newer TagPup than this one: a library (`what` is its file
-    name) or a snapshot of one (snapshots.restore uses it). It says which app to start."""
-    return ("%s was made by a newer version of TagPup (its schema is %d; this version knows up to %d), so this "
+    name) or a snapshot of one (snapshots.restore uses it). It says which app to start, and, for a library
+    (`recover`), where the backups are and how to go back."""
+    said = ("%s was made by a newer version of TagPup (its schema is %d; this version knows up to %d), so this "
             "version will not open it: it would misread it and write it wrong. Start the newest TagPup you have "
             "installed (its launchers, TagPup.cmd and TagTuner.cmd, install and start the current version)."
             % (what, found, known))
+    return said + " " + BACKUPS_NOTE if recover else said
+
+
+# ---- What may open a library newer than this version -----------------------------------------
+#
+# ONE owner of which operations may: `reading_newer()`. Inside it `ensure` lets a newer library through
+# without migrating, settling or writing anything, so the recovery tools of an older checkout still work:
+# listing and restoring snapshots, reading the journal, the doctor's report, the MCP's read tools. An entry point
+# enters it only for an operation of RECOVERY (the CLI's commands by name; the MCP's read tools; the doctor's
+# report); everything that writes through the app is outside it, and `ensure` refuses.
+
+#: The CLI commands that may open a newer library: the journal's read and the snapshots (list and restore).
+RECOVERY_COMMANDS = ("history", "snapshots")
+
+_reading_newer = contextvars.ContextVar("tagpup_reading_newer", default=False)
+
+
+@contextlib.contextmanager
+def reading_newer():
+    """Within it, `ensure` lets a library newer than this version through, changing nothing."""
+    token = _reading_newer.set(True)
+    try:
+        yield
+    finally:
+        _reading_newer.reset(token)
+
+
+def newer_note(db_path):
+    """One line saying the library at `db_path` is newer than this version and is being read as it is, or None."""
+    sentence = newer_problem(db_path)
+    if sentence is None:
+        return None
+    found = version_of(db_path)
+    return ("Note: %s is from a newer TagPup (schema %d; this version knows %d): it is only read, nothing is written."
+            % (os.path.basename(db_path), found, LATEST))
+
+
+def version_of(db_path):
+    """The schema version of the library file at `db_path`, read only; 0 for none."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return version(conn)
+    finally:
+        conn.close()
 
 
 def newer_problem(db_path):
@@ -1539,7 +1594,12 @@ def ensure(db_path):
     with _current_guard:
         if identity is not None and _current.get(key) == identity:
             return []
-    applied = _ensure(db_path)
+    try:
+        applied = _ensure(db_path)
+    except NewerLibrary:
+        if _reading_newer.get():
+            return []   # reading_newer(): as it is, nothing migrated, settled or remembered
+        raise
     from tagpup.store import journal   # the journal imports this module
     journal.settle_once(db_path)
     with _current_guard:

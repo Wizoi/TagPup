@@ -112,7 +112,11 @@ def library_names():
             if os.path.exists(config.library_path(name + ".db"))]
 
 
-def find_library(name, photos=True):
+#: What a read tool says when the library is newer than this version: set by find_library, added to the answer by _answer.
+_notes = []
+
+
+def find_library(name, photos=True, writes=False):
     """The Library called `name` in the home's data folder; ToolError when there is none. And, for a
     tool that reads photos' paths (`photos`), when the library holds a root this machine does not
     place: the message names machine_roots.json and the line to add (tagpup.services.roots.problem),
@@ -121,8 +125,10 @@ def find_library(name, photos=True):
         raise ToolError("There is no library called %r; `libraries` lists them." % (name,))
     found = Library(config.library_path(name + ".db"))
     newer = library_service.newer_problem(found.path)
+    if newer and writes:
+        raise ToolError(newer)   # a library of a newer TagPup: this version would misread it and write it wrong
     if newer:
-        raise ToolError(newer)   # a library of a newer TagPup: this version would misread it
+        _notes.append(library_service.newer_note(found.path))   # a read tool still reads it, as it is
     if photos:
         unplaced = roots_service.problem(found)
         if unplaced:
@@ -144,8 +150,13 @@ def _answer(action, reveal=False):
     """Run `action`, turning what the service refuses into the tool's error. An error
     the service did not expect is logged whole and answered by its kind alone, unless
     `reveal`: its message can hold a path."""
+    del _notes[:]
     try:
-        return action()
+        with library_service.reading_newer():
+            answer = action()
+        if _notes and isinstance(answer, dict):
+            answer = dict(answer, note=_notes[0])
+        return answer
     except ToolError:
         raise
     except (NotFound, Refused) as e:
@@ -257,7 +268,7 @@ def build():
     def refresh(library: str, apply: bool = False, folder: Optional[str] = None,
                 reveal: bool = False, limit: int = inspect.LIMIT) -> dict[str, Any]:
         def act():
-            found = find_library(library)
+            found = find_library(library, writes=True)
             # The library's ExifTool, read without stamping it: a dry run writes nothing.
             exiftool = runtimes.exiftool(found, runtimes.peek_settings(found))
             return written(refresh_rows.refresh_rows(found, exiftool, apply=apply, folder=folder),
@@ -278,7 +289,7 @@ def build():
     def sync(library: str, apply: bool = False, folder: Optional[str] = None,
              reveal: bool = False, limit: int = inspect.LIMIT) -> dict[str, Any]:
         def act():
-            found = find_library(library)
+            found = find_library(library, writes=True)
             result = runtimes.sync(found, folder=folder, apply=apply, index_new=False)
             answer = written(result, found, reveal, limit)
             answer["in_step"] = result.details["in_step"]
@@ -300,7 +311,7 @@ def build():
     def merge_duplicate_person_tags(library: str, apply: bool = False, reveal: bool = False,
                                     limit: int = inspect.LIMIT) -> dict[str, Any]:
         def act():
-            found = find_library(library)
+            found = find_library(library, writes=True)
             return written(person_tags.merge_duplicate_person_tags(found, apply=apply), found, reveal, limit)
         return _answer(act, reveal)
 
@@ -311,7 +322,7 @@ def build():
     def dedupe_faces(library: str, apply: bool = False, reveal: bool = False,
                      limit: int = inspect.LIMIT) -> dict[str, Any]:
         def act():
-            found = find_library(library)
+            found = find_library(library, writes=True)
             return written(duplicate_faces.dedupe_faces(found, apply=apply), found, reveal, limit)
         return _answer(act, reveal)
 
@@ -337,7 +348,7 @@ def build():
                 "Answers name tables, row ids and columns, never values.")
     def undo(library: str, change: int, apply: bool = False) -> dict[str, Any]:
         def act():
-            found = find_library(library, photos=False)
+            found = find_library(library, photos=False, writes=True)
             # A change of photo files is undone file by file, through the library's ExifTool.
             exiftool = runtimes.exiftool(found, runtimes.peek_settings(found))
             return written(library_journal.undo(found, change, apply=apply, exiftool_path=exiftool), found)
@@ -351,7 +362,7 @@ def build():
     def prune_journal(library: str, days: int = library_journal.RETENTION_DAYS,
                       apply: bool = False) -> dict[str, Any]:
         def act():
-            found = find_library(library, photos=False)
+            found = find_library(library, photos=False, writes=True)
             result = library_journal.prune(found, days, apply=apply)
             return {"ok": result.ok, "dry_run": not apply, "changes": result.attempted,
                     "pruned": result.changed, "values": result.details["values"], "days": days,

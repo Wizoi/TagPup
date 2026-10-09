@@ -38,6 +38,11 @@ def bring_up_to_date(db_path):
     return schema.ensure(db_path)
 
 
+reading_newer = schema.reading_newer
+newer_note = schema.newer_note
+RECOVERY_COMMANDS = schema.RECOVERY_COMMANDS
+
+
 def newer_problem(db_path):
     """The sentence saying the library at `db_path` is newer than this version of TagPup, or None
     (tagpup.store.schema.newer_problem). Reads only: for an entry point that does not open it

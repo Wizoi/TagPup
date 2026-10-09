@@ -166,6 +166,14 @@ class Directory:
         found = self._by_tag.get(vocabulary.normalize(tag).lower()) if tag else None
         return dict(found) if found else None
 
+    def of_reference(self, value):
+        """The person a suggester's `name` is: a TAG PATH when the suggestion came from a face match
+        (`Family/Immediate/Clara Ingersoll`: the suggester's item['tag']), else a bare name. A path is looked up
+        by `of_tag` and so is exact even when the leaf is shared; a name by `of_name`."""
+        if value and vocabulary.SEPARATOR in vocabulary.normalize(value):
+            return self.of_tag(value)
+        return self.of_name(value)
+
     def annotate(self, items, key="name", into="person"):
         """Give each dict of `items` a `person` beside the name it holds under `key` (None when it holds none, or a
         name no person is called): the fields a page labels the person by. Returns `items`."""
