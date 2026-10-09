@@ -204,6 +204,30 @@ export class PeopleDirectory {
         return value.includes('/') ? this.ofTag(value) : this.only(value);
     }
 
+    /** The person whose label -- what a picker's option shows, `Sam · Friends` -- is `text`, without case; null for none. */
+    ofLabel(text) {
+        const wanted = textKey(text);
+        if (!wanted) return null;
+        return this.records.find(each => textKey(personLabel(each)) === wanted) || null;
+    }
+
+    /**
+     * What typed text means, for a picker that offers people by their labels:
+     *   { kind: 'person', person } -- a label, a tag path, or a name one person has;
+     *   { kind: 'choose', people } -- a name two or more people have: the owner is asked which, never given the first;
+     *   { kind: 'new', name } -- a name nobody has; { kind: 'none' } -- nothing was typed.
+     */
+    match(text) {
+        const value = String(text ?? '').trim();
+        if (!value) return { kind: 'none' };
+        const labelled = this.ofLabel(value) || this.ofTag(value);
+        if (labelled) return { kind: 'person', person: labelled };
+        const called = this.called(value);
+        if (called.length === 1) return { kind: 'person', person: called[0] };
+        if (called.length > 1) return { kind: 'choose', people: called };
+        return { kind: 'new', name: value };
+    }
+
     /** Every person, by name and then group (the order the server sends them in), as a copy. */
     all() {
         return this.records.slice();

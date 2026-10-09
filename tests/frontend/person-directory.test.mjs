@@ -105,6 +105,30 @@ describe("a photo that already has a person", () => {
   });
 });
 
+describe("what typed text means to a picker", () => {
+  const directory = new PeopleDirectory(PEOPLE);
+
+  test("a label, a tag path and a name one person has are that person", () => {
+    assert.equal(directory.match("Sam · Pets").person.id, 41);
+    assert.equal(directory.match("sam · friends").person.id, 40);
+    assert.equal(directory.match("Pets/Sam").person.id, 41);
+    assert.equal(directory.match("  Wren ").person.id, 52);
+    assert.equal(directory.match("Wren").kind, "person");
+  });
+
+  test("a name two people have is a question, with both of them; never the first", () => {
+    const asked = directory.match("Sam");
+    assert.equal(asked.kind, "choose");
+    assert.deepEqual(asked.people.map((each) => each.tag), ["Friends/Sam", "Pets/Sam"]);
+  });
+
+  test("a name nobody has makes a person; nothing typed is nothing", () => {
+    assert.deepEqual(directory.match("Fenn Ashdown"), { kind: "new", name: "Fenn Ashdown" });
+    assert.deepEqual(directory.match("   "), { kind: "none" });
+    assert.deepEqual(directory.match(null), { kind: "none" });
+  });
+});
+
 describe("what a row is shown as, and how a request names a person", () => {
   test("the label of the nested person when the row has one, else the name it holds", () => {
     assert.equal(personLabelOf({ name: "Sam", person: PEOPLE[1] }), "Sam · Friends");

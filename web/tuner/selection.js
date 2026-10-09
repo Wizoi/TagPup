@@ -1,7 +1,7 @@
 // Selecting faces in the Identify grid, and the selected face's details.
 import { api } from './common/api.js';
 import { attachPersonFaces } from './common/person-faces.js';
-import { sortedTags } from './common/vocabulary.js';
+import { personLabelOf, personTitleOf, sortedTags } from './common/vocabulary.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { boxInContainedImage } from './common/image-zoom.js';
 import { state } from './state.js';
@@ -177,7 +177,8 @@ export function showFaceDetails(faceId) {
 
                     const nameSpan = document.createElement('span');
                     nameSpan.className = 'diagnostics-name';
-                    nameSpan.textContent = item.name;
+                    nameSpan.textContent = personLabelOf(item);
+                    nameSpan.title = personTitleOf(item);
 
                     const simSpan = document.createElement('span');
                     simSpan.className = 'diagnostics-similarity';
@@ -191,7 +192,7 @@ export function showFaceDetails(faceId) {
                     itemDiv.appendChild(simSpan);
                     // A suggested person too: focusable, so the keyboard sees their faces as well.
                     itemDiv.tabIndex = 0;
-                    attachPersonFaces(itemDiv, item.name);
+                    attachPersonFaces(itemDiv, item.person || item.name);
                     matchingDetailDiagnostics.appendChild(itemDiv);
                 });
             }

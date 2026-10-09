@@ -1,0 +1,71 @@
+/* "Which one?": the question a page asks when a name is two people's (web/common/person-choice.js). Self-contained, since TagTuner's
+   stylesheet has no .modal-overlay of TagPup's. */
+.person-choice {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    opacity: 1;
+    visibility: visible;
+}
+
+.person-choice .modal-container {
+    box-sizing: border-box;
+    width: 420px;
+    max-width: 92vw;
+    padding: 18px 20px;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    opacity: 1;
+    transform: none;
+}
+
+.person-choice .modal-header h2 {
+    margin: 0 0 10px 0;
+    font-size: 16px;
+}
+
+.person-choice-about {
+    margin: 0 0 10px 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.person-choice-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.person-choice-option {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.person-choice-option:hover {
+    background: var(--bg-tertiary);
+}
+
+.person-choice-tag {
+    color: var(--text-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.person-choice .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}

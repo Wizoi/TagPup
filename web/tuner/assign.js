@@ -2,7 +2,7 @@
 // undo, rename.
 import { api } from './common/api.js';
 import { choicesOf, loadRules } from './common/validate.js';
-import { nameProblem } from './common/vocabulary.js';
+import { nameProblem, personFields, personLabel } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     btnExcludeSelected, btnReassignSelected, btnRenamePerson, btnRestoreSelected,
@@ -10,7 +10,7 @@ import {
     panelContent,
 } from './elements.js';
 import { upper } from './hooks.js';
-import { fetchKnownPeople, personExists, updateURLParams } from './shared.js';
+import { fetchKnownPeople, resolveTyped, updateURLParams } from './shared.js';
 import { clearFaceDetails, updateMatchingSelectionUI } from './selection.js';
 import { putFacesBack, removeFacesFromGrid, updateTabLabels } from './grid-parts.js';
 
@@ -26,15 +26,16 @@ const btnAssignUndo = document.getElementById('btn-assign-undo');
 const btnAssignUndoDismiss = document.getElementById('btn-assign-undo-dismiss');
 
 /**
- * The person beside `name` in the sidebar, as it is drawn: the one before, or after for the first.
+ * The person beside the one chosen in the sidebar, as it is drawn: the one before, or after for the first, as {name, id}. The
+ * chosen one is found by their id when they have one (two people may be called alike).
  * It followed the server's order, which is not the order shown once the list is sorted by name.
  */
-function besidePerson(name) {
+function besidePerson(name, personId = null) {
     const people = state.shownPeople.length > 0 ? state.shownPeople : (state.allPeopleWithCounts || []);
-    const idx = people.findIndex(p => p.name === name);
+    const idx = people.findIndex(p => (personId !== null ? p.person_id === personId : p.name === name));
     if (idx === -1) return null;
-    if (idx > 0) return people[idx - 1].name;
-    return people.length > 1 ? people[idx + 1].name : null;
+    const beside = idx > 0 ? people[idx - 1] : (people.length > 1 ? people[idx + 1] : null);
+    return beside ? { name: beside.name, id: beside.person_id !== undefined ? beside.person_id : null } : null;
 }
 
 // ---- Excluding faces ---------------------------------------------------
@@ -262,12 +263,13 @@ function postUnmatchBulk(faceIds, { undo = false } = {}) {
             // Check if the person is going to be removed after unmatching
             const willBeRemoved = (state.activePersonFaces.length === 0);
             if (willBeRemoved) {
-                const priorName = besidePerson(state.activePersonName);
+                const prior = besidePerson(state.activePersonName, state.activePersonId);
 
-                if (priorName) {
-                    upper.selectPerson(priorName);
+                if (prior) {
+                    upper.selectPerson(prior.name, null, false, false, prior.id);
                 } else {
                     state.activePersonName = null;
+                    state.activePersonId = null;
                     updateURLParams();
                     emptyState.classList.remove('hidden');
                     panelContent.classList.add('hidden');
@@ -402,8 +404,10 @@ function hideAssignUndo() {
     if (assignUndoBar) assignUndoBar.classList.add('hidden');
 }
 
-export function postMatchBulk(faceIds, name) {
-    const problem = nameProblem(name);
+// `who` is a person ({id, name, ...}: named by the id of their node, the only way to name one of two people called alike) or a
+// name no tag has (a new person).
+export function postMatchBulk(faceIds, who) {
+    const problem = nameProblem(typeof who === 'string' ? who : who.name);
     if (problem) {
         alert(problem);
         return Promise.resolve(null);
@@ -419,7 +423,7 @@ export function postMatchBulk(faceIds, name) {
         headers: {
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ face_ids: faceIds, person_name: name })
+        body: JSON.stringify({ face_ids: faceIds, ...personFields(who) })
     })
     .then(async res => {
         if (!res.ok) {
@@ -477,12 +481,13 @@ export function postMatchBulk(faceIds, name) {
             // Check if the person is going to be removed after matching
             const willBeRemoved = (state.activePersonFaces.length === 0);
             if (willBeRemoved) {
-                const priorName = besidePerson(state.activePersonName);
+                const prior = besidePerson(state.activePersonName, state.activePersonId);
 
-                if (priorName) {
-                    upper.selectPerson(priorName);
+                if (prior) {
+                    upper.selectPerson(prior.name, null, false, false, prior.id);
                 } else {
                     state.activePersonName = null;
+                    state.activePersonId = null;
                     updateURLParams();
                     emptyState.classList.remove('hidden');
                     panelContent.classList.add('hidden');
@@ -513,7 +518,7 @@ export function postMatchBulk(faceIds, name) {
 }
 
 // POST rename person to backend API
-function postRenamePerson(oldName, newName) {
+function postRenamePerson(oldName, newName, personId = null) {
     const problem = nameProblem(newName);
     if (problem) {
         alert(problem);
@@ -528,7 +533,7 @@ function postRenamePerson(oldName, newName) {
         headers: {
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ old_name: oldName, new_name: newName })
+        body: JSON.stringify(personId !== null ? { person_id: personId, old_name: oldName, new_name: newName } : { old_name: oldName, new_name: newName })
     })
     .then(res => {
         if (!res.ok) throw new Error('Rename operation failed');
@@ -714,30 +719,40 @@ ${summary}${note}`)) {
                 const next = (i) => {
                     if (i >= runs.length) return;
                     const [person, ids] = runs[i];
-                    Promise.resolve(postMatchBulk(ids, person)).then(() => next(i + 1));
+                    // The badge's label finds its person again (two people called alike have different labels).
+                    resolveTyped(person).then(found => (found ? postMatchBulk(ids, found.person || found.name) : null))
+                        .then(() => next(i + 1));
                 };
                 next(0);
                 return;
             }
 
             if (!name) return;
-            if (!personExists(name)) {
-                if (!confirm(`"${name}" is not currently in the database. Do you want to create a new person tag and assign it to the selected face(s)?`)) {
-                    return;
+            // Who the text is: a person (the id travels), after asking which when two have the name; or a new one.
+            const ids = state.selectedFaceIds.slice();
+            resolveTyped(name).then(found => {
+                if (!found) return;
+                if (!found.person && !found.exists) {
+                    if (!confirm(`"${found.name}" is not currently in the database. Do you want to create a new person tag and assign it to the selected face(s)?`)) {
+                        return;
+                    }
+                } else {
+                    if (!confirm(`Are you sure you want to assign the ${ids.length} selected face(s) to "${found.person ? personLabel(found.person) : found.name}"?`)) {
+                        return;
+                    }
                 }
-            } else {
-                if (!confirm(`Are you sure you want to assign the ${state.selectedFaceIds.length} selected face(s) to "${name}"?`)) {
-                    return;
-                }
-            }
-            postMatchBulk(state.selectedFaceIds, name);
+                postMatchBulk(ids, found.person || found.name);
+            });
         });
     }
 
     if (btnRenamePerson) {
         btnRenamePerson.addEventListener('click', () => {
             if (!state.activePersonName) return;
-            const newName = prompt(`Rename person "${state.activePersonName}" to:`, state.activePersonName);
+            const row = (state.allPeopleWithCounts || []).find(each => state.activePersonId !== null
+                ? each.person_id === state.activePersonId : each.name === state.activePersonName);
+            const shownAs = row && row.person ? personLabel(row.person) : state.activePersonName;
+            const newName = prompt(`Rename person "${shownAs}" to:`, state.activePersonName);
             if (newName === null) return;
             const trimmed = newName.trim();
             if (!trimmed) {
@@ -746,11 +761,11 @@ ${summary}${note}`)) {
             }
             if (trimmed === state.activePersonName) return;
             
-            if (!confirm(`Are you sure you want to rename "${state.activePersonName}" to "${trimmed}"? This will update all of their matched face tags and photo metadata.`)) {
+            if (!confirm(`Are you sure you want to rename "${shownAs}" to "${trimmed}"? This will update all of their matched face tags and photo metadata.`)) {
                 return;
             }
             
-            postRenamePerson(state.activePersonName, trimmed);
+            postRenamePerson(state.activePersonName, trimmed, state.activePersonId);
         });
     }
 

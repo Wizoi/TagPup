@@ -352,7 +352,9 @@ function filterPhotos() {
         const items = Array.from(photoList.children);
         items.forEach(item => {
             if (item.personName) {
-                const match = item.personName.toLowerCase().includes(query);
+                // By the name and by the label shown (`Sam · Pets`).
+                const match = item.personName.toLowerCase().includes(query)
+                    || String(item.personText || '').toLowerCase().includes(query);
                 item.style.display = match ? '' : 'none';
             }
         });
