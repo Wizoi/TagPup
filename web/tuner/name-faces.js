@@ -6,10 +6,21 @@ import { attachNameFaces, openNameFaces } from './common/name-faces.js';
 import { modeSelect } from './elements.js';
 import { fetchKnownPeople } from './shared.js';
 import { refreshSidebarQuietly } from './sidebar.js';
+import { state } from './state.js';
 
-/** What the page gives the dialog: TagTuner has no open folder to report on; names written read its lists again. */
+/**
+ * TagTuner has no one open folder: Folder Matches lists photos in folder groups. The folder the dialog offers ("Only this
+ * folder", docs/findings.md #987) is the group of the photo selected in the list, or none (the whole library, as before).
+ */
+export function selectedFolder() {
+    if (!state.activePhotoPath) return null;
+    const photo = state.allPhotos.find(each => each.path === state.activePhotoPath);
+    return (photo && photo.folderGroup && photo.folderGroup.name) || null;
+}
+
+/** What the page gives the dialog: the selected photo's folder (or none); names written read its lists again. */
 const nameFacesOptions = {
-    folder: () => null,
+    folder: selectedFolder,
     changed: () => {
         fetchKnownPeople();
         refreshSidebarQuietly();

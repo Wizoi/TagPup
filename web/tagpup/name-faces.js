@@ -1,7 +1,8 @@
 // TagPup's "Name faces from tags" (web/common/name-faces.js; docs/findings.md, #789): the button in the Organize folder
-// view's header opens the one dialog, which reads the plan of the whole library, asks, and writes. What this adds is the
-// page's side of it: the folder that is open, whose faces the result counts before and after, and, once names were
-// written, the open photo's faces read again.
+// view's header opens the one dialog, which asks how much to look at (only the folder that is open, or the whole library),
+// reads the plan, asks, and writes. What this adds is the page's side of it: the folder that is open, which the dialog offers
+// as "Only this folder" and whose faces the result counts before and after, and, once names were written, the open photo's
+// faces read again.
 import { wireFaceJobBanner } from './common/face-job-banner.js';
 import { attachNameFaces, openNameFaces } from './common/name-faces.js';
 import { upper } from './hooks.js';
