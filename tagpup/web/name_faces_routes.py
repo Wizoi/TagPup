@@ -2,8 +2,9 @@
 
 TagTuner's Folder Matches header and gear, and TagPup's Organize folder view, start the same job
 (tagpup.jobs.naming_faces): its plan is read first and shown as a question, and only the answer Yes writes. The page polls
-`status`; a job it did not start (another page, another tab, a page that was reloaded) is found by `current`. Library-wide:
-the job works on the whole library, so these answer this PC only, as the library's views do.
+`status`; a job it did not start (another page, another tab, a page that was reloaded) is found by `current`. The job works on the
+whole library, or, when the page asks (`only_folder`), on the folder it has open and its subfolders (#994); `scope` gives the
+counts the dialog's choice between the two shows. Either way it answers this PC only, as the library's views do.
 
 Every reply is `{"success": true, ...}` or the JSON error both pages read. A job that is already working answers 409 with its
 status in `job`, so a page that asked again shows it instead.
@@ -92,14 +93,17 @@ def _job_number(raw):
 @routes.post("/api/name-faces/start")
 def name_faces_start():
     """Read the plan of naming faces from tags, as a job (tagpup.jobs.naming_faces.start): nothing is written. `folder`, the folder
-    the page has open, is the one whose faces the result counts. A plan already waiting for its answer is returned as it is."""
+    the page has open, is the one whose faces the result counts; with `only_folder` true the plan, and so the apply, are limited to
+    it and its subfolders (a folder the library holds no photo under is refused, 400). A plan already waiting for its answer is
+    returned as it is, when it is for the same scope; else 409 with that plan in `job`."""
     library = state.require()
     body = request.get_json(silent=True)
     body = body if isinstance(body, dict) else {}
     folder = body.get("folder") if isinstance(body.get("folder"), str) and body.get("folder") else None
 
     def start():
-        job = naming_faces.start(library, folder, hold=_hold(library), busy=lambda: _busy(library))
+        job = naming_faces.start(library, folder, hold=_hold(library), busy=lambda: _busy(library),
+                                 only_folder=body.get("only_folder") is True)
         return jsonify({"success": True, "status": job.status()})
     return _reply(start)
 
@@ -117,6 +121,15 @@ def name_faces_status():
             raise NotFound("There is no such job in this library.")
         return jsonify({"success": True, "status": found})
     return _reply(read)
+
+
+@routes.get("/api/name-faces/scope")
+def name_faces_scope():
+    """What the dialog's choice between "only this folder" and the whole library shows (tagpup.jobs.naming_faces.scope), counts
+    only: `library` and `folder` ({named, unnamed, photos}; null with `why` when the library holds no photo under `folder` or none
+    is given) and `job`, the one a page opening the dialog should pick up. Reads only."""
+    library = state.require()
+    return _reply(lambda: jsonify({"success": True, **naming_faces.scope(library, request.args.get("folder") or None)}))
 
 
 @routes.get("/api/name-faces/current")

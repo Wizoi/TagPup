@@ -23,10 +23,14 @@ the always-on server): the lock of changes of photo files is the process's, so a
 read again just before it is written, and a file another process changed meanwhile is a conflict, reported, not
 overwritten -- run it again. A photo whose file cannot be read (a share that is away, a file gone) is an error counted
 and the others are written.
+
+With `folder` (tagpup.services.folder_scope) the plan counts and `apply` writes only the photos under that folder, at any depth;
+a folder the library holds no photo under is refused. The rule for each photo is the same, so the folder's plan is the
+whole-library plan restricted to the folder's photos.
 """
 from tagpup.core import paths
 from tagpup.core.result import Result
-from tagpup.services import face_people
+from tagpup.services import face_people, folder_scope
 from tagpup.store import db, people, photos
 from tagpup.store import roots as store_roots
 
@@ -34,7 +38,7 @@ from tagpup.store import roots as store_roots
 OPERATION = "person tags from faces"
 
 
-def plan(library, guesses=False):
+def plan(library, guesses=False, folder=None):
     """What `apply` would write, counted: a Result whose details are `counts` (safe to show anyone) and `work`, the
     (photo path, name) of each person to put on a photo (never reported). Reads only.
 
@@ -42,10 +46,21 @@ def plan(library, guesses=False):
     already name them (by their leaf under ANY root: face_people.already_names, the writer's own rule) is skipped -- a
     people tag under a root the tree does not file people under; a person only a guess of clustering or automatch backs
     (no face of that name named by hand) is skipped unless `guesses`, since the keyword would make the guess a decided
-    reference (#640). Each is counted, so the count to write is what `apply` writes and a second run finds none."""
+    reference (#640). Each is counted, so the count to write is what `apply` writes and a second run finds none.
+
+    With `folder`, only the photos under it: the Result is refused (`refused` says why) when the library holds none there."""
+    spelled = None
+    if folder is not None:
+        try:
+            spelled = folder_scope.resolve(library, folder).folder
+        except folder_scope.NoPhotosThere as why:
+            refused = Result(attempted=0)
+            refused.details.update(dry_run=True, work=[], counts={})
+            refused.refuse(str(why))
+            return refused
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        found = store_roots.natives(conn, people.on_faces_alone(conn), 0)
+        found = store_roots.natives(conn, people.on_faces_alone(conn, spelled), 0)
     finally:
         conn.close()
     held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, sorted({row[0] for row in found}))}

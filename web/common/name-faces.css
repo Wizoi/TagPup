@@ -73,11 +73,13 @@
 }
 
 .name-faces-again,
+.name-faces-no-group,
 .name-faces-note {
     font-size: 13px;
     color: var(--text-secondary);
 }
 
+.name-faces-choice,
 .name-faces-group {
     display: flex;
     gap: 8px;
@@ -87,6 +89,7 @@
     cursor: pointer;
 }
 
+.name-faces-choice input,
 .name-faces-group input {
     margin-top: 3px;
 }

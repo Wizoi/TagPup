@@ -1130,6 +1130,11 @@ def history(ctx, change_id, limit, reveal):
             ", undone %s" % entry["undone"] if entry["undone"] else "", entry["schema_version"],
             _rows_line(entry["rows"]) if entry["rows"] or not entry.get("files") else "",
             _files_line(entry.get("files"))), markup=False, soft_wrap=True)
+    for entry in found["changes"]:
+        scope = entry["summary"].get("scope")
+        if scope and change_id is not None:
+            console.print("  scope: %s%s" % (scope, ": " + entry["summary"]["folder"] if entry["summary"].get("folder") else ""),
+                          markup=False, soft_wrap=True)
     if change_id is not None:
         entry = found["changes"][0]
         for table, keys in sorted(entry.get("keys", {}).items()):
@@ -1458,15 +1463,22 @@ def sync(ctx, folder, apply_):
               help="Name the faces, as one change of the journal. Without it, only says how many it would.")
 @click.option("--again", is_flag=True,
               help="Apply once more to a library it was applied to before: the names it gave then are references now.")
+@click.option("--folder", default=None, type=click.Path(file_okay=False),
+              help="Only the photos under this folder, at any depth (a second location of a root works). Without it, the whole "
+                   "library. A folder the library holds no photo under is refused.")
 @click.pass_context
-def faces_from_tags(ctx, apply_, again):
+def faces_from_tags(ctx, apply_, again, folder):
     """Name the faces a photo's person tag names: a photo with one face still to be named and
     one tagged person no face of it carries gives the face that person; several faces or
     people only when one person's named faces alike leave no doubt. Names are automatic, so
     clustering may revise them; faces unmatched by hand or excluded are left alone. A dry run
-    unless --apply; counts only, never names."""
+    unless --apply; counts only, never names.
+
+    --folder limits the plan and the write to the photos under one folder and its subfolders: the
+    same rule, the same references (the people's named faces anywhere in the library), only the
+    photos read are fewer. A second --apply needs --again, whichever folder the first was for."""
     library = _existing_library(ctx)
-    result = faces_from_tags_service.faces_from_tags(library, apply=apply_, again=again)
+    result = faces_from_tags_service.faces_from_tags(library, apply=apply_, again=again, folder=folder)
     if result.refused and result.details.get("earlier_apply"):
         console.print("Would name %d face(s). Nothing changed." % result.details["counts"]["faces"])
     if result.refused or result.errors:
@@ -1474,6 +1486,8 @@ def faces_from_tags(ctx, apply_, again):
             console.print(line, markup=False, soft_wrap=True)
         raise SystemExit(1)
     counts = result.details["counts"]
+    if folder:
+        console.print("Only the photos under the folder given, and its subfolders.")
     console.print("%d photo(s) have a face to be named and a tagged person no face carries."
                   % counts["photos_with_a_face_and_a_person_to_place"])
     console.print("  %d photo(s): one face, one person; named by the tag alone: %d"
@@ -1496,7 +1510,8 @@ def faces_from_tags(ctx, apply_, again):
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
         if result.details.get("earlier_apply"):
-            console.print("Applied before: " + faces_from_tags_service.AGAIN, markup=False, soft_wrap=True)
+            console.print("Applied before: " + faces_from_tags_service.AGAIN + " " + faces_from_tags_service.earlier_sentence(
+                faces_from_tags_service.earlier_applies(library)), markup=False, soft_wrap=True)
         console.print("Nothing changed. --apply names them%s."
                       % (" (with --again)" if result.details.get("earlier_apply") else ""))
         return
@@ -1513,8 +1528,11 @@ def faces_from_tags(ctx, apply_, again):
               help="Write the keywords into the photo files. Without it, only says how many photos it would write.")
 @click.option("--guesses", is_flag=True,
               help="Also write people only a guess backs (clustering's or automatch's): the keyword makes the guess a decided reference.")
+@click.option("--folder", default=None, type=click.Path(file_okay=False),
+              help="Only the photos under this folder, at any depth (a second location of a root works). Without it, the whole "
+                   "library. A folder the library holds no photo under is refused.")
 @click.pass_context
-def tags_from_faces(ctx, apply_, guesses):
+def tags_from_faces(ctx, apply_, guesses, folder):
     """Put on a photo the people its faces name and its keywords do not: a face named, the photo
     saying "No people tags" (#861). A dry run unless --apply; counts only, never names.
 
@@ -1523,10 +1541,17 @@ def tags_from_faces(ctx, apply_, guesses):
     Run it on a small library first; TagPup and TagTuner may stay open (a file changed meanwhile
     is a conflict, reported and not overwritten: run it again). Left, and counted: a person the
     tree files in two places; a photo whose keywords already name the person under a root the
-    tree does not file people under; and, unless --guesses, a person only a guess backs."""
+    tree does not file people under; and, unless --guesses, a person only a guess backs.
+
+    --folder limits the count and the write to the photos under one folder and its subfolders."""
     library = _existing_library(ctx)
-    planned = tags_from_faces_service.plan(library, guesses=guesses)
+    planned = tags_from_faces_service.plan(library, guesses=guesses, folder=folder)
+    if planned.refused:
+        console.print("Refused: %s" % planned.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
     counts = planned.details["counts"]
+    if folder:
+        console.print("Only the photos under the folder given, and its subfolders.")
     console.print("%d photo(s) list a person from a face alone (%d people): their keywords do not name them."
                   % (counts["photos_with_a_person_on_a_face_alone"], counts["people"]))
     if counts["people_the_tree_files_in_two_places"]:

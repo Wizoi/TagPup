@@ -5,14 +5,16 @@
  * One dialog for both pages: it starts the job (the plan is read, nothing is written), shows the question the plan
  * makes -- "Name N faces in M photos (X by their tag, Y by looking like the person's confirmed faces)? Z are left for
  * you." -- and only the answer Yes writes. A second box, off, also groups the rest of the faces, and its text says that
- * it works on the whole library and re-derives automatic names. The server is scripted: these tests are about what
- * the person sees and what the page sends.
+ * it works on the whole library and re-derives automatic names. With a folder open, a first step asks how much to look at
+ * (docs/findings.md, #994): only that folder and its subfolders, the default, or the whole library with its count; the question
+ * says which, and the grouping is not offered for a folder. The server is scripted: these tests are about what the person
+ * sees and what the page sends.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, closeAllApps, pageExports } from "./harness.mjs";
 import { OPEN_DIALOG } from "../../web/common/dialog.js";
-import { questionText, folderText } from "../../web/common/name-faces.js";
+import { questionText, folderText, scopeLabel } from "../../web/common/name-faces.js";
 
 afterEach(() => closeAllApps());
 
@@ -23,13 +25,16 @@ const PLAN = { faces: 10477, by_tag: 5093, by_comparison: 5384, photos: 9624, le
 function status(state, extra = {}) {
   return { job: 7, library: LIBRARY, state, phase: state, stage: "reading", label: null, percent: null, done: 0, total: 1,
            started: 1, finished: null, elapsed: 3, cancelling: false, can_cancel: false, message: null, plan: null,
-           group: false, applied: null, grouped: null, in_folder: null, folder: false, ask_seconds: null, ...extra };
+           group: false, applied: null, grouped: null, in_folder: null, folder: false, only_folder: false, ask_seconds: null, ...extra };
 }
 
 const ASKING = status("asking", { plan: PLAN, ask_seconds: 900, can_cancel: true });
 const PLANNING = status("planning", { label: "Comparing faces with the confirmed faces of the people", percent: 40, can_cancel: true });
 
-async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, current } = {}) {
+const FOLDER = "D:\\Pictures\\kr-track\\Run";
+const SCOPE = { success: true, library: { named: 1640, unnamed: 2422 }, folder: { named: 126, unnamed: 80, photos: 106 }, why: null, job: null };
+
+async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, current, scope } = {}) {
   const server = new FakeServer()
     .on("/api/apps", { this: appName === "tagtuner" ? "tuner" : "tagpup", apps: {} })
     .on("/api/taxonomy/tree", [])
@@ -39,6 +44,7 @@ async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, curr
     .on("/api/people", [])
     .on("/api/photos", [])
     .on("/api/name-faces/current", () => ({ success: true, status: current || null }))
+    .on("/api/name-faces/scope", () => scope || SCOPE)
     .on("/api/name-faces/start", () => start || { success: true, status: ASKING })
     .on("/api/name-faces/confirm", () => (confirm ? confirm() : { success: true, status: status("applying", { phase: "applying", label: "Writing", can_cancel: true }) }))
     .on("/api/name-faces/cancel", () => cancel || { success: true, status: status("cancelled", { message: "Cancelled: nothing was changed." }) })
@@ -46,6 +52,16 @@ async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, curr
   const ctx = await loadApp(appName, { t, url: `http://localhost:8080/${LIBRARY}/`, server });
   await flush(ctx.window, 6);
   ctx.server = server;
+  // The folder the page has open, as each page holds it: TagPup's Organize view's, TagTuner's selected photo's folder group.
+  ctx.openFolder = (folder) => {
+    if (appName === "tagpup") {
+      pageExports(ctx.window, "web/tagpup/state.js").state.scannedFolder = folder;
+    } else {
+      const state = pageExports(ctx.window, "web/tuner/state.js").state;
+      state.allPhotos = [{ path: folder + "\\a.jpg", folder, folderGroup: { name: folder } }];
+      state.activePhotoPath = folder + "\\a.jpg";
+    }
+  };
   ctx.button = ctx.document.getElementById("btn-name-faces");
   ctx.modal = () => ctx.document.getElementById("name-faces-modal");
   ctx.open = async () => {
@@ -73,6 +89,15 @@ describe("the words", () => {
     assert.match(questionText({ ...PLAN, faces: 0, photos: 0, by_tag: 0, by_comparison: 0 }), /^No face can be named from its tag\./);
   });
 
+  test("the question says which scope it is about", () => {
+    assert.equal(scopeLabel(false), "the whole library");
+    assert.equal(scopeLabel(true, "Run"), 'the folder "Run" and its subfolders');
+    assert.equal(scopeLabel(true), "a single folder (not named here) and its subfolders");
+    assert.match(questionText(PLAN, scopeLabel(true, "Run")), /^In the folder "Run" and its subfolders: name 10,477 faces in 9,624 photos/);
+    assert.match(questionText({ ...PLAN, faces: 0, photos: 0, by_tag: 0, by_comparison: 0 }, scopeLabel(false)),
+      /^In the whole library: no face can be named from its tag\. /);
+  });
+
   test("what changed in the open folder is said from the counts before and after", () => {
     assert.equal(folderText({ before: { named: 68, unnamed: 2407 }, after: { named: 90, unnamed: 2385 } }),
       "In the open folder: 22 more named; 90 named and 2,385 still unnamed.");
@@ -91,7 +116,7 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.equal(ctx.posts("/api/name-faces/start").length, 1);
       assert.ok(ctx.document.querySelector(OPEN_DIALOG));
       assert.match(ctx.text(".name-faces-scope"), /whole library, not only the open folder/);
-      assert.equal(ctx.text(".name-faces-question"), questionText(PLAN));
+      assert.equal(ctx.text(".name-faces-question"), questionText(PLAN, "the whole library"), "no folder is open: it is the library's");
       assert.ok(ctx.shown("Yes") && ctx.shown("No"));
       assert.equal(ctx.modal().querySelector("#name-faces-group").checked, false, "grouping is off until it is ticked");
     });
@@ -226,7 +251,7 @@ for (const appName of ["tagpup", "tagtuner"]) {
       await ctx.open();
       await ctx.press("Yes");
       assert.match(ctx.text(".name-faces-status-line"), /Suggest is running/);
-      assert.equal(ctx.text(".name-faces-question"), questionText(PLAN), "the question stays: it can be answered again");
+      assert.equal(ctx.text(".name-faces-question"), questionText(PLAN, "the whole library"), "the question stays: it can be answered again");
     });
 
     test("a plan the server has let go is not left on screen as a question", async (t) => {
@@ -277,6 +302,135 @@ for (const appName of ["tagpup", "tagtuner"]) {
   });
 }
 
+for (const appName of ["tagpup", "tagtuner"]) {
+  describe(`${appName}: only this folder`, () => {
+    const ONLY = status("asking", { plan: { ...PLAN, faces: 12, photos: 12, by_tag: 12, by_comparison: 0, left: 3 }, ask_seconds: 900,
+                                    can_cancel: true, only_folder: true, folder: true });
+
+    async function openWithFolder(t, options = {}) {
+      const ctx = await openFrom(appName, t, options);
+      ctx.openFolder(FOLDER);
+      return ctx;
+    }
+
+    test("with a folder open, the first step offers it as the default and the whole library with its count", async (t) => {
+      const ctx = await openWithFolder(t);
+      await ctx.open();
+      assert.equal(ctx.posts("/api/name-faces/start").length, 0, "nothing is read before the choice is made");
+      assert.ok(ctx.server.urls().some((u) => u.includes("/api/name-faces/scope?folder=" + encodeURIComponent(FOLDER))));
+      const [only, whole] = [...ctx.modal().querySelectorAll(".name-faces-choice")];
+      assert.match(only.textContent, /^Only this folder and its subfolders: Run \(106 photos, 80 faces still unnamed\)/);
+      assert.match(whole.textContent, /^The whole library \(2,422 faces still unnamed, 1,640 named\)/);
+      assert.equal(ctx.modal().querySelector("#name-faces-only-folder").checked, true, "the folder is the default");
+      assert.equal(ctx.modal().querySelector("#name-faces-whole-library").checked, false);
+      assert.match(ctx.text(".name-faces-body"), /Grouping the rest of the faces works on the whole library and is only offered for it/);
+      assert.ok(ctx.shown("Read the plan") && !ctx.shown("Yes"));
+    });
+
+    test("Read the plan starts the job for the folder", async (t) => {
+      const ctx = await openWithFolder(t, { start: { success: true, status: ONLY } });
+      await ctx.open();
+      await ctx.press("Read the plan");
+      assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: FOLDER, only_folder: true }]);
+      assert.equal(ctx.text(".name-faces-question"), questionText(ONLY.plan, 'the folder "Run" and its subfolders'));
+      assert.match(ctx.text(".name-faces-scope"), /open folder and its subfolders only/);
+    });
+
+    test("the whole library is the explicit other choice", async (t) => {
+      const ctx = await openWithFolder(t);
+      await ctx.open();
+      const whole = ctx.modal().querySelector("#name-faces-whole-library");
+      whole.checked = true;
+      whole.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
+      await ctx.press("Read the plan");
+      assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: FOLDER, only_folder: false }]);
+      assert.equal(ctx.text(".name-faces-question"), questionText(PLAN, "the whole library"));
+      assert.ok(ctx.modal().querySelector("#name-faces-group"), "the grouping is offered for the library");
+    });
+
+    test("the grouping is not offered for a folder, and the dialog says why", async (t) => {
+      const ctx = await openWithFolder(t, { start: { success: true, status: ONLY } });
+      await ctx.open();
+      await ctx.press("Read the plan");
+      assert.equal(ctx.modal().querySelector("#name-faces-group"), null);
+      assert.match(ctx.text(".name-faces-no-group"), /not offered for one folder: it works on every face in the library and cannot be limited to a folder/);
+      await ctx.press("Yes");
+      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 7, group: false }]);
+    });
+
+    test("a rapid double click on Read the plan starts once", async (t) => {
+      const ctx = await openWithFolder(t, { start: { success: true, status: ONLY } });
+      await ctx.open();
+      const go = [...ctx.modal().querySelectorAll("button")].find((b) => b.textContent === "Read the plan");
+      click(ctx.window, go);
+      click(ctx.window, go);
+      await flush(ctx.window, 8);
+      assert.equal(ctx.posts("/api/name-faces/start").length, 1);
+    });
+
+    test("a folder the library holds no photo under cannot be chosen, and the library is", async (t) => {
+      const why = "D:\\Pictures\\kr-track\\Run holds no photo of kr-track, at any depth.";
+      const ctx = await openWithFolder(t, { scope: { ...SCOPE, folder: null, why } });
+      await ctx.open();
+      assert.equal(ctx.modal().querySelector("#name-faces-only-folder").disabled, true);
+      assert.equal(ctx.modal().querySelector("#name-faces-whole-library").checked, true);
+      assert.match(ctx.text(".name-faces-body"), /holds no photo of kr-track/);
+    });
+
+    test("a job already there is shown as it is, not hidden behind the choice", async (t) => {
+      const ctx = await openWithFolder(t, { scope: { ...SCOPE, job: ONLY } });
+      await ctx.open();
+      assert.equal(ctx.modal().querySelector(".name-faces-choice"), null);
+      assert.match(ctx.text(".name-faces-question"), /^In a single folder \(not named here\) and its subfolders: name 12 faces/);
+    });
+
+    test("another folder's waiting plan, answered 409, is shown as itself and not under this page's folder name", async (t) => {
+      const other = { success: false, error: "A plan for ANOTHER folder is waiting for its answer in this library.", job: { ...ONLY, job: 329 } };
+      const ctx = await openWithFolder(t, { start: other });
+      await ctx.open();
+      await ctx.press("Read the plan");
+      assert.equal(ctx.text(".name-faces-question"), questionText(ONLY.plan, "a single folder (not named here) and its subfolders"));
+      assert.doesNotMatch(ctx.text(".name-faces-question"), /"Run"/, "this page's folder is not put over the other plan");
+      assert.match(ctx.text(".name-faces-status-line"), /ANOTHER folder/);
+      await ctx.press("Yes");
+      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 329, group: false }], "Yes answers the plan that is shown");
+    });
+
+    test("the server's refusal of the scope is said", async (t) => {
+      const ctx = await openWithFolder(t, { start: { success: false, error: "D:\\x holds no photo of kr-track, at any depth. Nothing was done." } });
+      await ctx.open();
+      await ctx.press("Read the plan");
+      assert.match(ctx.text(".name-faces-result"), /holds no photo of kr-track/);
+    });
+
+    test("a page that cannot ask what the choice shows says so and starts nothing", async (t) => {
+      const ctx = await openWithFolder(t, { scope: { success: false, error: "Naming faces works on the whole library and answers this PC only" } });
+      await ctx.open();
+      assert.match(ctx.text(".name-faces-result"), /answers this PC only/);
+      assert.equal(ctx.posts("/api/name-faces/start").length, 0);
+    });
+
+    test("a photo with no folder (the Root group) offers no folder", async (t) => {
+      if (appName !== "tagtuner") return;
+      const ctx = await openFrom(appName, t);
+      const state = pageExports(ctx.window, "web/tuner/state.js").state;
+      state.allPhotos = [{ path: "a.jpg", folder: "", folderGroup: { name: "Root" } }];
+      state.activePhotoPath = "a.jpg";
+      await ctx.open();
+      assert.equal(ctx.modal().querySelector(".name-faces-choice"), null);
+      assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: null, only_folder: false }]);
+    });
+
+    test("with no folder open there is no choice: the whole library, as before", async (t) => {
+      const ctx = await openFrom(appName, t);
+      await ctx.open();
+      assert.equal(ctx.modal().querySelector(".name-faces-choice"), null);
+      assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: null, only_folder: false }]);
+      assert.equal(ctx.server.urls().filter((u) => u.includes("/api/name-faces/scope")).length, 0);
+    });
+  });
+}
+
 describe("TagTuner's header", () => {
   test("the button is part of Folder Matches and the gear has the same item", async (t) => {
     const ctx = await openFrom("tagtuner", t);
@@ -313,6 +467,6 @@ describe("TagPup's folder view", () => {
   test("the button sits in the folder view's header with its reach in the title", async (t) => {
     const ctx = await openFrom("tagpup", t);
     assert.ok(ctx.button.closest(".folder-view-actions"));
-    assert.match(ctx.button.title, /whole library, not only this folder/);
+    assert.match(ctx.button.title, /only this folder and its subfolders \(the default\), or the whole library, as you choose/);
   });
 });

@@ -35,6 +35,10 @@ def history(library, change_id=None, reveal=False, limit=20):
     with the keys of every row it wrote, and with `reveal` each column's values before
     and after (a BLOB by its size). NotFound for a change the library has not."""
     entries = journal.history(library.path, limit=limit, change_id=change_id, values=reveal)
+    if not reveal:
+        # A folder is a path, and paths can name people: the summary keeps it for `reveal` only.
+        for entry in entries:
+            entry["summary"] = {key: value for key, value in entry["summary"].items() if key != "folder"}
     if change_id is not None and not entries:
         raise NotFound("There is no change %d in the library %s." % (change_id, library.name))
     return {"changes": entries, "retention_days": RETENTION_DAYS}
