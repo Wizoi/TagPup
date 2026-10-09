@@ -16,6 +16,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_faces_and_tags_in_step import InStep  # noqa: E402
 
+from tagpup.services import inspect  # noqa: E402
 from tagpup.store import db, people, taxonomy  # noqa: E402
 
 SAM_T, SAM_I = "Family/Thackeray/Sam", "Family/Ingersoll/Sam"
@@ -121,6 +122,17 @@ class TwoSamsOnAPhoto(InStep):
         self.assertEqual(400, by_name.status_code)
         stale = self.tuner_client.get("/library/api/person-faces", query_string={"person_id": 99999})
         self.assertEqual(404, stale.status_code)
+
+    def test_inspect_finds_the_photos_of_the_one_person_a_path_names_and_of_everyone_a_name_names(self):
+        other = self.held("regatta_002.jpg")
+        self.face(other)
+        self.match(self.first, person_id=self.sam_t)
+        self.tuner_post("face/match", {"face_id": self.face(other), "person_id": self.sam_i})
+        by_path = inspect.photos(self.library, person=SAM_T)
+        self.assertEqual(1, by_path["count"], by_path)
+        self.assertEqual(2, inspect.photos(self.library, person="Sam")["count"], "a name is everyone called it")
+        self.assertEqual(0, inspect.photos(self.library, person="Family/Nowhere/Sam")["count"],
+                         "a path no node holds is nobody filed: only rows with no id, spelled as its leaf, would answer")
 
     def test_the_queue_and_the_grid_tell_the_two_apart(self):
         """The queue lists a person by their node: two Sams are two rows, each opening its own grid."""

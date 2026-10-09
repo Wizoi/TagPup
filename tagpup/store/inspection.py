@@ -92,15 +92,15 @@ def tags_of(conn, photo_ids):
 
 def of_person(conn, name):
     """(id, path as stored) of each photo whose people (photo_people) list the person `name` is, by id: a tag path is the one
-    person filed there; a name is every person called it, and the rows of that exact spelling that no person is filed
-    under. idx_photo_people_tag and idx_photo_people_name serve it."""
+    person filed there (a path no node holds names only the rows with no id that spell its leaf); a name is every person called it,
+    and the rows of that exact spelling that no person is filed under. idx_photo_people_tag and idx_photo_people_name serve it."""
     from tagpup.core import vocabulary   # read-only helper; not at import
     known = person_ids.read(conn)
     text = str(name).strip()
     path = vocabulary.normalize(text)
     if vocabulary.SEPARATOR in path:
         found = known.by_tag.get(path.lower())
-        ids, spelled = ([found.id] if found else []), None
+        ids, spelled = ([found.id] if found else []), (None if found else vocabulary.leaf_of(path))
     else:
         ids, spelled = [person.id for person in known.called(text)], text
     inner, params = [], []
