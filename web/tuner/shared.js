@@ -72,12 +72,6 @@ export function fetchKnownPeople() {
         .catch(err => console.error('Error fetching the people records:', err));
 }
 
-/** Is this somebody the library already knows, hidden from autocomplete or not? A text may be a label (`Sam · Pets`). */
-export function personExists(name) {
-    return state.people.match(name).kind === 'person' || state.people.match(name).kind === 'choose'
-        || state.everyKnownPerson.includes(name) || state.allKnownPeople.includes(name);
-}
-
 /**
  * Who typed text means: the person (their id with them), after asking which when two people have the name, or a name no tag has.
  * Resolves to {person}, or {name, exists} -- `exists`: faces or photos already hold the name (hidden from autocomplete, or no tag
