@@ -278,14 +278,17 @@ def tags_merge():
 
 @routes.post("/api/person/rename")
 def person_rename():
-    """Rename a person everywhere (tagpup.services.tags.rename_person)."""
+    """Rename a person everywhere (tagpup.services.tags.rename_person): the one person picked -- `person_id`, or `old_name` for a
+    page not reloaded since the update, refused naming the candidates when two people are called it."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     try:
-        result = tags_service.rename_person(library, body.get("old_name"), body.get("new_name"),
-                                            state.exiftool(library))
+        result = tags_service.rename_person(library, face_routes.person_arg(body.get("person_id"), body.get("old_name")),
+                                            body.get("new_name"), state.exiftool(library))
     except NotFound as missing:
         abort(404, description=str(missing))
+    except Refused as why:
+        _refuse(400, str(why))
     except Exception as e:
         logger.error("Error renaming a person: %s", e)
         abort(500, description="Internal error: %s" % e)
@@ -318,8 +321,8 @@ def face_matches_unmatched():
 @routes.get("/api/person-faces")
 def person_faces():
     library = state.require()
-    name = request.args.get("name")
-    if not name:
+    person = face_routes.person_arg(request.args.get("person_id"), request.args.get("name"))
+    if person is None:
         abort(400, description="Missing 'name' parameter")
     limit, page = 100, 1
     try:
@@ -334,7 +337,13 @@ def person_faces():
         pass
     if not _library_there(library):
         return jsonify({"faces": [], "total_count": 0, "has_more": False})
-    return jsonify(identify_service.person_faces(library, name, limit, page))
+    try:
+        # A read: a name two people have is all of them (the union), as the name always showed; a write refuses it.
+        return jsonify(identify_service.person_faces(library, people_service.for_reading(library, person), limit, page))
+    except NotFound as missing:
+        abort(404, description=str(missing))
+    except Refused as why:
+        _refuse(400, str(why))
 
 
 @routes.get("/api/faces/excluded")
@@ -361,13 +370,22 @@ def unmatched_faces_people():
 @routes.get("/api/unmatched-faces/person-matches")
 def unmatched_faces_person_matches():
     library = state.require()
-    name = request.args.get("name")
-    if not name:
+    person = face_routes.person_arg(request.args.get("person_id"), request.args.get("name"))
+    if person is None:
         abort(400, description="Missing 'name' parameter")
     if not _library_there(library):
         return jsonify({"faces": [], "total_count": 0, "has_more": False})
+    asked = request.args.get("person_id") or request.args.get("name")
+    try:
+        # A read: the person by their id, a name one person has as that person, a name two people have as all of them (the
+        # union, as the name always showed; nothing is created or linked), a name no node is as the name.
+        person = people_service.for_reading(library, person)
+    except NotFound as missing:
+        abort(404, description=str(missing))
+    except Refused as why:
+        _refuse(400, str(why))
     return jsonify(identify_jobs.grid(library, identify_cache.of(library),
-                                      identify_progress.of(library), name))
+                                      identify_progress.of(library), person, progress_key=asked))
 
 
 @routes.get("/api/unmatched-faces/build-status")
@@ -376,7 +394,7 @@ def unmatched_faces_build_status():
     deliberately not cached: it is polled while another thread does the slow work, and
     it touches no database at all."""
     library = state.require()
-    name = request.args.get("name")
+    name = request.args.get("person_id") or request.args.get("name")
     if not name:
         abort(400, description="Missing 'name' parameter")
     return jsonify(identify_progress.of(library).of(name))
@@ -397,20 +415,23 @@ def faces_match_bulk():
     """Name many faces as one person (tagpup.services.faces.name_faces)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    face_ids, person_name = body.get("face_ids"), body.get("person_name")
-    if not face_ids or not isinstance(face_ids, list) or not person_name:
+    face_ids, person = body.get("face_ids"), face_routes.person_arg(body.get("person_id"), body.get("person_name"))
+    if not face_ids or not isinstance(face_ids, list) or person is None:
         abort(400, description="Missing or invalid face_ids or person_name")
     try:
-        face_ids, person_name = [int(fid) for fid in face_ids], str(person_name).strip()
+        face_ids = [int(fid) for fid in face_ids]
     except (ValueError, TypeError):
         abort(400, description="Invalid parameters format")
     try:
-        plan = face_assignment.plan_name(library, face_ids, person_name)
+        plan = face_assignment.plan_name(library, face_ids, person)
     except Refused as why:
         _refuse(400, str(why))
+    except NotFound as missing:
+        abort(404, description=str(missing))
     outcome = face_routes.assigned(library, plan).outcome()
     named = set(outcome["matched_ids"])
-    reply = {"success": True, "person": people_service.annotate(library, [{"name": person_name}])[0]["person"],
+    reply = {"success": True,
+             "person": people_service.annotate(library, [{"name": plan["person_name"], "person_id": plan["person_id"]}])[0]["person"],
              "matched": len(named), "matched_ids": outcome["matched_ids"],
              "skipped_excluded": plan["skipped_excluded"], "tags_written": outcome["tags_written"],
              "not_named": [face_id for face_id in outcome["planned_ids"] if face_id not in named], "job": outcome["job"]}

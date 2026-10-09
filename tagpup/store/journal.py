@@ -95,12 +95,30 @@ DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta"
            "search_gear")
 
 #: Derived columns of journaled tables, rebuilt from the row's other columns after each
-#: write (a photo's dates, from its metadata and path: store.photos.date_photos; a face's
-#: person, from its name and the tree: store.person_ids). An inserted photo is recorded as
-#: written, before they are filled in, so an undo does not hold a row to them: it would find
-#: every inserted photo changed since. A face put back by an undo -- one recorded before the
-#: column existed among them -- is given its person's id by `_derive`.
-DERIVED_COLUMNS = {"photos": ("taken", "year"), "faces": ("tag_id",)}
+#: write (a photo's dates, from its metadata and path: store.photos.date_photos). An inserted photo is
+#: recorded as written, before they are filled in, so an undo does not hold a row to them: it would find
+#: every inserted photo changed since.
+#:
+#: A face's `tag_id` is NOT one: it is the person (docs/ARCHITECTURE.md, "People by id, stage 2"), recorded
+#: with the change like any column, and `name` beside it is only its cache (`cache_columns`). A change
+#: recorded before that -- one that wrote a face's name and not its id -- is replayed by the name: the id of
+#: the rows it wrote is put by the name and the tree as they stand (`_derive`, `_named_by_name`), and nothing
+#: in the journal is rewritten.
+DERIVED_COLUMNS = {"photos": ("taken", "year")}
+
+
+def cache_columns(table, values):
+    """The columns of a recorded row that only repeat another, so a change is not held to them: a face's `name` beside the
+    `tag_id` of its person -- the cache of the node's leaf, which a rename of the node changes without changing the face --
+    and, in a row recorded with a name and no `tag_id`, the `tag_id`: it is what the name is, given by the settle that follows
+    a write (person_ids). A row recorded with neither, or with a `tag_id`, is held to what it says."""
+    if table != "faces":
+        return ()
+    if values.get("tag_id") is not None:
+        return ("name",)
+    if "tag_id" in values and values.get("name") is not None:
+        return ("tag_id",)
+    return ()
 
 RECORDED, REBUILT, FORBIDDEN = "recorded", "rebuilt", "forbidden"
 
@@ -379,9 +397,10 @@ def _resolve(conn, edits):
             else:
                 refusals.append("%s is gone" % _named(edit.table, key))
             continue
-        differs = [column for column, value in edit.expect.items()
-                   if not _same(_canonical_value(roots, edit.table, key, column, row[column]),
-                                _canonical_value(roots, edit.table, key, column, value))]
+        cached = cache_columns(edit.table, edit.expect)
+        differs = [column for column, value in edit.expect.items() if column not in cached
+                   and not _same(_canonical_value(roots, edit.table, key, column, row[column]),
+                                 _canonical_value(roots, edit.table, key, column, value))]
         if differs:
             if edit.skippable:
                 skipped.append((_named(edit.table, key), "not what the plan read: %s changed" % ", ".join(differs)))
@@ -396,6 +415,11 @@ def _resolve(conn, edits):
             if changed:
                 top.append(RowChange("update", edit.table, key, {c: row[c] for c in changed}, changed, edit.kind))
                 rewritten[(edit.table, key)] = set(changed)
+            continue
+        if edit.table == "tag_taxonomy" and person_ids.present(conn) and conn.execute(
+                "SELECT 1 FROM faces WHERE tag_id = ? LIMIT 1", (key[0],)).fetchone():
+            refusals.append("%s is the person of faces: unname them first (or merge it into the person they are)"
+                            % _named(edit.table, key))
             continue
         change = RowChange("delete", edit.table, key, row, None, edit.kind)
         top.append(change)
@@ -692,7 +716,7 @@ def _not_as_left(conn, change_id, changes):
         if row is None:
             reasons.append("%s is gone" % _named(change.table, change.key))
             continue
-        derived = DERIVED_COLUMNS.get(change.table, ())
+        derived = DERIVED_COLUMNS.get(change.table, ()) + cache_columns(change.table, change.new)
         differs = [c for c in change.new if c not in derived
                    and not _same(_canonical_value(roots, change.table, change.key, c, row[c]), change.new[c])]
         if differs:
@@ -707,6 +731,12 @@ def _not_as_left(conn, change_id, changes):
                 if conn.execute('SELECT 1 FROM "%s" WHERE "%s" = ? LIMIT 1' % (child, column),
                                 (change.new[KEYS[parent][0]],)).fetchone():
                     reasons.append("%s has rows in %s made since" % (_named(change.table, change.key), child))
+            if change.table == "tag_taxonomy" and person_ids.present(conn) and conn.execute(
+                    "SELECT 1 FROM faces WHERE tag_id = ? AND name_source = 'manual' LIMIT 1", (change.key[0],)).fetchone():
+                # The faces linked to it by their name, or named by a guess, go back to the name alone; a face a person named
+                # is theirs (docs/ARCHITECTURE.md, "People by id, stage 2").
+                reasons.append("%s is the person of faces a person named: unname them first"
+                               % _named(change.table, change.key))
     return reasons
 
 
@@ -777,6 +807,22 @@ def _face_photos(conn, changes):
     return found
 
 
+def _named_by_name(conn, changes):
+    """A change recorded before a face's person was an id wrote a face's NAME and not its id (a naming, an unnaming, a
+    guess): the faces it wrote still hold the id they had, which is another person's now, or none. Their id is put aside --
+    NULL: an unresolved name for the owner, never guessed from the name; the journal knows no id --
+    and nothing recorded is rewritten. A change that recorded the id is replayed as it was. Returns the faces."""
+    ids = set()
+    for change in changes:
+        if change.table != "faces" or change.key is None:
+            continue
+        values = [d for d in (change.old, change.new) if d]
+        if any("name" in d and "tag_id" not in d for d in values):
+            ids.add(change.key[0])
+    person_ids.put_aside(conn, sorted(ids))
+    return ids
+
+
 def _derive(conn, changes):
     """Rebuild what `changes` touched of the derived data: the people of each photo whose
     keywords or faces changed or whose keywords a changed node names, the dates of each photo
@@ -785,7 +831,7 @@ def _derive(conn, changes):
     node names (tagpup.store.derived); and the person each face of the photos it touched names, by
     id -- every face's and every listed person's when it touched the tree (tagpup.store.person_ids).
     The generations move by their triggers. Returns how many photos' people changed."""
-    photo_ids, dated, nodes, listed, _node_ids = _touched(conn, changes)
+    photo_ids, dated, nodes, listed, node_ids = _touched(conn, changes)
     changed = 0
     # A photo left with no face row is no longer one whose faces were detected: Suggest detects it again
     # (docs/findings.md, #779; the one owner is tagpup.store.faces_detected, as for tagpup.store.faces).
@@ -793,10 +839,14 @@ def _derive(conn, changes):
     if nodes:
         changed += people.follow_nodes(conn, nodes)
     if photo_ids:
+        _named_by_name(conn, changes)
         person_ids.follow_faces(conn, sorted(photo_ids))
         changed += people.rebuild(conn, sorted(photo_ids))
     if nodes:
         person_ids.sync(conn)
+        # A node the change made or renamed (or an undo put back) ADDED a person under its name: the one place that links
+        # an unresolved name to a person after the fact (person_ids.link_added) is asked, for those names only.
+        person_ids.link_added(conn, person_ids.names_of_nodes(conn, node_ids))
     if dated:
         store_photos.date_photos(conn, sorted(dated))
     if listed:
@@ -866,6 +916,54 @@ def record(conn, operation, changes, summary=None, schema_version=None):
     return change_id
 
 
+#: What the journal calls the face rows a tree edit changed (taxonomy.delete_branch with force; people.merge_person).
+PERSON_DELETED = "person deleted (force): faces unnamed"
+PERSON_MERGED = "person merged: faces renamed"
+PERSON_LINKED = "name linked to its person: faces linked"
+
+#: What History says of those two changes: honest about what an undo gives back (the tree rows are not journaled).
+PERSON_NOTES = {
+    PERSON_DELETED: "the faces return as unresolved names; the deleted person and the photos' keywords are not restored",
+    PERSON_MERGED: "the faces return as unresolved names; the merged person and the photos' keywords are not restored",
+    PERSON_LINKED: "the faces return as unresolved names",
+}
+
+#: Rows a face costs the journal when a person is deleted with force or merged: name, name_source and tag_id.
+ROWS_A_FACE = 3
+
+
+def read_faces(conn, face_ids):
+    """{face id: (name, name_source, tag_id)} of `face_ids` as they stand, to be handed to record_faces after the write. Chunked."""
+    found = {}
+    ids = sorted(face_ids)
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        found.update((face_id, (name, source, person)) for face_id, name, source, person in conn.execute(
+            "SELECT id, name, name_source, tag_id FROM faces WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk))
+    return found
+
+
+def record_faces(conn, operation, before):
+    """Record, in the caller's transaction, the face rows a tree edit has just changed -- `before` is read_faces' answer from
+    before the write -- as ONE applied change `operation` (counts only in its summary), so History can put the faces' names and
+    who decided them back as they were. The person's id is recorded with them (cache_columns): an undo puts the id back, and when the node is gone (a
+    force delete, a merge) the settle that follows drops it and keeps the name -- an unresolved name for the owner to settle,
+    never another person called alike. The tree rows themselves are not journaled (as before). Nothing when no face changed or the library has
+    no journal. Returns the change's id or None. The caller commits."""
+    if not before or not has_journal(conn):
+        return None
+    now = read_faces(conn, before)
+    changes = []
+    columns = ("name", "name_source", "tag_id")
+    for face_id, was in sorted(before.items()):
+        left = now.get(face_id)
+        if left is None or left == was:
+            continue
+        changes.append(RowChange("update", "faces", (face_id,), dict(zip(columns, was)), dict(zip(columns, left)),
+                                 "face identity"))
+    return record(conn, operation, changes, {"faces": len(changes), "note": PERSON_NOTES.get(operation, "")}) if changes else None
+
+
 def apply(db_path, operation, edits, summary=None, also=None):
     """Apply `edits` to the library at `db_path` as one change named `operation`, with
     `summary` (counts, never names) kept with it. Refusal, with nothing written, when a
@@ -932,8 +1030,9 @@ def schema_gap_blocker(version, current):
             return "migration %d is not known" % number
         if migration.kind != schema.ADDITIVE:
             return "migration %d, %s, is %s" % (number, migration.name, migration.kind)
-        derived_only = {table for table, columns in schema.ADDS_DERIVED_COLUMNS.get(number, {}).items()
-                        if set(columns) <= set(DERIVED_COLUMNS.get(table, ()))}
+        # What the migration added was derived when it was added (a change older than it cannot hold the column), whatever
+        # a later version made of it: tests hold the declaration to the columns the migration really adds.
+        derived_only = set(schema.ADDS_DERIVED_COLUMNS.get(number, {}))
         touched = sorted(set(migration.touches) & journaled - derived_only)
         if touched:
             return "migration %d, %s, touches %s" % (number, migration.name, ", ".join(touched))
@@ -1062,6 +1161,9 @@ def _undo_rows(conn, change_id):
     if reasons:
         raise Refusal(reasons)
     try:
+        # A node the undo takes away leaves its faces with the name alone (they were linked to it by it, or by a guess).
+        person_ids.release(conn, [change.key[0] for change in inverse if change.table == "tag_taxonomy"
+                                  and change.action == "delete" and change.key is not None])
         _write(conn, inverse)
     except sqlite3.IntegrityError as e:
         raise _integrity(e) from e
@@ -1110,7 +1212,7 @@ def _snapshot(conn, changes):
     listed = []
     for start in range(0, len(photo_ids), CHUNK):
         chunk = photo_ids[start:start + CHUNK]
-        listed += conn.execute("SELECT photo_id, position, name, source FROM photo_people WHERE photo_id IN (%s)"
+        listed += conn.execute("SELECT photo_id, position, tag_id, name, source FROM photo_people WHERE photo_id IN (%s)"
                                " ORDER BY photo_id, position" % ",".join("?" * len(chunk)), chunk).fetchall()
     return rows, (listed, derived.listing(conn, set(photo_ids) | kept, node_ids))
 

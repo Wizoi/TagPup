@@ -2537,7 +2537,7 @@ numbers, the phases and the owner's questions are in "People by id, stage 2" bel
 decisions it keeps: a branch tag cannot be a person, the two rules are refusals, deleting a person tag that faces use is refused with a
 force that unnames them, old history stays undoable, and (#985) a name without a person tag is listed for the owner, never unnamed.
 
-### People by id, stage 2 *(design, 2026-10-09; part A, phases 1-3, built 2026-10-09; parts B and C not built; the questions at its end were the owner's, answered below)*
+### People by id, stage 2 *(design, 2026-10-09; part A, phases 1-3, and part B, phases 4-5, built 2026-10-09; part C not built; the questions at its end were the owner's, answered below)*
 Stage 1 put the id beside the name and kept it derived from the name. Stage 2 makes the **id the person** and the name
 what the tree calls them. Two things the owner added on 2026-10-09 shape it: the same NAME can be two people when their
 tags sit in different groups (two cousins called Sam under `Family/Thackeray` and `Family/Ingersoll`; a dog and a friend
@@ -2728,8 +2728,8 @@ which app to start. That is a new guard (question 7).
 | 1 | **Built (part A).** The group tag is not a person (#986): `PeopleVocabulary` is given the tree's groups (`taxonomy.group_tags`), `extract_people` drops a group's keyword (path or bare leaf), `people_out_of_date` agrees, `tools/doctor.py --rebuild-derived` rebuilds the photos' people (`people.repair`; it did not before). Not done here, left for phase 4 with the references: `PeopleVocabulary` rows carrying ids, `people_in_photo` returning references and deduping by id. No schema. | M |
 | 2 | **Built (part A).** Migration 28 (`idx_faces_tag`, `idx_photo_people_tag`, the empty `name_review_dismissals`), and the newer-library guard (`schema.NewerLibrary`, every entry point), measured on a copy. | S |
 | 3 | **Built (part A).** `person_labels` + `personLabel` + the fixture, and a `person` `{id, name, tag, group, shared}` on the answers that name someone (additive; pages unchanged; the list is in SPEC_TAGTUNER.md, `/api/people?records=1`). | M |
-| 4 | Writers and readers move to ids: `faces.name_as`, `person_ids.resolve`, the 158 reader lines, `counts_by_person`, identify/automatch/clustering known sets keyed by id, the wire's `person_id`; `person_ids` follows turned round; tests with two Sams in the fixture. | L |
-| 5 | **Until it exists, a tree edit that gives a person a child (a tag under them) silently changes the people of every photo carrying them (they become a group and leave the photos' lists, N photos, by the part A rule); the refusals of rule (a) are this phase.** Tree operations by id: rename of one node, move, merge, delete with refusal and force, the trigger on, the two rules as refusals, journal recording of `tag_id`, the lazy rule for old entries. | M |
+| 4 | **Built (part B).** Writers and readers move to ids: `faces.name_as`, `person_ids.resolve`, the 158 reader lines, `counts_by_person`, identify/automatch/clustering known sets keyed by id, the wire's `person_id`; `person_ids` follows turned round; tests with two Sams in the fixture. | L |
+| 5 | **Built (part B; with 4).** (Was: until it exists, a tree edit that gives a person a child (a tag under them) silently changes the people of every photo carrying them (they become a group and leave the photos' lists, N photos, by the part A rule); the refusals of rule (a) are this phase.) Tree operations by id: rename of one node, move, merge, delete with refusal and force, the trigger on, the two rules as refusals, journal recording of `tag_id`, the lazy rule for old entries. | M |
 | 6 | The pickers show the group on every surface listed; narrow-window checks; the new-person Group box. | M |
 | 7 | Names to review: service, routes, Review People row and dialog, Activity and doctor counts, dismissals, the "new person with a shared name" entry. | M |
 | 8 | `idx_faces_name` / `idx_faces_person` read by nothing but the review's pair query; docs; the doctor's stage-2 lines. Columns are not dropped. | S |
@@ -2777,6 +2777,88 @@ be split across a merge: the id is the key only when every writer writes it. Siz
   The photos' `people` lists of names and the dicts keyed by name get nothing now (a card list of thousands would carry a parallel array for
   every photo): the page keeps `/api/people?records=1`, where a name is looked up. The cached Identify queue and the saved suggestions are
   labelled when they are served, never inside the cache.
+
+**Part B as built** *(2026-10-09; branch worktree-agent-a7c53f38d987029d9; phases 4 and 5 together)*, and what was decided in building it:
+- **The id is the key; the name is its cache.** `faces.tag_id` and `photo_people.tag_id` hold the node; `name` is the node's leaf, kept in step by
+  every writer and by the tree operations (`person_ids.follow_faces`, `follow_listed`, `follow_tree`; `out_of_step(spelling=)` finds a cache
+  that differs; `fill` is migration 21's one-time backfill and nothing else). A row with a name and no id is an *unresolved name*
+  (the review list's, phase 7). **One door:** `person_ids.target` / `resolve` turn what a caller sends -- an id, a tag path or a name -- into one
+  Person or a refusal (`StalePerson` 404, `AmbiguousPerson` and `GroupNotPerson` 400, the sentence naming the candidates' tags);
+  `People.settle` drops the id of a node that is gone and keeps the cache; **it gives a name with no id none**, however unique the name has become
+  (round 2). **One owner links an unresolved name: `person_ids.link_added`**, for a name a person was ADDED under (`follow_tree` after an edit
+  of the tree; the journal for a node its change inserted or renamed). Otherwise a writer that knows the id writes it, a keyword is resolved by
+  its path, and the owner links the rest (the names to review).
+- **Writers** (`store/faces.py`): `name`, `name_if_unnamed`, `name_unnamed`, `set_names`, `reinstate`, `revert_automatic`, `unname*`, `exclude`, `insert`,
+  `unname_person`, `rename_unresolved` write the id with the name in one statement; a bare name two people have is refused, never guessed
+  (a detected face given such a name stays unnamed). The keyword writer no longer drops "a person the file already names by their leaf": two
+  people called alike are two keywords (`vocabulary.names_same_person`, by the id of their nodes) -- *before part B the second Sam's tag was
+  skipped*. **Readers** return `Ref(id, name)`: `people_in_photo`, `people_by_face`, `counts_by_person`, `face_refs`, the matrices, `KnownFaces.labels`;
+  a card, a count or a row of the pages keeps its name and gains `person` / `person_id`. Clustering stays name-based (a shared name's faces are
+  compared as one person there: a decision, not a defect; the faces still carry their ids).
+- **The wire.** `person_id` is preferred in every request that names a person (`face/match`, `faces/match-bulk`, `person/rename`, `person-faces`,
+  `unmatched-faces/person-matches` and `build-status`, a bulk People edit's `add_ids` / `remove_ids`, the plans of the assignment job); a name still works
+  when it is one person's (an open old page, the CLI, the MCP). `/api/people-faces` and `people-face-samples` are keyed by name when nobody else
+  is called alike and by `id:<id>` for every person with a node; the queue rows carry `person_id`. `inspect.photos(person=)` takes a tag path
+  (that person) or a name (everyone called it).
+- **Tree operations by id** (`store/taxonomy.py`, `services/tags.py`). *Rename* renames the one node picked, never joins two people and never merges
+  into one who is there (refused, "merge them instead"); the faces and lists follow in the same transaction, the photos' files after (the journal's
+  resumable change). *Move* between groups keeps the id. *Merge* (`move_branch` onto an existing node) repoints the faces and lists to the target
+  before the node goes, and the plan says how many photos would list one person twice and how many have a face of each (owner's question 6: allowed).
+  *Delete* of a person faces name is refused with the count; `force` unnames those faces in the same transaction (they become faces to review, not
+  decided as nobody) and then deletes. **The two rules.** (a) *no children under a person that faces or photos carry* -- for person tags only (owner's
+  answer to question 1): refused for an owner's action (the tree view's add, a move under a person, the keyword writer's new tag); never for what a
+  file holds (the indexer reads a path as it finds it). (b) *a group tag is never a person* (part A) is refused where an owner would set it.
+- **Final round (2026-10-09).** Rename Person on a name no tag has, into a person's name, is a writer that knows the id and writes it
+  (`faces.rename_unresolved`; a name two people have is refused). A name that is exactly one person's but whose rows are linked to nobody (a
+  same-named person left) is REPORTED -- `person_ids.unresolved()` bucket `one`, the doctor, `checks.names_without_a_person` -- and linked
+  only by the owner: `people link-name <name> [--apply]` (`services.people.link_name`; a dry run; one journaled change of the faces,
+  undoable). The refusal of an undo (`_person_gone`) is gone with the fill it guarded against. The page action comes with part C's review list.
+- **Review round 2 (2026-10-09).** The ownership question of round 1, answered: see "`person_ids.link_added`" above. `settle` filled any
+  unresolved name that was unique NOW, so a rename of one of two same-named people and then any rebuild of the photo, face write or journal
+  replay linked a hand-decided face to the other; it no longer fills. `person_ids.repair` and the doctor put names and dead ids right and
+  link nothing; a journal undo of an entry that recorded only a name leaves an unresolved name; fixtures state who a face is. A tree edit takes
+  the write lock BEFORE it reads the tree (`people.tree_edit`: BEGIN IMMEDIATE), so two processes cannot decide from a stale tree
+  (`tests/test_people_by_id_at_once.py` holds one transaction open until the other is at its edit). The undo of a force delete or a merge returns the
+  faces as unresolved names (the name and the decision back, the dead id dropped), never to another person called alike, because nothing links
+  an unresolved name by itself; History says what an undo does not give back (the person, the photos' keywords). Cost, measured on a copy of photo_index: the biggest person (7,468
+  faces) takes 8.0 s to force delete and writes 22,404 change_rows (the whole journal held 17,053); the rehearsal that refuses a bad merge
+  before any file is written takes 6.6 s for it. The refusal text and `usage` say the rows ("about N rows", `history_rows_if_forced`).
+- **Review round 1 (2026-10-09), what changed.** (1) *One rule for linking an unresolved name after a tree edit*
+  (`person_ids.follow_tree`): only the rows of a name NO ONE had before the edit and a person has after it (a node made, moved or renamed
+  into it) are linked; a name that became one person's because a same-named node LEFT (rename away, merge, force delete) was ambiguous
+  before and its rows -- a hand decision too -- stay unresolved for the review list. (2) *Every refusal of a merge or move comes before the
+  first file is written* (`tags._tree_refusal` rehearses the tree edit in a rolled-back transaction, so the rule is the tree's own).
+  (3) *Reads fall back, writes do not:* `person-faces`, `person-matches`, `build-status` and `people-faces` accept a name two people have
+  and answer for all of them (`person_ids.SharedName`, `people.for_reading`; nothing is created or linked); a write with it is still a 400
+  naming the candidates, and the page shows that text. (4) *The single owner of an undoable record of a face's identity change is the
+  journal* (`journal.record_faces`): a force delete (`taxonomy.delete_branch` / `faces.unname_person`) and a merge (`people.merge_person`)
+  write ONE change of the face rows (name, name_source, tag_id; counts only in its summary) in the same transaction as the tree edit, so
+  History can put the faces back; an undo that would give a face whose person is gone to ANOTHER person called alike is refused. **The tree
+  rows themselves are still not journaled** (as before part B; finding). (5) `faces_renamed` is counted after the write, a group counts the
+  faces under it. (6) `removals.removed_people` carries the id the change recorded. (7) The navigator keys a person by id (`p:<id>`) and opens a
+  shared name by its tag path. (8) Two real processes editing the tree: `tests/test_people_by_id_at_once.py`.
+- **The trigger** `person_tag_not_deleted_while_named` (**migration 29**, additive, triggers only) aborts the DELETE of a node a face names on any
+  connection; `generation_faces_update` now also fires on `tag_id`.
+- **The journal.** A change records `faces.tag_id` and `photo_people.tag_id` as columns of their own (`journal.cache_columns`; `DERIVED_COLUMNS`
+  no longer has `tag_id`); a change recorded before part B has none and is replayed by the name (`_named_by_name`: the person that name is
+  now). The undo of a node's insert releases the faces linked to it (`person_ids.release`) and is refused when a decision of the owner's names
+  the node. *Not done:* the design said tree edits are "journaled with the tree row"; they are not journaled today (the tree is not a journaled
+  table), so there is nothing to record for them (finding below).
+- **The stale-keyword case, as built.** A file that still holds a path no node has (a rename interrupted between the tree and the files, a copy from
+  another library) is read as the name its path ends in; if that name is one person's now, the settle rule lists the photo under that person
+  until its file is rewritten (the journal resumes the rename; tested). It is wrong for the moment and visible in the review list; the former-paths
+  record (question 5) was not built.
+- **The library views.** A person in a view is the node (`tag_id IN (...)`, `idx_photo_people_tag`); a *name* in a search or a view is every
+  spelling the rows hold (a view of "Sam" shows both Sams, as it always showed the name), a tag path is exactly that person. The navigator's
+  people are `(Ref, photos)`, two people called alike two entries each filed under its own branch; names with no node merge by spelling. The
+  tally counts by node. *Counted on a copy of photo_index (2,615 MB; 895 tree nodes, 406 people, 9 groups, 1 leaf with two nodes):* `people_counts`
+  8 ms, `people_groups` 54 ms, `counts_by_person` 3 ms, the whole tree read 2 ms, `out_of_step` 4 ms (faces) and 47 ms (photo_people),
+  `person_ids.unresolved` 50 ms (4 names with no person, 1 with several, 4 that are a branch), a whole settle with nothing to change 54 ms,
+  migrating 26 to 29 1.4 s, and **renaming a person 1.05 s**. Every lookup by id plans as `SEARCH ... USING COVERING INDEX idx_faces_tag` or
+  `idx_photo_people_tag`; the only temp b-trees are the grouping of one pass over `photo_people` (as before) and the distinct unresolved names.
+- **Left for part C:** the pages' own leaf-based "already has" rules and duplicate checks, the pickers that send ids from every surface, the
+  names-to-review service, and the shared-leaf specs of the navigator. The pages still send names; with two people called alike they get the
+  refusal that names the candidates.
 
 #### How it fails (each is a test before it is built)
 - **Interrupted.** The migration is additive and one transaction: a crash leaves 27 and the next start runs it again. A tree operation is one

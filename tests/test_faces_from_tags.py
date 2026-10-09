@@ -20,6 +20,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import face_rows  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -85,6 +86,7 @@ class Case(unittest.TestCase):
             sets = ", ".join("%s = ?" % column for column in columns)
             if sets:
                 conn.execute("UPDATE faces SET %s WHERE id = ?" % sets, list(columns.values()) + [face_id])
+                face_rows.give_their_person(conn, face_id)
                 people.rebuild_photos(conn, [photo_path])
             return face_id
         return write(self.path, add)
@@ -154,8 +156,8 @@ class OneFaceOnePerson(Case):
         photo = self.photo("regatta_007.jpg")
         self.face(photo)
         self.tag(photo, "People/" + WREN)
-        _stamp, (ids, names, _matrix) = identify.decided_faces(self.library)
-        self.assertEqual([WREN], names)
+        _stamp, (ids, people_of, _matrix) = identify.decided_faces(self.library)
+        self.assertEqual([(self.node("People/" + WREN), WREN)], [(each.id, each.name) for each in people_of])
 
 
 class WhatIsNotNamed(Case):

@@ -168,7 +168,7 @@ def _read(library, files, exiftool_path):
 def people_of(library, raw_meta, tags, photo_path):
     """Everyone in a photo, by its metadata and its named faces
     (tagpup.core.vocabulary.people_in_photo), for a page record just written."""
-    return vocabulary.people_in_photo(raw_meta, tags, faces.face_names(photo_path, db_path=library.path),
+    return vocabulary.people_in_photo(raw_meta, tags, faces.face_refs(photo_path, db_path=library.path),
                                       taxonomy.people_vocabulary(library.path))
 
 

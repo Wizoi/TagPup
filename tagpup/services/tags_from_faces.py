@@ -31,7 +31,7 @@ whole-library plan restricted to the folder's photos.
 from tagpup.core import paths
 from tagpup.core.result import Result
 from tagpup.services import face_people, folder_scope
-from tagpup.store import db, people, photos
+from tagpup.store import db, people, photos, taxonomy
 from tagpup.store import roots as store_roots
 
 #: What the journal calls the changes made here (History's `operation`).
@@ -40,10 +40,10 @@ OPERATION = "person tags from faces"
 
 def plan(library, guesses=False, folder=None):
     """What `apply` would write, counted: a Result whose details are `counts` (safe to show anyone) and `work`, the
-    (photo path, name) of each person to put on a photo (never reported). Reads only.
+    (photo path, person) of each person to put on a photo -- a Ref, the node's id and the name (never reported). Reads only.
 
     One rule for each row, in this order: the person the tree files in two places is left; the photo whose keywords
-    already name them (by their leaf under ANY root: face_people.already_names, the writer's own rule) is skipped -- a
+    already name them (by the id of their node, under ANY root: face_people.already_names, the writer's own rule) is skipped -- a
     people tag under a root the tree does not file people under; a person only a guess of clustering or automatch backs
     (no face of that name named by hand) is skipped unless `guesses`, since the keyword would make the guess a decided
     reference (#640). Each is counted, so the count to write is what `apply` writes and a second run finds none.
@@ -65,24 +65,25 @@ def plan(library, guesses=False, folder=None):
         conn.close()
     held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, sorted({row[0] for row in found}))}
     filer = face_people.Filer(library)
+    known = taxonomy.people_vocabulary(library.path)
     work, photo_set = [], set()
     left = elsewhere = guessed = 0
-    for photo_path, name, decided in found:
+    for photo_path, person, decided in found:
         photo_set.add(photo_path)
-        tag = filer.tag(name)
+        tag = filer.tag(person)
         if tag is None:
             left += 1
-        elif face_people.already_names(held.get(paths.key(photo_path), []), tag):
+        elif face_people.already_names(held.get(paths.key(photo_path), []), tag, known):
             elsewhere += 1
         elif not decided and not guesses:
             guessed += 1
         else:
-            work.append((photo_path, name))
+            work.append((photo_path, person))
     result = Result(attempted=len(photo_set))
     result.details.update(
         dry_run=True, work=work,
         counts={"photos_with_a_person_on_a_face_alone": len(photo_set), "people": len(found),
-                "photos_to_write": len({photo_path for photo_path, _name in work}), "people_to_write": len(work),
+                "photos_to_write": len({photo_path for photo_path, _person in work}), "people_to_write": len(work),
                 "people_the_tree_files_in_two_places": left, "people_the_file_names_under_another_root": elsewhere,
                 "people_from_a_guess_only": guessed, "guesses_included": bool(guesses)})
     return result

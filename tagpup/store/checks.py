@@ -168,23 +168,25 @@ def tags_without_a_node(conn):
 # ---- People by their node's id (tagpup.store.person_ids; docs/ARCHITECTURE.md, "Identity by id") ------------
 
 def face_person_ids_out_of_step(conn):
-    """Faces whose person id (`faces.tag_id`) is not the node their name is now: a version of the app from
-    before migration 21 that named a face, or a tree edited by one. The examples are face ids.
-    `tools/doctor.py --rebuild-derived --apply` puts them right. Waits for migration 21."""
+    """Faces whose name is not their person's: the id (`faces.tag_id`) is the person and `name` the cache of the node's leaf, so a
+    name written without the id (a version of the app from before migration 29 that renamed a face) or an id of a node that is
+    gone. (A name with no id is not this: `names_without_a_person` reports it, and the owner links it.) The examples are face ids. `tools/doctor.py --rebuild-derived
+    --apply` puts them right, the id being the key. Waits for migration 21."""
     found = person_ids.out_of_step(conn, "faces", EXAMPLES)
-    return Check("faces whose person id is not their name's", found.rows, found.examples)
+    return Check("faces whose name is not their person's", found.rows, found.examples)
 
 
 def listed_person_ids_out_of_step(conn):
-    """People listed for a photo (`photo_people`) whose person id is not the node their name is now. The
-    examples are photo ids."""
+    """People listed for a photo (`photo_people`) whose name is not their person's, as face_person_ids_out_of_step says it of
+    faces. The examples are photo ids."""
     found = person_ids.out_of_step(conn, "photo_people", EXAMPLES)
-    return Check("people listed whose person id is not their name's", found.rows, found.examples)
+    return Check("people listed whose name is not their person's", found.rows, found.examples)
 
 
 def names_without_a_person(conn):
     """(names no person node is called: {name: rows}, names more than one is: {name: rows}, names only a
-    branch is: {name: ([node ids], rows)}) of faces and photos' people (person_ids.unresolved). Reported, not
+    branch is: {name: ([node ids], rows)}, names exactly one person is called whose rows are linked to nobody:
+    {name: (id, faces by hand, other faces, listed)}) of faces and photos' people (person_ids.unresolved). Reported, not
     broken: none has an id, none is guessed, and the tree is the owner's to settle (the ambiguous person
     path, docs/findings.md, #27; a branch is not a person, #660)."""
     return person_ids.unresolved(conn)

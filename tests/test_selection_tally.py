@@ -92,14 +92,16 @@ class Counting(Tally):
         found = self.tally({"ids": [self.d]})
         self.assertEqual(({}, {"Rowan Thackeray": 1}), self.counts(found))
 
-    def test_a_person_spelled_two_ways_is_one_entry_counting_each_photo_once(self):
-        self.vl.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, 5, ?, 'keyword')",
-                             (self.a, "wren halloway"))
-        self.vl.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, 5, ?, 'keyword')",
-                             (self.e, "WREN HALLOWAY"))
+    def test_a_name_no_person_has_spelled_two_ways_is_one_entry_counting_each_photo_once(self):
+        """A person the tree files is their node whatever the rows spell; a name no node has is one entry for its spellings."""
+        for position, (photo, spelled) in enumerate(((self.a, "skye marlowe"), (self.a, "Skye Marlowe"), (self.e, "SKYE MARLOWE")), 5):
+            self.vl.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, 'keyword')",
+                                 (photo, position, spelled))
         self.vl.conn.commit()
         found = self.tally({"ids": [self.a, self.b, self.e]})
-        self.assertEqual({"Wren Halloway": 3, "Rowan Thackeray": 1}, self.counts(found)[1])
+        counts = {name.lower(): count for name, count in self.counts(found)[1].items()}
+        self.assertEqual(2, counts["skye marlowe"])
+        self.assertEqual(1, counts["rowan thackeray"])
 
     def test_the_lists_are_in_the_shared_alphabetical_order(self):
         found = self.tally({"ids": [self.a, self.b, self.c, self.d, self.e]})

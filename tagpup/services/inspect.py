@@ -125,7 +125,8 @@ def photos(library, folder=None, tag=None, person=None, reveal=False, limit=LIMI
     """The photos under a folder (any depth), carrying a tag (or a tag under it), or listing
     a person among their people -- each given narrows the others. Their count and ids;
     their paths only with `reveal`. A person is a name (Rowan Thackeray) or their tag
-    (People/Rowan Thackeray), spelled as the photos spell it."""
+    (People/Rowan Thackeray): a tag path is the one person filed there (two people called alike are told apart by it), a name is
+    everyone called it; a path no node holds names no one filed."""
     if not (folder or tag or person):
         raise Refused("Name a folder, a tag or a person.")
     found = None
@@ -133,8 +134,7 @@ def photos(library, folder=None, tag=None, person=None, reveal=False, limit=LIMI
         if folder:
             found = dict(inspection.under(conn, folder))
         if person:
-            name = vocabulary.leaf_of(person)
-            of_person = dict(inspection.of_person(conn, name))
+            of_person = dict(inspection.of_person(conn, person))
             found = of_person if found is None else {i: p for i, p in found.items() if i in of_person}
         if tag:
             # Only the photos a folder or a person has narrowed to: it read every

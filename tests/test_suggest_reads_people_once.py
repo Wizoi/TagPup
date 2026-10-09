@@ -119,11 +119,13 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
 
     def test_named_faces_only_excluded_left_out(self):
         known = face_records.known_faces(self.db)
-        self.assertEqual(sorted(known.names()), ["Imogen Vale", "Rowan Thackeray"])
+        self.assertEqual(sorted(person.name for person in known.labels.values()), ["Imogen Vale", "Rowan Thackeray"])
         # Rowan's closest face to each of their two named ones is itself; the excluded
         # face is not among them.
-        self.assertAlmostEqual(1.0, known.likeness("Rowan Thackeray", unit([0.8, 0.6, 0])), places=5)
-        self.assertAlmostEqual(0.0, known.likeness("Rowan Thackeray", unit([0, 0, 1])), places=5)
+        # Keyed by person (no node here, so by the name's key), the Ref each is in `labels`.
+        rowan = next(key for key, person in known.labels.items() if person.name == "Rowan Thackeray")
+        self.assertAlmostEqual(1.0, known.likeness(rowan, unit([0.8, 0.6, 0])), places=5)
+        self.assertAlmostEqual(0.0, known.likeness(rowan, unit([0, 0, 1])), places=5)
 
 
 class FaceModelsLoadOnce(unittest.TestCase):

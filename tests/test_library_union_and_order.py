@@ -231,7 +231,10 @@ class ThePlans(Library):
                                                   order or store.TAKEN)
         finally:
             conn.close()
-        return "\n".join("\n".join(lines) for _sql, lines in statements)
+        # The tree is read whole once (person_ids.read: a few hundred nodes, a DISTINCT of their parents): not the search.
+        return "\n".join("\n".join(lines) for sql, lines in statements
+                         if "SELECT DISTINCT parent_id FROM tag_taxonomy" not in sql and "FROM sqlite_master" not in sql
+                         and not sql.startswith("SELECT id, name, has_face, tag FROM tag_taxonomy"))
 
     def test_a_union_seeks_an_index_for_each_kind_and_scans_no_table(self):
         text = self.plans("any_of", union(("keyword", "Trips", False), ("person", WREN, False), ("year", "2021", False),

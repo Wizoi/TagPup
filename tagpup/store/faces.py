@@ -3,9 +3,15 @@
 Every write here that changes who a face is -- named, unnamed, excluded, detected,
 deleted -- rebuilds the people of the photos it touched (tagpup.store.people.rebuild),
 in the same transaction: clustering, re-detection and dedupe changed faces and left
-each photo's people as they were (docs/findings.md, #63). It gives their faces the id of
-the person their name now is, too (tagpup.store.person_ids.follow_faces), by the same
-call (`_rebuilt`).
+each photo's people as they were (docs/findings.md, #63).
+
+A face names its person by the id of the person's node (`tag_id`): a writer here takes the person as
+an id, a tag path or a bare name (`person`), turns it into the pair of id and cached name through
+tagpup.store.person_ids.target -- the one door, which refuses a stale id, a name two people have and
+a group -- and writes both in the one statement. `name` is the cache of the node's leaf, never what a
+face is told apart by. Readers group, count and join by the id, and by the name's key for a face whose
+name no person is filed under (person_ids.key_of). `_rebuilt` settles what a statement left (a name
+that is one person's links, a renamed node's leaf follows: person_ids.follow_faces).
 
 The names a photo's faces were given, turning their boxes when a photo is turned, a
 face's crop, a write to the table that the Identify Faces grids can account for, and
@@ -23,9 +29,10 @@ import os
 import types
 
 from tagpup.core import paths
+from tagpup.core.vocabulary import Ref
 from tagpup.store import db, faces_detected, generations, people, person_ids
 from tagpup.store import roots as store_roots
-from tagpup.store.people import PEOPLE_JSON
+from tagpup.store.people import PEOPLE_REFS_JSON
 
 logger = logging.getLogger(__name__)
 
@@ -47,50 +54,60 @@ def _under(conn, folder, column="photo_id"):
     return "%s IN (SELECT id FROM photos WHERE %s)" % (column, where), params
 
 
-def names_in_photo(conn, photo_path):
-    """The names given to faces in one photo, on `conn`."""
-    where, params = _on_photo(conn, photo_path)
-    return {name for (name,) in conn.execute(
-        "SELECT name FROM faces WHERE " + where + " AND name IS NOT NULL", params)}
+def _ref(tag_id, name):
+    """The person a face carries as a Ref (the node's id, the cached name), or None for a face that carries nobody."""
+    return None if name is None else Ref(tag_id, name)
 
 
-def names_by_face(conn, photo_path):
-    """{face id: name} of the faces of one photo that carry a name, on `conn`."""
+def people_in_photo(conn, photo_path):
+    """The people named on the faces of one photo, as a set of Refs, on `conn`."""
     where, params = _on_photo(conn, photo_path)
-    return dict(conn.execute("SELECT id, name FROM faces WHERE " + where + " AND name IS NOT NULL", params).fetchall())
+    return {Ref(tag_id, name) for tag_id, name in conn.execute(
+        "SELECT tag_id, name FROM faces WHERE " + where + " AND name IS NOT NULL", params)}
+
+
+def people_by_face(conn, photo_path):
+    """{face id: Ref} of the faces of one photo that carry a person, on `conn`."""
+    where, params = _on_photo(conn, photo_path)
+    return {face_id: Ref(tag_id, name) for face_id, tag_id, name in conn.execute(
+        "SELECT id, tag_id, name FROM faces WHERE " + where + " AND name IS NOT NULL", params)}
 
 
 def named_in_photo(conn, photo_path):
-    """[(face id, name, name_source)] of the faces of one photo that carry a name and are not ruled out, on `conn`."""
-    return [(face_id, name, source) for face_id, name, source, excluded in _of_photo(conn, photo_path)
-            if name is not None and not excluded]
+    """[(face id, Ref, name_source)] of the faces of one photo that carry a person and are not ruled out, on `conn`."""
+    return [(face_id, person, source) for face_id, person, source, excluded in _of_photo(conn, photo_path)
+            if person is not None and not excluded]
 
 
 def nobody_in_photo(conn, photo_path):
     """[face id] of the faces of one photo a person called nobody (name NULL, name_source 'manual') and that are not ruled out."""
-    return [face_id for face_id, name, source, excluded in _of_photo(conn, photo_path)
-            if name is None and source == "manual" and not excluded]
+    return [face_id for face_id, person, source, excluded in _of_photo(conn, photo_path)
+            if person is None and source == "manual" and not excluded]
 
 
 def _of_photo(conn, photo_path):
-    """[(id, name, name_source, excluded)] of one photo's faces, found by idx_faces_photo_id: with the name and the exclusion in
+    """[(id, Ref or None, name_source, excluded)] of one photo's faces, found by idx_faces_photo_id: with the name and the exclusion in
     the WHERE the planner reads idx_faces_identify (every named face of the library, 0.12 s on photo_index) for each photo."""
     where, params = store_roots.sql_equals(conn, "path", photo_path)
-    return [row for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params).fetchall()
-            for row in conn.execute("SELECT id, name, name_source, excluded FROM faces INDEXED BY idx_faces_photo_id"
-                                    " WHERE photo_id = ? ORDER BY id", (photo_id,)).fetchall()]
+    return [(face_id, _ref(tag_id, name), source, excluded)
+            for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params).fetchall()
+            for face_id, tag_id, name, source, excluded in conn.execute(
+                "SELECT id, tag_id, name, name_source, excluded FROM faces INDEXED BY idx_faces_photo_id"
+                " WHERE photo_id = ? ORDER BY id", (photo_id,)).fetchall()]
 
 
-def names_given(conn, names):
-    """Which of `names` some face carries now, on `conn`: one indexed query for them all.
-    A name read before a write began may have been renamed, or taken off every face,
-    before it is written."""
-    names = list(names)
-    found = set()
-    for chunk in _chunks(names):
-        found.update(name for (name,) in conn.execute(
-            "SELECT DISTINCT name FROM faces WHERE name IN (" + ",".join("?" * len(chunk)) + ")", chunk))
-    return found
+def people_given(conn, persons):
+    """Which of `persons` some face carries now, on `conn`: a person given as an id by idx_faces_tag, one given as a name (a
+    name no person is filed under) by the name's index; one query a chunk. A person read before a write began may have been
+    unnamed everywhere, or merged away, before it is written."""
+    persons = list(persons)
+    ids = person_ids.given(conn, [person for person in persons if isinstance(person, int)])
+    names = set()
+    named = [person for person in persons if isinstance(person, str)]
+    for chunk in _chunks(named):
+        names.update(name for (name,) in conn.execute(
+            "SELECT DISTINCT name FROM faces WHERE tag_id IS NULL AND name IN (" + ",".join("?" * len(chunk)) + ")", chunk))
+    return {person for person in persons if (person in ids if isinstance(person, int) else person in names)}
 
 
 def generation(conn):
@@ -142,8 +159,8 @@ def accounted_write(db_path, label="faces write"):
             conn.close()
 
 
-def face_names(photo_path, db_path=None, conn=None):
-    """The names given to a photo's faces, excluded faces left out, in detection order.
+def face_refs(photo_path, db_path=None, conn=None):
+    """The people a photo's faces were given, as Refs, excluded faces left out, in detection order.
 
     From `conn`, else from the library at `db_path`, read-only. Nothing when neither
     can be read: a photo's people are its keywords' then, rather than an error.
@@ -156,9 +173,9 @@ def face_names(photo_path, db_path=None, conn=None):
             own = conn = db.connect(db.readonly_uri(db_path), uri=True)
         clause, params = _on_photo(conn, photo_path)
         rows = conn.execute(
-            "SELECT name FROM faces WHERE " + clause
+            "SELECT tag_id, name FROM faces WHERE " + clause
             + " AND name IS NOT NULL AND COALESCE(excluded, 0) = 0 ORDER BY id", params).fetchall()
-        return [name for (name,) in rows if name]
+        return [Ref(tag_id, name) for tag_id, name in rows if name]
     except Exception as e:
         logger.warning("Could not read face names for %s: %s", photo_path, e)
         return []
@@ -262,10 +279,12 @@ def decided_count(conn, photo_id):
 
 
 def for_merging(conn, photo_id):
-    """[(id, box JSON, name, name_source, excluded, excluded_reason)] of one photo's faces, by id: what was
+    """[(id, box JSON, Ref or None, name_source, excluded, excluded_reason)] of one photo's faces, by id: what was
     decided about each, without its embedding or crop (tagpup.services.duplicate_rows)."""
-    return conn.execute("SELECT id, box, name, name_source, excluded, excluded_reason FROM faces WHERE photo_id = ?"
-                        " ORDER BY id", (photo_id,)).fetchall()
+    return [(face_id, box, _ref(tag_id, name), source, excluded, reason)
+            for face_id, box, tag_id, name, source, excluded, reason in conn.execute(
+                "SELECT id, box, tag_id, name, name_source, excluded, excluded_reason FROM faces WHERE photo_id = ?"
+                " ORDER BY id", (photo_id,)).fetchall()]
 
 
 def decided_photo_ids(conn, photo_ids):
@@ -290,13 +309,13 @@ def _photos_of(conn, face_ids):
     return found
 
 
-def _rebuilt(conn, photo_ids, changed, vocabulary=None):
+def _rebuilt(conn, photo_ids, changed, vocabulary=None, known=None):
     """`changed`, after rebuilding the people of `photo_ids` and giving their faces and listed people
     the ids their names give (person_ids), if anything changed. The tree's people are read once for
     both (docs/findings.md, #659). `vocabulary` is the tree's PeopleVocabulary when the caller has it
     already (a batch that rebuilds many photos reads the tree once: #838)."""
     if changed and photo_ids:
-        known = person_ids.read(conn)
+        known = known or person_ids.read(conn)
         person_ids.follow_faces(conn, photo_ids, known)
         people.rebuild(conn, photo_ids, known=vocabulary, ids=known)
     return changed
@@ -317,12 +336,19 @@ def remove_for_photo(conn, photo_path):
 
 def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
     """Record one detected face: `box` as a list, `embedding` as float32 bytes, and its
-    crop, if one was cut, in face_crops. Returns the face's id. The caller commits."""
+    crop, if one was cut, in face_crops. `name` is a person (an id, a tag path or a name:
+    person_ids.target), or None. Returns the face's id. The caller commits."""
     from tagpup.store import photos   # photos imports this module
     photo_id = photos.ensure_row(conn, photo_path)
-    face_id = conn.execute(
-        "INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-        (photo_id, json.dumps(box), embedding, name, prob)).lastrowid
+    tag_id, name = person_ids.target(conn, name) if name is not None else (None, None)
+    if person_ids.present(conn):
+        face_id = conn.execute(
+            "INSERT INTO faces (photo_id, box, embedding, name, tag_id, prob) VALUES (?, ?, ?, ?, ?, ?)",
+            (photo_id, json.dumps(box), embedding, name, tag_id, prob)).lastrowid
+    else:
+        face_id = conn.execute(
+            "INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
+            (photo_id, json.dumps(box), embedding, name, prob)).lastrowid
     if crop:
         conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
     _rebuilt(conn, [photo_id], bool(name))
@@ -330,9 +356,10 @@ def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
 
 
 def manual_names(conn):
-    """face id -> name for every face a person decided by hand. A name of None is a
-    deliberate "this is nobody", as binding as a name."""
-    return dict(conn.execute("SELECT id, name FROM faces WHERE name_source = 'manual'").fetchall())
+    """face id -> Ref for every face a person decided by hand. A None is a
+    deliberate "this is nobody", as binding as a person."""
+    return {face_id: _ref(tag_id, name)
+            for face_id, tag_id, name in conn.execute("SELECT id, tag_id, name FROM faces WHERE name_source = 'manual'")}
 
 
 def excluded_ids(conn):
@@ -341,42 +368,64 @@ def excluded_ids(conn):
 
 
 def for_clustering(conn):
-    """(id, photo_path, box JSON, embedding bytes, name, prob) of every face. The crop is
+    """(id, photo_path, box JSON, embedding bytes, Ref or None, prob) of every face. The crop is
     left behind: 6 KB a face, and clustering never looks at it."""
-    return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, p.path, f.box, f.embedding, f.name, f.prob FROM faces f" + PHOTO).fetchall(), 1)
-
-
-def named_embeddings(conn):
-    """(name, embedding bytes) of every named face that is not excluded, which
-    idx_faces_identify answers without touching the rest of the table."""
-    return conn.execute(
-        "SELECT name, embedding FROM faces WHERE excluded = 0 AND name IS NOT NULL").fetchall()
+    return [(face_id, photo_path, box, embedding, _ref(tag_id, name), prob)
+            for face_id, photo_path, box, embedding, tag_id, name, prob in store_roots.natives(conn, conn.execute(
+                "SELECT f.id, p.path, f.box, f.embedding, f.tag_id, f.name, f.prob FROM faces f" + PHOTO).fetchall(), 1)]
 
 
 def named_for_known(conn):
-    """(name, embedding bytes, photo path, the year it was taken or None) of every named
+    """(Ref, embedding bytes, photo path, the year it was taken or None) of every named
     face that is not excluded: what tagpup.core.clustering.KnownFaces is made of."""
-    return store_roots.natives(conn, conn.execute(
-        "SELECT f.name, f.embedding, p.path, p.year FROM faces f" + PHOTO
-        + " WHERE f.excluded = 0 AND f.name IS NOT NULL AND f.embedding IS NOT NULL").fetchall(), 2)
+    return [(Ref(tag_id, name), embedding, photo_path, year)
+            for tag_id, name, embedding, photo_path, year in store_roots.natives(conn, conn.execute(
+                "SELECT f.tag_id, f.name, f.embedding, p.path, p.year FROM faces f" + PHOTO
+                + " WHERE f.excluded = 0 AND f.name IS NOT NULL AND f.embedding IS NOT NULL").fetchall(), 3)]
 
 
 def in_photo(conn, photo_path):
-    """(box JSON, embedding bytes, prob, excluded, name, name_source) of each face in one
+    """(box JSON, embedding bytes, prob, excluded, Ref or None, name_source) of each face in one
     photo, for suggesting who is in it."""
     where, params = _on_photo(conn, photo_path)
-    return conn.execute(
-        "SELECT box, embedding, prob, excluded, name, name_source FROM faces WHERE " + where,
-        params).fetchall()
+    return [(box, embedding, prob, excluded, _ref(tag_id, name), source)
+            for box, embedding, prob, excluded, tag_id, name, source in conn.execute(
+                "SELECT box, embedding, prob, excluded, tag_id, name, name_source FROM faces WHERE " + where,
+                params).fetchall()]
 
 
-def set_names(conn, names_by_id):
-    """Give each face in {id: name} its name, leaving who decided it alone. The caller
-    commits."""
-    conn.executemany("UPDATE faces SET name = ? WHERE id = ?",
-                     [(name, face_id) for face_id, name in names_by_id.items()])
-    _rebuilt(conn, _photos_of(conn, names_by_id), bool(names_by_id))
+def _targets(conn, persons, known=None):
+    """({person: (id, name)} for each distinct person among `persons`, the People read for it): the tree is read once,
+    inside the caller's transaction (or is `known`, which the caller read in it), and each distinct person is resolved once
+    (person_ids.target)."""
+    known = known or person_ids.read(conn)
+    return {person: person_ids.target(conn, person, known) for person in set(persons)}, known
+
+
+def _assign(conn):
+    """The SET fragment that gives a face a person, and the order its parameters go in: (SQL, "pair") -- name then id --
+    where the library has the id column (migration 21), the name alone before."""
+    return "name = ?, tag_id = ?" if person_ids.present(conn) else "name = ?"
+
+
+def _pair(conn, target):
+    """The parameters of `_assign` for a (id, name) target."""
+    tag_id, name = target
+    return (name, tag_id) if person_ids.present(conn) else (name,)
+
+
+def _unassign(conn):
+    """The SET fragment that takes a face's person off."""
+    return "name = NULL, tag_id = NULL" if person_ids.present(conn) else "name = NULL"
+
+
+def set_names(conn, persons_by_id):
+    """Give each face in {id: person} its person (an id, a tag path or a name: person_ids.target), leaving who decided
+    it alone. The caller commits."""
+    targets, known = _targets(conn, persons_by_id.values())
+    conn.executemany("UPDATE faces SET " + _assign(conn) + " WHERE id = ?",
+                     [_pair(conn, targets[person]) + (face_id,) for face_id, person in persons_by_id.items()])
+    _rebuilt(conn, _photos_of(conn, persons_by_id), bool(persons_by_id), known=known)
 
 
 def clear_automatic_names(conn):
@@ -384,7 +433,7 @@ def clear_automatic_names(conn):
     were cleared. The caller commits."""
     automatic = "name IS NOT NULL AND COALESCE(name_source, '') <> 'manual'"
     photo_ids = {photo_id for (photo_id,) in conn.execute("SELECT DISTINCT photo_id FROM faces WHERE " + automatic)}
-    return _rebuilt(conn, photo_ids, conn.execute("UPDATE faces SET name = NULL WHERE " + automatic).rowcount)
+    return _rebuilt(conn, photo_ids, conn.execute("UPDATE faces SET " + _unassign(conn) + " WHERE " + automatic).rowcount)
 
 
 # ---- What the face actions read and write (tagpup.services.faces) ------------------------
@@ -404,69 +453,86 @@ def _in(chunk):
 
 
 def rows(conn, face_ids):
-    """{id: (photo_path, name, excluded)} of the faces among `face_ids` that exist."""
+    """{id: (photo_path, Ref or None, excluded)} of the faces among `face_ids` that exist."""
     found = {}
     for chunk in _chunks(face_ids):
-        for face_id, photo_path, name, excluded in store_roots.natives(conn, conn.execute(
-                "SELECT f.id, p.path, f.name, f.excluded FROM faces f" + PHOTO
+        for face_id, photo_path, tag_id, name, excluded in store_roots.natives(conn, conn.execute(
+                "SELECT f.id, p.path, f.tag_id, f.name, f.excluded FROM faces f" + PHOTO
                 + " WHERE f." + _in(chunk), chunk).fetchall(), 1):
-            found[face_id] = (photo_path, name, excluded)
+            found[face_id] = (photo_path, _ref(tag_id, name), excluded)
     return found
 
 
 def named_among(conn, face_ids):
-    """[(photo path, name)] of the faces among `face_ids` that carry a name and are not excluded -- and only those: ignoring
+    """[(photo path, Ref)] of the faces among `face_ids` that carry a person and are not excluded -- and only those: ignoring
     a cluster sends thousands of nameless faces, whose photos are not read. By the faces' key, then each one's photo by its."""
     found = []
     for chunk in _chunks(face_ids):
-        found.extend(store_roots.natives(conn, conn.execute(
-            "SELECT p.path, f.name FROM faces f" + PHOTO + " WHERE f." + _in(chunk)
+        found.extend((photo_path, Ref(tag_id, name)) for photo_path, tag_id, name in store_roots.natives(conn, conn.execute(
+            "SELECT p.path, f.tag_id, f.name FROM faces f" + PHOTO + " WHERE f." + _in(chunk)
             + " AND f.name IS NOT NULL AND f.excluded = 0", chunk).fetchall(), 0))
     return found
 
 
 def decided_by_id(conn, face_ids):
-    """{face id: (name, name_source)} of the faces among `face_ids` that carry a name and are not excluded: what they were, for a
-    job that can put them back (its Undo)."""
+    """{face id: (person, name_source)} of the faces among `face_ids` that carry a name and are not excluded: what they were, for a
+    job that can put them back (its Undo). `person` is the node's id, or -- for a face whose name no person is filed under -- the
+    name (person_ids.target takes either)."""
     found = {}
     for chunk in _chunks(face_ids):
-        found.update((face_id, (name, source)) for face_id, name, source, excluded in conn.execute(
-            "SELECT f.id, f.name, f.name_source, f.excluded FROM faces f WHERE f." + _in(chunk), chunk)
+        found.update((face_id, (tag_id if tag_id is not None else name, source))
+                     for face_id, name, tag_id, source, excluded in conn.execute(
+            "SELECT f.id, f.name, " + _tag_id_of(conn) + ", f.name_source, f.excluded FROM faces f WHERE f." + _in(chunk), chunk)
             if name is not None and not excluded)
     return found
 
 
+def _tag_id_of(conn):
+    """The select item for a face's person id: the column, or NULL before migration 21."""
+    return "f.tag_id" if person_ids.present(conn) else "NULL"
+
+
 def reinstate(conn, prior):
-    """Give each face of `prior` ({face id: (name, name_source)}) the name and decider it had, when it is unnamed and not ruled
-    out now (a face named, or ruled out, since is somebody's newer decision). Returns the ids reinstated. The caller commits."""
+    """Give each face of `prior` ({face id: (person, name_source)}) the person and decider it had, when it is unnamed and not ruled
+    out now (a face named, or ruled out, since is somebody's newer decision). A person merged away or removed since is not given
+    back (their faces stay unnamed). Returns the ids reinstated. The caller commits."""
     done = []
-    for face_id, (name, source) in prior.items():
-        if conn.execute("UPDATE faces SET name = ?, name_source = ? WHERE id = ? AND name IS NULL AND excluded = 0",
-                        (name, source, face_id)).rowcount:
+    known = person_ids.read(conn)
+    for face_id, (person, source) in prior.items():
+        try:
+            target = person_ids.target(conn, person, known)
+        except person_ids.PersonProblem:
+            continue
+        if conn.execute("UPDATE faces SET " + _assign(conn) + ", name_source = ? WHERE id = ? AND name IS NULL AND excluded = 0",
+                        _pair(conn, target) + (source, face_id)).rowcount:
             done.append(face_id)
-    _rebuilt(conn, _photos_of(conn, done), len(done))
+    _rebuilt(conn, _photos_of(conn, done), len(done), known=known)
     return done
 
 
 def named_by_id(conn, face_ids):
-    """{face id: name} of the faces among `face_ids` that carry a name and are not excluded: the names a job that unnames or
+    """{face id: Ref} of the faces among `face_ids` that carry a person and are not excluded: who a job that unnames or
     rules out faces in chunks keeps from its start (a chunk run again after a stop finds them gone)."""
     found = {}
     for chunk in _chunks(face_ids):
         # By the primary key, the rest decided here: with the name and the exclusion in the WHERE the planner scans
         # idx_faces_identify (every named face) for each chunk.
-        found.update((face_id, name) for face_id, name, excluded in conn.execute(
-            "SELECT f.id, f.name, f.excluded FROM faces f WHERE f." + _in(chunk), chunk) if name is not None and not excluded)
+        found.update((face_id, Ref(tag_id, name)) for face_id, tag_id, name, excluded in conn.execute(
+            "SELECT f.id, f.tag_id, f.name, f.excluded FROM faces f WHERE f." + _in(chunk), chunk)
+            if name is not None and not excluded)
     return found
 
 
-def name(conn, face_ids, person_name):
+def name(conn, face_ids, person):
     """Name faces as a person's decision (name_source 'manual'), which re-clustering does
-    not revise. Excluded faces are left alone. Returns rows named. The caller commits."""
+    not revise. `person` is an id, a tag path or a name (person_ids.target: refused when the id is stale, the name two
+    people have, or it is a group). Excluded faces are left alone. Returns rows named. The caller commits."""
+    known = person_ids.read(conn)
+    given = _pair(conn, person_ids.target(conn, person, known))
     changed = sum(conn.execute(
-        "UPDATE faces SET name = ?, name_source = 'manual' WHERE " + _in(chunk) + " AND excluded = 0",
-        [person_name] + chunk).rowcount for chunk in _chunks(face_ids))
-    return _rebuilt(conn, _photos_of(conn, face_ids), changed)
+        "UPDATE faces SET " + _assign(conn) + ", name_source = 'manual' WHERE " + _in(chunk) + " AND excluded = 0",
+        list(given) + chunk).rowcount for chunk in _chunks(face_ids))
+    return _rebuilt(conn, _photos_of(conn, face_ids), changed, known=known)
 
 
 def decided_by_hand(conn, face_id):
@@ -483,53 +549,78 @@ def confirm(conn, face_id):
                         " AND COALESCE(name_source, '') <> 'manual'", (face_id,)).rowcount
 
 
-def name_if_unnamed(conn, face_id, person_name):
-    """Give an unnamed, unexcluded face a name as a guess -- who decided is left alone,
+def name_if_unnamed(conn, face_id, person):
+    """Give an unnamed, unexcluded face a person as a guess -- who decided is left alone,
     so re-clustering may revise it. Not a face somebody unmatched by hand: "this is
     nobody" is a decision, which a guess does not overrule (docs/findings.md, #643).
     Returns rows named. The caller commits."""
-    changed = conn.execute("UPDATE faces SET name = ? WHERE id = ? AND name IS NULL AND excluded = 0"
-                           " AND " + NOT_DECIDED_NOBODY % "", (person_name, face_id)).rowcount
-    return _rebuilt(conn, _photos_of(conn, [face_id]), changed)
+    known = person_ids.read(conn)
+    given = _pair(conn, person_ids.target(conn, person, known))
+    changed = conn.execute("UPDATE faces SET " + _assign(conn) + " WHERE id = ? AND name IS NULL AND excluded = 0"
+                           " AND " + NOT_DECIDED_NOBODY % "", given + (face_id,)).rowcount
+    return _rebuilt(conn, _photos_of(conn, [face_id]), changed, known=known)
 
 
-def name_unnamed(conn, names_by_id, vocabulary=None):
-    """Give each face in {id: name} its name as a guess, as name_if_unnamed does -- only a face still
-    unnamed, not excluded and not unmatched by hand -- in one statement per name and chunk, and rebuild
+def name_unnamed(conn, persons_by_id, vocabulary=None, known=None):
+    """Give each face in {id: person} its person as a guess, as name_if_unnamed does -- only a face still
+    unnamed, not excluded and not unmatched by hand -- in one statement per person and chunk, and rebuild
     their photos once: automatch's write (docs/findings.md, #659), which named a folder's faces one by
     one and rebuilt a photo for each. Returns the ids its UPDATE changed (RETURNING), in the order given:
     a face another process named meanwhile is not counted, inside a transaction or not (#665). The
-    caller commits, inside the transaction that read the faces it chose. `vocabulary`: the tree's people
-    when the caller has read them (_rebuilt)."""
+    caller commits, inside the transaction that read the faces it chose. `vocabulary`: the tree's PeopleVocabulary when the
+    caller has read it (_rebuilt); `known`: its person_ids.People, read in the same transaction."""
     guard = " AND name IS NULL AND excluded = 0 AND " + NOT_DECIDED_NOBODY % ""
-    by_name = collections.defaultdict(list)
-    for face_id, person_name in names_by_id.items():
-        by_name[person_name].append(face_id)
+    targets, known = _targets(conn, persons_by_id.values(), known)
+    by_person = collections.defaultdict(list)
+    for face_id, person in persons_by_id.items():
+        by_person[person].append(face_id)
     named = set()
-    for person_name, face_ids in by_name.items():
+    for person, face_ids in by_person.items():
+        given = _pair(conn, targets[person])
         for chunk in _chunks(face_ids):
             named.update(face_id for (face_id,) in conn.execute(
-                "UPDATE faces SET name = ? WHERE " + _in(chunk) + guard + " RETURNING id", [person_name] + chunk).fetchall())
-    done = [face_id for face_id in names_by_id if face_id in named]
-    _rebuilt(conn, _photos_of(conn, done), len(done), vocabulary)
+                "UPDATE faces SET " + _assign(conn) + " WHERE " + _in(chunk) + guard + " RETURNING id",
+                list(given) + chunk).fetchall())
+    done = [face_id for face_id in persons_by_id if face_id in named]
+    _rebuilt(conn, _photos_of(conn, done), len(done), vocabulary, known)
     return done
 
 
-def revert_automatic(conn, names_by_id):
+def _carries(conn, target, alias=""):
+    """(SQL, parameters): a face (of the table aliased `alias`, with its dot) carries the person `target` (id, name) is: the
+    id, or -- an unresolved name -- the name with no id."""
+    if isinstance(target, person_ids.Many):
+        # Everyone called a name (a read): the people's ids, and the rows of that name no person is filed under.
+        marks = ",".join("?" * len(target.ids))
+        return ("(%stag_id IN (%s) OR (%sname = ? AND %stag_id IS NULL))" % (alias, marks, alias, alias) if target.ids
+                else "(%sname = ? AND %stag_id IS NULL)" % (alias, alias)), list(target.ids) + [target.name]
+    tag_id, name = target
+    if tag_id is not None:
+        return "%stag_id = ?" % alias, [tag_id]
+    return ("%sname = ? AND %stag_id IS NULL" % (alias, alias) if person_ids.present(conn) else "%sname = ?" % alias), [name]
+
+
+def revert_automatic(conn, persons_by_id):
     """Take back guesses just made (automatch's names, when their photo's tag could not be written):
-    each face in {id: name} that still carries that name AS A GUESS (name_source NULL) is unnamed again,
+    each face in {id: person} that still carries that person AS A GUESS (name_source NULL) is unnamed again,
     as it was before, not as a decision. A face a person named, confirmed or unmatched meanwhile is theirs
-    and is left. Returns the ids reverted. The caller commits."""
-    by_name = collections.defaultdict(list)
-    for face_id, person_name in names_by_id.items():
-        by_name[person_name].append(face_id)
+    and is left. A person merged away or removed meanwhile (a stale id) is nobody's guess to take back. Returns the
+    ids reverted. The caller commits."""
+    known = person_ids.read(conn)
+    by_person = collections.defaultdict(list)
+    for face_id, person in persons_by_id.items():
+        by_person[person].append(face_id)
     reverted = []
-    for person_name, face_ids in by_name.items():
+    for person, face_ids in by_person.items():
+        try:
+            where, params = _carries(conn, person_ids.target(conn, person, known))
+        except person_ids.PersonProblem:
+            continue
         for chunk in _chunks(face_ids):
             reverted.extend(face_id for (face_id,) in conn.execute(
-                "UPDATE faces SET name = NULL WHERE " + _in(chunk) + " AND name = ? AND name_source IS NULL"
-                " RETURNING id", chunk + [person_name]).fetchall())
-    _rebuilt(conn, _photos_of(conn, reverted), len(reverted))
+                "UPDATE faces SET " + _unassign(conn) + " WHERE " + _in(chunk) + " AND " + where
+                + " AND name_source IS NULL RETURNING id", chunk + params).fetchall())
+    _rebuilt(conn, _photos_of(conn, reverted), len(reverted), known=known)
     return reverted
 
 
@@ -537,9 +628,49 @@ def unname(conn, face_ids, source="manual"):
     """Take the names off faces, recording who decided in name_source: 'manual' for
     "this is nobody", None for an undone guess. Returns rows changed. The caller commits."""
     changed = sum(conn.execute(
-        "UPDATE faces SET name = NULL, name_source = ? WHERE " + _in(chunk),
+        "UPDATE faces SET " + _unassign(conn) + ", name_source = ? WHERE " + _in(chunk),
         [source] + chunk).rowcount for chunk in _chunks(face_ids))
     return _rebuilt(conn, _photos_of(conn, face_ids), changed)
+
+
+def unname_person(conn, tag_ids, source=None):
+    """Take the people whose nodes are `tag_ids` off every face that names them (the tag tree's delete of a person, with force):
+    the faces become unnamed and unreviewed -- name_source `source`, NULL by default, so they are not "nobody" for good --
+    and the photos they were in are rebuilt, in the same transaction as the tree row goes. By the node's index. Returns rows
+    changed. The caller commits."""
+    from tagpup.store import journal   # the journal imports the people; not at import
+    photo_ids, changed, before = set(), 0, {}
+    for chunk in _chunks(sorted(set(tag_ids))):
+        marks = ",".join("?" * len(chunk))
+        for face_id, photo_id, name, held_source, held_person in conn.execute(
+                "SELECT id, photo_id, name, name_source, tag_id FROM faces WHERE tag_id IN (%s)" % marks, chunk):
+            photo_ids.add(photo_id)
+            before[face_id] = (name, held_source, held_person)
+        changed += conn.execute("UPDATE faces SET " + _unassign(conn) + ", name_source = ? WHERE tag_id IN (%s)" % marks,
+                                [source] + chunk).rowcount
+    # One journaled change of the faces' identity, in this transaction (History puts their names and decisions back).
+    journal.record_faces(conn, journal.PERSON_DELETED, before)
+    return _rebuilt(conn, photo_ids, changed)
+
+
+def rename_unresolved(conn, old, new):
+    """The faces and listed people called `old` (without case) whose name no person is filed under (no id) are called `new`
+    (Rename Person for a name with no tag). When `new` IS a person's name -- one node is called so -- the faces are that person's:
+    this writer knows the id, and writes it with the node's leaf (a name written alone would be on no person's page, and
+    nothing links it later: person_ids.link_added). A `new` two people have (or a group) is PersonProblem, naming them. Returns
+    (faces renamed, photos changed). The caller commits."""
+    key = old.strip().lower()
+    new_id, new = person_ids.target(conn, new)
+    spellings = {name for (name,) in conn.execute("SELECT DISTINCT name FROM faces WHERE tag_id IS NULL AND name IS NOT NULL")
+                 if name.strip().lower() == key}
+    photo_ids = {photo_id for spelling in spellings for (photo_id,) in conn.execute(
+        "SELECT DISTINCT photo_id FROM faces WHERE tag_id IS NULL AND name = ?", (spelling,))}
+    renamed = sum(conn.execute("UPDATE faces SET name = ?, tag_id = ? WHERE tag_id IS NULL AND name = ?",
+                               (new, new_id, spelling)).rowcount for spelling in spellings)
+    photo_ids |= {photo_id for (photo_id, name) in conn.execute(
+        "SELECT DISTINCT photo_id, name FROM photo_people WHERE tag_id IS NULL") if name.strip().lower() == key}
+    changed = people.rebuild(conn, sorted(photo_ids)) if photo_ids else 0
+    return renamed, changed
 
 
 def unname_photo(conn, photo_path):
@@ -551,7 +682,7 @@ def unname_photo(conn, photo_path):
     called each of them "nobody" for good, and automatch never named them again
     (docs/findings.md, #656)."""
     where, params = _on_photo(conn, photo_path)
-    changed = conn.execute("UPDATE faces SET name = NULL, name_source = 'manual' WHERE " + where
+    changed = conn.execute("UPDATE faces SET " + _unassign(conn) + ", name_source = 'manual' WHERE " + where
                            + " AND name IS NOT NULL", params).rowcount
     return _rebuilt(conn, {photo_id for (photo_id,) in conn.execute(
         "SELECT DISTINCT photo_id FROM faces WHERE " + where, params)}, changed)
@@ -561,7 +692,7 @@ def exclude(conn, face_ids, reason):
     """Take faces out of identity work, their names with them, as a decision. Returns
     rows excluded. The caller commits."""
     changed = sum(conn.execute(
-        "UPDATE faces SET excluded = 1, excluded_reason = ?, name = NULL, name_source = 'manual'"
+        "UPDATE faces SET excluded = 1, excluded_reason = ?, " + _unassign(conn) + ", name_source = 'manual'"
         " WHERE " + _in(chunk), [reason] + chunk).rowcount for chunk in _chunks(face_ids))
     return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
@@ -577,22 +708,26 @@ def restore(conn, face_ids):
     return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
 
-def named_elsewhere_in_photo(conn, photo_path, person_name, face_id, decided_only=False):
-    """Does a face in the photo other than `face_id` carry the name? By equality: a LIKE
-    retry scanned every face row, and read an underscore in a file name as any character.
-    With `decided_only`, only a name somebody decided counts, not a guess (name_source NULL)."""
+def named_elsewhere_in_photo(conn, photo_path, person, face_id, decided_only=False):
+    """Does a face in the photo other than `face_id` carry the person (an id, a tag path or a name: person_ids.target)? By
+    the node's id, or -- a name no person is filed under -- by the name's equality: a LIKE retry scanned every face row, and
+    read an underscore in a file name as any character. With `decided_only`, only a person somebody decided counts, not a
+    guess (name_source NULL)."""
     where, params = _on_photo(conn, photo_path)
-    return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND name = ? AND id != ?"
+    carried, carried_params = _carries(conn, person_ids.target(conn, person))
+    return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND " + carried + " AND id != ?"
                         + (" AND name_source IS NOT NULL" if decided_only else ""),
-                        params + (person_name, face_id)).fetchone() is not None
+                        tuple(params) + tuple(carried_params) + (face_id,)).fetchone() is not None
 
 
-def guesses_named(conn, photo_path, person_name, face_id):
-    """{id: name} of the faces of the photo other than `face_id` that carry the name as a guess (name_source NULL)."""
+def guesses_named(conn, photo_path, person, face_id):
+    """{id: person} of the faces of the photo other than `face_id` that carry the person as a guess (name_source NULL), the
+    person as it was given."""
     where, params = _on_photo(conn, photo_path)
-    return {other: person_name for (other,) in conn.execute(
-        "SELECT id FROM faces WHERE " + where + " AND name = ? AND id != ? AND name_source IS NULL",
-        params + (person_name, face_id))}
+    carried, carried_params = _carries(conn, person_ids.target(conn, person))
+    return {other: person for (other,) in conn.execute(
+        "SELECT id FROM faces WHERE " + where + " AND " + carried + " AND id != ? AND name_source IS NULL",
+        tuple(params) + tuple(carried_params) + (face_id,))}
 
 
 #: The faces of the photos under a folder, the photos found first: their range on
@@ -642,14 +777,20 @@ def unnamed_counts(conn, folder):
 
 # ---- What TagTuner's screens read -----------------------------------------------------
 
-def counts_by_name(conn):
-    """[(name, faces)] for everyone named, most faces first."""
-    return conn.execute("SELECT name, COUNT(*) AS count FROM faces WHERE name IS NOT NULL"
-                        " GROUP BY name ORDER BY count DESC").fetchall()
+def counts_by_person(conn):
+    """[(Ref, faces)] for everyone named, most faces first: a person is the node (the id), so two people called alike are two
+    rows; a name no person is filed under is one row by its name (without case)."""
+    counted = {}
+    for tag_id, name, count in conn.execute("SELECT tag_id, name, COUNT(*) FROM faces WHERE name IS NOT NULL"
+                                           " GROUP BY tag_id, name").fetchall():
+        key = person_ids.key_of(tag_id, name)
+        seen = counted.setdefault(key, [Ref(tag_id, name), 0])
+        seen[1] += count
+    return sorted(((ref, count) for ref, count in counted.values()), key=lambda found: -found[1])
 
 
 def identify_candidates(conn):
-    """(id, photo_path, the photo's people JSON, embedding length) of every nameless face
+    """(id, photo_path, the photo's people as JSON [[id, name]], embedding length) of every nameless face
     still in play: the Identify Faces queue.
 
     LENGTH(embedding) rather than the embedding: the queue groups faces by the people
@@ -658,15 +799,15 @@ def identify_candidates(conn):
     to answer a question about integers.
     """
     return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, p.path, " + PEOPLE_JSON + ", LENGTH(f.embedding) FROM faces f" + PHOTO
+        "SELECT f.id, p.path, " + PEOPLE_REFS_JSON + ", LENGTH(f.embedding) FROM faces f" + PHOTO
         + " WHERE f.name IS NULL AND f.excluded = 0").fetchall(), 1)
 
 
 def unnamed_for_matching(conn):
-    """(id, photo_path, box JSON, prob, mtime, embedding, year, people JSON) of every
+    """(id, photo_path, box JSON, prob, mtime, embedding, year, people as JSON [[id, name]]) of every
     nameless face still in play, for a person's Identify grid."""
     return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.year, " + PEOPLE_JSON + ""
+        "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.year, " + PEOPLE_REFS_JSON + ""
         " FROM faces f" + PHOTO + " WHERE f.name IS NULL AND f.excluded = 0").fetchall(), 1)
 
 
@@ -709,11 +850,11 @@ def unnamed_among(conn, face_ids):
 
 
 def names_by_photo(conn):
-    """{photo_path as stored: names on its faces}, for every photo with a named face."""
+    """{photo_path as stored: the people on its faces, as person_ids.key_of}, for every photo with a named face."""
     named = {}
-    for photo_path, name in store_roots.natives(conn, conn.execute(
-            "SELECT p.path, f.name FROM faces f" + PHOTO + " WHERE f.name IS NOT NULL").fetchall(), 0):
-        named.setdefault(photo_path, set()).add(name)
+    for photo_path, tag_id, name in store_roots.natives(conn, conn.execute(
+            "SELECT p.path, f.tag_id, f.name FROM faces f" + PHOTO + " WHERE f.name IS NOT NULL").fetchall(), 0):
+        named.setdefault(photo_path, set()).add(person_ids.key_of(tag_id, name))
     return named
 
 
@@ -723,18 +864,21 @@ def count_excluded(conn):
 
 
 def for_named_matrix(conn):
-    """(id, name, embedding) of every named face that has an embedding and is not
+    """(id, Ref, embedding) of every named face that has an embedding and is not
     excluded: what a face is compared against to say who it resembles."""
-    return conn.execute("SELECT id, name, embedding FROM faces"
-                        " WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()
+    return [(face_id, Ref(tag_id, name), embedding) for face_id, tag_id, name, embedding in conn.execute(
+        "SELECT id, tag_id, name, embedding FROM faces"
+        " WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()]
 
 
 def for_decided_matrix(conn):
-    """(id, name, embedding, name_source, photo_id) of every named face that has an embedding
+    """(id, Ref, embedding, name_source, photo_id) of every named face that has an embedding
     and is not excluded: the candidates for what automatch compares a face against. The
     caller keeps those a person decided (tagpup.services.identify.decided_faces)."""
-    return conn.execute("SELECT id, name, embedding, name_source, photo_id FROM faces"
-                        " WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()
+    return [(face_id, Ref(tag_id, name), embedding, source, photo_id)
+            for face_id, tag_id, name, embedding, source, photo_id in conn.execute(
+                "SELECT id, tag_id, name, embedding, name_source, photo_id FROM faces"
+                " WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()]
 
 
 def embedding_row(conn, face_id):
@@ -743,9 +887,11 @@ def embedding_row(conn, face_id):
 
 
 def in_photo_with_names(conn, photo_path):
-    """(id, box JSON, name, embedding, excluded) of each face in one photo."""
+    """(id, box JSON, Ref or None, embedding, excluded) of each face in one photo."""
     where, params = _on_photo(conn, photo_path)
-    return conn.execute("SELECT id, box, name, embedding, excluded FROM faces WHERE " + where, params).fetchall()
+    return [(face_id, box, _ref(tag_id, name), embedding, excluded)
+            for face_id, box, tag_id, name, embedding, excluded in conn.execute(
+                "SELECT id, box, tag_id, name, embedding, excluded FROM faces WHERE " + where, params).fetchall()]
 
 
 def photos_with_unnamed(conn, every=False):
@@ -764,26 +910,41 @@ def photos_with_unnamed(conn, every=False):
         + " ORDER BY p.mtime DESC").fetchall(), 0)
 
 
-def count_named(conn, person_name):
-    """How many faces carry the name."""
-    return conn.execute("SELECT COUNT(*) FROM faces WHERE name = ?", (person_name,)).fetchone()[0]
+def count_named(conn, person):
+    """How many faces carry the person (an id, a tag path or a name: person_ids.target): by the node's id (idx_faces_tag)."""
+    where, params = _carries(conn, person_ids.target(conn, person))
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE " + where, params).fetchone()[0]
 
 
-def person_embeddings(conn, person_name):
+def count_of_people(conn, person_ids_, named=None):
+    """How many faces name any of the people `person_ids_` (their nodes' ids; idx_faces_tag) -- and, with `named`, now carry that
+    name: what a rename reports, counted after the write."""
+    ids = list(person_ids_)
+    if not ids:
+        return 0
+    marks = ",".join("?" * len(ids))
+    if named is None:
+        return conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id IN (%s)" % marks, ids).fetchone()[0]
+    return conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id IN (%s) AND name = ?" % marks, ids + [named]).fetchone()[0]
+
+
+def person_embeddings(conn, person):
     """(embedding, mtime, year, photo_path) of each of a person's faces that
     has an embedding: what their era-aware centroids are made from."""
+    where, params = _carries(conn, person_ids.target(conn, person), "f.")
     return store_roots.natives(conn, conn.execute(
         "SELECT f.embedding, p.mtime, p.year, p.path FROM faces f" + PHOTO
-        + " WHERE f.name = ? AND f.embedding IS NOT NULL", (person_name,)).fetchall(), 3)
+        + " WHERE " + where + " AND f.embedding IS NOT NULL", params).fetchall(), 3)
 
 
-def person_page(conn, person_name, limit, offset):
+def person_page(conn, person, limit, offset):
     """(id, photo_path, box JSON, prob, mtime, embedding, year) of a page of a
     person's faces. A negative limit is no limit."""
+    where, params = _carries(conn, person_ids.target(conn, person), "f.")
     return store_roots.natives(conn, conn.execute(
         "SELECT f.id, p.path, f.box, f.prob, p.mtime, f.embedding, p.year"
-        " FROM faces f" + PHOTO + " WHERE f.name = ? LIMIT ? OFFSET ?",
-        (person_name, limit, offset)).fetchall(), 1)
+        " FROM faces f" + PHOTO + " WHERE " + where + " LIMIT ? OFFSET ?",
+        list(params) + [limit, offset]).fetchall(), 1)
 
 
 def excluded_for_review(conn):
@@ -797,20 +958,22 @@ def excluded_for_review(conn):
 # ---- What TagPup's photo panel and the CLI read -----------------------------------------
 
 def in_photo_for_panel(conn, photo_path):
-    """(id, box JSON, name, prob, embedding, excluded, excluded_reason) of each face in one
+    """(id, box JSON, Ref or None, prob, embedding, excluded, excluded_reason) of each face in one
     photo, in detection order."""
     where, params = _on_photo(conn, photo_path)
-    return conn.execute("SELECT id, box, name, prob, embedding, excluded, excluded_reason"
-                        " FROM faces WHERE " + where + " ORDER BY id", params).fetchall()
+    return [(face_id, box, _ref(tag_id, name), prob, embedding, excluded, reason)
+            for face_id, box, tag_id, name, prob, embedding, excluded, reason in conn.execute(
+                "SELECT id, box, tag_id, name, prob, embedding, excluded, excluded_reason"
+                " FROM faces WHERE " + where + " ORDER BY id", params).fetchall()]
 
 
 def named_embeddings_elsewhere(conn, photo_path):
-    """(name, embedding) of every named, unexcluded face in any photo but this one: who a
+    """(Ref, embedding) of every named, unexcluded face in any photo but this one: who a
     face in it might be."""
     where, params = _on_photo(conn, photo_path)
-    return conn.execute("SELECT name, embedding FROM faces"
-                        " WHERE name IS NOT NULL AND excluded = 0 AND NOT (" + where + ")",
-                        params).fetchall()
+    return [(Ref(tag_id, name), embedding) for tag_id, name, embedding in conn.execute(
+        "SELECT tag_id, name, embedding FROM faces"
+        " WHERE name IS NOT NULL AND excluded = 0 AND NOT (" + where + ")", params).fetchall()]
 
 
 def photos_with_faces(conn):
@@ -820,7 +983,8 @@ def photos_with_faces(conn):
 
 
 def names_by_photo_key(conn):
-    """{paths.key of a photo: names on its faces that are not excluded}."""
+    """{paths.key of a photo: the NAMES on its faces that are not excluded}: what a photo's list of people names
+    (photos.people holds names, however many people share one)."""
     named = {}
     for photo_path, name in store_roots.natives(conn, conn.execute(
             "SELECT p.path, f.name FROM faces f" + PHOTO + " WHERE f.name IS NOT NULL AND f.excluded = 0").fetchall(),
@@ -839,10 +1003,11 @@ def counts_on(conn, stored_path):
 # ---- What dedupe_faces reads and writes -------------------------------------------------
 
 def decisions(conn):
-    """(id, photo_path, box JSON, name, name_source, excluded) of every face: what was
+    """(id, photo_path, box JSON, Ref or None, name_source, excluded) of every face: what was
     decided about each, without its embedding or crop."""
-    return store_roots.natives(conn, conn.execute(
-        "SELECT f.id, p.path, f.box, f.name, f.name_source, f.excluded FROM faces f" + PHOTO).fetchall(), 1)
+    return [(face_id, photo_path, box, _ref(tag_id, name), source, excluded)
+            for face_id, photo_path, box, tag_id, name, source, excluded in store_roots.natives(conn, conn.execute(
+                "SELECT f.id, p.path, f.box, f.tag_id, f.name, f.name_source, f.excluded FROM faces f" + PHOTO).fetchall(), 1)]
 
 
 def delete(conn, face_ids):

@@ -59,11 +59,12 @@ KINDS = {
     26: schema.ADDITIVE,     # library_identity and folder_ids, empty
     27: schema.ADDITIVE,     # search_gear: the camera and lens words a search matches (derived)
     28: schema.ADDITIVE,     # idx_faces_tag, idx_photo_people_tag and name_review_dismissals (empty)
+    29: schema.ADDITIVE,     # the trigger that keeps a person faces name from being deleted; the faces' generation moves with tag_id
 }
 
 
-#: The migrations that only make indexes.
-INDEX_ONLY = (20, 22, 23)
+#: The migrations that only make indexes (and, for 29, a trigger): they change no row of any table.
+INDEX_ONLY = (20, 22, 23, 29)
 
 
 class TheNamesTestsExpect(unittest.TestCase):

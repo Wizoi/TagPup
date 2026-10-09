@@ -52,6 +52,22 @@ def decided(library):
     return lambda: identify_jobs.decided_faces(library, identify_cache.of(library))
 
 
+def person_arg(person_id, name):
+    """The person a request names, from its `person_id` and its name (the handler reads both: `body.get("person_id")`,
+    `body.get("person_name")`): the id of their node when it carries one (what a page that has the person sends), else the
+    name, trimmed (the CLI, the MCP, a page not reloaded since the update). None when it names nobody. 400 for an id that is not
+    a number. A name two people have, a group, and an id that is no person are answered by the service that is given
+    them: 400 naming the candidates, 400, and 404."""
+    if person_id is not None and person_id != "":
+        if isinstance(person_id, bool):
+            abort(400, description="Invalid 'person_id' parameter")
+        try:
+            return int(person_id)
+        except (TypeError, ValueError):
+            abort(400, description="Invalid 'person_id' parameter")
+    return str(name).strip() or None if name is not None else None
+
+
 def int_arg(name, what):
     """A query parameter that must be an integer, or the 400 the old handlers sent."""
     value = request.args.get(name)
@@ -80,12 +96,13 @@ def face_matches():
 @routes.get("/api/people-faces")
 def people_faces():
     """{name: face id}: the face most like each person, for the people list shown by face
-    (tagpup.services.identify.representative_faces). A person with no readable face is
+    (tagpup.services.identify.representative_faces), keyed by the person's name when nobody else is called alike and by
+    `id:<id>` for every person with a node (identify.for_pages). A person with no readable face is
     absent; the crop is /api/face-crop?id=."""
     library = state.require()
     if not library_there(library):
         return jsonify({})
-    return jsonify(identify_jobs.representative_faces(library, identify_cache.of(library)))
+    return jsonify(identify_service.for_pages(library, identify_jobs.representative_faces(library, identify_cache.of(library))))
 
 
 @routes.get("/api/people-face-samples")
@@ -98,7 +115,7 @@ def people_face_samples():
     library = state.require()
     if not library_there(library):
         return jsonify({})
-    return jsonify(identify_jobs.face_samples(library, identify_cache.of(library)))
+    return jsonify(identify_service.for_pages(library, identify_jobs.face_samples(library, identify_cache.of(library))))
 
 
 # ---- The writes of one face ------------------------------------------------------------------
@@ -123,6 +140,8 @@ def faces_write(library, action):
         abort(404, description=str(missing))
     except Conflict as conflict:
         refuse(409, str(conflict))
+    except Refused as why:
+        refuse(400, str(why))
     except Exception as e:
         logger.error("Error in a face action: %s", e)
         abort(500, description="Internal error: %s" % e)
@@ -313,15 +332,15 @@ def face_match():
     was another person's."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    face_id, person_name = body.get("face_id"), body.get("person_name")
-    if face_id is None or not person_name:
+    face_id, person = body.get("face_id"), person_arg(body.get("person_id"), body.get("person_name"))
+    if face_id is None or person is None:
         abort(400, description="Missing face_id or person_name")
     try:
-        face_id, person_name = int(face_id), str(person_name).strip()
+        face_id = int(face_id)
     except (ValueError, TypeError):
         abort(400, description="Invalid parameters")
     writer = writer_for(library, bool(body.get("page_writes_tags")))
-    result = faces_write(library, lambda lib: face_people.name_face(lib, face_id, person_name, writer))
+    result = faces_write(library, lambda lib: face_people.name_face(lib, face_id, person, writer))
     # What the write changed, not what was asked: naming a face the name it has is no change.
     return jsonify({"success": True, "changed": result.changed, **tags_reply(result)})
 

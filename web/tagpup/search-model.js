@@ -16,6 +16,7 @@
 // as a tag: they are offered by name.
 import { compareTagNames, joinTag } from './common/vocabulary.js';
 import { memberLabel, viewLabel } from './library-source.js';
+import { personSource } from './navigator-model.js';
 
 /** The most names the picker shows at once; more are counted ("12 more: keep typing"). */
 export const PICKER_MAX = 30;
@@ -35,7 +36,7 @@ export function pickerNames(keywords, people) {
             if (!person.groupTag && branches.has(key)) continue;   // a branch is never a person (#660)
             if (person.groupTag) personNodes.add(joinTag(person.groupTag, person.name).toLowerCase());
             names.push({
-                member: { kind: 'person', value: person.name, recursive: false }, label: person.name, hint: person.groupTag || '',
+                member: { kind: 'person', value: personSource(person), recursive: false }, label: person.name, hint: person.groupTag || '',
                 count: person.count, what: 'person', words: [key],
             });
         }
@@ -107,7 +108,10 @@ export function chipLabel(member) {
  * or deleted since: the chip says so, and the search answers what the library holds.
  */
 export function chipKnown(member, keywords, people) {
-    if (member.kind === 'person') return people ? people.byLower.has(String(member.value).toLowerCase()) : null;
+    if (member.kind === 'person') {
+        const wanted = String(member.value).toLowerCase();
+        return people ? people.byLower.has(wanted) || (!!people.byPersonTag && people.byPersonTag.has(wanted)) : null;
+    }
     if (member.kind === 'keyword' || member.kind === 'keyword_only') {
         return keywords ? keywords.byTag.has(member.value) || keywords.byLower.has(String(member.value).toLowerCase()) : null;
     }

@@ -90,7 +90,8 @@ class NamingAddsThePersonToThePhoto(InStep):
         face = self.face(photo)
         reply = self.tuner_post("face/match", {"face_id": face, "person_name": ODA})
         self.assertEqual(400, reply.status_code)
-        self.assertIn("more than one place", reply.get_json()["error"])
+        self.assertIn("More than one person is called", reply.get_json()["error"])
+        self.assertIn("People/Pairs/" + ODA, reply.get_json()["error"], "it names the candidates")
         self.assertIsNone(self.row(face)[0])
         self.assertEqual(0, self.files.writes)
 

@@ -1,11 +1,12 @@
-"""People by their node's id, stage 1 (tagpup.store.person_ids; docs/ARCHITECTURE.md, "Identity by id").
+"""People by their node's id (tagpup.store.person_ids; docs/ARCHITECTURE.md, "Identity by id").
 
-`faces.tag_id` and `photo_people.tag_id` sit beside `name` and hold the id of the one person node the
-name is -- NULL for a name no person node is called, or two are. Migration 21 fills them, one lookup per
-distinct name; every write that sets a name, every edit of the tree and every undo keeps them, in its
-own transaction. Each case here is a way that goes wrong: the migration interrupted, a name recorded in
-the journal before the column existed, a snapshot from before it, the tree renamed or edited between two
-writes, a tag the tree lacks, a node deleted while faces name it, two libraries naming one person with
+`faces.tag_id` and `photo_people.tag_id` sit beside `name` and hold the id of the person node a row means -- NULL for a name
+no person node is called, or that two are and nothing said which. Stage 1: migration 21 fills them, one lookup per distinct
+name. Stage 2: the id is the PERSON and the name beside it a cache of the node's leaf (a rename of the node changes it, the
+id never); a writer takes the person by id (or by a name that is one person's), a tree edit that renames, moves or merges a
+person keeps their faces by id, and a node that faces name is not deleted. Each case here is a way that goes wrong: the
+migration interrupted, a name recorded in the journal before the column existed, a snapshot from before it, the tree renamed
+or edited between two writes, a tag the tree lacks, a node deleted while faces name it, two libraries naming one person with
 different ids.
 
 Rows are made as the code that makes them makes them: a face by tagpup.store.faces, a photo by the
@@ -140,8 +141,13 @@ class WritesKeepTheId(Library):
         self.assertEqual(node_id(self.path, "People/" + WREN), self.face_id(made))
 
     def test_a_name_filed_twice_or_nowhere_has_no_id_and_is_reported(self):
-        self.name([self.faces[0]], ASH)
+        """A name two people have is refused when a face is named by it (nobody is guessed); a row that holds it anyway --
+        written by something that knew no ids -- stays a name with no id, and the doctor lists it."""
+        with self.assertRaises(person_ids.AmbiguousPerson):
+            self.name([self.faces[0]], ASH)
         self.name([self.faces[2]], NOBODY)
+        write(self.path, lambda conn: conn.execute("UPDATE faces SET name = ? WHERE id = ?", (ASH, self.faces[0])))
+        write(self.path, lambda conn: people.rebuild(conn))
         self.assertEqual([None, None], [self.face_id(self.faces[0]), self.face_id(self.faces[2])])
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:
@@ -151,48 +157,54 @@ class WritesKeepTheId(Library):
             conn.close()
         self.assertEqual({ASH: 2}, found.several, "a face and the photo's list")
         self.assertEqual({NOBODY: 2}, found.none)
-        self.assertEqual(0, results["faces whose person id is not their name's"])
-        self.assertEqual(0, results["people listed whose person id is not their name's"])
+        self.assertEqual(0, results["faces whose name is not their person's"])
+        self.assertEqual(0, results["people listed whose name is not their person's"])
 
-    def test_renaming_a_person_follows_through_the_tree_and_the_faces(self):
-        """TagTuner's rename: the tree's node moves (one transaction), the files are rewritten, then the
-        faces are renamed (another). Between the two the faces' old name names no node: no id, never the
-        renamed node's under a name it no longer has."""
+    def test_renaming_a_person_is_one_transaction_and_the_id_stays(self):
+        """TagTuner's rename moves the node, and the faces take its new name in the same transaction (the cache of its
+        leaf): no moment has a face with a name that no node has -- stage 1 left the faces' id NULL until a second
+        transaction renamed them."""
         self.name([self.faces[0], self.faces[2]], ODA)
         oda = node_id(self.path, "Family/Coast/" + ODA)
         write(self.path, lambda conn: taxonomy.move_branch(conn, "Family/Coast/" + ODA, "Family/Coast/Oda Vance"))
         self.assertEqual(oda, node_id(self.path, "Family/Coast/Oda Vance"), "the node keeps its id")
-        self.assertEqual({ODA: {None}}, {k: v for k, v in ids_of(self.path).items()})
-        self.assertEqual([0, 0], in_step(self.path))
-        write(self.path, lambda conn: people.rename(conn, ODA, "Oda Vance"))
         self.assertEqual({"Oda Vance": {oda}}, ids_of(self.path))
         self.assertEqual({oda}, ids_of(self.path, "photo_people")["Oda Vance"])
         self.assertEqual([0, 0], in_step(self.path))
 
-    def test_a_node_deleted_while_faces_name_it_leaves_no_id_naming_it(self):
+    def test_a_node_a_face_names_is_not_deleted_without_force(self):
         self.name([self.faces[0]], ODA)
-        gone = node_id(self.path, "Family/Coast/" + ODA)
-        write(self.path, lambda conn: taxonomy.remove_node(conn, "Family/Coast/" + ODA))
-        self.assertIsNone(self.face_id(self.faces[0]))
-        self.assertEqual([], look(self.path, "SELECT 1 FROM faces WHERE tag_id = ? UNION ALL"
-                                             " SELECT 1 FROM photo_people WHERE tag_id = ?", (gone, gone)))
+        oda = node_id(self.path, "Family/Coast/" + ODA)
+        with self.assertRaises(person_ids.PersonInUse) as refused:
+            write(self.path, lambda conn: taxonomy.remove_node(conn, "Family/Coast/" + ODA))
+        self.assertIn("1 face(s)", str(refused.exception))
+        self.assertEqual(oda, self.face_id(self.faces[0]), "nothing was written")
+        write(self.path, lambda conn: taxonomy.remove_node(conn, "Family/Coast/" + ODA, force=True))
+        self.assertIsNone(node_id(self.path, "Family/Coast/" + ODA))
+        self.assertEqual((None, None), look(self.path, "SELECT tag_id, name FROM faces WHERE id = ?", (self.faces[0],))[0])
+        self.assertEqual([0, 0], in_step(self.path))
 
-    def test_a_second_node_of_the_same_name_takes_the_id_away_and_removing_it_gives_it_back(self):
+    def test_a_second_node_of_the_same_name_does_not_take_the_id_away(self):
         self.name([self.faces[0]], ODA)
         oda = node_id(self.path, "Family/Coast/" + ODA)
         write(self.path, lambda conn: taxonomy.add_node(conn, "People/" + ODA))
-        self.assertIsNone(self.face_id(self.faces[0]), "which of the two is a guess")
+        self.assertEqual(oda, self.face_id(self.faces[0]), "which of the two is the person is the id's to say")
         write(self.path, lambda conn: taxonomy.remove_node(conn, "People/" + ODA))
         self.assertEqual(oda, self.face_id(self.faces[0]))
 
-    def test_a_person_given_a_tag_under_them_is_a_branch_and_loses_the_id(self):
-        """The leaf rule (#660): a person is a node with nothing under it. A node made under a person
-        makes them a branch -- no id, by the tree's edit -- and taking it away gives the id back."""
+    def test_a_person_given_a_tag_under_them_keeps_the_id_but_is_a_group_now(self):
+        """Existing violations are not converted (rule a is a refusal of the owner's actions): the face still names the
+        node; it is not a person any more (#660), so a request for them as a person is refused."""
         self.name([self.faces[0]], ODA)
         oda = node_id(self.path, "Family/Coast/" + ODA)
         write(self.path, lambda conn: taxonomy.add_node(conn, "Family/Coast/%s/Swim Team" % ODA))
-        self.assertIsNone(self.face_id(self.faces[0]))
-        self.assertEqual({None}, ids_of(self.path, "photo_people")[ODA])
+        self.assertEqual(oda, self.face_id(self.faces[0]))
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        try:
+            with self.assertRaises(person_ids.GroupNotPerson):
+                person_ids.resolve(conn, oda)
+        finally:
+            conn.close()
         write(self.path, lambda conn: taxonomy.remove_node(conn, "Family/Coast/%s/Swim Team" % ODA))
         self.assertEqual(oda, self.face_id(self.faces[0]))
         self.assertEqual([0, 0], in_step(self.path))
@@ -202,10 +214,10 @@ class WritesKeepTheId(Library):
         self.name([self.faces[0]], ODA)
         self.assertEqual(node_id(self.path, "Family/Coast/" + ODA), self.face_id(self.faces[0]))
 
-    def test_a_branch_no_longer_holding_faces_names_nobody(self):
+    def test_a_branch_no_longer_holding_faces_keeps_the_faces_it_has(self):
         self.name([self.faces[0]], ODA)
         write(self.path, lambda conn: taxonomy.set_branch_flags(conn, "Family", has_face=0))
-        self.assertIsNone(self.face_id(self.faces[0]))
+        self.assertEqual(node_id(self.path, "Family/Coast/" + ODA), self.face_id(self.faces[0]))
         self.assertEqual([0, 0], in_step(self.path))
 
     def test_a_tag_in_a_file_the_tree_lacks_gets_a_new_node_never_an_old_id(self):
@@ -215,6 +227,7 @@ class WritesKeepTheId(Library):
         write(self.path, lambda conn: taxonomy.remove_node(conn, "Trips/Coast"))
         self.name([self.faces[2]], NOBODY)
         self.assertIsNone(self.face_id(self.faces[2]))
+        self.assertEqual(NOBODY, look(self.path, "SELECT name FROM faces WHERE id = ?", (self.faces[2],))[0][0])
         tree = taxonomy.TagTaxonomy(self.path)
         tree.load()
         tree.add_people([NOBODY])
@@ -293,7 +306,8 @@ class TheMigration(unittest.TestCase):
             photo_rows.add_read(conn, photo, {"XMP:Subject": ["People/" + WREN]})
             made = [faces.insert(conn, photo, [n, 0, n + 5, 5], bytes([n])) for n in range(5)]
             for face, who in zip(made, (ODA, WREN.lower(), ASH, NOBODY, "People")):
-                faces.name(conn, [face], who)
+                conn.execute("UPDATE faces SET name = ?, name_source = 'manual' WHERE id = ?", (who, face))   # no id yet
+            people.rebuild(conn)
             conn.commit()
         finally:
             conn.close()
@@ -314,7 +328,9 @@ class TheMigration(unittest.TestCase):
         self.assertEqual([node_id(path, "Family/Coast/" + ODA), node_id(path, "People/" + WREN), None, None, None],
                          [held[face] for face in made], "a root is a category, not a person")
         self.assertEqual({node_id(path, "People/" + WREN)}, ids_of(path, "photo_people")[WREN])
-        self.assertEqual([0, 0], in_step(path))
+        # The migration changes no name: the face spelled in lower case still is, and the doctor says so.
+        self.assertEqual([1, 0], in_step(path))
+        self.assertEqual("wren halloway", look(path, "SELECT name FROM faces WHERE id = ?", (made[1],))[0][0])
         # migrations 22 and 23 (indexes), 24 (the word index) and 25 (faces_detected) are recorded after it
         skipped = migration_names.operations_after(21)
         operation, summary = look(path, "SELECT operation, summary FROM changes WHERE operation NOT IN (%s)"
@@ -361,7 +377,7 @@ class TheMigration(unittest.TestCase):
     def test_interrupted_part_way_leaves_the_library_at_20_and_a_second_run_does_it(self):
         _home, path, made = self.library_at_20()
         schema._current.clear()
-        with mock.patch.object(person_ids, "sync", side_effect=RuntimeError("the power went")):
+        with mock.patch.object(person_ids, "fill", side_effect=RuntimeError("the power went")):
             with self.assertRaises(RuntimeError):
                 schema.ensure(path)
         self.assertEqual([(20,)], look(path, "SELECT MAX(version) FROM schema_version"))
@@ -391,12 +407,14 @@ class TheMigration(unittest.TestCase):
         self.assertEqual([(schema.LATEST,)], look(path, "SELECT MAX(version) FROM schema_version"))
         self.assertEqual(node_id(path, "Family/Coast/" + ODA),
                          look(path, "SELECT tag_id FROM faces WHERE id = ?", (made[0],))[0][0])
+        self.assertEqual([1, 0], in_step(path), "the lower-case spelling is a cache the repair puts right")
+        person_ids.repair(path)
         self.assertEqual([0, 0], in_step(path))
 
     def test_a_change_recorded_before_it_is_undone_after_it_and_the_face_gets_its_id(self):
         """A face deleted by a journaled change at version 20 (dedupe_faces) was recorded without the
         column. The migration blocks no undo of it (schema.ADDS_DERIVED_COLUMNS); the undo puts the row
-        back as recorded and gives it its person's id."""
+        back as recorded: a name and no id, which nothing links by the name alone (person_ids.link_added)."""
         _home, path, made = self.library_at_20()
         schema._current.clear()
         with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:20]), mock.patch.object(schema, "LATEST", 20):
@@ -411,8 +429,7 @@ class TheMigration(unittest.TestCase):
             conn.close()
         self.assertTrue(journal.rehearse_undo(path, applied.change_id).exact)
         journal.undo(path, applied.change_id)
-        self.assertEqual([(ODA, node_id(path, "Family/Coast/" + ODA))],
-                         look(path, "SELECT name, tag_id FROM faces WHERE id = ?", (made[0],)))
+        self.assertEqual([(ODA, None)], look(path, "SELECT name, tag_id FROM faces WHERE id = ?", (made[0],)))
         self.assertEqual([0, 0], in_step(path))
 
     def test_the_columns_it_says_are_derived_are_the_ones_it_adds(self):
@@ -428,13 +445,59 @@ class TheMigration(unittest.TestCase):
 
 
 class TheJournal(Library):
-    def test_an_undone_rename_of_a_node_gives_the_faces_back_their_id(self):
+    def test_a_node_the_faces_name_cannot_be_deleted_by_a_change(self):
         self.name([self.faces[0]], ODA)
         oda = node_id(self.path, "Family/Coast/" + ODA)
-        applied = journal.apply(self.path, "merge", [journal.delete("tag_taxonomy", (oda,), {"tag": "Family/Coast/" + ODA})])
-        self.assertIsNone(self.face_id(self.faces[0]))
-        journal.undo(self.path, applied.change_id)
+        with self.assertRaises(journal.Refusal) as refused:
+            journal.apply(self.path, "merge", [journal.delete("tag_taxonomy", (oda,), {"tag": "Family/Coast/" + ODA})])
+        self.assertIn("faces", str(refused.exception))
         self.assertEqual(oda, self.face_id(self.faces[0]))
+
+    def test_the_undo_of_a_nodes_insert_gives_the_faces_linked_to_it_their_name_back(self):
+        """A face carrying the name of a person made later is linked to them (the settle that follows a write); undoing the
+        insert takes the node away and leaves the name -- unless a person named the face, which is theirs."""
+        write(self.path, lambda conn: conn.execute("UPDATE faces SET name = 'Maren Oakhollow' WHERE id = ?", (self.faces[0],)))
+        applied = journal.apply(self.path, "add a person", [journal.insert("tag_taxonomy", {
+            "tag": "Friends/Maren Oakhollow", "parent_id": node_id(self.path, "Friends"), "name": "Maren Oakhollow",
+            "has_face": 1})])
+        made = node_id(self.path, "Friends/Maren Oakhollow")
+        self.assertEqual(made, self.face_id(self.faces[0]))
+        self.assertTrue(journal.rehearse_undo(self.path, applied.change_id).exact)
+        journal.undo(self.path, applied.change_id)
+        self.assertIsNone(self.face_id(self.faces[0]))
+        self.assertEqual("Maren Oakhollow", look(self.path, "SELECT name FROM faces WHERE id = ?", (self.faces[0],))[0][0])
+        again = journal.apply(self.path, "add a person", [journal.insert("tag_taxonomy", {
+            "tag": "Friends/Maren Oakhollow", "parent_id": node_id(self.path, "Friends"), "name": "Maren Oakhollow",
+            "has_face": 1})])
+        write(self.path, lambda conn: faces.name(conn, [self.faces[0]], node_id(self.path, "Friends/Maren Oakhollow")))
+        with self.assertRaises(journal.Refusal) as refused:
+            journal.undo(self.path, again.change_id)
+        self.assertIn("unname them first", str(refused.exception))
+
+    def test_a_rename_between_a_naming_and_its_undo_is_not_a_conflict(self):
+        """The change records the person's id and, beside it, the name as a cache: the rename of the node changes the cache
+        and not the face, so the undo finds the face as the change left it."""
+        oda = node_id(self.path, "Family/Coast/" + ODA)
+        applied = journal.apply(self.path, "name a face", [journal.update(
+            "faces", (self.faces[0],), {"name": None, "tag_id": None}, {"name": ODA, "tag_id": oda}, kind="named")])
+        write(self.path, lambda conn: taxonomy.move_branch(conn, "Family/Coast/" + ODA, "Family/Coast/Oda Vance"))
+        self.assertEqual((oda, "Oda Vance"), look(self.path, "SELECT tag_id, name FROM faces WHERE id = ?", (self.faces[0],))[0])
+        self.assertTrue(journal.rehearse_undo(self.path, applied.change_id).exact)
+        journal.undo(self.path, applied.change_id)
+        self.assertEqual((None, None), look(self.path, "SELECT tag_id, name FROM faces WHERE id = ?", (self.faces[0],))[0])
+
+    def test_a_change_that_recorded_the_name_alone_is_replayed_by_the_name(self):
+        """Entries from before the id was recorded: the undo puts the name back and nothing else decides who it is -- the face is
+        an unresolved name (for the names to review), however unique the name is now: a journal that knows only a name does
+        not guess (person_ids.link_added is the one place that links one)."""
+        oda = node_id(self.path, "Family/Coast/" + ODA)
+        self.name([self.faces[0]], ODA)
+        applied = journal.apply(self.path, "unname", [journal.update(
+            "faces", (self.faces[0],), {"name": ODA}, {"name": None, "name_source": "manual"}, kind="unnamed")])
+        journal.undo(self.path, applied.change_id)
+        self.assertIsNone(self.face_id(self.faces[0]))
+        self.assertEqual(ODA, look(self.path, "SELECT name FROM faces WHERE id = ?", (self.faces[0],))[0][0])
+        self.assertEqual(oda, node_id(self.path, "Family/Coast/" + ODA), "the person is still there, and not linked")
         self.assertEqual([0, 0], in_step(self.path))
 
     def test_a_face_deleted_and_put_back_rehearses_exactly(self):
@@ -462,13 +525,30 @@ class TheDoctor(Library):
         self.assertEqual([1, 0], in_step(self.path))
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:
-            found = {check.name: check for check in checks.run(conn)}["faces whose person id is not their name's"]
+            found = {check.name: check for check in checks.run(conn)}["faces whose name is not their person's"]
         finally:
             conn.close()
         self.assertEqual((1, [self.faces[0]]), (found.count, found.examples))
         self.assertEqual({"faces": 1, "photo_people": 0}, person_ids.repair(self.path))
         self.assertEqual([0, 0], in_step(self.path))
-        self.assertEqual(node_id(self.path, "People/" + WREN), self.face_id(self.faces[0]))
+        # The id is the person; the name was a cache and is put right, not the id.
+        self.assertEqual((node_id(self.path, "Family/Coast/" + ODA), ODA),
+                         look(self.path, "SELECT tag_id, name FROM faces WHERE id = ?", (self.faces[0],))[0])
+
+    def test_repairing_only_the_people_does_not_rebuild_every_photos_derived_rows(self):
+        """Fix round 3: after the ids were put right the doctor compared the number of lines with whether any list was left, and so
+        rebuilt the keyword, folder and metadata rows of every photo though only the people were wrong."""
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import doctor
+        self.name([self.faces[0]], ODA)
+        write(self.path, lambda conn: conn.execute("UPDATE faces SET name = ? WHERE id = ?", (ODA.lower(), self.faces[0])))
+        with mock.patch.object(doctor.derived, "repair", side_effect=AssertionError("the photos were rebuilt")), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(0, doctor.rebuild_derived(self.path, apply=True))
+        self.assertEqual([0, 0], in_step(self.path))
 
     def test_the_tool_reports_and_with_apply_repairs(self):
         import io
@@ -476,19 +556,24 @@ class TheDoctor(Library):
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
         import doctor
         self.name([self.faces[0]], ODA)
-        self.name([self.faces[2]], ASH)
+        self.name([self.faces[1]], WREN)
         conn = db.connect(self.path)
         try:
-            conn.execute("UPDATE faces SET tag_id = NULL WHERE id = ?", (self.faces[0],))
+            conn.execute("UPDATE faces SET tag_id = NULL WHERE id = ?", (self.faces[1],))   # a name whose id was not written
+            conn.execute("UPDATE faces SET name = ? WHERE id = ?", (ASH, self.faces[2]))   # a name two people have, no id
+            people.rebuild(conn)
+            conn.execute("UPDATE faces SET name = ? WHERE id = ?", (ODA.lower(), self.faces[0]))   # a cache the node does not spell so
             conn.commit()
         finally:
             conn.close()
         said = io.StringIO()
         with redirect_stdout(said):
-            self.assertEqual(1, doctor.report(self.path))
+            self.assertEqual(2, doctor.report(self.path), "the face, and the photo whose list now differs from the face's")
         text = said.getvalue()
-        self.assertIn("faces whose person id is not their name's", text)
+        self.assertIn("faces whose name is not their person's", text)
         self.assertIn("names with several person nodes: 1", text)
+        self.assertIn("names one person is called whose rows are linked to nobody: 1", text,
+                      "a name whose id was not written is reported, and linked only by the owner (people link-name)")
         self.assertNotIn(ASH, text, "names only with --show")
         said = io.StringIO()
         with redirect_stdout(said):
@@ -497,6 +582,7 @@ class TheDoctor(Library):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(0, doctor.rebuild_derived(self.path, apply=True))
         self.assertEqual([0, 0], in_step(self.path))
+        self.assertIsNone(self.face_id(self.faces[1]), "the repair links no name: the owner does")
 
 
     def test_a_name_on_a_branch_has_no_id_and_is_reported_with_the_node(self):
@@ -504,7 +590,10 @@ class TheDoctor(Library):
         whose only node has nodes under it -- a group such as Family/Coast -- has no id; the name itself is
         left as it is (stage 1 renames and unnames nothing), and the doctor lists it with the node's id,
         the name only with --show."""
-        self.name([self.faces[0]], "Coast")
+        with self.assertRaises(person_ids.GroupNotPerson):
+            self.name([self.faces[0]], "Coast")
+        write(self.path, lambda conn: conn.execute("UPDATE faces SET name = 'Coast' WHERE id = ?", (self.faces[0],)))
+        write(self.path, lambda conn: people.rebuild(conn))
         coast = node_id(self.path, "Family/Coast")
         self.assertIsNone(self.face_id(self.faces[0]))
         self.assertEqual("Coast", look(self.path, "SELECT name FROM faces WHERE id = ?", (self.faces[0],))[0][0])

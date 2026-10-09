@@ -10,7 +10,7 @@ from tagpup.files import exiftool_session, field_values, metadata, names
 from tagpup.services import damaged_photos, file_changes, file_only, libraries
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
-from tagpup.store import photos, taxonomy
+from tagpup.store import db, person_ids, photos, taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,26 @@ logger = logging.getLogger(__name__)
 #: `base` not given: no check of the file's tags and caption (the CLI, the MCP). None is a page's record of a photo
 #: ExifTool could not read; a dict is what the page read.
 NO_BASE = object()
+
+
+def refuse_under_people(library, tags):
+    """Rule (a), the owner's own writes *(owner, 2026-10-09)*: the sentence that refuses `tags` when one of them would be a new
+    tag under a person that faces or photos carry ("Sam is a person (12 faces, 40 photos); a person cannot have tags under
+    them. Choose another group."), else None. A tag the tree has already is not new, and a keyword read from a file is never
+    refused (the indexer does not come here). The one keyword writer asks it for every write the owner makes: a photo's save,
+    Add to all selected, Apply All, the bulk Tags edit."""
+    tags = [vocabulary.normalize(tag) for tag in dict.fromkeys(tags) if vocabulary.SEPARATOR in vocabulary.normalize(tag)]
+    if not tags or not os.path.exists(library.path):
+        return None
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        for tag in tags:
+            taxonomy.refuse_child_of_person(conn, tag)
+    except person_ids.PersonHasNoChildren as why:
+        return str(why)
+    finally:
+        conn.close()
+    return None
 
 
 def _held_title(now):
@@ -112,6 +132,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             return result
         held = set(_tags_held(now))
         problem = (validation.first_problem("tag", (t for t in tags if t not in held))
+                   or (None if files_only else refuse_under_people(library, [t for t in tags if t not in held]))
                    or _caption_problem(et, photo_path, title))
         if problem:
             result.refuse(problem)
@@ -264,8 +285,8 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
 
     `operation` names the change in the journal. A bulk JOB (tagpup.jobs.bulk_edits) passes its own and
     `stop_at_first_error=False`: a photo that cannot be read or written is an error and the others are written all the
-    same. `persons` ({paths.key(path): the tags of `add` that are people}): a person the file already names by their
-    leaf is not added again (_change_each). `et`: an ExifTool session the caller opened (a bulk job's chunk gets its own,
+    same. `persons` ({paths.key(path): the tags of `add` that are people}): a person the file already names is not
+    added again (_change_each). `et`: an ExifTool session the caller opened (a bulk job's chunk gets its own,
     with a deadline of its own), used instead of one per write.
 
     A photo whose file is gone is left out and listed in the result's skips (details[SKIPPED_MISSING] says how many);
@@ -275,7 +296,7 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
     What is added is checked (tagpup.core.validation) and written in its one spelling;
     what is taken off is not: taking a bad tag off must stay possible. One that may not
     be set refuses the whole change, and nothing is written."""
-    problem = validation.first_problem("tag", add)
+    problem = validation.first_problem("tag", add) or refuse_under_people(library, add)
     if problem:
         return _refused(len(photo_paths), problem)
     present, gone = leave_out_missing(photo_paths)
@@ -333,7 +354,7 @@ def add_tags(library, additions, exiftool_path, persons=None):
     A tag that may not be set refuses the whole of it, and nothing is written.
 
     `persons` ({paths.key(path): the tags of `additions` that are people}): a person the file already
-    names by their leaf is not added again (_change_each)."""
+    names is not added again (_change_each)."""
     return change_each(library, {path: (tags, ()) for path, tags in additions.items()}, exiftool_path,
                        "apply all suggestions", persons=persons)
 
@@ -352,7 +373,8 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     change_tags'. `stop_at_first_error` False: a photo that cannot be read or written is an error and the others are
     written, as a bulk job does. Apply All's own is add_tags; the faces' (tagpup.services.face_people) adds and takes
     off a person per photo."""
-    problem = validation.first_problem("tag", dict.fromkeys(t for add, _remove in changes.values() for t in add))
+    adds = dict.fromkeys(t for add, _remove in changes.values() for t in add)
+    problem = validation.first_problem("tag", adds) or refuse_under_people(library, adds)
     if problem:
         return _refused(len(changes), problem)
     refused = _refused(len(changes), None)
@@ -469,10 +491,11 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
     else is: no journal change (`change` is None), no row.
 
     `persons` ({paths.key(path): tags that are people}): of what is added, a person the file already names
-    by their leaf is left out -- read from the file here, under the lock, as the page leaves out one the
-    photo already has.
+    is left out -- by the id of their node (two people called alike are two: vocabulary.names_same_person) --
+    read from the file here, under the lock, as the page leaves out one the photo already has.
     """
     people = taxonomy.people_paths(library.path)
+    known = taxonomy.people_vocabulary(library.path) if persons else None
     wanted = {paths.key(path): (add, remove) for path, add, remove in plan}
 
     def plan_one(path, held):
@@ -480,7 +503,7 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
         held_tags = list(_tags_held(held))
         mine = (persons or {}).get(paths.key(path), ())
         add = [tag for tag in add
-               if not (tag in mine and any(vocabulary.same_person(tag, there) for there in held_tags))]
+               if not (tag in mine and any(vocabulary.names_same_person(known, tag, there) for there in held_tags))]
         # In the file's order, what is added after: a set's order changed from run to
         # run, and a file holding every tag already was written again for its order.
         tags = [tag for tag in dict.fromkeys(held_tags + list(add)) if tag not in set(remove)]
@@ -584,6 +607,7 @@ def write_suggestions(library, writes, exiftool_path, nobackup=False):
     """
     result = Result(attempted=len(writes))
     problem = (validation.first_problem("tag", dict.fromkeys(t for _, tags, _ in writes for t in tags))
+               or refuse_under_people(library, [t for _, tags, _ in writes for t in tags])
                or validation.first_problem("caption", (caption for _, _, caption in writes if caption)))
     if problem:
         result.refuse(problem)

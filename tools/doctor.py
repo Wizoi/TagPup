@@ -146,6 +146,15 @@ def report(db_path, show=0, out=print):
                 "person id, and none is guessed)" % (label, len(found), sum(found.values())))
             for name, count in sorted(found.items(), key=lambda pair: (-pair[1], pair[0]))[:show]:
                 out("    %6d  %s" % (count, name))
+    if nameless.one:
+        out("names one person is called whose rows are linked to nobody: %d, on %d face(s) decided by hand, %d other face(s) and %d "
+            "listed person(s) (reported, not broken: nothing links them by itself, so they are on no person's page; "
+            "`tagpup_cli.py people link-name <name> --apply` links one)"
+            % (len(nameless.one), sum(each[1] for each in nameless.one.values()), sum(each[2] for each in nameless.one.values()),
+               sum(each[3] for each in nameless.one.values())))
+        for name, (_person, by_hand, by_guess, listed_people) in sorted(
+                nameless.one.items(), key=lambda pair: (-(pair[1][1] + pair[1][2] + pair[1][3]), pair[0]))[:show]:
+            out("    %6d  %s" % (by_hand + by_guess + listed_people, name))
     if nameless.branch:
         out("names on a branch: %d, on %d row(s) of faces and photos' people (reported, not broken: a tag with tags "
             "under it is not a person, so they have no person id): node %s"
@@ -174,7 +183,8 @@ def rebuild_derived(db_path, apply=False, out=print):
             out("the library is at schema %d: the derived tables are made by migration 19, which opening it with "
                 "TagPup or the CLI applies" % version)
             return 1
-        tables = derived.problems(conn)
+        derived_problems = derived.problems(conn)
+        tables = list(derived_problems)
         listed = people.stale(conn)   # photo_people is migration 6's; this tool starts at 19
         ids = _person_ids_wrong(conn)
         has_ids = person_ids.present(conn)
@@ -185,12 +195,23 @@ def rebuild_derived(db_path, apply=False, out=print):
     for line in tables + ids:
         out("  " + line)
     if not tables and not ids:
-        out("the derived tables are what the photos say" + (", and every person id what its name is" if has_ids else ""))
+        out("the derived tables are what the photos say" + (", and every person's name what their node is called" if has_ids else ""))
         return 0
     if not apply:
         out("a dry run: nothing was written. --apply makes them so; only derived rows and columns change")
         return 1
     after = []
+    if ids:
+        # First: a face's name is the cache the photo's list is written from, so the lists are rebuilt from the faces as they
+        # should be (rebuilt before, the list took the stale name and was stale again).
+        changed = person_ids.repair(db_path)
+        out("people's names and ids put right: %d face(s), %d listed person(s)" % (changed["faces"], changed["photo_people"]))
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            after += _person_ids_wrong(conn)
+            listed = people.stale(conn)
+        finally:
+            conn.close()
     if listed:
         out("photos' people rebuilt: %d photo(s) changed" % people.repair(db_path, listed))
         conn = db.connect(db.readonly_uri(db_path), uri=True)
@@ -200,29 +221,23 @@ def rebuild_derived(db_path, apply=False, out=print):
             conn.close()
         if left:
             after.append("%d photo(s) still list people the rule makes otherwise" % left)
-    if len(tables) > bool(listed):
+    if derived_problems:   # (read once, before the ids were put right: the people's lists are not these)
         _before, written, after_tables = derived.repair(db_path)
         after += after_tables
         out("rebuilt from %d photo(s): %d keyword row(s), %d folder(s), %d photo(s) in one, %d metadata row(s), "
             "%d word row(s), %d camera and lens row(s)"
             % (written["photos"], written["tag_rows"], written["folders"], written["in_a_folder"], written["meta_rows"],
                written["word_rows"], written["gear_rows"]))
-    if ids:
-        changed = person_ids.repair(db_path)
-        out("person ids put right: %d face(s), %d listed person(s)" % (changed["faces"], changed["photo_people"]))
-        conn = db.connect(db.readonly_uri(db_path), uri=True)
-        try:
-            after += _person_ids_wrong(conn)
-        finally:
-            conn.close()
     for line in after:
         out("  still wrong: " + line)
     return 1 if after else 0
 
 
 def _person_ids_wrong(conn):
-    """A line for each table whose rows hold a person id their name does not give (tagpup.store.person_ids)."""
-    return ["%d row(s) of %s hold a person id their name does not give" % (found.rows, table)
+    """A line for each table whose rows hold a name that is not their person's (tagpup.store.person_ids: the id is the person and
+    the name a cache of the node's leaf) or an id of a node that is gone. A name with no id is not this: it is reported by
+    names_without_a_person, and linked only by the owner (`people link-name`)."""
+    return ["%d row(s) of %s hold a name that is not their person's" % (found.rows, table)
             for table in person_ids.TABLES for found in [person_ids.out_of_step(conn, table)] if found.rows]
 
 

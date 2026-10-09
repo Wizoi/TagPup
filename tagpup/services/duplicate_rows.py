@@ -57,9 +57,17 @@ def _knows(conn, photo_id):
 
 
 def _faces(conn, photo_id):
-    """[(id, box as a list, name, name_source, excluded, excluded_reason)] of a photo's faces: no embedding, no crop."""
-    return [(face_id, json.loads(box) if box else None, name, source, excluded, reason)
-            for face_id, box, name, source, excluded, reason in store_faces.for_merging(conn, photo_id)]
+    """[(id, box as a list, Ref or None, name_source, excluded, excluded_reason)] of a photo's faces: no embedding, no crop."""
+    return [(face_id, json.loads(box) if box else None, person, source, excluded, reason)
+            for face_id, box, person, source, excluded, reason in store_faces.for_merging(conn, photo_id)]
+
+
+def _name(person):
+    return person.name if person else None
+
+
+def _id(person):
+    return person.id if person else None
 
 
 def _same_decision(a, b):
@@ -122,10 +130,10 @@ def _plan_set(conn, group):
                 kept_faces.append(face)
             elif _decided(face) and not _decided(twin):
                 edits.append(journal.update("faces", (twin[0],),
-                                            {"name": twin[2], "name_source": twin[3], "excluded": twin[4],
-                                             "excluded_reason": twin[5]},
-                                            {"name": face[2], "name_source": face[3], "excluded": face[4],
-                                             "excluded_reason": face[5]}, kind="decision carried"))
+                                            {"name": _name(twin[2]), "tag_id": _id(twin[2]), "name_source": twin[3],
+                                             "excluded": twin[4], "excluded_reason": twin[5]},
+                                            {"name": _name(face[2]), "tag_id": _id(face[2]), "name_source": face[3],
+                                             "excluded": face[4], "excluded_reason": face[5]}, kind="decision carried"))
                 moves["decisions_carried"] += 1
             elif _decided(face) and _decided(twin) and not _same_decision(face, twin):
                 return "disputed"

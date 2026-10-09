@@ -93,7 +93,7 @@ def taxonomy_delete_confirm():
     if tag_id is None or not action:
         return responses.error(400, "Missing parameters")
     result, failed = _tree_edit(lambda library: tags_service.delete(
-        library, tag_id, action, body.get("target_tag"), state.exiftool(library)))
+        library, tag_id, action, body.get("target_tag"), state.exiftool(library), force=bool(body.get("force"))))
     if failed:
         return failed
     tagpup_routes.forget_scans(state.require())

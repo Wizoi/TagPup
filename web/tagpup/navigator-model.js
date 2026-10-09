@@ -141,10 +141,22 @@ export function indexPeople(list, groups = [], unfiled = 0) {
     }
     for (const each of Array.isArray(list) ? list : []) {
         if (!each || typeof each.name !== 'string') continue;
-        people.push({ id: `p:${each.name}`, name: each.name, count: Number(each.count) || 0, groupTag: each.group || null, children: [] });
+        // A person is their id when the server has one (two people called alike are two rows: `p:${name}` collided); a name
+        // no node is stays the name. `tag` is the person's path, `shared` that another person has the name.
+        const identity = each.person_id !== undefined && each.person_id !== null ? each.person_id : each.name;
+        const record = each.person && typeof each.person === 'object' ? each.person : {};
+        people.push({
+            id: `p:${identity}`, name: each.name, count: Number(each.count) || 0, groupTag: each.group || null, children: [],
+            personId: each.person_id === undefined ? null : each.person_id, tag: typeof record.tag === 'string' ? record.tag : null,
+            shared: record.shared === true,
+        });
     }
-    people.sort((a, b) => compareTagNames(a.name, b.name));
-    for (const person of people) if (!byLower.has(person.name.toLowerCase())) byLower.set(person.name.toLowerCase(), person);
+    people.sort((a, b) => compareTagNames(a.name, b.name) || compareTagNames(a.tag || '', b.tag || ''));
+    const byPersonTag = new Map();
+    for (const person of people) {
+        if (!byLower.has(person.name.toLowerCase())) byLower.set(person.name.toLowerCase(), person);
+        if (person.tag) byPersonTag.set(person.tag.toLowerCase(), person);
+    }
     const alphabetical = (a, b) => compareTagNames(a.name, b.name) || compareTagNames(a.tag, b.tag);
     const tops = [];
     for (const group of [...byTag.values()].sort(alphabetical)) {
@@ -166,7 +178,15 @@ export function indexPeople(list, groups = [], unfiled = 0) {
             unfiled: true, subgroups: [], people: loose, children: loose,
         });
     }
-    return { people, byLower, groups: byTag, tops: grouped ? tops : loose, grouped, size: people.length };
+    return { people, byLower, byPersonTag, groups: byTag, tops: grouped ? tops : loose, grouped, size: people.length };
+}
+
+/**
+ * What a view or a chip of this person asks for: their name, or -- when another person has it -- their tag path, which names
+ * exactly them (the library's views: a name is everyone called it, a path is one person).
+ */
+export function personSource(person) {
+    return person.shared && person.tag ? person.tag : person.name;
 }
 
 function navPersonRow(person, level = 1) {
@@ -175,7 +195,7 @@ function navPersonRow(person, level = 1) {
         title: `${person.name}${person.groupTag ? ` (${person.groupTag})` : ''}\n${navPlural(person.count, 'photo', 'photos')}`,
         aria: `${person.name}, ${navPlural(person.count, 'photo', 'photos')}`,
         hint: '', expandable: false, expanded: false,
-        spec: { kind: 'person', value: person.name, recursive: false },
+        spec: { kind: 'person', value: personSource(person), recursive: false },
     };
 }
 
@@ -426,7 +446,8 @@ export function locate(section, index, spec) {
         return { id, open };
     }
     if (section === 'people' && spec.kind === 'person') {
-        const person = index.byLower.get(String(spec.value).toLowerCase());
+        const wanted = String(spec.value).toLowerCase();
+        const person = (index.byPersonTag && index.byPersonTag.get(wanted)) || index.byLower.get(wanted);
         if (!person) return null;
         const open = [];
         for (let tag = person.groupTag; tag && index.groups && index.groups.has(tag) && open.length < 64; tag = index.groups.get(tag).parentTag) {
@@ -525,7 +546,7 @@ export function rowTree(section, index) {
                 add(node.id, node.children.map(c => c.id), null, null);
                 node.children.forEach(visit);
             } else {
-                const spec = { kind: 'person', value: node.name, recursive: false };
+                const spec = { kind: 'person', value: personSource(node), recursive: false };
                 add(node.id, [], spec, spec);
             }
         };

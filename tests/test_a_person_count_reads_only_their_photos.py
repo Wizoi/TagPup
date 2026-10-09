@@ -16,6 +16,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_faces_from_tags import WREN, Case  # noqa: E402
 
+from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.store import db, face_tags  # noqa: E402
 
 #: The instructions between two calls of the progress handler.
@@ -45,11 +46,12 @@ class CountingAPersonsPhotos(Case):
 
     def test_the_count_does_not_grow_with_the_faces_of_everyone_else(self):
         self.seed(30)
-        few, answer = instructions(self.path, lambda conn: face_tags._photos_to_be_named(conn, WREN))
+        wren = Ref(self.node("People/" + WREN), WREN)
+        few, answer = instructions(self.path, lambda conn: face_tags._photos_to_be_named(conn, wren))
         self.assertEqual(2, answer)
         for number in range(30, 400):
             self.face(self.photo("quay_%04d.jpg" % number))
-        many, answer = instructions(self.path, lambda conn: face_tags._photos_to_be_named(conn, WREN))
+        many, answer = instructions(self.path, lambda conn: face_tags._photos_to_be_named(conn, wren))
         self.assertEqual(2, answer)
         self.assertLess(many, few * 2, "%d instructions with 400 other faces, %d with 30" % (many, few))
 

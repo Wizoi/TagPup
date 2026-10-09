@@ -264,7 +264,7 @@ def dissolve_stranded_clusters(faces):
 # ---- The reads, cached -------------------------------------------------------------------
 
 def named_faces(library, cache):
-    """(ids, names, matrix) of every named face (tagpup.services.identify.named_faces),
+    """(ids, people, matrix) of every named face (tagpup.services.identify.named_faces),
     built once per state of the faces table rather than once per request. Naming or
     excluding a face moves the fingerprint and the matrix is rebuilt; nothing else
     disturbs it."""
@@ -277,7 +277,7 @@ def named_faces(library, cache):
 
 
 def decided_faces(library, cache):
-    """(ids, names, matrix) of the faces a person decided (tagpup.services.identify.decided_faces),
+    """(ids, people, matrix) of the faces a person decided (tagpup.services.identify.decided_faces),
     for automatch alone. Cached against the faces fingerprint and the photos generation: a
     keyword written or removed changes which faces qualify without touching a face."""
     cached = cache.get("decided_matrix", identify.decided_stamp(library))
@@ -289,7 +289,8 @@ def decided_faces(library, cache):
 
 
 def representative_faces(library, cache):
-    """{name: face id} of the face most like each person (tagpup.services.identify
+    """{person: face id} of the face most like each person, a person being the id of their node or the name of one no node
+    is (tagpup.services.identify
     .representative_faces), cached against the decided matrix's stamp: a rename, a merge,
     an exclusion or a keyword changes it, and nothing else does."""
     stamp = identify.decided_stamp(library)
@@ -302,7 +303,7 @@ def representative_faces(library, cache):
 
 
 def face_samples(library, cache):
-    """{name: [face ids]} of the faces to show of each person (tagpup.services.identify.face_samples),
+    """{person: [face ids]} of the faces to show of each person (tagpup.services.identify.face_samples),
     cached against the decided matrix's stamp like representative_faces: one pass over every
     named face, read again when a name, a keyword or an exclusion changes it."""
     stamp = identify.decided_stamp(library)
@@ -339,11 +340,13 @@ def queue(library, cache):
     return value
 
 
-def grid(library, cache, progress, name):
-    """A person's grid (tagpup.services.identify.grid), from the cache when the faces
-    table has not moved since it was built; else built, its progress published under
-    `name` from here until it is done, and cached."""
+def grid(library, cache, progress, name, progress_key=None):
+    """A person's grid (tagpup.services.identify.grid; `name` is a bucket, or the person as person_ids.wire has them: the id
+    of their node, or the name of one no node is), from the cache when the faces table has not moved since it was built; else
+    built, its progress published under `progress_key` (what the request called it; `name` as text) from here until it is
+    done, and cached."""
     key = "matches:%s" % name
+    shown = str(name) if progress_key is None else progress_key
     cached = cache.get(key, identify.fingerprint(library))
     if cached is not None:
         return cached
@@ -352,8 +355,8 @@ def grid(library, cache, progress, name):
     try:
         stamp, value = identify.grid(
             library, name, lambda: named_faces(library, cache),
-            on_progress=lambda stage, fraction, message: progress.report(name, stage, fraction, message))
+            on_progress=lambda stage, fraction, message: progress.report(shown, stage, fraction, message))
     finally:
-        progress.done(name)
+        progress.done(shown)
     cache.put(key, stamp, value)
     return value
