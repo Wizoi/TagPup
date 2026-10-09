@@ -203,6 +203,7 @@ To resolve individual image noise by leveraging event-level folder context, reco
 The `tagpup_cli.py` engine is accessed via `click` subcommands. 
 
 ### Global Options
+- **A library from a newer TagPup is not opened.** With `--db` (or `TAGPUP_DB_PATH`) naming a library whose schema is newer than this version knows, every command stops before it starts: the sentence of `schema.NewerLibrary` (the library's name, its schema, the one this version knows, and to start the newest TagPup), exit status 1, nothing written. `tools/doctor.py` and the MCP's tools say the same.
 - `--test`: Use the test library (`test_photo_index.db`) to avoid altering the production one. The tag tree is in the library, so the test tree stays in the test library (findings.md, #61).
 
 ---
