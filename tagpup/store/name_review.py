@@ -77,6 +77,11 @@ def groups(conn):
     return sorted(found, key=lambda group: vocabulary.tag_sort_key(group["tag"]))
 
 
+def tag_exists(conn, tag):
+    """Is `tag` a node of the library's tag tree already?"""
+    return taxonomy.tree_exists(conn) and conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone() is not None
+
+
 def group(conn, group_id):
     """The group `groups` lists with this id, or None (a person, a node gone, a tag that holds no faces)."""
     for each in groups(conn):

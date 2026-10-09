@@ -180,7 +180,7 @@ def _settle(library, key, action, person_id, group_id, conn):
                 result.refuse(problem)
                 return result
             made = vocabulary.SEPARATOR.join([group["tag"], review.name])
-            if conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (made,)).fetchone():
+            if store.tag_exists(conn, made):
                 result.refuse("%s is already a tag in the tree." % made)
                 return result
         elif action == UNNAME and not review.faces:
