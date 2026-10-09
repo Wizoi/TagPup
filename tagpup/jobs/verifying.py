@@ -38,6 +38,8 @@ class Run:
         self.checked = 0
         self.rows = 0
         self.folders = 0
+        self.markers_read = 0       # the folder markers read so far, of `markers_of`: they are read before the rows
+        self.markers_of = 0
         self.cancel = threading.Event()
         self.answer = None
         self.error = None
@@ -45,11 +47,15 @@ class Run:
     def update(self, checked, rows, folders):
         self.checked, self.rows, self.folders = checked, rows, folders
 
+    def update_markers(self, read, of):
+        self.markers_read, self.markers_of = read, of
+
     def status(self):
-        """For the page: {"root", "location", "state", "checked", "rows", "folders", "cancelling",
+        """For the page: {"root", "location", "state", "checked", "rows", "folders", "markers_read", "markers_of", "cancelling",
         "started", "result", "error"}."""
         return {"root": self.name, "location": self.location, "state": self.state, "checked": self.checked,
                 "rows": self.rows, "folders": self.folders,
+                "markers_read": self.markers_read, "markers_of": self.markers_of,
                 "cancelling": self.cancel.is_set() and self.state == "running",
                 "started": self.started, "finished": self.finished, "result": self.answer, "error": self.error}
 
@@ -78,7 +84,8 @@ def start(library, name, location, machine):
     def work():
         try:
             run.answer = roots_location.run_verify(library, name, location, machine, full=True,
-                                                   cancel=run.cancel.is_set, progress=run.update, claim=claim)
+                                                   cancel=run.cancel.is_set, progress=run.update, claim=claim,
+                                                   marker_progress=run.update_markers)
             run.state = "cancelled" if run.answer["stopped"] == "cancelled" else (
                 "failed" if run.answer["stopped"] else "done")
         except Exception as problem:

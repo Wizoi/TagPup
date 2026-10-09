@@ -839,6 +839,27 @@ the design assumes a GPU and more memory later and does not wait for them.
       `tagpup.files.shares`, which Verify and the damaged photos' lists both use. An unplaced root is a check result
       (`roots_placed`, its sentence in `message`) in `inspect.all_checks` / `check` / `summary` and the MCP tools, and
       the Activity page's attention list carries the sentence.
+    - **Verify reads the folder markers too** *(#984)*: for the root's folders that have a `folder_ids` row, the `.tagpup` at the
+      CANDIDATE place (the row's `@name/rel` turned into a path by the same Roots built for the candidate; the machine's map is
+      never touched, so a root kept in two places is read at the one asked about). Counted as `markers` in the answer:
+      **match** (the marker holds this library's entry for the row's id), **differs** (this library's entry for ANOTHER id:
+      likely a different folder at that path; only our entry is evidence, so another library's line, beside ours or alone,
+      is never a difference),
+      **unmarked** (no marker, or none with an entry of ours: the library predates marking, the folder is new, or `mark`
+      recorded the id before a publish that was then skipped, as with two libraries over one folder -- sync reads it the same), **malformed** (a hand-edited file: counted,
+      never a reason to refuse), **unreadable** and **not there**, with `line`, one sentence for the dialog ("N of M marked
+      folders match; K differ; L not marked"; never a folder's name). A sample reads at most 300 folders, each
+      once, starting no read after 10 s (the worst case is that plus one look, 15 s), and reads them BEFORE the rows, so a sample
+      that runs out of its row budget still has its marker verdict; a full run all of them, with the job's progress and cancel. Each read is made on the bounded thread (a share that
+      stops answering ends the run as unreachable, never as "all differ"). Any DIFFERING marker makes the result poor, so
+      Change location refuses it, with the counts, unless the owner overrides, as it does for missing files. A library with
+      no `folder_ids` row for the root (marked nothing; or behind migration 26, which has no such table: the read-only
+      connection answers empty) has `markers: null` and nothing is said. The live libraries are marked
+      (the owner marked all three on 2026-10-09; the `folder-ids mark` dry run counted photo_index 2,672 of 2,673 leaf
+      folders, kr-track 20 of 20, renton_parkrun 8 of 8, 16 folders of photo_index and 16 of kr-track holding another
+      library's line too), so Verify and Change location read markers for real: 300 in a sample, every marked folder in a
+      full run. A COPY of a marked
+      folder keeps its marker and so matches: a marker proves a folder is the same folder, not that it is the original.
     - **Not built**: `roots remove` (an undo is the way back); Verify from the CLI or the MCP; moving a root while a
       run is under way (refused, by design); a library behind more than one machine map (one map per `TAGPUP_HOME`).
 - **Changing where a root lives, in TagTuner** *(owner, 2026-10-02; built, see "Stages 3 and 4")*: for now the libraries stay on
