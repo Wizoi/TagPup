@@ -102,6 +102,15 @@ def stale(conn):
     return [photo_id for photo_id, _people in _differences(conn, None, None)]
 
 
+def repair(db_path, photo_ids):
+    """Rebuild the people of `photo_ids` (what `stale` found, read before and outside the write: reading
+    every photo's metadata takes seconds, and the write lock is held for the writing only) by the one
+    rule, under the library's write lock. Only photos whose rows still differ are written. Returns how
+    many photos' people changed."""
+    return db.write_with_connection(db_path, lambda conn: rebuild(conn, photo_ids) if photo_ids else 0,
+                                    label="photos' people")
+
+
 def rebuild_photos(conn, photo_paths, known=None):
     """rebuild, for the photos at `photo_paths`, however they are spelled. Returns how many
     photos' people changed. The caller commits."""

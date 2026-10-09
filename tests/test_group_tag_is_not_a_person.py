@@ -8,6 +8,8 @@ fed the tree's groups by tagpup.store.taxonomy.read_people_vocabulary; everythin
 people reads `photo_people`, which `people.rebuild` writes by that rule, and the doctor's
 people_out_of_date asks the same rule.
 """
+import contextlib
+import io
 import os
 import sys
 import unittest
@@ -107,6 +109,24 @@ class InTheLibrary(unittest.TestCase):
         self.assertEqual([], self.listed(self.alone))
         self.assertEqual([CORA], self.listed(self.both))
         self.assertEqual(0, self.read(lambda conn: checks.people_out_of_date(conn)).count)
+
+    def test_the_doctors_rebuild_says_then_mends_and_counts_what_it_wrote(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import doctor
+        self.write(lambda conn: taxonomy.add_path(conn, PERSON))
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said):
+            self.assertEqual(1, doctor.rebuild_derived(self.lib.library.path), "a dry run")
+        self.assertIn("2 photo(s) list people the rule makes otherwise", said.getvalue())
+        self.assertEqual(["Idzi"], self.listed(self.alone), "a dry run writes nothing")
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said):
+            self.assertEqual(0, doctor.rebuild_derived(self.lib.library.path, apply=True))
+        self.assertIn("photos' people rebuilt: 2 photo(s) changed", said.getvalue())
+        self.assertEqual([], self.listed(self.alone))
+        self.assertEqual([CORA], self.listed(self.both))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, doctor.rebuild_derived(self.lib.library.path))
 
     def test_a_group_is_not_filed_or_resolved_as_a_person(self):
         self.write(lambda conn: taxonomy.add_path(conn, PERSON))
