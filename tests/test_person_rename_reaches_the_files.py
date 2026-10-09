@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
+import face_rows  # noqa: E402
 import own_home  # noqa: E402
 import tuner_client  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -84,6 +85,8 @@ class PersonRenameReachesTheFiles(unittest.TestCase):
         # Its people as the store keeps them: the keyword and the face both name OLD.
         conn = db.connect(self.db_path)
         try:
+            for (face_id,) in conn.execute("SELECT id FROM faces").fetchall():
+                face_rows.give_their_person(conn, face_id)   # the face is the person its name is, as the writers leave it
             people.rebuild(conn)
             conn.commit()
         finally:

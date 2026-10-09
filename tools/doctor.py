@@ -191,6 +191,17 @@ def rebuild_derived(db_path, apply=False, out=print):
         out("a dry run: nothing was written. --apply makes them so; only derived rows and columns change")
         return 1
     after = []
+    if ids:
+        # First: a face's name is the cache the photo's list is written from, so the lists are rebuilt from the faces as they
+        # should be (rebuilt before, the list took the stale name and was stale again).
+        changed = person_ids.repair(db_path)
+        out("people's names and ids put right: %d face(s), %d listed person(s)" % (changed["faces"], changed["photo_people"]))
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            after += _person_ids_wrong(conn)
+            listed = people.stale(conn)
+        finally:
+            conn.close()
     if listed:
         out("photos' people rebuilt: %d photo(s) changed" % people.repair(db_path, listed))
         conn = db.connect(db.readonly_uri(db_path), uri=True)
@@ -207,14 +218,6 @@ def rebuild_derived(db_path, apply=False, out=print):
             "%d word row(s), %d camera and lens row(s)"
             % (written["photos"], written["tag_rows"], written["folders"], written["in_a_folder"], written["meta_rows"],
                written["word_rows"], written["gear_rows"]))
-    if ids:
-        changed = person_ids.repair(db_path)
-        out("people's names and ids put right: %d face(s), %d listed person(s)" % (changed["faces"], changed["photo_people"]))
-        conn = db.connect(db.readonly_uri(db_path), uri=True)
-        try:
-            after += _person_ids_wrong(conn)
-        finally:
-            conn.close()
     for line in after:
         out("  still wrong: " + line)
     return 1 if after else 0

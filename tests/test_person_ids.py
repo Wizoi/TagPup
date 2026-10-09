@@ -414,7 +414,7 @@ class TheMigration(unittest.TestCase):
     def test_a_change_recorded_before_it_is_undone_after_it_and_the_face_gets_its_id(self):
         """A face deleted by a journaled change at version 20 (dedupe_faces) was recorded without the
         column. The migration blocks no undo of it (schema.ADDS_DERIVED_COLUMNS); the undo puts the row
-        back as recorded and gives it its person's id."""
+        back as recorded: a name and no id, which nothing links by the name alone (person_ids.link_added)."""
         _home, path, made = self.library_at_20()
         schema._current.clear()
         with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:20]), mock.patch.object(schema, "LATEST", 20):
@@ -429,8 +429,7 @@ class TheMigration(unittest.TestCase):
             conn.close()
         self.assertTrue(journal.rehearse_undo(path, applied.change_id).exact)
         journal.undo(path, applied.change_id)
-        self.assertEqual([(ODA, node_id(path, "Family/Coast/" + ODA))],
-                         look(path, "SELECT name, tag_id FROM faces WHERE id = ?", (made[0],)))
+        self.assertEqual([(ODA, None)], look(path, "SELECT name, tag_id FROM faces WHERE id = ?", (made[0],)))
         self.assertEqual([0, 0], in_step(path))
 
     def test_the_columns_it_says_are_derived_are_the_ones_it_adds(self):
@@ -488,13 +487,17 @@ class TheJournal(Library):
         self.assertEqual((None, None), look(self.path, "SELECT tag_id, name FROM faces WHERE id = ?", (self.faces[0],))[0])
 
     def test_a_change_that_recorded_the_name_alone_is_replayed_by_the_name(self):
-        """Entries from before the id was recorded: the undo puts the name back and the id is what the name gives now."""
+        """Entries from before the id was recorded: the undo puts the name back and nothing else decides who it is -- the face is
+        an unresolved name (for the names to review), however unique the name is now: a journal that knows only a name does
+        not guess (person_ids.link_added is the one place that links one)."""
         oda = node_id(self.path, "Family/Coast/" + ODA)
         self.name([self.faces[0]], ODA)
         applied = journal.apply(self.path, "unname", [journal.update(
             "faces", (self.faces[0],), {"name": ODA}, {"name": None, "name_source": "manual"}, kind="unnamed")])
         journal.undo(self.path, applied.change_id)
-        self.assertEqual(oda, self.face_id(self.faces[0]), "the id the name gives now")
+        self.assertIsNone(self.face_id(self.faces[0]))
+        self.assertEqual(ODA, look(self.path, "SELECT name FROM faces WHERE id = ?", (self.faces[0],))[0][0])
+        self.assertEqual(oda, node_id(self.path, "Family/Coast/" + ODA), "the person is still there, and not linked")
         self.assertEqual([0, 0], in_step(self.path))
 
     def test_a_face_deleted_and_put_back_rehearses_exactly(self):
@@ -542,7 +545,7 @@ class TheDoctor(Library):
         try:
             conn.execute("UPDATE faces SET name = ? WHERE id = ?", (ASH, self.faces[2]))   # a name two people have, no id
             people.rebuild(conn)
-            conn.execute("UPDATE faces SET tag_id = NULL WHERE id = ?", (self.faces[0],))   # a name whose id was not written
+            conn.execute("UPDATE faces SET name = ? WHERE id = ?", (ODA.lower(), self.faces[0]))   # a cache the node does not spell so
             conn.commit()
         finally:
             conn.close()

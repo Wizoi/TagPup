@@ -27,9 +27,7 @@ class Edits(TwoSams, unittest.TestCase):
             self.automatic = faces.insert(conn, self.other, [60, 0, 70, 10], b"\x04" * 8)
             conn.execute("UPDATE faces SET name = 'Max', tag_id = NULL, name_source = 'manual' WHERE id = ?", (self.manual,))
             conn.execute("UPDATE faces SET name = 'Max', tag_id = NULL, name_source = NULL WHERE id = ?", (self.automatic,))
-            photo = conn.execute("SELECT id FROM photos WHERE path = ?", (self.other,)).fetchone()[0]
-            conn.execute("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, 0, 'Max', 'keyword', NULL)",
-                         (photo,))
+            people.rebuild_photos(conn, [self.other])   # the photo's list, written as the store writes it (not by hand)
 
         write(self.path, unresolved)
 
@@ -37,7 +35,7 @@ class Edits(TwoSams, unittest.TestCase):
         return (self.face(self.manual), self.face(self.automatic), self.listed(self.other))
 
     def unchanged(self):
-        self.assertEqual(((None, "Max", "manual"), (None, "Max", None), [(None, "Max", "keyword")]), self.rows())
+        self.assertEqual(((None, "Max", "manual"), (None, "Max", None), [(None, "Max", "face")]), self.rows())
 
     def test_a_node_renamed_away_makes_the_other_unique_and_links_nothing(self):
         write(self.path, lambda conn: taxonomy.move_branch(conn, MAX_PET, "Pets/Rex"))
@@ -55,6 +53,51 @@ class Edits(TwoSams, unittest.TestCase):
         write(self.path, lambda conn: taxonomy.delete_branch(conn, MAX_PET, force=True))
         self.unchanged()
 
+    # ---- The same question asked by everything that comes after the edit: one owner (person_ids.link_added) ----------------
+
+    def rename_the_friend_away(self, conn):
+        taxonomy.move_branch(conn, MAX_FRIEND, "Friends/Rowan Thackeray")   # Pets/Max is now the only Max
+
+    def test_the_rename_and_a_rebuild_of_the_photo_in_the_same_transaction_link_nothing(self):
+        def both(conn):
+            self.rename_the_friend_away(conn)
+            people.rebuild_photos(conn, [self.other])
+
+        write(self.path, both)
+        self.unchanged()
+
+    def test_a_rebuild_of_the_photo_after_the_rename_links_nothing(self):
+        write(self.path, self.rename_the_friend_away)
+        write(self.path, lambda conn: people.rebuild_photos(conn, [self.other]))
+        self.unchanged()
+
+    def test_a_face_written_on_the_photo_after_the_rename_links_nothing(self):
+        write(self.path, self.rename_the_friend_away)
+        write(self.path, lambda conn: faces.insert(conn, self.other, [80, 0, 90, 10], b"\x05" * 8))
+        self.unchanged()
+
+    def test_a_journaled_change_touching_the_photo_and_its_undo_link_nothing(self):
+        from tagpup.store import journal
+        write(self.path, self.rename_the_friend_away)
+        applied = journal.apply(self.path, "touch a face", [journal.update(
+            "faces", (self.manual,), {"excluded": 0}, {"excluded": 1}, kind="excluded")])
+        self.unchanged_but_excluded()
+        journal.undo(self.path, applied.change_id)
+        self.unchanged()
+
+    def unchanged_but_excluded(self):
+        self.assertEqual((None, "Max", "manual"), self.face(self.manual))
+        self.assertEqual((None, "Max", None), self.face(self.automatic))
+
+    def test_a_photo_carrying_the_bare_keyword_is_rebuilt_and_the_faces_stay(self):
+        """The keyword is resolved by what it says (a bare name one person has); the faces are not given to anyone by it."""
+        import photo_rows
+        write(self.path, lambda conn: photo_rows.add_read(conn, self.other, {"XMP:Subject": ["Max"]}))
+        write(self.path, self.rename_the_friend_away)
+        write(self.path, lambda conn: people.rebuild_photos(conn, [self.other]))
+        self.assertEqual((None, "Max", "manual"), self.face(self.manual))
+        self.assertEqual((None, "Max", None), self.face(self.automatic))
+
     def test_a_person_added_under_a_name_nobody_had_links_its_unresolved_rows_the_hand_decision_too(self):
         write(self.path, lambda conn: taxonomy.move_branch(conn, MAX_PET, "Pets/Rex"))
         write(self.path, lambda conn: taxonomy.move_branch(conn, MAX_FRIEND, "Friends/Rowan Thackeray"))
@@ -67,7 +110,7 @@ class Edits(TwoSams, unittest.TestCase):
         new = self.node("Friends/Max")
         self.assertEqual((new, "Max", "manual"), self.face(self.manual), "added for that name: the decision was to it")
         self.assertEqual((new, "Max", None), self.face(self.automatic))
-        self.assertEqual([(new, "Max", "keyword")], self.listed(self.other))
+        self.assertEqual([(new, "Max", "face")], self.listed(self.other))
         self.assertEqual(0, look(self.path, "SELECT COUNT(*) FROM faces WHERE name = 'Max' AND tag_id IS NULL")[0][0])
 
 

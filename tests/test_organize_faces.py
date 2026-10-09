@@ -22,6 +22,7 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 import fake_exiftool  # noqa: E402
@@ -83,6 +84,7 @@ class Case(unittest.TestCase):
             face_id = faces.insert(conn, photo_path, list(box), at(degrees))
             for column, value in columns.items():
                 conn.execute("UPDATE faces SET %s = ? WHERE id = ?" % column, (value, face_id))
+            face_rows.give_their_person(conn, face_id)
             people.rebuild_photos(conn, [photo_path])
             return face_id
         return db.write_with_connection(self.path, add)

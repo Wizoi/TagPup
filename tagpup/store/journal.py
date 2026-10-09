@@ -852,7 +852,7 @@ def _derive(conn, changes):
     node names (tagpup.store.derived); and the person each face of the photos it touched names, by
     id -- every face's and every listed person's when it touched the tree (tagpup.store.person_ids).
     The generations move by their triggers. Returns how many photos' people changed."""
-    photo_ids, dated, nodes, listed, _node_ids = _touched(conn, changes)
+    photo_ids, dated, nodes, listed, node_ids = _touched(conn, changes)
     changed = 0
     # A photo left with no face row is no longer one whose faces were detected: Suggest detects it again
     # (docs/findings.md, #779; the one owner is tagpup.store.faces_detected, as for tagpup.store.faces).
@@ -865,6 +865,9 @@ def _derive(conn, changes):
         changed += people.rebuild(conn, sorted(photo_ids))
     if nodes:
         person_ids.sync(conn)
+        # A node the change made or renamed (or an undo put back) ADDED a person under its name: the one place that links
+        # an unresolved name to a person after the fact (person_ids.link_added) is asked, for those names only.
+        person_ids.link_added(conn, person_ids.names_of_nodes(conn, node_ids))
     if dated:
         store_photos.date_photos(conn, sorted(dated))
     if listed:

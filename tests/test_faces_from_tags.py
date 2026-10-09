@@ -20,6 +20,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import face_rows  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -85,6 +86,7 @@ class Case(unittest.TestCase):
             sets = ", ".join("%s = ?" % column for column in columns)
             if sets:
                 conn.execute("UPDATE faces SET %s WHERE id = ?" % sets, list(columns.values()) + [face_id])
+                face_rows.give_their_person(conn, face_id)
                 people.rebuild_photos(conn, [photo_path])
             return face_id
         return write(self.path, add)
