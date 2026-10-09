@@ -33,6 +33,25 @@ def resolve(library, ref):
         conn.close()
 
 
+def for_reading(library, person):
+    """`person` as a READ may ask for them: the id of their node when it is a name one person has (or a path), the name as it
+    is for one no node is, a `SharedName` for a name two or more people have -- the union, which is what the name always
+    showed; nothing is created or linked --; a bucket or an id is as it is. NotFound for an id that is nobody's, Refused for a
+    group. Writes never come through here: they refuse a shared name (resolve)."""
+    if isinstance(person, str) and person in vocabulary.BUCKETS.values():
+        return person
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        found = person_ids.resolve(conn, person)
+    except person_ids.AmbiguousPerson:
+        return person_ids.SharedName(str(person).strip())
+    except person_ids.PersonProblem as problem:
+        translate(problem)
+    finally:
+        conn.close()
+    return found.id if found else person
+
+
 def tags_by_id(library):
     """{id: tag} of everyone the tree files as a person, read now: the tag a person is written as."""
     return {record["id"]: record["tag"] for record in records(library, include_hidden=True)}

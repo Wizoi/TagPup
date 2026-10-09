@@ -47,6 +47,16 @@ CHUNK = 500
 #: One person: the id of the node, its tag (the path) and its name (the leaf).
 Person = collections.namedtuple("Person", "id tag name")
 
+class SharedName(str):
+    """A name two or more people have, asked for by a page that has only the name (an open page not reloaded since part B).
+    A READ answers for all of them together (the union: what the name always showed); a write never takes one (people.translate:
+    refused, naming the candidates). Reads create and link no one."""
+
+
+#: Everyone called one name -- a READ's answer for a name two people have (a page that has only the name): the ids of the people and
+#: the name. `target` passes it through; only readers take it (faces._carries), no writer.
+Many = collections.namedtuple("Many", "ids name")
+
 
 class PersonProblem(Exception):
     """A person could not be resolved. `str()` is the sentence a person reads."""
@@ -278,6 +288,8 @@ def resolve(conn, ref, known=None):
 def target(conn, ref, known=None):
     """(the id, the name) a row naming `ref` is written with: the Person's, or -- for a name no person is filed under --
     (None, the name trimmed), an unresolved name. Raises as `resolve` does; (None, None) for no person at all."""
+    if isinstance(ref, Many):
+        return ref
     found = resolve(conn, ref, known)
     if found is not None:
         return found.id, found.name

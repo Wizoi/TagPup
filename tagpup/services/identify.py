@@ -232,7 +232,8 @@ def face_samples(decided, named, limit=SAMPLE_FACES):
 def for_pages(library, by_person):
     """`by_person` ({person: value}, representative_faces' or face_samples') as the pages read it: keyed by the person's NAME,
     as it always was, for a person no one else is called like (or no node is), and by `id:<id>` for every person with a node. A
-    name two people have is only under their ids: a page that has the person's id looks there. Read now from the tree."""
+    name two people have is under each id, and under the name as the first of them has it (an open page that has only the
+    name still shows a face); a page that has the person's id looks there. Read now from the tree."""
     everyone = people_service.directory(library)
     keyed = {}
     for person, value in by_person.items():
@@ -243,6 +244,8 @@ def for_pages(library, by_person):
             keyed["id:%d" % person] = value
             if not found["shared"]:
                 keyed[found["name"]] = value
+            else:
+                keyed.setdefault(found["name"], value)   # a page that has only the name: the first of them (a read)
         else:
             keyed[person] = value
     return keyed
@@ -543,24 +546,28 @@ def unnamed_like(library, face_id, unnamed=None):
 # ---- One person's faces, and the faces ruled out ---------------------------------------------
 
 def person_faces(library, person, limit=100, page=1):
-    """A page of a person's faces (`person`: the id of their node, or a tag path or a name -- a name two people have is
-    refused), each scored against their closest other face of the years around it, never one of its own photo
+    """A page of a person's faces (`person`: the id of their node, or a tag path or a name; a name two people have, as a
+    SharedName, is the faces of all of them -- a read), each scored against their closest other face of the years around it, never one of its own photo
     (tagpup.core.clustering, #71), and flagged when the name looks wrong. A negative limit is no limit."""
     offset = (page - 1) * limit
     conn = _reading(library)
     try:
-        try:
-            found = person_ids.target(conn, person)
-        except person_ids.PersonProblem as problem:
-            people_service.translate(problem)
-        ref = found[0] if found[0] is not None else found[1]
+        if isinstance(person, SharedName):
+            ref = person_ids.Many([each.id for each in person_ids.read(conn).called(person)], str(person))
+            key = vocabulary.key(person)
+        else:
+            try:
+                found = person_ids.target(conn, person)
+            except person_ids.PersonProblem as problem:
+                people_service.translate(problem)
+            ref = found[0] if found[0] is not None else found[1]
+            key = person_ids.key_of(*found)
         total_count = faces.count_named(conn, ref)
         all_matched_rows = faces.person_embeddings(conn, ref)
         rows = faces.person_page(conn, ref, limit, offset)
     finally:
         conn.close()
 
-    key = person_ids.key_of(*found)
     known = face_rules.KnownFaces()
     for emb_bytes, _mtime, year, photo_path in all_matched_rows:
         if emb_bytes and len(emb_bytes) > 0:
@@ -749,6 +756,9 @@ def _empty_grid():
     return {"faces": [], "total_count": 0, "has_more": False}
 
 
+SharedName = person_ids.SharedName   # a read of a name two people have: all of them (people.for_reading)
+
+
 def is_bucket(name):
     """Is `name` one of the buckets of the queue (Unknown Faces, Ungrouped, Excluded) and not a person?"""
     return isinstance(name, str) and name in vocabulary.BUCKETS.values()
@@ -779,7 +789,12 @@ def grid(library, name, named, on_progress=None):
 
     # How many unmatched candidates each tag has library-wide, so "Ungrouped" can
     # recognise the tags that cannot form a group. Mirrors the queue listing.
-    seeking_key = None if is_bucket(name) else person_ids.wire_key(name)
+    seeking_keys = set() if is_bucket(name) else {person_ids.wire_key(name)}
+    if isinstance(name, SharedName):
+        # Everyone called it: the keys the candidates' photos list under that name.
+        wanted = vocabulary.key(name)
+        seeking_keys |= {person_ids.key_of(tag_id, tag_name) for r in unmatched_rows for tag_id, tag_name in _listed(r[7])
+                         if vocabulary.key(tag_name) == wanted}
     tag_candidate_counts = {}
     if name == vocabulary.BUCKETS["ungrouped"]:
         for r in unmatched_rows:
@@ -806,7 +821,7 @@ def grid(library, name, named, on_progress=None):
             if unmatched_tags and all(
                     tag_candidate_counts.get(tag, 0) <= 1 for tag in unmatched_tags):
                 candidate_rows.append(r)
-        elif seeking_key in unmatched_tags:
+        elif seeking_keys.intersection(unmatched_tags):
             candidate_rows.append(r)
 
     if not candidate_rows:
@@ -818,13 +833,13 @@ def grid(library, name, named, on_progress=None):
     report("reading", 0.7, "Reading the faces already named")
     _known_ids, known_people, known_matrix = named()
 
-    def reference_faces(person_key):
-        """Every face already named as this person; None when nobody has been named
+    def reference_faces(person_keys):
+        """Every face already named as this person (or any of the people a shared name is); None when nobody has been named
         yet -- the ordinary case for somebody being identified for the first time, and
         the reason this cannot simply replace the keyword queue."""
-        if known_matrix is None or person_key is None:
+        if known_matrix is None or not person_keys:
             return None
-        rows = [i for i, found in enumerate(known_people) if person_ids.key_of(found.id, found.name) == person_key]
+        rows = [i for i, found in enumerate(known_people) if person_ids.key_of(found.id, found.name) in person_keys]
         return known_matrix[rows] if rows else None
 
     def suggest_for_all(centroids):
@@ -866,7 +881,7 @@ def grid(library, name, named, on_progress=None):
         reads as noise until you are told why."""
         matched = matched_by_photo.get(row[1], set())
         return [tag_name for tag_id, tag_name in _listed(row[7])
-                if (key := person_ids.key_of(tag_id, tag_name)) not in matched and key != seeking_key]
+                if (key := person_ids.key_of(tag_id, tag_name)) not in matched and key not in seeking_keys]
 
     valid_rows, embs = [], []
     for r in candidate_rows:
@@ -953,7 +968,7 @@ def grid(library, name, named, on_progress=None):
     # UNCLUSTERED_LIMIT. The person being sought is needed before the cap rather than
     # after it: ranking has to see every candidate to choose the strongest 500.
     unclustered_total = len(noise_indices)
-    seeking = reference_faces(seeking_key)
+    seeking = reference_faces(seeking_keys)
 
     # Rank the whole set, then take the top of it. This used to slice the first 500
     # off an unordered list and sort those, so with 4,739 unclustered faces the 500 on

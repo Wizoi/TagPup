@@ -589,6 +589,11 @@ def name_unnamed(conn, persons_by_id, vocabulary=None, known=None):
 def _carries(conn, target, alias=""):
     """(SQL, parameters): a face (of the table aliased `alias`, with its dot) carries the person `target` (id, name) is: the
     id, or -- an unresolved name -- the name with no id."""
+    if isinstance(target, person_ids.Many):
+        # Everyone called a name (a read): the people's ids, and the rows of that name no person is filed under.
+        marks = ",".join("?" * len(target.ids))
+        return ("(%stag_id IN (%s) OR (%sname = ? AND %stag_id IS NULL))" % (alias, marks, alias, alias) if target.ids
+                else "(%sname = ? AND %stag_id IS NULL)" % (alias, alias)), list(target.ids) + [target.name]
     tag_id, name = target
     if tag_id is not None:
         return "%stag_id = ?" % alias, [tag_id]
