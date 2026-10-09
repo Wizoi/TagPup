@@ -85,6 +85,7 @@ def report(db_path, show=0, out=print):
         unnamed = checks.tags_without_a_node(conn)
         empty = checks.empty_folders(conn)
         nameless = checks.names_without_a_person(conn)
+        to_review = checks.names_to_review(conn)
         words = search_index.present(conn)
         identity, marked = folder_ids.identity(conn), folder_ids.count(conn)
     finally:
@@ -140,6 +141,10 @@ def report(db_path, show=0, out=print):
     if empty:
         out("folders holding no photo: %d (left by a delete that did not come through TagPup; reported, not broken: "
             "--rebuild-derived --apply takes them)" % len(empty))
+    if to_review[0] or to_review[1]:
+        out("names to review: %d waiting, %d set aside (reported, not broken: a name no person's tag is, for the owner to settle one "
+            "at a time in TagTuner's Review People -- make a person, link it, unname the faces or set it aside; nothing is "
+            "converted by itself)" % to_review[:2])
     for label, found in (("no person node", nameless.none), ("several person nodes", nameless.several)):
         if found:
             out("names with %s: %d, on %d row(s) of faces and photos' people (reported, not broken: they have no "

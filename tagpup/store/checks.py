@@ -9,7 +9,7 @@ import collections
 import os
 
 from tagpup.core import paths
-from tagpup.store import derived, generations, people, person_ids, schema, search_index
+from tagpup.store import derived, generations, name_review, people, person_ids, schema, search_index
 from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
@@ -190,6 +190,14 @@ def names_without_a_person(conn):
     broken: none has an id, none is guessed, and the tree is the owner's to settle (the ambiguous person
     path, docs/findings.md, #27; a branch is not a person, #660)."""
     return person_ids.unresolved(conn)
+
+
+def names_to_review(conn):
+    """(names waiting for the owner, names set aside, listed rows naming a group tag) -- the names-to-review list's counts
+    (tagpup.store.name_review.split is the one rule). Reported, not broken: nothing is converted by itself, the owner settles each
+    in TagTuner's Review People. Names only through `name_review.waiting`."""
+    waiting, hidden, stale = name_review.waiting(conn)
+    return len(waiting), len(hidden), stale
 
 
 def people_on_faces_alone(conn):

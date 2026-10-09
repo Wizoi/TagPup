@@ -25,7 +25,7 @@ from tagpup.core.result import NotFound, Refused
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import roots as roots_service
 from tagpup.store import checks as rules
-from tagpup.store import db, embeddings, inspection, taxonomy
+from tagpup.store import db, embeddings, inspection, name_review, taxonomy
 from tagpup.store import photos as photo_rows
 
 #: How many ids an answer lists at most, unless asked for more; the count is always whole.
@@ -297,7 +297,26 @@ def all_checks(library, reveal=False, embedder_settings=None):
         answer = {"broken": sum(1 for r in results if r["count"]), "checks": results}
         if embedder_settings is not None:
             answer["without_a_vector"] = rules.without_a_vector(conn, embeddings.model_key(**embedder_settings))
+        answer["names_to_review"] = _names_to_review(conn, reveal)
     return answer
+
+
+def _names_to_review(conn, reveal=False):
+    """The names-to-review list as counts (reported, not broken): `waiting`, `set_aside`, `stale_group_rows`, `by_reason`
+    ({none, several, one, branch: names}) and `rows`; each waiting name's reason and rows as `entries`, and its name only with
+    `reveal`."""
+    waiting, hidden, stale = name_review.waiting(conn)
+    by_reason = {}
+    for review in waiting:
+        by_reason[review.why] = by_reason.get(review.why, 0) + 1
+    entries = []
+    for number, review in enumerate(waiting, 1):
+        entry = {"entry": number, "why": review.why, "faces": review.faces, "listed": review.listed}
+        if reveal:
+            entry["name"] = review.name
+        entries.append(entry)
+    return {"waiting": len(waiting), "set_aside": len(hidden), "stale_group_rows": stale, "by_reason": by_reason,
+            "rows": sum(review.faces + review.listed for review in waiting), "entries": entries}
 
 
 # ---- Rows whose file is gone ------------------------------------------------------------

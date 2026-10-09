@@ -7,10 +7,12 @@ first). Two cousins called Sam under two groups, a person typed with a slip of t
 Failure modes: a choice interrupted in the middle (all or nothing), two windows choosing at once, a stale person or group, a name settled
 elsewhere meanwhile, a dismissed name that gains rows.
 """
+import io
 import os
 import sys
 import threading
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,7 +20,7 @@ from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, WREN, TwoSams, look,
 
 from tagpup.core.result import NotFound, Refused  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
-from tagpup.services import name_review  # noqa: E402
+from tagpup.services import inspect, name_review  # noqa: E402
 from tagpup.store import journal, people  # noqa: E402
 
 QUILL = "Wren Quill"          # a name no tag has
@@ -198,6 +200,24 @@ class NamesToReview(TwoSams, unittest.TestCase):
         self.assertIn("not been brought up to date", done.refused)
         self.assertFalse(done.details["applied"])
         self.assertEqual(2, name_review.count(self.library), "nothing was set aside")
+
+    # ---- where the owner and the tools see the count ---------------------------------------------
+
+    def test_the_doctor_and_the_tools_count_the_names_and_name_them_only_when_asked(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import doctor
+        said = io.StringIO()
+        with redirect_stdout(said):
+            doctor.report(self.path)
+        self.assertIn("names to review: 2 waiting, 0 set aside", " ".join(said.getvalue().split()))
+        counted = inspect.all_checks(self.library)["names_to_review"]
+        self.assertEqual((2, 0, {"none": 1, "several": 1}, 5), (counted["waiting"], counted["set_aside"], counted["by_reason"], counted["rows"]))
+        self.assertNotIn("name", counted["entries"][0], "counts only, names with reveal")
+        self.assertNotIn(QUILL, str(counted))
+        self.assertIn(QUILL, [each["name"] for each in inspect.all_checks(self.library, reveal=True)["names_to_review"]["entries"]])
+        name_review.resolve(self.library, QUILL, name_review.DISMISS, apply=True)
+        self.assertEqual((1, 1), (inspect.all_checks(self.library)["names_to_review"]["waiting"],
+                                  inspect.all_checks(self.library)["names_to_review"]["set_aside"]))
 
     # ---- how it fails ----------------------------------------------------------------------------
 

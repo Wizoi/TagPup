@@ -84,19 +84,12 @@ def entries(library, include_dismissed=False):
     "candidates": [person], "dismissed"}; the name and the faces' ids are the page's to show. A group tag's listed-only rows are not
     entries (the rebuild's). Reads only."""
     reviews, aside, directory, groups, extra = _read(library)
-    shown, hidden, stale = [], 0, 0
-    for review in reviews:
-        if review.why == "branch" and not review.faces:
-            stale += review.listed
-            continue
-        entry = _entry(review, directory, aside, extra)
-        if entry["dismissed"]:
-            hidden += 1
-            if not include_dismissed:
-                continue
-        shown.append(entry)
-    return {"entries": shown, "count": sum(1 for each in shown if not each["dismissed"]), "dismissed": hidden, "groups": groups,
-            "stale_group_rows": stale}
+    waiting, hidden, stale = store.split(reviews, aside)
+    shown = [_entry(review, directory, aside, extra) for review in waiting]
+    if include_dismissed:
+        shown = sorted(shown + [_entry(review, directory, aside, extra) for review in hidden],
+                       key=lambda entry: (vocabulary.tag_sort_key(entry["name"]), entry["key"]))
+    return {"entries": shown, "count": len(waiting), "dismissed": len(hidden), "groups": groups, "stale_group_rows": stale}
 
 
 def count(library):
