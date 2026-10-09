@@ -4,7 +4,7 @@ A row records what a read of its file found; when a field is added to tagpup.cor
 2026-10-09: 0 of 68,324 rows of photo_index held one -- the rows already read lack it, and the indexer does not read a
 file again until its modified time or size changes. A row says which read it comes from: `TagPup:ReadGeneration` in its
 raw_metadata (fields.READ_GENERATION; docs/findings.md, #1012). This takes the rows whose generation is lower, reads
-those files with ExifTool (metadata only: no picture is decoded, no model loaded, no graphics card used, no file written)
+those files, through ExifTool's session and for metadata only (no picture is decoded, no model loaded, no graphics card used, no file written)
 and records what each holds, as refresh_rows records a re-read -- tags, people, captions, raw_metadata, modified time and
 size, through the same reading and the same edits (tagpup.services.refresh_rows.read_files, edits_for). Faces, names,
 embeddings and tags other than what the file itself holds are untouched; a person named on a face stays in the row's people.
