@@ -494,8 +494,12 @@ def sync(conn, known=None):
 def follow_tree(conn, before):
     """After an edit of the tree (`before` is the People read before it): a node renamed gives its name to the rows
     that hold its id (UPDATE ... WHERE tag_id = ?, by idx_faces_tag); a node gone leaves its rows' names unresolved;
-    and a name that is now exactly one person's links the rows that name it and hold no id. An edit that does none
-    of these costs two reads of the tree. Returns rows changed."""
+    and a name NO ONE had before the edit and a person has after it -- the edit ADDED that person under that name (a node
+    made, moved or renamed into it) -- links the rows that name it and hold no id (a hand decision too: the person was added for that name, and the
+    decision was always to that name). That is the one rule for linking an unresolved name after an edit: a name that became
+    exactly one person's because a same-named node LEFT (renamed away, merged, deleted) was ambiguous before and stays
+    unresolved, hand decisions included, for the owner to settle (the review list); nothing is guessed. An edit that does none of these costs two reads of the
+    tree. Returns rows changed."""
     if not present(conn):
         return 0
     after = read(conn)
@@ -510,8 +514,7 @@ def follow_tree(conn, before):
     for node_id in set(before.node_names) - set(after.node_names):
         for table in TABLES:
             changed += conn.execute("UPDATE %s SET tag_id = NULL WHERE tag_id = ?" % table, (node_id,)).rowcount
-    fillable = {key for key, found in after.by_key.items()
-                if found is not People.AMBIGUOUS and before.by_key.get(key) != found}
+    fillable = {key for key, found in after.by_key.items() if found is not People.AMBIGUOUS and key not in before.by_key}
     if fillable:
         for table in TABLES:
             for name, in conn.execute("SELECT DISTINCT name FROM %s WHERE tag_id IS NULL AND name IS NOT NULL"
