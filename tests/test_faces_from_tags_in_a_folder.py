@@ -1,4 +1,4 @@
-"""docs/findings.md, #987: `faces-from-tags --folder` and the plan behind the dialog's "Only this folder".
+"""docs/findings.md, #994: `faces-from-tags --folder` and the plan behind the dialog's "Only this folder".
 
 The folder is a filter on which photos a plan reads, never another rule: the folder's plan is the whole-library plan restricted
 to the folder's photos (the property below), the write names only those faces, and a folder the library holds no photo under is

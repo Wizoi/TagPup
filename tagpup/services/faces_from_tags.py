@@ -127,7 +127,7 @@ def faces_from_tags(library, apply=False, again=False, planned=None, folder=None
 
     With `folder`, the plan reads (and, read again after the write, counts what is still to be named in) the photos under that
     folder only; a folder the library holds no photo under is refused. A second apply needs `again` whichever folder the
-    first was for (#988): the faces it named are references for the next."""
+    first was for (#995): the faces it named are references for the next."""
     earlier = earlier_apply(library)
     plan_of = (lambda _library: _plan(_library, folder=folder)) if planned is None else (lambda _library: planned)
     if apply and earlier and not again:

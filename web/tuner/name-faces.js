@@ -10,7 +10,7 @@ import { state } from './state.js';
 
 /**
  * TagTuner has no one open folder: Folder Matches lists photos in folder groups. The folder the dialog offers ("Only this
- * folder", docs/findings.md #987) is the group of the photo selected in the list, or none (the whole library, as before).
+ * folder", docs/findings.md #994) is the group of the photo selected in the list, or none (the whole library, as before).
  */
 export function selectedFolder() {
     if (!state.activePhotoPath) return null;

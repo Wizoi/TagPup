@@ -1,4 +1,4 @@
-"""docs/findings.md, #987: the routes of "Name faces from tags" with "Only this folder", served alike by both apps.
+"""docs/findings.md, #994: the routes of "Name faces from tags" with "Only this folder", served alike by both apps.
 
 Flask's test client over one library (tests/test_name_faces_routes.py's RoutesCase): the plan the question shows is the
 folder's, Yes writes it and nothing outside the folder, grouping is refused for a folder, a folder with no photo is refused with

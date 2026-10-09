@@ -3,7 +3,7 @@
 TagTuner's Folder Matches header and gear, and TagPup's Organize folder view, start the same job
 (tagpup.jobs.naming_faces): its plan is read first and shown as a question, and only the answer Yes writes. The page polls
 `status`; a job it did not start (another page, another tab, a page that was reloaded) is found by `current`. The job works on the
-whole library, or, when the page asks (`only_folder`), on the folder it has open and its subfolders (#987); `scope` gives the
+whole library, or, when the page asks (`only_folder`), on the folder it has open and its subfolders (#994); `scope` gives the
 counts the dialog's choice between the two shows. Either way it answers this PC only, as the library's views do.
 
 Every reply is `{"success": true, ...}` or the JSON error both pages read. A job that is already working answers 409 with its

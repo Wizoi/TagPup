@@ -6,7 +6,7 @@
  * makes -- "Name N faces in M photos (X by their tag, Y by looking like the person's confirmed faces)? Z are left for
  * you." -- and only the answer Yes writes. A second box, off, also groups the rest of the faces, and its text says that
  * it works on the whole library and re-derives automatic names. With a folder open, a first step asks how much to look at
- * (docs/findings.md, #987): only that folder and its subfolders, the default, or the whole library with its count; the question
+ * (docs/findings.md, #994): only that folder and its subfolders, the default, or the whole library with its count; the question
  * says which, and the grouping is not offered for a folder. The server is scripted: these tests are about what the person
  * sees and what the page sends.
  */

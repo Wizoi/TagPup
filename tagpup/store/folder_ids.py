@@ -68,6 +68,20 @@ def rows(conn):
     return store_roots.natives(conn, conn.execute("SELECT id, path, marked FROM folder_ids").fetchall(), 1)
 
 
+def held(db_path):
+    """(the library's identifier, [(folder id, folder AS THE LIBRARY HOLDS IT)]) read from the file at `db_path`, with
+    a connection of its own and the map of no machine: `@name/rel` under a root, native under none. Verify of a place the
+    map does not say yet turns them into paths itself (tagpup.services.roots_verify). (None, []) for a library that has no
+    such tables (a schema behind migration 26) or has marked nothing. Read-only; the two small columns only."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        if not _there(conn):
+            return None, []
+        return identity(conn), [tuple(row) for row in conn.execute("SELECT id, path FROM folder_ids")]
+    finally:
+        conn.close()
+
+
 def count(conn):
     if not _there(conn):
         return 0

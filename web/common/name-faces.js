@@ -12,7 +12,7 @@
  *      tags. It re-derives every automatic name in the library, so its text says so. Not offered for a folder (below).
  *   4. The result, in counts, and for the folder the page has open what changed in it.
  *
- * When the page has a folder open, a first step asks how much to look at (docs/findings.md, #987): "Only this folder and its
+ * When the page has a folder open, a first step asks how much to look at (docs/findings.md, #994): "Only this folder and its
  * subfolders" (the default) or the whole library, each with the count of its unnamed faces. The plan, the question and the
  * write are then that scope's, and the question says which. The grouping works on every face of the library and cannot be
  * limited, so a folder is not offered it, and the dialog says why. With no folder open it works on the whole library, as before,
@@ -324,7 +324,7 @@ function nfCount(count, one, many) {
 }
 
 /**
- * The first step, when the page has a folder open (#987): how much to look at. The folder is the default; the whole library is
+ * The first step, when the page has a folder open (#994): how much to look at. The folder is the default; the whole library is
  * the explicit other choice, with its count. A folder the library holds no photo under cannot be chosen, and the answer says why.
  */
 function nfRenderChoice(folderPath, scope) {

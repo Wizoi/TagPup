@@ -1,4 +1,4 @@
-"""docs/findings.md, #987: `tags-from-faces --folder` writes the keywords of the photos under one folder, and no others.
+"""docs/findings.md, #994: `tags-from-faces --folder` writes the keywords of the photos under one folder, and no others.
 
 The rule for each photo is the same; the folder only chooses the photos. So the folder's plan is the whole-library plan restricted
 to its photos, a sibling whose name starts like the folder's is not in it, and a folder the library holds no photo under is

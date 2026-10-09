@@ -18,7 +18,7 @@ was asked, and the page asks how it is getting on. Nothing is run on the owner's
    library, keeps the names given by hand, and is not journaled, so History cannot take it back. It uses no model and no
    graphics card.
 
-**Only this folder (#987).** `start(only_folder=True)` limits the plan, and so the apply, to the photos under the folder the page
+**Only this folder (#994).** `start(only_folder=True)` limits the plan, and so the apply, to the photos under the folder the page
 has open and its subfolders (tagpup.services.folder_scope): the plan is the whole-library plan restricted to those photos, the
 people's decided faces are still the library's, and the plan the owner said Yes to is exactly what is applied, with the guards
 unchanged. The scope is fixed at the start and shown in the question. Grouping (`identities.resolve`) re-derives the automatic
@@ -475,7 +475,7 @@ def _same_scope(job, folder, only_folder):
 def start(library, folder=None, hold=None, busy=None, only_folder=False):
     """Begin the plan, on a thread of its own, and return the Job (its status is the page's). `folder`: the folder the page
     has open, whose faces are counted before and after. `only_folder`: and the plan and the apply are limited to it and its
-    subfolders (#987; Refused when no folder is given or the library holds no photo under it, nothing begun). `hold`: a context manager held from the Yes to the end, keeping
+    subfolders (#994; Refused when no folder is given or the library holds no photo under it, nothing begun). `hold`: a context manager held from the Yes to the end, keeping
     writes of faces out (the web layer's clustering flag). `busy`: a function giving the sentences for what runs in the
     library that this module cannot see (indexing, Suggest, a sync, a Verify, the flag).
 
@@ -655,7 +655,7 @@ def current(library):
 
 
 def scope(library, folder):
-    """What the dialog's choice shows before a job is started (#987), counts only: the library's named and unnamed faces, and
+    """What the dialog's choice shows before a job is started (#994), counts only: the library's named and unnamed faces, and
     those under `folder` (and its photos), or `folder: None` with `why` when the library holds no photo under it; and `job`,
     the job a page opening the dialog should pick up (as `current`), which the choice does not hide. Reads only."""
     folder = paths.stored(roots_service.canonical(library, folder)) if folder else None

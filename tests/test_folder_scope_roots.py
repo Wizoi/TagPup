@@ -1,4 +1,4 @@
-"""docs/findings.md, #987: a folder given to a backfill is read through the library's roots, as every folder is.
+"""docs/findings.md, #994: a folder given to a backfill is read through the library's roots, as every folder is.
 
 The real libraries hold `@name/relative` rows. A folder typed in the OLD place of a root (the map still lists it after a move) is
 the first place's folder (tagpup.services.roots.canonical), and the photos found under it are the rows of that folder; a folder

@@ -1,4 +1,4 @@
-"""docs/findings.md, #987: "Only this folder" in the job behind the button "Name faces from tags".
+"""docs/findings.md, #994: "Only this folder" in the job behind the button "Name faces from tags".
 
 The plan is limited to the folder the page has open and its subfolders, and so is the apply, which writes exactly the plan the owner
 said Yes to under the same guards. Grouping re-derives the whole library's automatic names, so a folder's job refuses it. Run on
