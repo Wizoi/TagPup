@@ -6,12 +6,14 @@ and Ignore cluster, and Re-examine this folder -- are one decision per face AND 
 (tagpup.services.face_people, the one owner of that rule). A selection of hundreds of faces means hundreds of photo files to
 write, so it is not one request's work: this module makes the PLAN, and the job runs it a step at a time.
 
-* **A plan** (it holds the people's NAMES -- `person_name`, and `names` for the faces a removal had -- so it is kept in the
-  library's cache folder only as long as the job's record is, 30 days, as a bulk edit's state names its people) is what the click
+* **A plan** (it holds the people -- `person_id` and `person_name`, and `names` for the faces a removal had, each the id of
+  their node or, for a name no person is filed under, the name -- so it is kept in the
+  library's cache folder only as long as the job's record is, 30 days, as a bulk edit's state names its people; a plan an
+  older version wrote holds names only, and they are resolved when a step runs) is what the click
   meant, decided up front, read-only, and refused as a whole for what the single write refuses
   (two faces of one photo, the person already on another face of the photo, a person the tree files in two places): `op`
   (name, unname, exclude or guess), the steps -- each a few faces, the faces of one photo never split between two -- and for
-  unname/exclude `names`, {face id: the name it carried when the click was made}. It is kept (`write_plan`) BEFORE the first
+  unname/exclude `names`, {face id: the person it carried when the click was made}. It is kept (`write_plan`) BEFORE the first
   step is run, so that a stop at any point leaves what to finish.
 * **A step** (`run_step`) is one chunk of face_people's, which keeps the rule of its direction: naming writes the tag first and
   names the faces of the photos it could write; unnaming and ruling out change the faces first and take the tags off after
@@ -30,7 +32,7 @@ from tagpup.files import job_files
 from tagpup.services import face_people
 from tagpup.services import journal as journal_service
 from tagpup.services import faces as faces_service
-from tagpup.store import db, faces, file_journal, person_ids
+from tagpup.store import db, faces, file_journal
 
 logger = logging.getLogger(__name__)
 
@@ -55,33 +57,32 @@ def _chunks(items, size):
 
 
 def _plan(op, steps, **more):
-    plan = {"op": op, "steps": steps, "person_name": None, "reason": None, "undo": False, "names": {}, "sources": {},
-            "skipped_excluded": [], "looked_at": 0}
+    plan = {"op": op, "steps": steps, "person_name": None, "person_id": None, "reason": None, "undo": False, "names": {},
+            "sources": {}, "skipped_excluded": [], "looked_at": 0}
     plan.update(more)
     plan["faces"] = sum(len(step) for step in steps)
     return plan
 
 
-def plan_name(library, face_ids, person_name):
-    """The plan of naming `face_ids` as `person_name`: Refused, nothing done, for what faces_service.name_faces refuses.
-    `skipped_excluded` are the faces left alone because they are ruled out; a face already under the name is no step."""
-    person_name = (person_name or "").strip()
-    check = faces_service.nameable(library, face_ids, person_name)
+def plan_name(library, face_ids, person):
+    """The plan of naming `face_ids` as `person` (the id of their node, or a tag path or a name): Refused, nothing done, for what
+    faces_service.name_faces refuses -- a name two people have, a group. `skipped_excluded` are the faces left alone because
+    they are ruled out; a face already under the person is no step."""
+    check = faces_service.nameable(library, face_ids, person)
     if check.refused:
         raise Refused(check.refused)
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        branch = person_ids.read(conn).why_not(person_name) == "branch"
-    finally:
-        conn.close()
-    if face_people.Filer(library).tag(person_name) is None and not branch:
+    ref, person_name = faces_service.who_is(library, person, Result())
+    if face_people.Filer(library).tag(ref) is None:
         raise Refused(face_people.not_filed(person_name))
-    if branch:
-        # A branch of the tree is never a person (owner, 2026-10-04): a photo is not tagged with the branch.
-        raise Refused("%s is a branch of the tag tree, not a person: name a person under it." % person_name)
     # A step names one face of a photo; the check refused two in a photo, so the order of the faces is free.
     return _plan(NAME, _chunks(check.details["matched_ids"], CHUNK), person_name=person_name,
-                 skipped_excluded=list(check.details["skipped_excluded"]))
+                 person_id=ref if isinstance(ref, int) else None, skipped_excluded=list(check.details["skipped_excluded"]))
+
+
+def person_of(plan):
+    """The person a naming plan names, as a store writer takes them: the id, else -- an older plan, or a name no person is
+    filed under -- the name."""
+    return plan["person_id"] if plan.get("person_id") is not None else plan["person_name"]
 
 
 def _prior(library, face_ids):
@@ -93,8 +94,9 @@ def _prior(library, face_ids):
 
 
 def _removal_steps(library, face_ids):
-    """(steps, {face id: (name, name_source)}): the faces that carry a name are the steps that read and write photos, a few at a
-    time; the others, which touch no photo, many at a time, first. What the named ones were is kept for the job's Undo."""
+    """(steps, {face id: (person, name_source)}): the faces that carry a name are the steps that read and write photos, a few at a
+    time; the others, which touch no photo, many at a time, first. Who the named ones were (the id of their node, or a name no
+    person is filed under) is kept for the job's Undo."""
     face_ids = list(dict.fromkeys(face_ids))
     names = _prior(library, face_ids)
     plain = [face_id for face_id in face_ids if face_id not in names]
@@ -139,15 +141,15 @@ def _names(plan):
 def named_still(library, plan, face_ids):
     """The faces among `face_ids` that still carry the name `plan` (a naming or Re-examine's) gave them: a face a person renamed
     since is theirs."""
-    wanted = {face_id: name for step in plan["steps"] for face_id, name in (
-        [(face_id, plan["person_name"]) for face_id in step] if plan["op"] == NAME else step)}
+    wanted = {face_id: person for step in plan["steps"] for face_id, person in (
+        [(face_id, person_of(plan)) for face_id in step] if plan["op"] == NAME else step)}
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         now = faces.rows(conn, list(face_ids))
     finally:
         conn.close()
     return [face_id for face_id in face_ids if face_id in now and now[face_id][1]
-            and now[face_id][1].lower() == str(wanted.get(face_id, "")).lower()]
+            and face_id in wanted and face_people.is_person(now[face_id][1], wanted[face_id])]
 
 
 def unname(library, face_ids):
@@ -220,8 +222,8 @@ def undo(library, plan, state, exiftool_path):
     if op in (NAME, GUESS):
         # Faces first (the faces a person named since are theirs), then the tags this job wrote.
         named = named_still(library, plan, ids)
-        wanted = {face_id: name for step in plan["steps"] for face_id, name in (
-            [(face_id, plan["person_name"]) for face_id in step] if op == NAME else step)}
+        wanted = {face_id: person for step in plan["steps"] for face_id, person in (
+            [(face_id, person_of(plan)) for face_id in step] if op == NAME else step)}
         # The people to take off are those the job named, whether or not their faces are still named (an earlier try of this undo
         # may have unnamed them): untag_plan keeps a person who is on a face of the photo now.
         where = _photo_of_faces(library, ids)
@@ -259,7 +261,7 @@ def undo(library, plan, state, exiftool_path):
 
 
 def prior_of(plan):
-    """{face id: (name, name_source)} the faces of a removal had when its click was made: what its Undo puts back."""
+    """{face id: (person, name_source)} the faces of a removal had when its click was made: what its Undo puts back."""
     return {int(face_id): (name, plan.get("sources", {}).get(face_id)) for face_id, name in plan["names"].items()}
 
 
@@ -268,7 +270,7 @@ def run_step(library, plan, index, writer):
     (face_people.Writer). Raises what the face writes raise (NotFound, Conflict); the job counts it as the step's error."""
     step, op = plan["steps"][index], plan["op"]
     if op == NAME:
-        return face_people.name_faces(library, step, plan["person_name"], writer)
+        return face_people.name_faces(library, step, person_of(plan), writer)
     if op == UNNAME:
         names = {face_id: name for face_id, name in _names(plan).items() if face_id in set(step)}
         return face_people.unname_faces(library, step, writer, undo=plan["undo"], names=names)

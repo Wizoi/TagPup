@@ -12,6 +12,8 @@ which is the journaled inverse.
 import json
 import sqlite3
 
+from tagpup.core.vocabulary import Ref
+
 #: What the journal calls the change that unnamed the faces of a person taken off a photo.
 OPERATION = "face unnamed for a person taken off the photo"
 
@@ -40,6 +42,20 @@ def faces_of(conn, change_id):
     return [(json.loads(key)[0], old) for key, old in conn.execute(
         "SELECT row_key, old FROM change_rows WHERE change_id = ? AND table_name = 'faces' AND column_name = 'name'"
         " ORDER BY id", (change_id,)) if old]
+
+
+def removed_people(conn, face_ids):
+    """{face id: Ref} for each of `face_ids` -- faces a person called nobody -- that the newest APPLIED change named OPERATION
+    unnamed: who they were (the node's id when the change recorded it, and the name). removed_names, with the ids."""
+    return {face_id: Ref(None, name) for face_id, name in removed_names(conn, face_ids).items()}
+
+
+def same_person(removed, person):
+    """Is the person a removal recorded, `removed` (a Ref), the person `person` (a Ref) is? By the node's id when both have
+    one -- two people called alike are two --, else by the name, as a record written before ids was."""
+    if removed.id is not None and person.id is not None:
+        return removed.id == person.id
+    return str(removed.name).strip().lower() == str(person.name).strip().lower()
 
 
 def removed_names(conn, face_ids):

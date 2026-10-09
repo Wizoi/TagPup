@@ -912,6 +912,24 @@ def _person_ids(conn):
     person_ids.sync(conn)
 
 
+def _person_tag_guard(conn):
+    """The backstop for a person that faces name (docs/ARCHITECTURE.md, "People by id, stage 2", "Tree operations, by id"): a
+    trigger, `person_tag_not_deleted_while_named`, aborts the DELETE of a node of the tag tree that a face names
+    (`faces.tag_id`, by idx_faces_tag), whichever connection deletes it -- an old checkout, a script, an undo of the journal. The
+    tree edits that delete a person the right way unname or repoint their faces first (taxonomy.delete_branch with force,
+    taxonomy.move_branch's join), so the trigger sees nothing. And the faces' generation moves when a face's `tag_id` is
+    written (a face given to another person who is called alike), as it moves when its name is. Triggers only: no row of any
+    table changes, nothing is recorded in the journal, and no backup is needed."""
+    conn.execute("DROP TRIGGER IF EXISTS person_tag_not_deleted_while_named")
+    conn.execute("CREATE TRIGGER person_tag_not_deleted_while_named BEFORE DELETE ON tag_taxonomy"
+                 " WHEN EXISTS (SELECT 1 FROM faces WHERE tag_id = OLD.id)"
+                 " BEGIN SELECT RAISE(ABORT, 'person_tag_not_deleted_while_named'); END")
+    conn.execute("DROP TRIGGER IF EXISTS generation_faces_update")
+    conn.execute("CREATE TRIGGER generation_faces_update AFTER %s ON faces"
+                 " BEGIN UPDATE generations SET value = value + 1 WHERE name = 'faces'; END"
+                 % (FACES_GENERATION_UPDATE + ", tag_id"))
+
+
 def _search_index(conn):
     """The word index a search's words are matched in (tagpup.store.search_index; docs/ARCHITECTURE.md, phase 9e-1): two
     contentless FTS5 tables -- `search_words` (the words of keywords, captions and people) and `search_names` (the file
@@ -1530,13 +1548,21 @@ MIGRATIONS = (
               "still be undone",
               ("name_review_dismissals",),
               (RowsKept(),) + STANDARD),
+    Migration(29, "a person that faces name is not deleted", _person_tag_guard, ADDITIVE,
+              "adds the trigger person_tag_not_deleted_while_named, which aborts the delete of a tag-tree node a face names, "
+              "and makes the faces' generation move when a face's person id is written; triggers only, no row of any table "
+              "changes, and a change journaled before it can still be undone",
+              (),
+              (RowsKept(),) + STANDARD),
 )
 
 #: The columns a migration adds to a table the journal keys that the journal derives
-#: (journal.DERIVED_COLUMNS) -- {version: {table: columns}}. Such a migration changes nothing an
+#: (derived when it added them) -- {version: {table: columns}}. Such a migration changes nothing an
 #: older change's rows mean: an undo writes the columns it recorded and the derived ones are made
 #: again from them (journal._derive), so it blocks no undo of a change made before it
-#: (journal.schema_gap_blocker). tests/test_person_ids.py holds each to the columns it really adds.
+#: (journal.schema_gap_blocker). Version 21's `faces.tag_id` was derived from the name then; it is the
+#: person since 29 (journal.cache_columns), and a change recorded before that is replayed by the name
+#: (journal._named_by_name). tests/test_person_ids.py holds each to the columns it really adds.
 ADDS_DERIVED_COLUMNS = {21: {"faces": ("tag_id",)}}
 
 LATEST = MIGRATIONS[-1].version

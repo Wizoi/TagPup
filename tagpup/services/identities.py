@@ -9,6 +9,11 @@ in scripts/faces.py, beside the face models it never used (docs/ARCHITECTURE.md,
 layers, revisited").
 
 How each face was named is recorded in the library's trace file (resolution_trace_path).
+
+**People are NAMES here** (the photos' keywords and the faces are read as the names they spell), and the name is turned into
+a person when it is written (`_save_face_names`: person_ids.resolve). A name two people have is never given by clustering --
+nothing in a name says which -- and a face that already carries a person of that name is left as it is; a face a person decided
+by hand is never written at all (docs/ARCHITECTURE.md, "People by id, stage 2").
 """
 import json
 import logging
@@ -19,6 +24,7 @@ from tqdm import tqdm
 from tagpup.core import clustering, dates, paths
 from tagpup.core import vocabulary as tag_vocabulary
 from tagpup.core.library import Library
+from tagpup.store import person_ids
 from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
 
@@ -44,9 +50,10 @@ def _all_faces(photo_index):
             "photo_path": photo_path,
             "box": json.loads(box_json),
             "embedding": np.frombuffer(emb_bytes, dtype=np.float32),
-            "name": name,
+            "name": person.name if person else None,
+            "person": person,
             "prob": prob,
-        } for face_id, photo_path, box_json, emb_bytes, name, prob in store_faces.for_clustering(photo_index.conn)]
+        } for face_id, photo_path, box_json, emb_bytes, person, prob in store_faces.for_clustering(photo_index.conn)]
     except Exception as e:
         logger.error(f"Error retrieving faces: {e}")
         return []
@@ -58,7 +65,8 @@ def _manual_face_names(photo_index):
     if photo_index.conn is None:
         return {}
     try:
-        return store_faces.manual_names(photo_index.conn)
+        return {face_id: person.name if person else None
+                for face_id, person in store_faces.manual_names(photo_index.conn).items()}
     except Exception as e:
         logger.warning(f"Could not read manual face names: {e}")
         return {}
@@ -76,12 +84,25 @@ def _excluded_face_ids(photo_index):
 
 
 def _save_face_names(photo_index, face_updates):
-    """Write the names resolved, (name, face id) each."""
+    """Write the names resolved, (name, face id) each, as the people they are (person_ids.resolve): a name no person is called
+    stays a name; a name two people are called, or a group's, is nobody here -- clustering cannot say which -- so its face is
+    left unnamed."""
     if photo_index.conn is None or not face_updates:
         return
     try:
-        store_faces.set_names(photo_index.conn, {face_id: name for name, face_id in face_updates})
-        photo_index.conn.commit()
+        conn = photo_index.conn
+        known = person_ids.read(conn)
+        resolved = {}
+        for name, _face_id in face_updates:
+            if name is None or name in resolved:
+                continue
+            try:
+                found = known.person(name)
+                resolved[name] = found.id if found else name
+            except person_ids.PersonProblem:
+                resolved[name] = None
+        store_faces.set_names(conn, {face_id: None if name is None else resolved[name] for name, face_id in face_updates})
+        conn.commit()
     except Exception as e:
         logger.error(f"Error updating face names: {e}")
         photo_index.conn.rollback()
@@ -689,7 +710,11 @@ def resolve(photo_index, max_iterations=5, on_step=None):
                 "trigger_photos": []
             }
 
-        face_updates.append((final_name, face["id"]))
+        # A face a person decided is not written; nor is one that already carries a person of the name found.
+        carried = face.get("person")
+        if face["id"] not in manual_names and not (
+                final_name and carried and tag_vocabulary.key(carried.name) == tag_vocabulary.key(final_name)):
+            face_updates.append((final_name, face["id"]))
         if final_name:
             resolved_stats[final_name] = resolved_stats.get(final_name, 0) + 1
 

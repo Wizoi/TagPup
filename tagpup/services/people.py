@@ -8,7 +8,34 @@ answer that carries a person carries that as `person`, beside the name it has al
 has, and has no id (and no tag) for a name two people are called.
 """
 from tagpup.core import vocabulary
+from tagpup.core.result import NotFound, Refused
 from tagpup.store import db, faces, people, person_ids, taxonomy
+
+
+def translate(problem):
+    """Raise what a web route answers for a person_ids.PersonProblem: NotFound (404) for an id that is no person -- merged or
+    deleted in another window, never made again -- and Refused (400) for a name two people have or a group, whose sentence
+    names the candidates. Called from an `except` block."""
+    if isinstance(problem, person_ids.StalePerson):
+        raise NotFound(str(problem)) from None
+    raise Refused(str(problem)) from None
+
+
+def resolve(library, ref):
+    """The Person `ref` is -- an id, a tag path or a bare name (tagpup.store.person_ids.resolve) -- read now, or None for a name
+    no person is filed under. NotFound for a stale id, Refused for a name two people have (the sentence names them) or a group."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return person_ids.resolve(conn, ref)
+    except person_ids.PersonProblem as problem:
+        translate(problem)
+    finally:
+        conn.close()
+
+
+def tags_by_id(library):
+    """{id: tag} of everyone the tree files as a person, read now: the tag a person is written as."""
+    return {record["id"]: record["tag"] for record in records(library, include_hidden=True)}
 
 
 def names(library, keywords_too=False, include_hidden=False):
@@ -63,7 +90,8 @@ def records(library, include_hidden=False):
 
 
 def with_counts(library):
-    """[{"name", "count", "person"}]: everyone with a named face, and how many, for Review People.
+    """[{"name", "count", "person", "person_id"}]: everyone with a named face, and how many, for Review People: a person
+    is the node, so two people called alike are two rows (their `person` says which).
     A person is left out when every node the tree files them under is hidden.
 
     Deliberately people only. An "Unmatched" pseudo-person used to be pinned at the
@@ -76,16 +104,18 @@ def with_counts(library):
         hidden_tags = taxonomy.hidden_tags(conn)
         # Where the tree files everyone, in one read: it was a query per person (#50).
         filed = taxonomy.filed_people(conn)
-        counted = faces.counts_by_name(conn)
+        counted = faces.counts_by_person(conn)
         everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
     listed = []
-    for name, count in counted:
-        tag_paths = filed.get(name, [])
+    for ref, count in counted:
+        name = ref.name
+        person = everyone.of_row(ref.id, name)
+        tag_paths = [person["tag"]] if person and person["id"] is not None else filed.get(name, [])
         if tag_paths and all(vocabulary.hidden_by(path, hidden_tags) for path in tag_paths):
             continue
-        listed.append({"name": name, "count": count, "person": everyone.of_name(name)})
+        listed.append({"name": name, "count": count, "person": person, "person_id": person["id"] if person else None})
     # Most faces first, and the alphabet for those that tie: the order of the rows the query
     # grouped is nobody's.
     listed.sort(key=lambda each: (-each["count"], vocabulary.tag_sort_key(each["name"])))

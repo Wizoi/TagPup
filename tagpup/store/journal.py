@@ -95,12 +95,25 @@ DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta"
            "search_gear")
 
 #: Derived columns of journaled tables, rebuilt from the row's other columns after each
-#: write (a photo's dates, from its metadata and path: store.photos.date_photos; a face's
-#: person, from its name and the tree: store.person_ids). An inserted photo is recorded as
-#: written, before they are filled in, so an undo does not hold a row to them: it would find
-#: every inserted photo changed since. A face put back by an undo -- one recorded before the
-#: column existed among them -- is given its person's id by `_derive`.
-DERIVED_COLUMNS = {"photos": ("taken", "year"), "faces": ("tag_id",)}
+#: write (a photo's dates, from its metadata and path: store.photos.date_photos). An inserted photo is
+#: recorded as written, before they are filled in, so an undo does not hold a row to them: it would find
+#: every inserted photo changed since.
+#:
+#: A face's `tag_id` is NOT one: it is the person (docs/ARCHITECTURE.md, "People by id, stage 2"), recorded
+#: with the change like any column, and `name` beside it is only its cache (`cache_columns`). A change
+#: recorded before that -- one that wrote a face's name and not its id -- is replayed by the name: the id of
+#: the rows it wrote is put by the name and the tree as they stand (`_derive`, `_named_by_name`), and nothing
+#: in the journal is rewritten.
+DERIVED_COLUMNS = {"photos": ("taken", "year")}
+
+
+def cache_columns(table, values):
+    """The columns of a recorded row that only repeat another recorded column, so a change is not held to them: a face's
+    `name` beside the `tag_id` of its person -- the cache of the node's leaf, which a rename of the node changes without
+    changing the face. A row recorded without a `tag_id`, or with none (NULL: an unresolved name), is held to its name."""
+    if table == "faces" and values.get("tag_id") is not None:
+        return ("name",)
+    return ()
 
 RECORDED, REBUILT, FORBIDDEN = "recorded", "rebuilt", "forbidden"
 
@@ -379,9 +392,10 @@ def _resolve(conn, edits):
             else:
                 refusals.append("%s is gone" % _named(edit.table, key))
             continue
-        differs = [column for column, value in edit.expect.items()
-                   if not _same(_canonical_value(roots, edit.table, key, column, row[column]),
-                                _canonical_value(roots, edit.table, key, column, value))]
+        cached = cache_columns(edit.table, edit.expect)
+        differs = [column for column, value in edit.expect.items() if column not in cached
+                   and not _same(_canonical_value(roots, edit.table, key, column, row[column]),
+                                 _canonical_value(roots, edit.table, key, column, value))]
         if differs:
             if edit.skippable:
                 skipped.append((_named(edit.table, key), "not what the plan read: %s changed" % ", ".join(differs)))
@@ -692,7 +706,7 @@ def _not_as_left(conn, change_id, changes):
         if row is None:
             reasons.append("%s is gone" % _named(change.table, change.key))
             continue
-        derived = DERIVED_COLUMNS.get(change.table, ())
+        derived = DERIVED_COLUMNS.get(change.table, ()) + cache_columns(change.table, change.new)
         differs = [c for c in change.new if c not in derived
                    and not _same(_canonical_value(roots, change.table, change.key, c, row[c]), change.new[c])]
         if differs:
@@ -777,6 +791,29 @@ def _face_photos(conn, changes):
     return found
 
 
+def _named_by_name(conn, changes):
+    """A change recorded before a face's person was an id wrote a face's NAME and not its id (a naming, an unnaming, a
+    guess): the faces it wrote still hold the id they had, which is another person's now, or none. Their id is put by
+    the name -- NULL, then person_ids.follow_faces gives it the one person that name is, or leaves it unresolved --
+    and nothing recorded is rewritten. A change that recorded the id is replayed as it was. Returns the faces."""
+    ids = set()
+    for change in changes:
+        if change.table != "faces" or change.key is None:
+            continue
+        values = [d for d in (change.old, change.new) if d]
+        if any("name" in d and "tag_id" not in d for d in values):
+            ids.add(change.key[0])
+    if ids and person_ids.present(conn):
+        for chunk in _id_chunks(sorted(ids)):
+            conn.execute("UPDATE faces SET tag_id = NULL WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk)
+    return ids
+
+
+def _id_chunks(items):
+    for start in range(0, len(items), CHUNK):
+        yield items[start:start + CHUNK]
+
+
 def _derive(conn, changes):
     """Rebuild what `changes` touched of the derived data: the people of each photo whose
     keywords or faces changed or whose keywords a changed node names, the dates of each photo
@@ -793,6 +830,7 @@ def _derive(conn, changes):
     if nodes:
         changed += people.follow_nodes(conn, nodes)
     if photo_ids:
+        _named_by_name(conn, changes)
         person_ids.follow_faces(conn, sorted(photo_ids))
         changed += people.rebuild(conn, sorted(photo_ids))
     if nodes:
@@ -932,8 +970,9 @@ def schema_gap_blocker(version, current):
             return "migration %d is not known" % number
         if migration.kind != schema.ADDITIVE:
             return "migration %d, %s, is %s" % (number, migration.name, migration.kind)
-        derived_only = {table for table, columns in schema.ADDS_DERIVED_COLUMNS.get(number, {}).items()
-                        if set(columns) <= set(DERIVED_COLUMNS.get(table, ()))}
+        # What the migration added was derived when it was added (a change older than it cannot hold the column), whatever
+        # a later version made of it: tests hold the declaration to the columns the migration really adds.
+        derived_only = set(schema.ADDS_DERIVED_COLUMNS.get(number, {}))
         touched = sorted(set(migration.touches) & journaled - derived_only)
         if touched:
             return "migration %d, %s, touches %s" % (number, migration.name, ", ".join(touched))
@@ -1110,7 +1149,7 @@ def _snapshot(conn, changes):
     listed = []
     for start in range(0, len(photo_ids), CHUNK):
         chunk = photo_ids[start:start + CHUNK]
-        listed += conn.execute("SELECT photo_id, position, name, source FROM photo_people WHERE photo_id IN (%s)"
+        listed += conn.execute("SELECT photo_id, position, tag_id, name, source FROM photo_people WHERE photo_id IN (%s)"
                                " ORDER BY photo_id, position" % ",".join("?" * len(chunk)), chunk).fetchall()
     return rows, (listed, derived.listing(conn, set(photo_ids) | kept, node_ids))
 

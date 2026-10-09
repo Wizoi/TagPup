@@ -122,10 +122,12 @@ def _edits(planned):
     whole change (journal.update with no values writes nothing; its `expect` is the guard)."""
     work = planned.work
     edits = [journal.update("faces", (choice.face_id,),
-                            {"name": None, "excluded": 0, "name_source": choice.source},
-                            {"name": choice.name}, kind=KIND)
+                            {"name": None, "tag_id": None, "excluded": 0, "name_source": choice.source},
+                            {"name": choice.person.name, "tag_id": choice.person.id}, kind=KIND)
              for choice in work.choices]
-    edits += [journal.update("faces", (face_id,), {"name": name}, {}) for face_id, name in work.siblings.items()]
+    edits += [journal.update("faces", (face_id,),
+                             {"name": person.name if person else None, "tag_id": person.id if person else None}, {})
+              for face_id, person in work.siblings.items()]
     edits += [journal.update("photos", (photo_id,), {"tags": tags}, {}) for photo_id, tags in work.photo_tags.items()]
     return edits
 

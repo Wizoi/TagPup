@@ -38,6 +38,7 @@ from tagpup.core.result import Conflict, Result
 from tagpup.files import exiftool_session
 from tagpup.services import faces as faces_service
 from tagpup.services import file_changes, tagging
+from tagpup.services import people as people_service
 from tagpup.store import db, faces, file_journal, journal, person_ids, photos, removals, taxonomy
 
 logger = logging.getLogger(__name__)
@@ -60,14 +61,19 @@ CHUNK = 25
 
 class Filer:
     """The tag a person is written as, by the one rule a chip and Apply All follow (`vocabulary.person_tag`): the tree
-    read once, and only read -- no node is made. None for a person the tree files in two places, or a tree with several
-    people roots: someone must choose (the page's placement question)."""
+    read once, and only read -- no node is made. A person given by the id of their node (or as a Person or a Ref with one)
+    is the tag of that node: a leaf two people have is no question for them. None for a person the tree files in two places
+    (a NAME two people have), or a tree with several people roots: someone must choose (the page's placement question)."""
 
     def __init__(self, library):
         self.filed, self.roots = taxonomy.people_filing(library.path)
+        self.tags_by_id = people_service.tags_by_id(library)
 
-    def tag(self, name):
-        name = (name or "").strip()
+    def tag(self, person):
+        person = person_ids.wire(person)
+        if isinstance(person, int):
+            return self.tags_by_id.get(person)
+        name = (person or "").strip()
         return vocabulary.person_tag(name, self.filed.get(vocabulary.key(name), []), self.roots)
 
 
@@ -77,17 +83,43 @@ def not_filed(name):
             "path." % name)
 
 
-def already_names(tags, tag):
-    """Do the photo's `tags` name the person `tag` is, by their leaf under any root? THE rule for "this photo already names
-    them" -- the keyword writer's own (tagging._change_each: vocabulary.same_person) -- so that what is planned, what is
-    skipped and what is written agree."""
-    return any(vocabulary.same_person(tag, there) for there in tags)
+def shown(person):
+    """What to call a person in a sentence: their name (a Ref's, a name given), or 'that person' for an id alone."""
+    person = person_ids.wire(person) if not isinstance(person, str) else person
+    return "that person" if isinstance(person, int) else str(person)
 
 
-def _person_tags(tags, name, known):
-    """The tags among `tags` that name the person `name`: under a people root, or a person's node, by the leaf."""
-    return [tag for tag in tags
-            if any(vocabulary.same_person(person, name) for person in vocabulary.extract_people({}, [tag], known))]
+def already_names(tags, tag, known):
+    """Do the photo's `tags` name the person `tag` is, by the id of their node (two people called alike are two)? THE rule
+    for "this photo already names them" -- the keyword writer's own (tagging._change_each: vocabulary.names_same_person) --
+    so that what is planned, what is skipped and what is written agree. `known` is the tree's PeopleVocabulary."""
+    return any(vocabulary.names_same_person(known, tag, there) for there in tags)
+
+
+def _person_tags(tags, person, known):
+    """The tags among `tags` that name `person` (a Ref, an id or a name): the node's own path or a bare name only they have,
+    by their id; a person with no id, by their name. A tag that names a person of the same name that no node here is -- a
+    path the tree lacks, a bare name two people have -- is theirs only when nobody else is called alike."""
+    person = person_ids.wire(person)
+    if isinstance(person, int):
+        name = known.names.get(person)
+        if name is None:
+            return []
+        alone = known.resolve_name(name) == person
+    else:
+        name, alone = person, True
+    found = []
+    for tag in tags:
+        ref = vocabulary.person_ref_of_tag(tag, known)
+        if ref is None:
+            continue
+        if isinstance(person, int) and ref.id is not None:
+            same = ref.id == person
+        else:
+            same = alone and vocabulary.key(ref.name) == vocabulary.key(name)
+        if same:
+            found.append(tag)
+    return found
 
 
 # ---- The tag, written and taken off ----------------------------------------------------------------------------
@@ -145,20 +177,21 @@ def write_tags(library, changes, writer, operation, persons=None, stop_at_first_
 
 
 def add_people(library, wanted, writer, filer=None, operation=ADDED, stop_at_first_error=True):
-    """Add the person of each (photo path, name) of `wanted` to the photo's keywords, a photo given all its people in
-    one write. A Result: `changed` the files written, details `written`. A photo whose keywords name the person already
-    (by their leaf under any root: already_names) is not read or written again.
+    """Add the person of each (photo path, person) of `wanted` to the photo's keywords, a photo given all its people in
+    one write; a person is their id, a Ref, or a name. A Result: `changed` the files written, details `written`. A photo whose
+    keywords name the person already (by the id of their node: already_names) is not read or written again.
     Refused, nothing written, for a name the tree files in two places."""
     filer = filer or Filer(library)
     result = Result(attempted=len(wanted))
     held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, [path for path, _name in wanted])}
+    known = taxonomy.people_vocabulary(library.path)
     changes, persons = {}, {}
     for photo_path, name in wanted:
         tag = filer.tag(name)
         if tag is None:
-            result.refuse(not_filed(name))
+            result.refuse(not_filed(shown(name)))
             return result
-        if already_names(held.get(paths.key(photo_path), []), tag):
+        if already_names(held.get(paths.key(photo_path), []), tag, known):
             continue
         add = changes.setdefault(photo_path, ([], ()))[0]
         if tag not in add:
@@ -168,29 +201,30 @@ def add_people(library, wanted, writer, filer=None, operation=ADDED, stop_at_fir
 
 
 def untag_plan(library, items):
-    """{photo path: [the tags to take off]} for the (photo path, person name) of `items` whose person is on no face of the
-    photo any more -- read from the library NOW, after the faces were written -- and on whose keywords the person still
-    is, in every spelling the photo holds (a tag at the person's path and a bare one are one person)."""
+    """{photo path: [the tags to take off]} for the (photo path, person) of `items` -- a person is a Ref, an id or a name --
+    whose person is on no face of the photo any more -- read from the library NOW, after the faces were written -- and on whose
+    keywords the person still is, in every spelling the photo holds (a tag at the person's path and a bare one are one person;
+    another person called alike is not)."""
     wanted = {}
-    for photo_path, name in items:
-        wanted.setdefault(photo_path, []).append(name)
+    for photo_path, person in items:
+        wanted.setdefault(photo_path, []).append(person_ids.wire(person))
     if not wanted:
         return {}
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        carried = {photo_path: {vocabulary.key(name) for name in faces.names_in_photo(conn, photo_path)}
+        carried = {photo_path: {person_ids.key_of(each.id, each.name) for each in faces.people_in_photo(conn, photo_path)}
                    for photo_path in wanted}
         known = taxonomy.read_people_vocabulary(conn)
     finally:
         conn.close()
     held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, list(wanted))}
     plan = {}
-    for photo_path, names in wanted.items():
+    for photo_path, people in wanted.items():
         tags = held.get(paths.key(photo_path), [])
-        for name in dict.fromkeys(names):
-            if vocabulary.key(name) in carried[photo_path]:
+        for person in dict.fromkeys(people):
+            if person_ids.wire_key(person) in carried[photo_path]:
                 continue
-            for tag in _person_tags(tags, name, known):
+            for tag in _person_tags(tags, person, known):
                 if tag not in plan.setdefault(photo_path, []):
                     plan[photo_path].append(tag)
     return {photo_path: tags for photo_path, tags in plan.items() if tags}
@@ -223,29 +257,27 @@ def _finish_untag(library, result, items, writer):
 
 # ---- Naming ---------------------------------------------------------------------------------------------------
 
-def name_face(library, face_id, person_name, writer):
+def name_face(library, face_id, person, writer):
     """Name one face AND put the person on its photo, the tag first (see the module's docstring). Everything
-    faces_service.name_face refuses is refused before a tag is written. `changed` is the faces named; details
-    `tags_written` (0 when the photo named the person already) and `written`. A face that carried another person's name
-    is renamed: that person's tags go from the photo unless another face is them, as unname_face's do. With no `writer`
+    faces_service.name_face refuses is refused before a tag is written. `person` is the id of the person's node, or a tag path
+    or a name (faces_service.name_face). `changed` is the faces named; details
+    `tags_written` (0 when the photo named the person already) and `written`. A face that carried another person is renamed:
+    that person's tags go from the photo unless another face is them, as unname_face's do. With no `writer`
     the page wrote the person's tag itself (TagPup's box and strip) and writes the old person's off itself too:
     details["untag"] says which."""
-    person_name = (person_name or "").strip()
     refused = Result(attempted=1)
-    # The page wrote the tag before it asked (no writer): its save ran the one-face rule (#788) and may have given the
-    # person to ANOTHER face as a guess. A guess yields to a person's choice (and is given back below); a name somebody
-    # decided on another face still refuses.
-    found = faces_service.check_nameable(library, face_id, person_name, refused, guesses_yield=writer is None)
+    found = faces_service.check_nameable(library, face_id, person, refused, guesses_yield=writer is None)
     if found is None:
         return refused
+    ref, person_name = faces_service.who_is(library, person, refused)
     photo_path, was = found
     if writer is None:
-        _give_back_guesses(library, photo_path, face_id, person_name)
+        _give_back_guesses(library, photo_path, face_id, ref)
     before = _names_on(library, photo_path)
     # No writer: the page wrote the tag itself (TagPup's box and strip, first), and says so.
-    tagged = add_people(library, [(photo_path, person_name)], writer) if writer is not None else Result()
+    tagged = add_people(library, [(photo_path, ref)], writer) if writer is not None else Result()
     if tagged.ok and tagged.details.get("tags_written"):
-        _give_back_to(library, photo_path, face_id, person_name, before)
+        _give_back_to(library, photo_path, face_id, ref, before)
     if not tagged.ok:
         # Nothing was named: the face stays as it was.
         failed = Result(attempted=1)
@@ -257,7 +289,7 @@ def name_face(library, face_id, person_name, writer):
                               % (person_name, tagged.message()))
         return failed
     try:
-        result = faces_service.name_face(library, face_id, person_name)
+        result = faces_service.name_face(library, face_id, ref)
     except Conflict as late:
         raise Conflict("%s The person was added to the photo." % late) from None
     result.details.update(tags_written=tagged.details.get("tags_written", 0), written=tagged.details.get("written", {}))
@@ -266,12 +298,22 @@ def name_face(library, face_id, person_name, writer):
     if result.refused and tagged.details.get("tags_written"):
         result.refused += " The person was added to the photo."
     # A face renamed is a name taken off one person and given to another: the old person's tag goes unless another face is them.
-    if result.changed and was and vocabulary.key(was) != vocabulary.key(person_name):
+    if result.changed and was and not is_person(was, ref):
         _finish_untag(library, result, [(photo_path, was)], writer)
     return result
 
 
-def name_faces(library, face_ids, person_name, writer):
+def is_person(face_ref, person):
+    """Is the person a face carries, `face_ref` (a Ref), `person` (the id, or the name of a person no node is)? Names a node
+    holds are compared when either has no id."""
+    if face_ref is None:
+        return False
+    if isinstance(person, int):
+        return face_ref.id == person
+    return vocabulary.key(face_ref.name) == vocabulary.key(person)
+
+
+def name_faces(library, face_ids, person, writer):
     """Name many faces as one person AND put the person on each of their photos, the tag first (name_face, for a chunk of
     a selection: the job's, tagpup.jobs.face_assignments). Everything faces_service.name_faces refuses is refused before a tag is
     written. A photo whose tag cannot be written (a file that cannot be read, a share that is away, a file changed outside since
@@ -279,20 +321,20 @@ def name_faces(library, face_ids, person_name, writer):
     named the person on another face meanwhile) keep the tags, the state the app has always allowed, and the same choice names
     them. `changed` the faces named; details `matched_ids` (the faces named), `skipped_excluded`, `tags_written`, `written`,
     `changes`, and for the page's caches `face_ids` and `fingerprints`."""
-    person_name = (person_name or "").strip()
-    check = faces_service.nameable(library, face_ids, person_name)
+    check = faces_service.nameable(library, face_ids, person)
     result = Result(attempted=len(face_ids))
     result.details.update(matched=0, matched_ids=[], skipped_excluded=check.details.get("skipped_excluded", []),
                           tags_written=0, written={})
     if check.refused:
         result.refuse(check.refused)
         return result
+    ref, _person_name = faces_service.who_is(library, person, result)
     photo_of = check.details["photos"]
     wanted = check.details["matched_ids"]
     if not wanted:
         return result
     before = {photo: _names_on(library, photo) for photo in dict.fromkeys(photo_of.values())}
-    tagged = add_people(library, [(photo_of[face_id], person_name) for face_id in wanted], writer, stop_at_first_error=False)
+    tagged = add_people(library, [(photo_of[face_id], ref) for face_id in wanted], writer, stop_at_first_error=False)
     if tagged.refused:
         result.refuse(tagged.refused)
         return result
@@ -306,13 +348,13 @@ def name_faces(library, face_ids, person_name, writer):
     # The tag just written can name ANOTHER face by the one-face rule (name_face's _give_back_to): the choice stands.
     for face_id in ready:
         if paths.key(photo_of[face_id]) in {paths.key(path) for path in tagged.details.get("written", {})}:
-            _give_back_to(library, photo_of[face_id], face_id, person_name, before[photo_of[face_id]])
+            _give_back_to(library, photo_of[face_id], face_id, ref, before[photo_of[face_id]])
     if not ready:
         return result
     # The tag just written can have NAMED the chosen face itself, as a guess (the one-face rule of a photo with one face to be
     # named): a person chose it, so the guess becomes their decision, and the face is one this call named.
     now = _names_now(library, ready)
-    by_rule = [face_id for face_id in ready if face_id in now and vocabulary.key(now[face_id]) == vocabulary.key(person_name)
+    by_rule = [face_id for face_id in ready if face_id in now and is_person(now[face_id], ref)
                and face_id not in before[photo_of[face_id]]]
     confirmed = []
     if by_rule:
@@ -326,7 +368,7 @@ def name_faces(library, face_ids, person_name, writer):
         if not ready:
             return result
     try:
-        named = faces_service.name_faces(library, ready, person_name)
+        named = faces_service.name_faces(library, ready, ref)
     except Conflict as late:
         result.fail("the faces", "%s The person was added to the photos." % late)
         return result
@@ -344,18 +386,19 @@ def name_faces(library, face_ids, person_name, writer):
 
 
 def _names_on(library, photo_path):
+    """{face id: Ref} of the photo's faces that carry a person."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        return faces.names_by_face(conn, photo_path)
+        return faces.people_by_face(conn, photo_path)
     finally:
         conn.close()
 
 
-def _give_back_guesses(library, photo_path, face_id, person_name):
-    """Take back the guesses that carry `person_name` on the photo's other faces (only a face still carrying it as a guess)."""
+def _give_back_guesses(library, photo_path, face_id, person):
+    """Take back the guesses that carry `person` on the photo's other faces (only a face still carrying it as a guess)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        taken = faces.guesses_named(conn, photo_path, person_name, face_id)
+        taken = faces.guesses_named(conn, photo_path, person, face_id)
     finally:
         conn.close()
     if taken:
@@ -363,13 +406,13 @@ def _give_back_guesses(library, photo_path, face_id, person_name):
                                  label="give a name back to the face chosen")
 
 
-def _give_back_to(library, photo_path, face_id, person_name, before):
+def _give_back_to(library, photo_path, face_id, person, before):
     """The tag just written can name ANOTHER face by the one-face rule (tagpup.store.face_tags, #788): a photo whose only face
     to be named is not the one chosen -- renaming a named face, with one face left nameless -- gives the new person to that
     face as a guess. A person chose this face: the guess goes back (only a face that was nameless before the tag and still
     carries the name as a guess), and the choice is named below."""
-    taken = {other: name for other, name in _names_on(library, photo_path).items()
-             if other != face_id and other not in before and vocabulary.key(name) == vocabulary.key(person_name)}
+    taken = {other: person for other, found in _names_on(library, photo_path).items()
+             if other != face_id and other not in before and is_person(found, person)}
     if taken:
         db.write_with_connection(library.path, lambda conn: faces.revert_automatic(conn, taken),
                                  label="give a name back to the face chosen")
@@ -391,7 +434,7 @@ def unname_photo(library, photo_path, writer=None):
     """Take the names off every face of a photo (Unmatch All), then the tags of the people they named."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        named = [(photo_path, name) for name in faces.names_in_photo(conn, photo_path)]
+        named = [(photo_path, each) for each in faces.people_in_photo(conn, photo_path)]
     finally:
         conn.close()
     result = faces_service.unname_photo(library, photo_path)
@@ -402,9 +445,9 @@ def unname_photo(library, photo_path, writer=None):
 
 def exclude(library, face_ids, reason=None, writer=None, names=None):
     """Rule faces out ("not important"), then take the tags of the people they were named off their photos, as unnaming
-    does. `names` ({face id: name}): the names the faces carried when a job began, for a chunk that may be run again after a
-    stop -- faces already ruled out carry none by then, but their people are still to be taken off (untag_plan reads what the
-    photo holds now, so a second run takes off nothing twice)."""
+    does. `names` ({face id: person}, the id or the name): who the faces carried when a job began, for a chunk that may be run
+    again after a stop -- faces already ruled out carry none by then, but their people are still to be taken off (untag_plan
+    reads what the photo holds now, so a second run takes off nothing twice)."""
     named = _items_of(library, names) if names is not None else _names_of(library, face_ids)
     result = faces_service.exclude(library, face_ids, reason)
     if (result.changed or names is not None) and named:
@@ -413,7 +456,7 @@ def exclude(library, face_ids, reason=None, writer=None, names=None):
 
 
 def _items_of(library, names):
-    """[(photo path, name)] for {face id: name}: the photo each face is in now."""
+    """[(photo path, person)] for {face id: person}: the photo each face is in now."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         where = faces.rows(conn, list(names))
@@ -425,7 +468,7 @@ def _items_of(library, names):
 def unname_faces(library, face_ids, writer, undo=False, names=None):
     """Take the names off many faces -- a chunk of a selection (Unmatch selected; `undo`, an assignment taken back) -- then the
     tags of the people they named off their photos unless another face of the photo still carries them, the faces first. `names`
-    ({face id: name}): as exclude's."""
+    ({face id: person}): as exclude's."""
     named = _items_of(library, names) if names is not None else _names_of(library, face_ids)
     result = faces_service.unname_faces(library, face_ids, undo=undo)
     if named:
@@ -434,7 +477,7 @@ def unname_faces(library, face_ids, writer, undo=False, names=None):
 
 
 def _names_of(library, face_ids):
-    """[(photo path, name)] of the faces among `face_ids` that carry a name and are not excluded."""
+    """[(photo path, Ref)] of the faces among `face_ids` that carry a person and are not excluded."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         return faces.named_among(conn, face_ids)
@@ -443,17 +486,17 @@ def _names_of(library, face_ids):
 
 
 def name_guesses(library, proposed, writer):
-    """Re-examine's chunk: write the guesses proposed for some photos ({photo path: [(face id, name)]}, faces_service.propose_guesses)
+    """Re-examine's chunk: write the guesses proposed for some photos ({photo path: [(face id, person)]}, faces_service.propose_guesses)
     and put each person on their photo (automatch_photo, for many photos). The faces first, decided under the write lock, then
     the tag of EVERY face of the chunk that carries its planned name now -- also one named by an earlier run of the same job that
     stopped before its tag was written, so a run again completes it. A photo whose tag cannot be written has the names it was
     just given taken back (faces.revert_automatic: a face a person named meanwhile is theirs). `changed` the faces named and kept;
     details `named_ids`, `tags_written`, `written`, `changes`, `face_ids` ... as faces_service.name_guesses'."""
     result = faces_service.name_guesses(library, proposed)
-    wanted = {face_id: (photo, name) for photo, found in proposed.items() for face_id, name in found}
+    wanted = {face_id: (photo, person) for photo, found in proposed.items() for face_id, person in found}
     now = _names_now(library, list(wanted))
-    carrying = [(photo, name) for face_id, (photo, name) in wanted.items()
-                if face_id in now and vocabulary.key(now[face_id]) == vocabulary.key(name)]
+    carrying = [(photo, person) for face_id, (photo, person) in wanted.items()
+                if face_id in now and is_person(now[face_id], person)]
     result.details.update(tags_written=0, written={})
     if not carrying:
         return result
@@ -469,11 +512,11 @@ def name_guesses(library, proposed, writer):
     if tagged.details.get("changes"):
         result.details["changes"] = tagged.details["changes"]
     named_ids = result.details.get("named_ids") or {}
-    back = {face_id: name for face_id, name in named_ids.items() if paths.key(wanted[face_id][0]) in failed_photos}
+    back = {face_id: person for face_id, person in named_ids.items() if paths.key(wanted[face_id][0]) in failed_photos}
     if back:
         reverted = set(db.write_with_connection(library.path, lambda conn: faces.revert_automatic(conn, back),
                                                 label="take back automatch names"))
-        result.details["named_ids"] = {face_id: name for face_id, name in named_ids.items() if face_id not in reverted}
+        result.details["named_ids"] = {face_id: person for face_id, person in named_ids.items() if face_id not in reverted}
         result.changed = len(result.details["named_ids"])
     if problem:
         result.fail("the people", "%s The names were taken back." % problem)
@@ -485,7 +528,7 @@ def name_guesses(library, proposed, writer):
 # ---- A person's tag taken off a photo --------------------------------------------------------------------------
 
 def _faces_to_unname(library, removed):
-    """[(face id, name, name_source)] of the faces whose person was taken off their photo: for each photo of `removed`
+    """[(face id, Ref, name_source)] of the faces whose person was taken off their photo: for each photo of `removed`
     ({photo path: [the tags a write took off it]}), a face that carries a person one of those tags names, when the photo's
     keywords -- as the library records them NOW, after the write -- no longer name them under any spelling. A branch of
     the tree is never a person (person_ids.People.why_not): a tag that names one takes no face's name off. Reads only."""
@@ -500,11 +543,11 @@ def _faces_to_unname(library, removed):
     found = []
     for photo_path, taken_off in removed.items():
         tags_now = now.get(paths.key(photo_path), [])
-        for face_id, name, source in named[photo_path]:
-            if tree.why_not(name) == "branch":
+        for face_id, person, source in named[photo_path]:
+            if person.id is None and tree.why_not(person.name) == "branch":
                 continue
-            if _person_tags(taken_off, name, known) and not _person_tags(tags_now, name, known):
-                found.append((face_id, name, source))
+            if _person_tags(taken_off, person, known) and not _person_tags(tags_now, person, known):
+                found.append((face_id, person, source))
     return found
 
 
@@ -528,9 +571,10 @@ def unname_for_removed_tags(library, removed, files_change=None):
     found = _faces_to_unname(library, removed)
     if not found:
         return result
-    edits = [journal.update("faces", (face_id,), {"name": name, "name_source": source, "excluded": 0},
-                            {"name": None, "name_source": "manual"}, kind="face unnamed", skippable=True)
-             for face_id, name, source in found]
+    edits = [journal.update("faces", (face_id,),
+                            {"name": person.name, "tag_id": person.id, "name_source": source, "excluded": 0},
+                            {"name": None, "tag_id": None, "name_source": "manual"}, kind="face unnamed", skippable=True)
+             for face_id, person, source in found]
     try:
         # `files_change`: the change of photo files this follows, so that undoing THAT change can undo this one (undo_unnaming).
         applied = journal.apply(library.path, UNNAMED, edits, summary={"faces": len(edits), "files_change": files_change})
@@ -538,7 +582,7 @@ def unname_for_removed_tags(library, removed, files_change=None):
         result.fail("the faces of the photos a tag was taken off", why)
         return result
     still_named = set(_names_now(library, [face_id for face_id, _n, _s in found]))
-    result.details["unnamed"] = [{"id": face_id, "name": name} for face_id, name, _source in found
+    result.details["unnamed"] = [{"id": face_id, "name": person.name} for face_id, person, _source in found
                                  if face_id not in still_named]
     result.details["change"] = applied.change_id
     result.changed = len(result.details["unnamed"])
@@ -611,10 +655,10 @@ def undo_unnaming(library, files_change, result):
 
 
 def _names_now(library, face_ids):
-    """{face id: name} of the faces among `face_ids` that carry a name now."""
+    """{face id: Ref} of the faces among `face_ids` that carry a person now."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        return {face_id: name for face_id, (_path, name, _ex) in faces.rows(conn, face_ids).items() if name}
+        return {face_id: person for face_id, (_path, person, _ex) in faces.rows(conn, face_ids).items() if person}
     finally:
         conn.close()
 
@@ -628,7 +672,7 @@ def automatch_photo(library, photo_path, named, writer):
     named_ids = result.details.get("named_ids") or {}
     if not named_ids:
         return result
-    tagged = add_people(library, [(photo_path, name) for name in dict.fromkeys(named_ids.values())], writer)
+    tagged = add_people(library, [(photo_path, person) for person in dict.fromkeys(named_ids.values())], writer)
     if tagged.ok:
         result.details.update(tags_written=tagged.details.get("tags_written", 0), written=tagged.details.get("written", {}))
         return result
@@ -636,7 +680,7 @@ def automatch_photo(library, photo_path, named, writer):
                                         label="take back automatch names")
     undone = Result(attempted=result.attempted)
     undone.details.update(result.details)
-    undone.details["named_ids"] = {face_id: name for face_id, name in named_ids.items() if face_id not in reverted}
+    undone.details["named_ids"] = {face_id: person for face_id, person in named_ids.items() if face_id not in reverted}
     undone.changed = len(undone.details["named_ids"])
     undone.fail(photo_path, "The people it named could not be added to the photo, so the names were taken back: %s"
                 % (tagged.refused or tagged.message()))
