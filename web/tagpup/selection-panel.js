@@ -11,7 +11,7 @@
 // auto-apply, which a library view does not have.
 import { buildElement, replaceContent } from './common/dom.js';
 import { pathKey } from './common/paths.js';
-import { samePerson, sortedTags } from './common/vocabulary.js';
+import { personLabelOf, samePerson, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -135,8 +135,10 @@ export function drawJumps(data) {
     if (!selectionPeopleJump || !selectionKeywordJump || !data) return;
     // Only a name that is one person node of the tree is a person to open a view of (the server says: `has_node`); a branch, a name
     // two nodes share or one no node has is listed, without a link (#866).
-    const people = sortedTags(data.people, each => each.name).map(each => ({
-        spec: { kind: 'person', value: each.name, recursive: false }, label: each.name, count: each.count, linked: each.has_node !== false,
+    // A person who shares a name is opened by their tag (exactly them), and listed by their label.
+    const people = sortedTags(data.people, each => personLabelOf(each)).map(each => ({
+        spec: { kind: 'person', value: each.person && each.person.shared && each.person.tag ? each.person.tag : each.name, recursive: false },
+        label: personLabelOf(each), count: each.count, linked: each.has_node !== false,
     }));
     const tags = sortedTags(data.tags, each => each.tag)
         .filter(each => !data.people.some(person => person.has_node !== false && samePerson(each.tag, person.name))

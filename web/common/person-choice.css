@@ -64,6 +64,30 @@
     overflow-wrap: anywhere;
 }
 
+/* A person's label as an element (web/common/person-label.js): the name, then the group dimmed. With no room the GROUP loses its
+   left (`Sam · ...Cousins/Thackeray`: the end of a path is what tells people apart) and the name loses nothing. */
+.person-label {
+    display: inline-flex;
+    max-width: 100%;
+    min-width: 0;
+    vertical-align: bottom;
+}
+
+.person-label-name {
+    flex: none;
+    white-space: pre;
+}
+
+.person-label-group {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    direction: rtl;
+    text-align: left;
+    color: var(--text-muted);
+}
+
 .person-choice .modal-footer {
     display: flex;
     justify-content: flex-end;

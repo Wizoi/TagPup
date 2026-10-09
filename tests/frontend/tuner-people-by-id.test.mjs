@@ -10,7 +10,9 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps } from "./harness.mjs";
+import fs from "node:fs";
+import path from "node:path";
+import { loadApp, FakeServer, flush, click, closeAllApps, REPO_ROOT } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -68,6 +70,22 @@ describe("Review People lists the two Sams as two people", () => {
     assert.deepEqual(ctx.rows().map((row) => row.querySelector(".photo-title").textContent),
       ["Sam · Friends", "Sam · Pets", "Wren"]);
     assert.deepEqual(ctx.rows().map((row) => row.title), ["Friends/Sam", "Pets/Sam", "Family/Ingersoll/Wren"]);
+  });
+
+  test("a narrow window shortens the group from the left and never the name: the group has a span of its own", async (t) => {
+    const ctx = await openReviewPeople(t);
+    const label = ctx.rows()[0].querySelector(".photo-title .person-label");
+    assert.equal(label.querySelector(".person-label-name").textContent, "Sam · ");
+    assert.equal(label.querySelector(".person-label-group").textContent, "Friends");
+    assert.equal(label.querySelector(".person-label-group bdi").textContent, "Friends");
+    assert.equal(ctx.rows()[2].querySelector(".person-label-group"), null, "a name nobody shares has no group");
+    const css = fs.readFileSync(path.join(REPO_ROOT, "web", "common", "person-choice.css"), "utf8");
+    const rule = (name) => css.match(new RegExp(`\\.${name}\\s*\\{([^}]*)\\}`))[1];
+    assert.match(rule("person-label-group"), /direction:\s*rtl/);
+    assert.match(rule("person-label-group"), /text-overflow:\s*ellipsis/);
+    assert.match(rule("person-label-group"), /overflow:\s*hidden/);
+    assert.match(rule("person-label-name"), /flex:\s*none/, "the name keeps its room");
+    assert.doesNotMatch(rule("person-label-name"), /overflow|ellipsis/);
   });
 
   test("the list is searched by label as well as by name", async (t) => {

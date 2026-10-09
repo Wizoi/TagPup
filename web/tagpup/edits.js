@@ -342,7 +342,7 @@ export async function writeDetailEdits(fields, { intent = null, path = state.act
     const tags = (photo.tags || []).slice();
     const added = [];
     for (const item of resolved) {
-        if (photoAlreadyHas({ tags }, item.tag, namesAPerson)) continue;
+        if (photoAlreadyHas({ tags }, item.tag, namesAPerson, state.people)) continue;
         tags.push(item.tag);
         added.push(item);
     }

@@ -7,7 +7,7 @@
 // before anything is asked of the server. Smart Rename and Shift Date Taken are Organize's, not a view's (#669): the server's bulk time
 // shift (op `time_shift`) is still there, and a job of it found running or stopped is shown and resumed by the strip (bulk-job.js).
 import { api } from './common/api.js';
-import { tagProblem } from './common/vocabulary.js';
+import { personLabel, tagProblem } from './common/vocabulary.js';
 import { state } from './state.js';
 import { bulkAddPeopleInput, bulkAddTagsInput } from './elements.js';
 import { setStatus } from './status.js';
@@ -84,19 +84,25 @@ export async function addTypedToSelection(isPeople) {
 
 /**
  * A pill of the selection's tally: take the tag (or person) off every photo of the selection, or -- the arrow -- put it on every one.
- * `kind` is 'tag' or 'person'; `name` is the tag as the tally gives it, or the person's name.
+ * `kind` is 'tag' or 'person'; `name` is the tag as the tally gives it, or the person's name; `person` the person as the tally
+ * tells them ({id, name, tag, group, shared}): their id is what the edit names.
  */
-export async function editByPill({ kind, name, remove }) {
+export async function editByPill({ kind, name, remove, person = null }) {
     const op = kind === 'person' ? 'people' : 'tags';
     if (state.bulk.asking) return false;
     const picked = readSelection();
     if (!picked) return false;
-    const desc = describeTags({ op, add: remove ? [] : [name], remove: remove ? [name] : [] });
+    // A person the server told by id is edited by that id: the name may be another person's too.
+    const byId = kind === 'person' && person && person.id !== null && person.id !== undefined;
+    const shown = byId ? personLabel(person) : name;
+    const desc = describeTags({ op, add: remove ? [] : [shown], remove: remove ? [shown] : [] });
+    const params = byId
+        ? { add: [], remove: [], ...(remove ? { remove_ids: [person.id] } : { add_ids: [person.id] }) }
+        : (remove ? { add: [], remove: [name] } : { add: [name], remove: [] });
     state.bulk.asking = true;
     try {
         if (!confirmed(desc, picked.count)) return false;
-        const started = await startBulk({ op, selection: picked.selection,
-            params: remove ? { add: [], remove: [name] } : { add: [name], remove: [] }, desc, picked: picked.count });
+        const started = await startBulk({ op, selection: picked.selection, params, desc, picked: picked.count });
         return started.ok;
     } finally {
         state.bulk.asking = false;

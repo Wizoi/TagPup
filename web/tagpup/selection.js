@@ -2,7 +2,7 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { pathKey, samePath } from './common/paths.js';
-import { leafOf, photoAlreadyHas, samePerson, sortedTags, tagProblem } from './common/vocabulary.js';
+import { leafOf, peopleListHas, personLabel, photoAlreadyHas, sortedTags, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -110,11 +110,14 @@ export function updateSelectedThumbnailsCount() {
             tags.forEach(tag => {
                 const isPerson = namesAPerson(tag) || photoPeople.includes(tag);
                 if (isPerson) {
+                    // One entry per PERSON: a tag the people records know is that person's id, so two people called Sam are two chips.
                     const leaf = leafOf(tag);
-                    if (!peopleCounts[leaf]) peopleCounts[leaf] = { count: 0, tags: [] };
-                    peopleCounts[leaf].count++;
-                    if (!peopleCounts[leaf].tags.includes(tag)) {
-                        peopleCounts[leaf].tags.push(tag);
+                    const known = state.people.ofText(tag);
+                    const key = known ? `id:${known.id}` : leaf;
+                    if (!peopleCounts[key]) peopleCounts[key] = { count: 0, tags: [], shown: known ? personLabel(known) : leaf, title: known ? known.tag : '' };
+                    peopleCounts[key].count++;
+                    if (!peopleCounts[key].tags.includes(tag)) {
+                        peopleCounts[key].tags.push(tag);
                     }
                 } else {
                     tagCounts[tag] = (tagCounts[tag] || 0) + 1;
@@ -124,12 +127,12 @@ export function updateSelectedThumbnailsCount() {
         
         // Render People List
         selectionPeopleList.innerHTML = '';
-        const peopleKeys = sortedTags(Object.keys(peopleCounts));
+        const peopleKeys = sortedTags(Object.keys(peopleCounts), key => peopleCounts[key].shown);
         if (peopleKeys.length === 0) {
             replaceContent(selectionPeopleList, noneChip());
         } else {
-            peopleKeys.forEach(p => {
-                const { count, tags: spellings } = peopleCounts[p];
+            peopleKeys.forEach(key => {
+                const { count, tags: spellings, shown: p } = peopleCounts[key];
                 // Apply the pathed form where the selection has one, so applying a
                 // person never introduces the bare name the keywords must not hold.
                 const applyAs = spellings.find(t => t.includes('/')) || spellings[0];
@@ -226,10 +229,12 @@ export function updateSelectedThumbnailsCount() {
                         // right only because photo.people happens to hold leaves,
                         // and would have offered everybody the moment it did not.
                         const alreadyAdded =
-                            photoAlreadyHas(photo, p.name, namesAPerson)
-                            || photoPeople.some(n => samePerson(n, leaf));
+                            photoAlreadyHas(photo, p.name, namesAPerson, state.people)
+                            || peopleListHas(photoPeople, leaf, state.people);
                         if (!alreadyAdded) {
-                            noteSuggestion(suggPeopleCounts, leaf, photo.path, p.score);
+                            // A person who shares a name is counted, and applied, by their tag: not as the other Sam.
+                            const known = state.people.ofText(p.name);
+                            noteSuggestion(suggPeopleCounts, known && known.shared ? known.tag : leaf, photo.path, p.score);
                         }
                     });
                 }
@@ -242,11 +247,12 @@ export function updateSelectedThumbnailsCount() {
                         // photoAlreadyHas compares people by who they are, so a
                         // suggested "Kira Bao" counts as present on a photo tagged
                         // "People/Kira Bao". A plain keyword still matches exactly.
-                        if (photoAlreadyHas(photo, leaf, namesAPerson)) return;
+                        if (photoAlreadyHas(photo, leaf, namesAPerson, state.people)) return;
                         if (isPerson) {
                             const cleanLeaf = leafOf(leaf);
-                            if (photoPeople.some(n => samePerson(n, cleanLeaf))) return;
-                            noteSuggestion(suggPeopleCounts, cleanLeaf, photo.path, t.score);
+                            if (peopleListHas(photoPeople, cleanLeaf, state.people)) return;
+                            const known = state.people.ofText(leaf);
+                            noteSuggestion(suggPeopleCounts, known && known.shared ? known.tag : cleanLeaf, photo.path, t.score);
                         } else {
                             noteSuggestion(suggTagCounts, leaf, photo.path, t.score);
                         }
@@ -321,7 +327,9 @@ export function noteSuggestion(into, key, photoPath, score) {
  */
 export function renderSuggestionChips(container, counts, isPerson) {
     container.innerHTML = '';
-    const keys = sortedTags(Object.keys(counts));
+    // A person who shares a name is keyed by their tag (what a click writes); shown by their label.
+    const shownOf = name => (isPerson && state.people.ofTag(name) ? personLabel(state.people.ofTag(name)) : name);
+    const keys = sortedTags(Object.keys(counts), shownOf);
     if (keys.length === 0) {
         replaceContent(container, noneChip());
         return;
@@ -334,7 +342,7 @@ export function renderSuggestionChips(container, counts, isPerson) {
         const chip = document.createElement('span');
         chip.className = 'suggestion-chip' + (unsure ? ' suggestion-chip-unsure' : '');
         chip.style.cursor = 'pointer';
-        chip.textContent = `${name} (${count}) · ${pct}%`;
+        chip.textContent = `${shownOf(name)} (${count}) · ${pct}%`;
         chip.title = `${pct}% confident— click to add it to ${count} photo(s) now, `
             + `or leave it for Apply All, which writes everything here.`;
         chip.addEventListener('click', (e) => {

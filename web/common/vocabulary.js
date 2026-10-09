@@ -257,6 +257,28 @@ export function sameTagPerson(a, b, directory = null) {
 }
 
 /**
+ * Do two rows that each name someone -- a face and a match, `{name, person?}` -- name the same person? By the id of their nodes
+ * when both rows have one (two people called Sam are two), else by name.
+ */
+export function sameNamed(a, b) {
+    if (!a || !b) return false;
+    const left = a.person && a.person.id !== undefined ? a.person.id : null;
+    const right = b.person && b.person.id !== undefined ? b.person.id : null;
+    if (left !== null && right !== null) return left === right;
+    return samePerson(a.name, b.name);
+}
+
+/**
+ * Does the list of names a photo lists (photo.people: leaves, no ids) name this person? Not when two people have the name: a
+ * name alone names neither of them for certain, so the list cannot say the photo has THIS one.
+ */
+export function peopleListHas(names, text, directory = null) {
+    const leaf = leafOf(text);
+    if (!leaf || (directory && directory.shared(leaf))) return false;
+    return (names || []).some(each => samePerson(each, leaf));
+}
+
+/**
  * Does this photo already carry this tag, or this same person under another spelling?
  *
  * A plain `tags.includes()` compared "Hazel Brookmire" against

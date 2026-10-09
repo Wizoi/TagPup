@@ -10,23 +10,24 @@
  * is open (web/common/dialog.js).
  */
 import { buildElement } from './dom.js';
-import { personLabel, personTitle } from './vocabulary.js';
+import { personLabelNode } from './person-label.js';
+import { personTitle } from './vocabulary.js';
 
-let open = null;
+let personQuestion = null;
 
 /**
  * Ask which of `people` is meant. Resolves to the person chosen, or null. `title` and `about` are the question's words.
  */
 export function choosePerson(people, { title = 'Which person?', about = '' } = {}) {
-    if (open) return open;
+    if (personQuestion) return personQuestion;
     const list = Array.isArray(people) ? people : [];
-    open = new Promise((resolve) => {
+    personQuestion = new Promise((resolve) => {
         let chosen = list.length ? list[0] : null;
         const choices = list.map((person, index) => buildElement('label', {
             className: 'person-choice-option', title: personTitle(person), data: { personId: person.id },
         }, [
             buildElement('input', { attrs: { type: 'radio', name: 'person-choice', value: String(index), checked: index === 0 } }),
-            buildElement('span', { className: 'person-choice-label', text: personLabel(person) }),
+            buildElement('span', { className: 'person-choice-label' }, [personLabelNode(person)]),
             buildElement('span', { className: 'person-choice-tag', text: person.tag ? ` ${personTitle(person)}` : '' }),
         ]));
         const cancel = buildElement('button', { className: 'btn btn-secondary btn-cancel', text: 'Cancel', attrs: { type: 'button' } });
@@ -47,7 +48,7 @@ export function choosePerson(people, { title = 'Which person?', about = '' } = {
         const finish = (value) => {
             document.removeEventListener('keydown', onKey, true);
             overlay.remove();
-            open = null;
+            personQuestion = null;
             resolve(value);
         };
         const onKey = (event) => {
@@ -70,5 +71,5 @@ export function choosePerson(people, { title = 'Which person?', about = '' } = {
         const first = overlay.querySelector('input');
         if (first) first.focus();
     });
-    return open;
+    return personQuestion;
 }

@@ -10,6 +10,7 @@ import {
 import { BUCKET, isBucket } from './rules.js';
 import { updateURLParams } from './shared.js';
 import { loadNamesCount, showNamesRow } from './names-review.js';
+import { personLabelNodeOf } from './common/person-label.js';
 import { renderTagList } from './tags.js';
 import { clearFaceDetails, updateMatchingSelectionUI } from './selection.js';
 import { updateTabLabels } from './grid-parts.js';
@@ -219,7 +220,7 @@ function renderPeopleList(keepTab = false) {
 
         const title = document.createElement('div');
         title.className = 'photo-title';
-        title.textContent = label;
+        title.appendChild(personLabelNodeOf(person));
 
         const badge = document.createElement('span');
         badge.className = 'photo-badge';
