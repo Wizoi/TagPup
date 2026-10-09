@@ -58,7 +58,7 @@ async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, curr
       pageExports(ctx.window, "web/tagpup/state.js").state.scannedFolder = folder;
     } else {
       const state = pageExports(ctx.window, "web/tuner/state.js").state;
-      state.allPhotos = [{ path: folder + "\\a.jpg", folderGroup: { name: folder } }];
+      state.allPhotos = [{ path: folder + "\\a.jpg", folder, folderGroup: { name: folder } }];
       state.activePhotoPath = folder + "\\a.jpg";
     }
   };
@@ -92,7 +92,7 @@ describe("the words", () => {
   test("the question says which scope it is about", () => {
     assert.equal(scopeLabel(false), "the whole library");
     assert.equal(scopeLabel(true, "Run"), 'the folder "Run" and its subfolders');
-    assert.equal(scopeLabel(true), "the open folder and its subfolders");
+    assert.equal(scopeLabel(true), "a single folder (not named here) and its subfolders");
     assert.match(questionText(PLAN, scopeLabel(true, "Run")), /^In the folder "Run" and its subfolders: name 10,477 faces in 9,624 photos/);
     assert.match(questionText({ ...PLAN, faces: 0, photos: 0, by_tag: 0, by_comparison: 0 }, scopeLabel(false)),
       /^In the whole library: no face can be named from its tag\. /);
@@ -381,7 +381,19 @@ for (const appName of ["tagpup", "tagtuner"]) {
       const ctx = await openWithFolder(t, { scope: { ...SCOPE, job: ONLY } });
       await ctx.open();
       assert.equal(ctx.modal().querySelector(".name-faces-choice"), null);
-      assert.match(ctx.text(".name-faces-question"), /^In the open folder and its subfolders: name 12 faces/);
+      assert.match(ctx.text(".name-faces-question"), /^In a single folder \(not named here\) and its subfolders: name 12 faces/);
+    });
+
+    test("another folder's waiting plan, answered 409, is shown as itself and not under this page's folder name", async (t) => {
+      const other = { success: false, error: "A plan for ANOTHER folder is waiting for its answer in this library.", job: { ...ONLY, job: 329 } };
+      const ctx = await openWithFolder(t, { start: other });
+      await ctx.open();
+      await ctx.press("Read the plan");
+      assert.equal(ctx.text(".name-faces-question"), questionText(ONLY.plan, "a single folder (not named here) and its subfolders"));
+      assert.doesNotMatch(ctx.text(".name-faces-question"), /"Run"/, "this page's folder is not put over the other plan");
+      assert.match(ctx.text(".name-faces-status-line"), /ANOTHER folder/);
+      await ctx.press("Yes");
+      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 329, group: false }], "Yes answers the plan that is shown");
     });
 
     test("the server's refusal of the scope is said", async (t) => {
@@ -396,6 +408,17 @@ for (const appName of ["tagpup", "tagtuner"]) {
       await ctx.open();
       assert.match(ctx.text(".name-faces-result"), /answers this PC only/);
       assert.equal(ctx.posts("/api/name-faces/start").length, 0);
+    });
+
+    test("a photo with no folder (the Root group) offers no folder", async (t) => {
+      if (appName !== "tagtuner") return;
+      const ctx = await openFrom(appName, t);
+      const state = pageExports(ctx.window, "web/tuner/state.js").state;
+      state.allPhotos = [{ path: "a.jpg", folder: "", folderGroup: { name: "Root" } }];
+      state.activePhotoPath = "a.jpg";
+      await ctx.open();
+      assert.equal(ctx.modal().querySelector(".name-faces-choice"), null);
+      assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: null, only_folder: false }]);
     });
 
     test("with no folder open there is no choice: the whole library, as before", async (t) => {

@@ -39,6 +39,25 @@ def earlier_apply(library):
                for entry in journal.history(library.path, limit=1000))
 
 
+def earlier_applies(library):
+    """The most recent apply of faces-from-tags not undone since, as its history entry (its summary has `scope`: "whole library" or
+    "folder", never the folder), or None."""
+    return next((entry for entry in journal.history(library.path, limit=1000)
+                 if entry["operation"] == "faces_from_tags" and entry["status"] != "undone"), None)
+
+
+def earlier_sentence(entry, how="cli"):
+    """Where the earlier apply `entry` was (earlier_applies): the whole library or one folder, and its change. The folder's path is
+    behind History's reveal, as a change's values are: the CLI's sentence says how to ask for it."""
+    if entry is None:
+        return ""
+    change = entry["id"]
+    if entry["summary"].get("scope") == "folder":
+        named = "; `history --change %d --reveal` names it" % change if how == "cli" else ""
+        return "It was applied to one folder (change %d%s)." % (change, named)
+    return "It was applied to the whole library (change %d)." % change
+
+
 def _decided(library):
     """The decided faces as (ids, names, matrix), built when a photo needs them."""
     return identify.decided_faces(library)[1]
@@ -49,12 +68,13 @@ Named = collections.namedtuple("Named", "choices photo_tags siblings")
 
 
 def _plan(library, on_step=None, folder=None):
-    photo_ids = None
+    photo_ids, summary = None, {"scope": "whole library"}
     if folder is not None:
         try:
-            photo_ids = folder_scope.resolve(library, folder).photo_ids
+            scope = folder_scope.resolve(library, folder)
         except folder_scope.NoPhotosThere as why:
             return maintenance.Plan(refused=str(why))
+        photo_ids, summary = scope.photo_ids, {"scope": "folder", "folder": scope.folder}
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         # One read transaction: the guards are the state the plan read, not a later one.
@@ -82,7 +102,7 @@ def _plan(library, on_step=None, folder=None):
                 "background_sized_faces_passed_over": found.counts["background_sized"]},
         ids={"faces": [choice.face_id for choice in named]},
         reveal={"named": [(choice.face_id, choice.name) for choice in named]},
-        work=Named(named, photo_tags, siblings))
+        work=Named(named, photo_tags, siblings), summary=summary)
 
 
 def plan(library, on_step=None, folder=None):
@@ -134,7 +154,8 @@ def faces_from_tags(library, apply=False, again=False, planned=None, folder=None
         planned = plan_of(library)
         result = Result(attempted=planned.size, details={"dry_run": True, "change": None, "counts": dict(planned.counts),
                                                          "ids": dict(planned.ids), "reveal": {}, "earlier_apply": not planned.refused})
-        result.refuse(planned.refused or AGAIN)     # a folder with no photo is the first thing to say
+        # A folder with no photo is the first thing to say; else the sentence, with where the earlier apply was.
+        result.refuse(planned.refused or (AGAIN + " " + earlier_sentence(earlier_applies(library))).strip())
         return result
     result = maintenance.run(library, "faces_from_tags", plan_of, _edits, apply=apply,
                              remaining=(lambda _library: _remaining(_library, folder)) if planned is None else None)

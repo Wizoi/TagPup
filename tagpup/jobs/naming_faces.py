@@ -285,6 +285,7 @@ class Job:
                     self.in_folder = None
                     return self._finish(FAILED, planned.refused, what, failed=True)
                 earlier = faces_from_tags.earlier_apply(self.library)
+                where = faces_from_tags.earlier_sentence(faces_from_tags.earlier_applies(self.library), how="page") if earlier else ""
                 counts = planned.counts
                 by_tag = counts["named_by_the_tag_alone"]
                 with self.lock:
@@ -292,7 +293,7 @@ class Job:
                     self.plan = {"faces": planned.size, "by_tag": by_tag, "by_comparison": planned.size - by_tag,
                                  "photos": by_tag + counts["photos_named_by_comparison"],
                                  "left": counts["photos_left_for_identify_faces"], "earlier_apply": earlier,
-                                 "again": AGAIN_SAYS if earlier else None}
+                                 "again": (AGAIN_SAYS + " " + where).strip() if earlier else None}
                     self.state, self.asked = ASKING, time.time()
                     self.done = self.total = 1
                 self._end_run(what)
@@ -318,7 +319,7 @@ class Job:
                     if result.refused or result.errors:
                         logger.warning("Name faces from tags in %s: the change was not written: %s", self.library.name,
                                        result.refused or result.errors)
-                        return self._finish(FAILED, APPLIED_MEANWHILE if result.refused == faces_from_tags.AGAIN else
+                        return self._finish(FAILED, APPLIED_MEANWHILE if result.refused.startswith(faces_from_tags.AGAIN) else
                                             REFUSED_SAYS if result.refused else
                                             "The change could not be written; the server's log says why. Nothing was written.",
                                             what, failed=True)
@@ -522,9 +523,12 @@ def _the_waiting_one(waiting, folder, only_folder):
     (it says its own scope): a question for the whole library is not handed back as the answer to "only this folder"."""
     if _same_scope(waiting, folder, only_folder):
         return waiting
+    if waiting.only_folder and only_folder:
+        raise AlreadyWorking("A plan for ANOTHER folder is waiting for its answer in this library (the status is counts only and "
+                             "does not name it). Answer it (Yes or No) before reading one for this folder.", waiting.status())
     raise AlreadyWorking("A plan for %s is waiting for its answer in this library. Answer it (Yes or No) before reading one for "
-                         "%s." % ("the open folder" if waiting.only_folder else "the whole library",
-                                  "the open folder" if only_folder else "the whole library"), waiting.status())
+                         "%s." % ("one folder" if waiting.only_folder else "the whole library",
+                                  "this folder" if only_folder else "the whole library"), waiting.status())
 
 
 def _register(library, job):

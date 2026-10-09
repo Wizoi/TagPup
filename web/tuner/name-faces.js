@@ -15,7 +15,9 @@ import { state } from './state.js';
 export function selectedFolder() {
     if (!state.activePhotoPath) return null;
     const photo = state.allPhotos.find(each => each.path === state.activePhotoPath);
-    return (photo && photo.folderGroup && photo.folderGroup.name) || null;
+    // A photo with no folder is listed under the group "Root" (sidebar.js): that is no folder, so none is offered.
+    if (!photo || !photo.folder) return null;
+    return (photo.folderGroup && photo.folderGroup.name) || null;
 }
 
 /** What the page gives the dialog: the selected photo's folder (or none); names written read its lists again. */

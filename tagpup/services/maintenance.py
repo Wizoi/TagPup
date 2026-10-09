@@ -62,6 +62,8 @@ class Plan:
     refused: Optional[str] = None
     #: Whatever `edits` needs; never reported.
     work: Any = None
+    #: Kept in the journaled change's summary beside the counts (what History shows): which part of the library it was for.
+    summary: Dict[str, Any] = field(default_factory=dict)
 
 
 def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
@@ -87,7 +89,7 @@ def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
             result.details["changed"] = {kind: 0 for kind in kinds}
         return result
     wanted = edits(planned)
-    summary = {"counts": dict(planned.counts)}
+    summary = {"counts": dict(planned.counts), **planned.summary}
     if not apply:
         behind = len(schema.pending(library.path))
         if behind:

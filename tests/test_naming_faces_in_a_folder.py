@@ -179,8 +179,10 @@ class OneQuestionAtATime(InFolders):
 
     def test_another_folder_is_another_scope(self):
         self.start()
-        with self.assertRaises(naming_faces.AlreadyWorking):
+        with self.assertRaises(naming_faces.AlreadyWorking) as raised:
             naming_faces.start(self.library, self.other, only_folder=True)
+        self.assertIn("ANOTHER folder", str(raised.exception))
+        self.assertNotIn(self.run, str(raised.exception) + str(raised.exception.job), "the status is counts only")
 
 
 class TheChoicesCounts(InFolders):

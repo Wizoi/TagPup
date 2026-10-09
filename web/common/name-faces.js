@@ -72,7 +72,7 @@ function nfPlural(count, one, many) {
 /** What the dialog says it works on: the folder chosen (by its leaf, when this page chose it), or the whole library. */
 export function scopeLabel(onlyFolder, leaf) {
     if (!onlyFolder) return 'the whole library';
-    return (leaf ? 'the folder "' + leaf + '"' : 'the open folder') + ' and its subfolders';
+    return (leaf ? 'the folder "' + leaf + '"' : 'a single folder (not named here)') + ' and its subfolders';
 }
 
 /**
@@ -287,7 +287,9 @@ function nfRecheck(error) {
 function nfTook(answer) {
     if (answer && answer.success) return nfFollow(answer.status);
     if (answer && answer.job) {
-        // Already running (another tab, another page, or this one pressed twice): show the one that runs.
+        // Already running (another tab, another page, or this one pressed twice): show the one that runs. It is not the
+        // choice this page just made (it may be for another folder), so the folder this page named is not put over it.
+        nfDialog.chosen = null;
         nfFollow(answer.job);
         nfSay(answer.error);
         return null;
@@ -376,7 +378,10 @@ function nfChoose(folderPath) {
     nfSay('');
     return api.json('/api/name-faces/scope?folder=' + encodeURIComponent(folderPath)).then(answer => {
         if (!answer || !answer.success) return nfRefused((answer && answer.error) || 'The server did not answer.');
-        if (answer.job) return nfFollow(answer.job);
+        if (answer.job) {
+            nfDialog.chosen = null;
+            return nfFollow(answer.job);
+        }
         nfDialog.goFolder = folderPath;
         nfRenderChoice(folderPath, answer);
         return null;

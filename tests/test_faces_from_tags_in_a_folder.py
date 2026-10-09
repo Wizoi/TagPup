@@ -19,6 +19,7 @@ import tagpup_cli  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import faces_from_tags, folder_scope  # noqa: E402
+from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import faces, journal, people, schema, taxonomy  # noqa: E402
 
 
@@ -138,7 +139,9 @@ class TheFoldersWrite(InFolders):
     def test_a_second_folder_is_a_second_apply_and_needs_again(self):
         self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling).changed)
         refused = faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.look_alike)
-        self.assertEqual(faces_from_tags.AGAIN, refused.refused)
+        self.assertTrue(refused.refused.startswith(faces_from_tags.AGAIN))
+        self.assertIn("applied to one folder (change", refused.refused)
+        self.assertNotIn(self.sibling, refused.refused, "the folder is a path: behind the reveal")
         self.assertIsNone(self.name(self.named["Run_x/b2.jpg"]))
 
     def test_the_plan_the_owner_said_yes_to_is_what_is_applied(self):
@@ -164,6 +167,42 @@ class TheFoldersWrite(InFolders):
             result = faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.run)
         self.assertTrue(result.errors)
         self.assertEqual({None}, set(self.names("Run/a1.jpg", "Run/Heat1/a2.jpg", "Run/crowd.jpg").values()))
+
+
+class TheJournalSaysWhatItWasFor(InFolders):
+    def summary_of(self, change, reveal=False):
+        return journal_service.history(self.library, change_id=change, reveal=reveal)["changes"][0]["summary"]
+
+    def test_a_folders_change_records_the_scope_and_the_folder_only_behind_the_reveal(self):
+        change = faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling).details["change"]
+        self.assertEqual("folder", self.summary_of(change)["scope"])
+        self.assertNotIn("folder", self.summary_of(change), "History without reveal holds counts only")
+        self.assertEqual(self.sibling, self.summary_of(change, reveal=True)["folder"])
+
+    def test_the_whole_librarys_change_says_so(self):
+        change = faces_from_tags.faces_from_tags(self.library, apply=True).details["change"]
+        self.assertEqual("whole library", self.summary_of(change)["scope"])
+        self.assertNotIn("folder", self.summary_of(change, reveal=True))
+
+    def test_the_history_dialog_never_gets_the_folder(self):
+        from tagpup.web import app as web
+        faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling)
+        app = web.create_app("tagpup", startup=self.library)
+        app.testing = True
+        body = app.test_client().get("/harbour/api/history").get_json()
+        self.assertEqual("folder", body["changes"][0]["summary"]["scope"])
+        self.assertNotIn(self.sibling, str(body))
+
+    def test_the_command_names_where_the_earlier_apply_was_and_the_reveal_gives_the_path(self):
+        faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling)
+        said = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags", "--folder", self.look_alike])
+        self.assertIn("It was applied to one folder (change 1; `history --change 1 --reveal` names it).", said.output)
+        self.assertNotIn(self.sibling, said.output)
+        shown = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "history", "--change", "1"])
+        self.assertIn("scope: folder", shown.output)
+        self.assertNotIn(self.sibling, shown.output)
+        revealed = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "history", "--change", "1", "--reveal"])
+        self.assertIn("scope: folder: " + self.sibling, revealed.output)
 
 
 class AFolderThatHoldsNothing(InFolders):
