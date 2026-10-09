@@ -2531,44 +2531,252 @@ node an integer id and a parent id, and a person is a node with `has_face` set. 
   id across libraries. Ids are AUTOINCREMENT, never given again, so an id left behind by a node deleted
   by an older writer names nothing rather than someone else.
 
-**Stage 2, the plan** *(not built; asked about before it runs)*. The id becomes the key and the name a
-view of the tree:
-1. **Settle the unresolved names first.** A name with no node or with two cannot become an id. Before
-   stage 2's migration the doctor's two lists must be empty, by the owner's hand (photo_index: 4 and 1
-   names; kr-track: 12 and 0), or the migration must say what it does with them -- making a node under
-   the library's people parent (as the indexer's `add_people` does) is a default the owner has not
-   chosen, so it is asked. **The names on a branch** (#660) are decided: a branch tag cannot be a person
-   *(owner, 2026-10-04)*, so stage 1 gives them no id, and stage 2 **unnames those faces** (photo_index: 7
-   faces, under 2 names; their 65 listed people follow from the rebuild) -- "make it unmatched" -- as a
-   journaled step of its migration, said and counted before it runs.
-1a. **The owner's two rules for the tree, to be built with stage 2** *(owner, 2026-10-04; not built
-   now)*: (a) a tag assigned to photos cannot be given child tags (TagTuner refuses to add a node under a
-   node photos or faces carry); (b) a tag with child tags cannot be assigned to a photo as a person (naming
-   a face, or a person keyword, refuses a branch). Together they keep every person a leaf, so the leaf rule
-   never moves an id by a tree edit; until then the doctor's "names on a branch" is how one is seen.
-2. **Every name a write is handed resolves to an id at the boundary**, by the same rule: a page or the
-   API still sends a name or a path; `person_ids` turns it into the node (a path picks one of two nodes of
-   one name, as `resolveTagOrPerson` already sends), and naming a face with a name no node has makes the
-   node first (`taxonomy.add_path` under the people parent), in the same transaction. On the way out the
-   name is the node's (`tag_taxonomy.name`, by the id), the way `from_row` gives a path.
-3. **Reads move to the id**: a person's faces (`count_named`, `person_embeddings`, `person_page`), the
-   counts by person (`counts_by_name`, the navigator's people), `library_view`'s person source (no more
-   `_spellings`), Identify's and clustering's known faces, `photo_people` in the views. `idx_faces_tag`
-   (`tag_id`) and `photo_people(tag_id, photo_id)` serve them; `idx_faces_name` and `idx_faces_person`
-   go when nothing reads by name.
-4. **Rename and merge become tree changes.** A rename is `move_branch` alone: faces and lists follow by
-   id, `people.rename` retires, and the window above closes. A merge of two people is one
-   `UPDATE faces SET tag_id = ? WHERE tag_id = ?` (and `photo_people`), then the node goes. The files
-   still take their keyword rewrites, as now.
-5. **The journal records the id.** `tag_id` leaves `journal.DERIVED_COLUMNS` and becomes a recorded
-   column; stage 2's migration is DATA (it rewrites the name column's meaning), so it blocks the undo of
-   older changes, or translates their recorded names to ids as the adoption translates paths. Which, is
-   decided when it is designed.
-6. **A node deleted while faces name it** is refused, or unnames them, in the same transaction (a
-   trigger with `idx_faces_tag`, so any connection does it): the owner's choice, asked then. Stage 1
-   leaves the name and sets the id NULL.
-7. **What must hold** is unchanged: ids stable, never reused, never compared across libraries; the
-   files and the pages keep names and paths.
+**Stage 2** *(designed 2026-10-09; not built; asked about before it runs)*: the id becomes the key and the name a cache of the
+tree's, the same name can be two people under two groups, and a picker shows the group when a leaf is shared. The design, the counted
+numbers, the phases and the owner's questions are in "People by id, stage 2" below. It replaces this section's earlier plan, whose
+decisions it keeps: a branch tag cannot be a person, the two rules are refusals, deleting a person tag that faces use is refused with a
+force that unnames them, old history stays undoable, and (#985) a name without a person tag is listed for the owner, never unnamed.
+
+### People by id, stage 2 *(design, 2026-10-09; not built; the questions at its end are the owner's, asked before the build)*
+Stage 1 put the id beside the name and kept it derived from the name. Stage 2 makes the **id the person** and the name
+what the tree calls them. Two things the owner added on 2026-10-09 shape it: the same NAME can be two people when their
+tags sit in different groups (two cousins called Sam under `Family/Thackeray` and `Family/Ingersoll`; a dog and a friend
+called Max under `Pets` and `Friends`), so identity is the tag's id and the leaf is only a label; and wherever two people
+share a leaf, every picker, list, chip and hover shows the group too, and only then.
+
+**What stays.** A person is a leaf `has_face` node that is not a root (stage 1's rule, unchanged). The files and
+the keywords in them stay text: a person keyword is a path (`Family/Thackeray/Sam`), and a path names exactly one node,
+so reading a file resolves a person without any guess even when the leaf is shared. Ids never go into a file, a
+journal row of another library, or a snapshot's meaning; they are per library, as now.
+
+**Counted 2026-10-09, read-only (`db.readonly_uri`), by the leaf rule.**
+
+| | photo_index | kr-track | renton_parkrun |
+|---|---|---|---|
+| faces / named | 226,208 / 35,796 | 9,850 / 1,640 | 3,328 / 1,211 |
+| nodes / face roots / person leaves / face branches | 895 / 3 / 406 / 9 | 73 / 1 / 66 / 0 | 262 / 1 / 257 / 0 |
+| **person leaves shared by 2+ person tags** | **1 leaf, 2 tags (under two different roots)** | **0** | **0** |
+| faces naming a shared leaf (photos) | 1 (1) | 0 | 0 |
+| `photo_people` rows naming it (photos) | 12 (12), all from a keyword, the path names the node exactly | 0 | 0 |
+| named faces with `tag_id` NULL, by why_not | none 40 (4 names), several 1 (1 name), branch 0 | none 186 (11 names) | 0 |
+| `photo_people` rows with `tag_id` NULL, by why_not | none 40 (4 names), several 12 (1 name), branch 65 (4 names) | none 188 (12 names) | 0 |
+| distinct ids on faces | 277 | 64 | 242 |
+| face branches (group tags) carried by photos | 4 tags, 65 photos | 0 | 0 |
+| tags of any kind with tags under them, carried by photos | 37 tags, 10,864 photos | 0 | 0 |
+| `change_rows` on `faces` in the journal | 0 | 0 | 0 |
+
+What the numbers say. (1) The owner's case is real but nearly empty today: one shared leaf, in photo_index only, and the
+faces cannot say which of its two tags they mean (that one face and the 12 photos whose keyword path names one of the two tags are all the data the feature touches today). (2) The branch names are no longer on faces (the 7 were unnamed on 2026-10-09); what remains of "branch" is 65
+`photo_people` rows made by group tags on photos, which #986 stops listing at all. (3) What is left for the names-to-review
+list (#985): photo_index 5 names (4 with no person tag, 40 faces; 1 on two tags, 1 face), kr-track 12 names (186 faces),
+renton_parkrun none. (4) **Rule (a), read as "no tag that photos carry gets a child", is already broken by 37 tags carried
+by 10,864 photos in photo_index** (ordinary hierarchical keywords: a photo holds both `Places` and `Places/Seattle`); read
+as "no PERSON tag that photos or faces carry gets a child" it is broken by the 4 group tags only. That is question 1.
+(5) The journal holds no face row in any library, so "history from before ids" has nothing to translate today; the rule
+below is for entries made before the build. (6) A lookup of a person's faces by id has no index: `WHERE tag_id = ?` scans
+`idx_faces_person` (name, tag_id) in full and `photo_people` has none, so the migration adds them.
+
+#### The id is the key: what moves
+- **Writers.** Naming a face is `faces.name_as(conn, face_ids, person_id)`: it writes `tag_id` and, beside it, `name` (below), in
+  one UPDATE. Nothing writes a face's person by a name any more except the one door that takes a name from outside
+  (`person_ids.resolve`, below), so `tests/test_person_ids_single_owner.py` becomes "one writer of the pair". Face writers
+  today, among them: `faces.name`, `name_if_unnamed`, `name_unnamed`, `set_names`, `reinstate`, `revert_automatic`, automatch's and
+  clustering's, `identities`, the indexer's `record_detected`; all end in `faces._rebuilt` already.
+- **Readers (158 lines that read `faces.name` or `photo_people.name`; 48 of them in `store/faces.py`, 16 in `services/faces.py`).**
+  Everything that means "this person" groups, counts and joins by `tag_id`: `count_named`, `person_embeddings`, `person_page`,
+  `counts_by_name` (becomes `counts_by_person`), `named_embeddings`, `for_named_matrix`, `named_for_known`, `names_by_photo`,
+  `named_elsewhere_in_photo`, `guesses_named`, `identify.named_faces` / `decided_faces` / `representative_faces` / `face_samples`
+  (keyed by id, not `{name: ...}`), automatch and clustering's known sets, `library_view`'s person source and counts, the
+  navigator's people counts, `people.names`. `photo_people(tag_id, photo_id)` serves the photo side. The naming rules that compare
+  "a person already on this photo" compare ids: a photo can hold two faces of two different Sams.
+- **What a reader is shown** is a label (see "Showing the group"), never the cache.
+- **The wire.** Between the pages and the server a person is `{id, name, tag, group, shared}`; a request names a person by
+  `person_id`. The old `person_name` (a leaf) is still accepted by the CLI, the MCP and a page not yet reloaded: it resolves to the
+  one person of that name, makes the person when no node has the name (today's `vocabulary.person_tag` rule: under the one
+  face root, asked when there are several), and is **refused naming the candidates** when two are called it. A saved or
+  bookmarked search keeps its contract (`{kind: 'person', value}`, phase 9e-1) with `value` the person's tag path; a bare name
+  still works when it is unambiguous. A stale `person_id` (merged or deleted in another tab) is a 404 that says so and offers a reload; it never
+  creates anyone.
+- **`faces.name` stays, as a cache of the node's leaf, and identity never reads it.** Reasons to keep it: it is the only place
+  an unresolved name lives (below); the CLI, the MCP and the doctor print it without a join; an older reader of a restored
+  snapshot still sees names; and nothing is dropped, so nothing is one-way. Its rule: for a face with `tag_id` it is the node's `name`,
+  written by `person_ids` alone in the same statement that writes the id, and by the tree edit that renames the node
+  (`UPDATE faces SET name = ? WHERE tag_id = ?`, by `idx_faces_tag`); for a face with `tag_id` NULL and a name it is an
+  **unresolved name**, left exactly as it is. The doctor's `face_person_ids_out_of_step` is turned round to compare
+  `name` with the node's: id to name, the reverse of stage 1. (Dropping the column and joining the tree for every display was
+  weighed: it ends the cache's drift for good, but an older app reading the library would see every face unnamed and offer
+  them all to Identify, so it is not taken until nothing older is in use.) `photo_people.name` is the same cache.
+- **Derived tables.** `photo_people` stays derived and stays written only by `people.rebuild`; its key becomes `(photo_id,
+  position)` holding `tag_id` first and `name` as the cache. The one rule is `vocabulary.people_in_photo`, which returns person
+  *references* (`id`, `name`, `source`) from three inputs: a keyword (its **path** is looked up in `PeopleVocabulary.by_keyword`,
+  now built from `(id, tag, name)` rows, so a path gives its id; a bare-leaf keyword gives an id only when one person has
+  that leaf, else an unresolved name), a person field of the metadata (a name: same bare rule), and the photo's faces
+  (`tag_id`, exact). Duplicates are removed by id, not by lower-cased name, so a photo can list two Sams; a **group tag (a branch)
+  is not a person** and gives nothing (#986). `photos.people` JSON (`PEOPLE_JSON`) keeps listing names; a photo that lists a
+  leaf twice shows it twice, and the pages read ids for the label (`details-panel` chips).
+
+#### Tree operations, by id
+All of them are one transaction (tree row, `faces` cache, `photo_people` of the affected photos), with the files rewritten after it
+by the machinery that exists (`tagging.replace_tag`, the journal's `change_files`, resumable). That closes stage 1's rename window:
+no moment has faces with a name that no node has.
+- **Rename a leaf** = `move_branch` of one node to a free path under the same parent. The id does not change; the cache follows. A rename
+  to a path that is a node is refused ("that person is already filed there: merge them instead"). Changed meaning: today's Rename Person
+  renames every node called the old name and silently joins them when the new name exists; stage 2's renames the one person picked
+  (`rename_person(person_id, new_name)`) and never merges (question 8).
+- **Move a person between groups** (`Family/Thackeray/Sam` to `Family/Ingersoll/Sam`): the node keeps its id; every face and every list
+  entry follows by id; `faces` is not written at all (the id and the leaf are the same). The photos' keywords are rewritten to the new path.
+  If another person called Sam is already at the destination the path is taken: refused, the owner merges or renames first.
+- **Merge A into B** (two tags that are one person): `UPDATE faces SET tag_id = B, name = B.name WHERE tag_id = A`, the same on
+  `photo_people`, the files' keywords rewritten, then A's row goes (`move_branch`'s join). The plan (dry run, as `tags.merge` already is by
+  default) says how many photos would end up with two faces named the same person (both faces stay named; question 6).
+- **Delete a person tag that faces use**: refused, with the count ("12 faces are named Sam; unname them first, or delete with
+  force"). `force` unnames the faces in the same transaction (`faces.unname_person`, name_source as `unname` writes it) and journals it as one
+  change with the tree row. A trigger `person_tag_not_deleted_while_named` (BEFORE DELETE ON `tag_taxonomy` when a face has that `tag_id`,
+  RAISE(ABORT)) is the backstop for any connection; the merge repoints the faces before its DELETE, so the trigger sees nothing.
+- **The two rules, as refusals with an explanation** *(owner, 2026-10-04 and 2026-10-07)*. Both are enforced where a person is chosen or
+  a node made **by an action of the owner**, never when the indexer reads what a file holds: a file's keywords are the truth, are not
+  refused, and make their nodes (a reading that makes a person tag a branch, or puts a person under a group, is shown by the doctor).
+  (a) *A person tag that faces or photos carry gets no children.* Checked in `taxonomy` (one function, `refuse_child_of_person`) at
+  `tags.create`, `move_branch` into a person, `Filer`/the keyword writer adding a new level under one, and the bulk Tags edit:
+  "Sam is a person (12 faces, 40 photos); a person cannot have tags under them. Choose another group." Scope is question 1.
+  (b) *A group tag is never put on a photo as a person.* Checked in `person_ids.resolve` (the one door for a person by id or name) so
+  naming a face, `face_people.add_people`, the bulk People edit and the MCP all refuse a branch: "Family/Thackeray is a group of
+  people, not a person." The pickers never offer a branch as a person. A group tag put on a photo as an ordinary tag stays legitimate.
+  Existing violations are not converted: the 4 group tags on 65 photos stay as tags and drop out of `photo_people` by the rebuild.
+
+#### Names to review *(#985; owner, 2026-10-09)*
+A name on a face or in a photo's people that is no person's node is **not unnamed, tagged or created by the migration or by any
+background step**. It is listed, per library, for the owner to settle one at a time.
+- **Where it lives: a derived view, plus a tiny table of what was set aside.** The list is `person_ids.unresolved`'s pairs
+  (`GROUP BY name, tag_id` over `idx_faces_person`, which stage 1 measured at 1.6 s on a cold copy of photo_index, faster warm; `photo_people` is a scan of 80,000 small rows), read when the
+  page asks and never cached. Reasons: `none` (no person tag), `several` (two or more tags have the leaf; after stage 2 this
+  means a *text* that cannot say which), and nothing for `branch` (a group tag is not a name; #986). The one table is
+  `name_review_dismissals(name_key PRIMARY KEY, rows_seen, decided)` (migration 28, empty): a dismissed name stays hidden until it holds more
+  rows than when it was set aside.
+- **An entry** shows the name, the reason, the faces (with a few crops) and the photos that list it from a keyword alone, with a link to
+  open them, and the person tags it could mean (every person with that leaf; for a name no tag has, the people with a close spelling).
+- **Choices** (each a journaled change of its own, said and counted before it is applied, never run on open):
+  1. *Make a person tag*: pick the group (a picker of the face roots and groups; one root offers itself, never silently chosen when
+     several) and the node is made as a person under it; the name's faces and list entries take its id.
+  2. *Link the name to a person*: pick an existing person (labelled with the group); the name's faces take that id and the person's
+     name. For a name that came from another library's keyword the photos' *files* keep their old keyword; the entry says how many
+     photos that is and offers the existing tag Merge (`tags.merge`) for them, which writes the files, as the owner's own step.
+  3. *Unname the faces*: the faces become unnamed (`faces.unname`, manual source as the face panel's Unname writes it); photo
+     keywords are untouched.
+  4. *Dismiss*: keep as is, hidden until new rows arrive.
+- **Where the owner opens it.** TagTuner, Review People: a first row "Names to review (5)" above the people (shown only when the count
+  is above 0), opening a dialog with the entries. Activity shows the count with a link to it; the doctor and the MCP's checks report
+  the count (names by `--show` only). A route pair in `tuner_routes` (`GET /api/names-to-review`, `POST /api/names-to-review/resolve`)
+  over `tagpup.services.name_review`, which uses `person_ids` and `face_people`/`tags` for the writes and holds no SQL of its own.
+- **A second kind, once a read made it: a new person with a name another person has.** A file read that makes a person tag whose leaf
+  another person already has (a stale keyword of a moved person; a photo copied from another library) is *not* the same person
+  until the owner says so. The list shows it too ("Sam, Family/Ingersoll, no faces: the same person as Sam, Family/Thackeray?
+  Merge / keep both"). Later phase.
+
+#### Showing the group when a leaf is shared *(the owner's requirement, 2026-10-09)*
+**One decision in Python, one string in JS, one fixture holding them together**, as `person_tag` / `resolveTagOrPerson` are held by
+`tests/fixtures/person_filing.json`.
+- `tagpup.core.vocabulary.person_labels(nodes)` takes every person leaf of the library as `(id, tag)` and returns, for each, `shared` (another
+  person leaf has the same `key`) and `group`: **the shortest tail of the parent path that tells the sharing people apart** (one segment,
+  as `Thackeray`, when it is enough; two when two groups end alike; the whole parent when needed), empty when not shared. It is computed over **all** the
+  library's people, not over the list being shown, so a filtered list of one Sam still says which Sam. Services answer people as
+  `{id, name, tag, group, shared}`; nobody else computes `shared`.
+- `web/common/vocabulary.js` gets `personLabel(person)`: `name` when not `shared`, else `name + ' · ' + group` (a middle dot, shown
+  `Sam · Thackeray`), and `personTitle(person)` (the full tag, for the hover title and the screen reader). No page builds that
+  string, joins `group`, or compares two people by their label; they compare ids. The fixture `tests/fixtures/person_labels.json`
+  (libraries of people with the labels expected) is read by `tests/test_person_labels.py` and `tests/frontend/person-labels.test.mjs`.
+- **The form** is `Sam · Thackeray` (leaf first, because lists are sorted by leaf and the leaf is what is scanned for; the group is dimmed),
+  not `Family/Thackeray/Sam`. A narrow window shortens the group from the left (`Sam · …/Cousins/Thackeray`) and never the leaf; the full
+  path is the element's `title` and `aria-label`. Sorting is by leaf, then by group, so two Sams sit together.
+- **Surfaces** (each reads a person item, none a bare name): TagPup's face panel (the name box's offered people, the five-nearest
+  buttons, "named elsewhere"), the photo's people chips and the selection panel's people, Suggest's chips (a name-only suggestion that
+  two people match is offered as two labelled chips, replacing today's "which folder?" question), the tag editor's person suggestions,
+  the navigator's people list (a tree: the group is already its parent row; a flat list and a filter result get the label), the search
+  chips and results header, the person-faces hover (`attachPersonFaces(button, person)`, keyed by id), TagTuner's Identify Faces
+  assign popup and bulk "Name as..." confirmation and undo toast, Review People's list and its header, the new-person dialog (see
+  below), the rename dialog, and the CLI's and MCP's revealed output.
+- **New person.** Typing a name no person has makes a person, under the group the typed text names (`Family/Thackeray/Sam`) or, for a plain
+  name, today's rule (the one face root; asked when several). The dialog gains an optional **Group** box (a picker of the face roots and
+  the groups under them). A new person whose leaf another person has is made without a warning screen; it is simply shown as `Sam · Group`
+  afterwards, and a dialog line says "another person is called Sam (Family/Ingersoll)" so a typing slip is seen before it is made.
+
+#### The journal, and history from before ids
+- `tag_id` leaves `journal.DERIVED_COLUMNS`: a change records a face's `tag_id` and `name` both. A row's precondition ("the rows are what the change
+  expects") compares `tag_id`, and `name` **only when the recorded `tag_id` is NULL on both sides** (an unresolved name), so a leaf rename
+  between a naming and its undo no longer makes the undo a conflict. The cache refresh a rename makes is a derived write, not a change of the face.
+- **Entries recorded before the build stay undoable, translated lazily.** A change whose `schema_version` is below the migration is replayed
+  as stage 1 replays it today: the recorded `name` is put back and `person_ids.follow_faces` gives it the id the tree gives that name *now*
+  (`_derive`); a name that no longer resolves leaves `tag_id` NULL, an unresolved name that the review list shows. Nothing in a journal is
+  rewritten (the journal's tests compare it byte for byte), and the rehearsal compares after `_derive` on both sides, as now.
+  Counted: no library holds a `faces` row in its journal, so today this is a rule with nothing to run on.
+- Tree rows keep their ids in the journal (686 `change_rows` on photo_index, one change), so the tree's undo needs no translation.
+
+#### Migration and phases
+Migration 28 is **additive**: `idx_faces_tag` on `faces(tag_id)`, `idx_photo_people_tag` on `photo_people(tag_id, photo_id)` and the empty
+`name_review_dismissals`; the trigger comes with phase 5 as a migration of its own, also additive. No row of the libraries is written; stage 1 already filled both `tag_id` columns, and they are
+what the names give today. **Measured before it is built, on a sandbox copy**, as migration 21 was (that one took 17.5 s cold; an index over
+226,208 faces is expected in seconds; it runs where 21 does, at the server's start, in the background thread, never on a page's request).
+The data that changes is derived and is rebuilt by the owner's command, never on open: `tools/doctor.py --rebuild-derived --apply` after
+a rehearsal that counts the photos: photo_index at most 77 (the 12 whose shared-name keyword now gets its exact id, the 65 whose group tag stops being
+a person), the others none. Until it runs those photos list their people as before and the doctor's `people_out_of_date` says how many.
+**An app from before the migration must not write the library after it** (it would write names without ids and the turned-round doctor
+would then overwrite them): `schema.ensure` refuses a library whose version is above `LATEST` (today it does not: it only opens), with a message that says
+which app to start. That is a new guard (question 7).
+
+| Phase | What | Size |
+|---|---|---|
+| 1 | The group tag is not a person (#986): `PeopleVocabulary` rows carry ids, `people_in_photo` returns references and drops branches, dedupes by id, `people_out_of_date`; the doctor's rebuild counts. No schema. | M |
+| 2 | Migration 28 (the two indexes, the dismissals table), the newer-library guard, measured on a copy. | S |
+| 3 | `person_labels` + `personLabel` + the fixture, and `{id, name, tag, group, shared}` on every people answer (additive fields, pages unchanged). | M |
+| 4 | Writers and readers move to ids: `faces.name_as`, `person_ids.resolve`, the 158 reader lines, `counts_by_person`, identify/automatch/clustering known sets keyed by id, the wire's `person_id`; `person_ids` follows turned round; tests with two Sams in the fixture. | L |
+| 5 | Tree operations by id: rename of one node, move, merge, delete with refusal and force, the trigger on, the two rules as refusals, journal recording of `tag_id`, the lazy rule for old entries. | M |
+| 6 | The pickers show the group on every surface listed; narrow-window checks; the new-person Group box. | M |
+| 7 | Names to review: service, routes, Review People row and dialog, Activity and doctor counts, dismissals, the "new person with a shared name" entry. | M |
+| 8 | `idx_faces_name` / `idx_faces_person` read by nothing but the review's pair query; docs; the doctor's stage-2 lines. Columns are not dropped. | S |
+Phases 1 and 3 can start at once and are worth having first (1 is an owner decision already made; 3 changes no behaviour). 4 and 5 must not
+be split across a merge: the id is the key only when every writer writes it. Sizes are worker rounds: S about half a day, M one to two days, L three.
+
+#### How it fails (each is a test before it is built)
+- **Interrupted.** The migration is additive and one transaction: a crash leaves 27 and the next start runs it again. A tree operation is one
+  transaction for the database (a crash keeps the old or the new, never faces with a name no node has); its file rewrite is the journal's
+  resumable change, so an interrupted rename leaves some photos holding the old path. Those photos are the **stale-keyword case** below.
+  The names-to-review writes are one change each; interrupted, they are in the journal as incomplete and settle at start like every change.
+- **Two at once.** The always-on server and a CLI run: every operation above runs under the library's write lock inside `db.write_with_connection`,
+  reads the tree inside the transaction and never caches it across transactions (stage 1's rule); `resolve` is called inside the writer's
+  transaction. Two libraries sharing a folder: ids are per library and a keyword is a path, so a move written to the files by library A reaches
+  B as a changed file whose keyword path B's tree does not have (the stale-keyword case, for B).
+- **The stale-keyword case** (a file edited elsewhere, a copy from before a move, a rename interrupted, a shared folder). The old path has no node, so
+  reading it makes a *new person tag* with a new id and the same leaf: a second Sam. This is correct as far as the data goes (a path is a
+  person) and is not silent: the second kind of review entry shows it. Whether to *prevent* it with a record of former paths is question 5.
+- **A read that fails.** A library that cannot be read answers an error and decides nothing (`present` and the doctor already do). A stale
+  `person_id` is a 404, never a new person. A tree read that fails in the middle of a rename aborts the transaction.
+- **The real data's shape.** One shared leaf, 5 + 12 names to review, 77 photos to rebuild, 37 ordinary tags with children (so a rule (a) over
+  all tags would be broken at once). The tests use two Sams under two roots, a person and a pet of one name, a group tag on a photo, a
+  keyword path of a shared leaf, a name with no node, a name two nodes have, and a leaf rename between a naming and its undo.
+- **What the owner sees.** A picker that answers from the page's cache (the people list) with `shared` and `group` already there, so nothing is
+  asked per keystroke; the review list reads two pair queries (the cold read of faces' pairs on photo_index was 1.6 s in stage 1; warm and the second table to be measured on a copy) and
+  says "Reading the library's names..." while it does.
+
+#### Questions only the owner can answer
+1. **Rule (a), how wide?** "A tag that photos carry gets no children" over *all* tags is broken today by 37 tags carried by 10,864 photos
+   in photo_index (a photo holds `Places` and `Places/Seattle`) and would refuse ordinary keywording. Recommended: **person tags only** (a
+   person that faces or photos carry), which only the 4 group tags (65 photos) already break.
+2. **Ids on the wire between the page and the server** (never in a file): recommended yes; the alternative, a tag path in every request, breaks when
+   a person is renamed in another tab.
+3. **The four names with no person tag** were to be created (2026-10-07) and are, since #985, to be settled by hand from the list. Recommended: all of
+   them, and kr-track's 12, by hand; nothing is made or unnamed by the migration or a background step. (The one name on two tags: link to one of them.)
+4. **The label**: `Sam · Thackeray` with the shortest distinguishing tail of the group, full path on hover, shown only when a leaf is shared.
+   The alternative is the whole path always when shared. Recommended: the short form.
+5. **A record of former paths** (`person_former_paths`: a moved or renamed person's old path, so a stale keyword resolves to the person and a
+   photo is not given a second Sam; additive, people only). It adds a meaning (a keyword with no node can name a person). Recommended: **not now**; the
+   stale keyword case is shown in the review list (phase 7) and built only if it happens, since zero shared leaves are stale today.
+6. **A merge of two people who each have a face in one photo** leaves two faces named one person. Recommended: allow, and say the count in the plan.
+7. **A guard against an older app writing a migrated library**: refuse to open a library of a newer version (new behaviour of `schema.ensure`, so the
+   installed copy and the CLI must be installed before the migration runs). Recommended: yes.
+8. **Rename Person means one person** (the one picked), it never joins two people of the same name and never merges into an existing tag; merging is
+   its own action. Changes what "Rename Person" does today. Recommended: yes.
+9. **A dismissed name** comes back when it gains rows. Recommended: yes.
+10. **Where the list opens**: Review People (a first row, shown only when there is something) with the count in Activity. Recommended as written.
 
 ### Ideas taken from Windows Live Photo Gallery's database *(2026-10-02)*
 The owner's WLPG index (`Pictures.pd6`, a SQL Server Compact 3.1 file: 73,184 files, 836
@@ -2794,7 +3002,7 @@ still takes its cameras from the folder's own photos, by the same name.*
   standard XMP holds 64 KB -- keep only the vectors of the models in use, float16. *Owner, 2026-10-07: baking
   only the CURRENT model's vectors into a photo is fine*; older models' vectors stay in the database only, and a
   model change rewrites the photos' baked vectors in the same pass as the re-embed.
-**People by id, stage 2:**
+**People by id, stage 2** *(the full design, with the counted numbers and the open questions, is "People by id, stage 2" under "Identity by id")*:
 - The 4 names with no person tag: **create the tag**. The name that matches two tags (1 face): **remove the
   tags** -- to be confirmed with the owner by name before anything is written (the tags also sit on photos'
   people lists). The names that sit on a group tag (counted 2026-10-09: 4 names, 65 photos in photo_index):
