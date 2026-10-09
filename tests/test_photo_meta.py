@@ -162,7 +162,7 @@ class TheLens(unittest.TestCase):
         self.assertIsNone(gear_of(**{"EXIF:LensModel": "  "}).lens)
 
     def test_a_lens_id_that_is_hex_bytes_is_no_name(self):
-        # Without print conversion a Nikon's Composite:LensID is the lens's eight bytes (docs/findings.md, #1013).
+        # Without print conversion a Nikon's Composite:LensID is the lens's eight bytes (docs/findings.md, #1020).
         self.assertIsNone(gear_of(**{"Composite:LensID": "A1 40 18 37 2C 34 A4 06"}).lens)
         self.assertIsNone(gear_of(**{"LensID": "137"}).lens)
         self.assertEqual("A name", gear_of(**{"Composite:LensID": "A1 40 18 37 2C 34 A4 06", "EXIF:LensModel": "A name"}).lens)

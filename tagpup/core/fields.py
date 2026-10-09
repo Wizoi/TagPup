@@ -65,7 +65,7 @@ METADATA_FIELDS = [
 #: read asked ExifTool for. 1 (no key) is the reads before the lens fields; 2 is METADATA_FIELDS as it
 #: stands with them. A photo that has no lens has no lens key either, so only this tells "read, holds
 #: none" from "read before" -- what tagpup.services.reread_fields takes rows by (docs/findings.md,
-#: #1012). Raise it when a field is added that rows already read should gain.
+#: #1019). Raise it when a field is added that rows already read should gain.
 READ_GENERATION_KEY = "TagPup:ReadGeneration"
 READ_GENERATION = 2
 
