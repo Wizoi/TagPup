@@ -209,9 +209,12 @@ def face_crop():
 def people():
     """Everyone the library knows, the people keywords name included
     (tagpup.services.people.names). ?include_hidden=1 adds those hidden from
-    autocomplete: it answers "does this person exist?", which a hidden person does."""
+    autocomplete: it answers "does this person exist?", which a hidden person does. ?records=1 answers
+    the people with a person tag instead, each `{id, name, tag, group, shared}` (tagpup.services.people.records)."""
     library = state.require()
     include_hidden = request.args.get("include_hidden", "0") == "1"
+    if request.args.get("records") == "1":
+        return jsonify(people_service.records(library, include_hidden=include_hidden))
     return jsonify(people_service.names(library, keywords_too=True, include_hidden=include_hidden))
 
 
@@ -350,7 +353,9 @@ def unmatched_faces_people():
     library = state.require()
     if not _library_there(library):
         return jsonify([])
-    return jsonify(identify_jobs.queue(library, identify_cache.of(library)))
+    # The queue is cached against the faces and photos; who is shared is the tree's, read now, on a copy.
+    waiting = [dict(each) for each in identify_jobs.queue(library, identify_cache.of(library))]
+    return jsonify(people_service.annotate(library, waiting))
 
 
 @routes.get("/api/unmatched-faces/person-matches")
@@ -405,7 +410,8 @@ def faces_match_bulk():
         _refuse(400, str(why))
     outcome = face_routes.assigned(library, plan).outcome()
     named = set(outcome["matched_ids"])
-    reply = {"success": True, "matched": len(named), "matched_ids": outcome["matched_ids"],
+    reply = {"success": True, "person": people_service.annotate(library, [{"name": person_name}])[0]["person"],
+             "matched": len(named), "matched_ids": outcome["matched_ids"],
              "skipped_excluded": plan["skipped_excluded"], "tags_written": outcome["tags_written"],
              "not_named": [face_id for face_id in outcome["planned_ids"] if face_id not in named], "job": outcome["job"]}
     if face_routes.trouble(outcome):

@@ -70,6 +70,7 @@ class People:
     def __init__(self, nodes, parents=()):
         self.by_key, self.branches = {}, {}
         self.nodes = set()   # every person node's id, those two nodes are called alike too
+        self.listing = []    # (id, tag, name) of each of them: what Directory tells the pages
         parents = set(parents)
         for node_id, tag, name in sorted(nodes):
             if not tag or vocabulary.SEPARATOR not in tag:
@@ -81,6 +82,7 @@ class People:
                 self.branches.setdefault(leaf, []).append(node_id)   # a branch tag is not a person
                 continue
             self.nodes.add(node_id)
+            self.listing.append((node_id, tag, name))
             self.by_key[leaf] = People.AMBIGUOUS if leaf in self.by_key else node_id
 
     @classmethod
@@ -117,6 +119,59 @@ class People:
 def read(conn):
     """The People of the library on `conn`, as its tree stands in this transaction."""
     return People.read(conn)
+
+
+class Directory:
+    """The people of a library as the pages are told of them: each a dict
+    `{"id", "name", "tag", "group", "shared"}` (docs/ARCHITECTURE.md, "People by id, stage 2", "The
+    wire"). `shared` and `group` are tagpup.core.vocabulary.person_labels', computed over EVERY person of
+    the library, so a list of one Sam still says which Sam. Read once for one answer, from the tree as it
+    stands now, and never kept: a rename in another process is what the next answer reads.
+
+    A row that names a person by NAME alone (every answer today: the id is not the key until part B)
+    gets `of_name`: the person when exactly one is called it, the same fields with no id and no tag when
+    two are (`shared`, and nothing says which), and None when none is -- a name no person tag has, a
+    group, a bucket such as Unknown Faces."""
+
+    def __init__(self, nodes):
+        nodes = list(nodes)
+        labels = vocabulary.person_labels([(node_id, tag) for node_id, tag, _name in nodes])
+        self._records, self._by_key, self._by_tag = [], {}, {}
+        for node_id, tag, name in sorted(nodes, key=lambda node: (vocabulary.tag_sort_key(node[2]), node[1])):
+            label = labels.get(node_id, vocabulary.PersonLabel(False, ""))
+            record = {"id": node_id, "name": name, "tag": tag, "group": label.group, "shared": label.shared}
+            self._records.append(record)
+            self._by_key.setdefault(vocabulary.key(name), []).append(record)
+            self._by_tag[vocabulary.normalize(tag).lower()] = record
+
+    @classmethod
+    def read(cls, conn):
+        return cls(People.read(conn).listing)
+
+    def records(self):
+        """Everyone, by name (vocabulary.tag_sort_key), then by group: a copy of each."""
+        return [dict(record) for record in self._records]
+
+    def of_name(self, name):
+        """The person called `name` (without case), or None; see the class."""
+        found = self._by_key.get(vocabulary.key(name))
+        if not found:
+            return None
+        if len(found) == 1:
+            return dict(found[0])
+        return {"id": None, "name": str(name).strip(), "tag": None, "group": "", "shared": True}
+
+    def of_tag(self, tag):
+        """The person filed at the tag `tag`, or None."""
+        found = self._by_tag.get(vocabulary.normalize(tag).lower()) if tag else None
+        return dict(found) if found else None
+
+    def annotate(self, items, key="name", into="person"):
+        """Give each dict of `items` a `person` beside the name it holds under `key` (None when it holds none, or a
+        name no person is called): the fields a page labels the person by. Returns `items`."""
+        for item in items:
+            item[into] = self.of_name(item.get(key))
+        return items
 
 
 def _chunks(items):

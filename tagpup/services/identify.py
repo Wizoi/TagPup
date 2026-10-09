@@ -23,7 +23,7 @@ from tagpup.core.result import NotFound
 from tagpup.ml import grouping
 from tagpup.services import photos as photos_service
 from tagpup.services import roots as roots_service
-from tagpup.store import db, faces, generations, people, photos
+from tagpup.store import db, faces, generations, people, person_ids, photos
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +257,7 @@ def photo_details(library, photo_path, named):
     try:
         photo_row = photos.details(conn, photo_path)
         face_rows = faces.in_photo_with_names(conn, photo_path)
+        everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
 
@@ -300,8 +301,8 @@ def photo_details(library, photo_path, named):
                 max_sim = float(np.max(sims))
         # Excluded: the page counts a photo's unmatched faces from these, and an excluded
         # face is not one, as the list's counts say (docs/findings.md, #642, #655).
-        found.append({"id": fid, "box": box, "name": fname, "max_similarity": max_sim,
-                      "excluded": bool(excluded)})
+        found.append({"id": fid, "box": box, "name": fname, "person": everyone.of_name(fname),
+                      "max_similarity": max_sim, "excluded": bool(excluded)})
 
     return {
         "path": photo_path,
@@ -326,10 +327,11 @@ def _embedding_of(conn, face_id):
 
 def face_matches(library, face_id, named):
     """The five people a face most resembles, best first, each with the similarity and
-    its band. Selecting a card asks this."""
+    its band, and the `person` the name is (tagpup.services.people). Selecting a card asks this."""
     conn = _reading(library)
     try:
         target_emb = _embedding_of(conn, face_id)
+        everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
 
@@ -352,6 +354,7 @@ def face_matches(library, face_id, named):
         seen.add(name)
         top_matches.append({
             "name": name,
+            "person": everyone.of_name(name),
             "similarity": float(similarities[idx]),
             "band": face_rules.band(float(similarities[idx])),
         })
