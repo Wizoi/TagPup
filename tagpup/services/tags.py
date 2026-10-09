@@ -507,8 +507,11 @@ def _rewrite(library, carrying, old, new, exiftool_path):
 def _rename_unnamed_records(library, old, new):
     """The faces called `old` whose name no person tag has renamed `new`, and each photo's list of people. Returns the faces
     renamed."""
-    faces_renamed, _ = db.write_with_connection(
-        library.path, lambda conn: faces.rename_unresolved(conn, old, new), label="rename a name's faces")
+    try:
+        faces_renamed, _ = db.write_with_connection(
+            library.path, lambda conn: faces.rename_unresolved(conn, old, new), label="rename a name's faces")
+    except person_ids.PersonProblem as problem:
+        people_service.translate(problem)   # a new name two people have: Refused, naming them
     if faces_renamed:
         logger.info("Renamed %d face(s) with no person tag.", faces_renamed)
     return faces_renamed
