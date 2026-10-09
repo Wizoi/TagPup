@@ -146,14 +146,19 @@ def _embedder(library):
         return None
 
 
-def _answer(action, reveal=False):
+def _answer(action, reveal=False, writes=False):
     """Run `action`, turning what the service refuses into the tool's error. An error
     the service did not expect is logged whole and answered by its kind alone, unless
-    `reveal`: its message can hold a path."""
+    `reveal`: its message can hold a path. A READ tool runs inside `reading_newer()` (a newer library is read as
+    it is); a tool that `writes` never does: the refusal in `ensure` is the last guard on every journaled
+    write, and a library migrated by an update while a long sync runs must not be written."""
     del _notes[:]
     try:
-        with library_service.reading_newer():
+        if writes:
             answer = action()
+        else:
+            with library_service.reading_newer():
+                answer = action()
         if _notes and isinstance(answer, dict):
             answer = dict(answer, note=_notes[0])
         return answer
@@ -273,7 +278,7 @@ def build():
             exiftool = runtimes.exiftool(found, runtimes.peek_settings(found))
             return written(refresh_rows.refresh_rows(found, exiftool, apply=apply, folder=folder),
                            found, reveal, limit)
-        return _answer(act, reveal)
+        return _answer(act, reveal, writes=True)
 
     @write_tool("Bring the library in step with its folders: walk every folder it holds photos in (or "
                 "`folder`) and compare each file with its row by path, size and modified time. Rows of "
@@ -295,7 +300,7 @@ def build():
             answer["in_step"] = result.details["in_step"]
             answer["warnings"] = result.details.get("warnings", [])
             return answer
-        return _answer(act, reveal)
+        return _answer(act, reveal, writes=True)
 
     @tool("When the library was last in step with its folders, and its last applied sync: when it "
           "started and finished, whether it looked at the whole library, whether it left it in step, "
@@ -313,7 +318,7 @@ def build():
         def act():
             found = find_library(library, writes=True)
             return written(person_tags.merge_duplicate_person_tags(found, apply=apply), found, reveal, limit)
-        return _answer(act, reveal)
+        return _answer(act, reveal, writes=True)
 
     @write_tool("Remove face rows that copy another face of the same photo (same box) and know no "
                 "more than the copy kept: a name given by hand or an exclusion always wins. Faces "
@@ -324,7 +329,7 @@ def build():
         def act():
             found = find_library(library, writes=True)
             return written(duplicate_faces.dedupe_faces(found, apply=apply), found, reveal, limit)
-        return _answer(act, reveal)
+        return _answer(act, reveal, writes=True)
 
     @tool("The library's journal: every change a maintenance operation applied, newest first (up to "
           "`limit`), each with its id, operation, status (applied, derived_pending, undone, pruned), "
@@ -352,7 +357,7 @@ def build():
             # A change of photo files is undone file by file, through the library's ExifTool.
             exiftool = runtimes.exiftool(found, runtimes.peek_settings(found))
             return written(library_journal.undo(found, change, apply=apply, exiftool_path=exiftool), found)
-        return _answer(act)
+        return _answer(act, writes=True)
 
     @write_tool("Prune the library's journal: the changes older than `days` (%d unless given) keep their "
                 "summary and lose their values, and can no longer be undone. The default is a dry run "
@@ -367,7 +372,7 @@ def build():
             return {"ok": result.ok, "dry_run": not apply, "changes": result.attempted,
                     "pruned": result.changed, "values": result.details["values"], "days": days,
                     "kept": result.details["kept"], "note": result.details["note"]}
-        return _answer(act)
+        return _answer(act, writes=True)
 
     return server
 

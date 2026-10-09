@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import sys
+import textwrap
 import threading
 import unittest
 from unittest import mock
@@ -195,6 +196,7 @@ class AnOlderAppAndALibraryItHasNotSeen(unittest.TestCase):
         self.assertIn("Start the newest TagPup", said)
         self.assertIn("backups", said, "where the backups are")
         self.assertIn("snapshots restore", said, "and how to go back")
+        self.assertIn(".db-wal", said, "and what to delete before copying a backup by hand")
         self.assertEqual((schema.LATEST + 1, schema.LATEST), (refused.exception.found, refused.exception.known))
         self.assertEqual(before, fingerprint(self.path))
 
@@ -305,17 +307,51 @@ class TwoProcessesBringingALibraryAt26UpToDate(unittest.TestCase):
         home = own_home.for_test(self)
         path = home.library("harbour.db")
         at_version(path, 26)
-        server = ("import sys; sys.path.insert(0, %r); from tagpup.core.library import Library; "
-                  "from tagpup.services import libraries; "
-                  "libraries.bring_up_to_date_in_background([Library(%r)]).join(); print('server')" % (ROOT, path))
-        cli = ("import sys; sys.path.insert(0, %r); from tagpup.services import libraries; "
-               "print(len(libraries.bring_up_to_date(%r)))" % (ROOT, path))
+        a_in, b_ready = os.path.join(home.root, "a_is_in_27"), os.path.join(home.root, "b_is_in_ensure")
+        # The overlap is made certain, not hoped for: the server's thread holds migration 27 (inside its transaction,
+        # with the write lock) until the CLI run has said it is about to open the library, and a while longer, so the
+        # CLI is waiting at the lock when 27 completes. Only the test's own processes patch anything.
+        server = textwrap.dedent("""
+            import os, sys, time
+            sys.path.insert(0, %(root)r)
+            from tagpup.core.library import Library
+            from tagpup.services import libraries
+            from tagpup.store import schema
+            real = schema.MIGRATIONS[26]
+            assert real.version == 27
+
+            def hold(conn):
+                open(%(a_in)r, "w").close()
+                until = time.time() + 60
+                while not os.path.exists(%(b_ready)r) and time.time() < until:
+                    time.sleep(0.05)
+                time.sleep(3)
+                real.apply(conn)
+
+            schema.MIGRATIONS = schema.MIGRATIONS[:26] + (real._replace(apply=hold),) + schema.MIGRATIONS[27:]
+            libraries.bring_up_to_date_in_background([Library(%(path)r)]).join()
+            print("server done")
+            """) % {"root": ROOT, "a_in": a_in, "b_ready": b_ready, "path": path}
+        cli = textwrap.dedent("""
+            import os, sys, time
+            sys.path.insert(0, %(root)r)
+            from tagpup.services import libraries
+            until = time.time() + 60
+            while not os.path.exists(%(a_in)r) and time.time() < until:
+                time.sleep(0.05)
+            open(%(b_ready)r, "w").close()
+            print(len(libraries.bring_up_to_date(%(path)r)))
+            """) % {"root": ROOT, "a_in": a_in, "b_ready": b_ready, "path": path}
         env = dict(os.environ, TAGPUP_HOME=home.root)
         running = [processes.start([sys.executable, "-c", code], env=env, stdout=-1, stderr=-1, text=True)
                    for code in (server, cli)]
+        answers = []
         for each in running:
             out, err = each.communicate(timeout=180)
+            answers.append(out.strip())
             self.assertEqual(0, each.returncode, err)
+        self.assertTrue(os.path.exists(a_in) and os.path.exists(b_ready), "they overlapped")
+        self.assertEqual("0", answers[1], "the CLI run, waiting at the lock, found 27 and 28 done and applied nothing")
         self.assertEqual([(27,), (28,)], look(path, "SELECT version FROM schema_version WHERE version >= 27 ORDER BY version"))
         self.assertEqual(["migration 27: photos by their camera and lens", "migration 28: people read by id, and the names set aside"],
                          [row[0] for row in look(path, "SELECT operation FROM changes WHERE operation LIKE 'migration 2%' "
@@ -388,23 +424,61 @@ class RecoveryOfANewerLibrary(unittest.TestCase):
                 doctor.rebuild_derived(self.path, **kwargs)
         self.assertEqual(before, fingerprint(self.path))
 
-    def test_the_mcp_reads_with_a_note_and_refuses_each_writer(self):
-        from mcp.server.fastmcp.exceptions import ToolError
+    def mcp(self):
+        """The MCP server's tools, called as a client calls them, on this home's libraries."""
+        import asyncio
         from tagpup.mcp import server
         folder = os.path.dirname(self.path)
-        with mock.patch.object(server.config, "data_dir", return_value=folder), \
-                mock.patch.object(server.config, "library_path", side_effect=lambda f: os.path.join(folder, f)):
-            answer = server._answer(lambda: (server.find_library("library", photos=False), {"ok": 1})[1])
-            self.assertEqual(1, answer["ok"])
-            self.assertIn("newer TagPup", answer["note"])
-            for photos in (True, False):
+        patches = [mock.patch.object(server.config, "data_dir", return_value=folder),
+                   mock.patch.object(server.config, "library_path", side_effect=lambda f: os.path.join(folder, f))]
+        for each in patches:
+            each.start()
+            self.addCleanup(each.stop)
+        tools = server.build()
+        return lambda name, **arguments: asyncio.run(tools.call_tool(name, arguments))
+
+    def test_each_mcp_writing_tool_is_refused_and_writes_nothing(self):
+        from mcp.server.fastmcp.exceptions import ToolError
+        call = self.mcp()
+        before = fingerprint(self.path)
+        for name, arguments in (("refresh_rows", {"apply": True}), ("sync", {"apply": True}), ("sync", {}),
+                                ("merge_duplicate_person_tags", {"apply": True}), ("dedupe_faces", {"apply": True}),
+                                ("undo", {"change": 1, "apply": True}), ("prune_journal", {"apply": True})):
+            with self.subTest(tool=name, arguments=arguments):
                 with self.assertRaises(ToolError) as refused:
-                    server.find_library("library", photos=photos, writes=True)
+                    call(name, library="library", **arguments)
                 self.assertIn("backups", str(refused.exception))
-            written = [name for name in ("refresh_rows", "sync", "merge_duplicate_person_tags", "dedupe_faces", "undo",
-                                         "prune_journal")]
-            tools = {each.name for each in __import__("asyncio").run(server.build().list_tools())}
-            self.assertLessEqual(set(written), tools)
+        self.assertEqual(before, fingerprint(self.path))
+
+    def test_a_writing_tool_is_never_inside_reading_newer_even_when_the_library_turns_newer_after_the_check(self):
+        # An update migrates the library while a long sync(apply) runs: find_library's check was passed, so the
+        # last guard is `ensure`, and it must not be switched off around a writer.
+        from mcp.server.fastmcp.exceptions import ToolError
+        from tagpup.mcp import server
+        call = self.mcp()
+        before = fingerprint(self.path)
+        refused = []
+        with mock.patch.object(server, "find_library", side_effect=lambda *a, **k: Library(self.path)):
+            for name, arguments in (("sync", {"apply": True}), ("refresh_rows", {"apply": True}),
+                                    ("merge_duplicate_person_tags", {"apply": True}), ("dedupe_faces", {"apply": True}),
+                                    ("undo", {"change": 1, "apply": True}), ("prune_journal", {"apply": True})):
+                with self.subTest(tool=name):
+                    try:
+                        call(name, library="library", **arguments)
+                    except ToolError:
+                        refused.append(name)
+        self.assertIn("sync", refused, "the one that writes the library's last sync is stopped by ensure")
+        self.assertEqual(before, fingerprint(self.path), "nothing written into the newer library")
+        self.assertEqual([(0,)], look(self.path, "SELECT COUNT(*) FROM sync_runs"))
+
+    def test_the_mcp_read_tools_answer_with_the_note(self):
+        call = self.mcp()
+        before = fingerprint(self.path)
+        for name in ("summary", "history", "checks", "sync_state", "folders"):
+            with self.subTest(tool=name):
+                answer = call(name, library="library")
+                self.assertIn("newer TagPup", json.dumps(answer, default=repr))
+        self.assertEqual(before, fingerprint(self.path))
 
     def test_the_server_still_answers_its_status_and_refuses_the_library(self):
         client = self.app.test_client()

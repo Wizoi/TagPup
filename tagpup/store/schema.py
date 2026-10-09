@@ -94,9 +94,11 @@ class NewerLibrary(Exception):
 #: Where a library's backups are, for the owner who has to go back to an older checkout.
 BACKUPS_NOTE = ("Your backups are in data/backups (the library's snapshots in data/backups/<library>/daily, weekly "
                 "and monthly, the copies taken before a bulk change beside them as <library>.before-...db). To go "
-                "back to an older TagPup: stop every TagPup, copy a backup over the library file in data, or list "
-                "and restore a snapshot with this version (`tagpup_cli.py --db <library> snapshots list`, "
-                "`snapshots restore <name> --apply`).")
+                "back to an older TagPup, prefer to list and restore a snapshot with this version "
+                "(`tagpup_cli.py --db <library> snapshots list`, `snapshots restore <name> --apply`). If you copy a "
+                "backup over the library file by hand instead: stop every TagPup and delete <library>.db-wal and "
+                "<library>.db-shm beside the library first, or the newer version's write-ahead log is replayed over the "
+                "older copy and the library is a mixture of both.")
 
 
 def newer_sentence(what, found, known, recover=True):
