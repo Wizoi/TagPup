@@ -120,10 +120,21 @@ class WhatItCounts(MarkedCase):
         for text in found["poor_why"] + [found["markers"]["line"]]:
             self.assertNotIn(self.home.root, text, "a path in a sentence about markers")
 
-    def test_a_marker_of_another_library_alone_differs(self):
+    def test_a_marker_with_only_another_librarys_line_says_nothing_of_our_id_and_is_not_marked(self):
+        """`mark` records its ids before it publishes the files, and a publish that is skipped leaves a row whose line
+        is not in the file: another library's line alone is no evidence of another folder (sync reads it the same)."""
         copy = self.copy_of_pictures()
         overwrite(os.path.join(self.marker_in(copy), ".tagpup"), ("%s %s\n" % (OTHER_LIBRARY, OTHER_FOLDER)).encode())
-        self.assertEqual(1, self.verify(copy)["markers"]["differs"])
+        found = self.verify(copy)
+        self.assertEqual((0, 1), (found["markers"]["differs"], found["markers"]["unmarked"]))
+        self.assertFalse(found["poor"], found["poor_why"])
+
+    def test_a_file_where_a_marked_folder_should_be_is_not_there(self):
+        copy = self.copy_of_pictures()
+        shutil.rmtree(self.marker_in(copy))
+        overwrite(self.marker_in(copy), b"not a folder")
+        marks = self.verify(copy)["markers"]
+        self.assertEqual((1, 0), (marks["not_there"], marks["unreadable"]))
 
     def test_another_librarys_line_beside_ours_is_fine(self):
         copy = self.copy_of_pictures()
@@ -180,7 +191,7 @@ class WhatItCounts(MarkedCase):
         copy = self.copy_of_pictures()
         self.machine.set_location("pictures", copy, must_exist=False)
         self.assertEqual(2, len(self.places()))
-        overwrite(os.path.join(self.marker_in(copy), ".tagpup"), ("%s %s\n" % (OTHER_LIBRARY, OTHER_FOLDER)).encode())
+        overwrite(os.path.join(self.marker_in(copy), ".tagpup"), ("%s %s\n" % (self.library_line(copy)[0], OTHER_FOLDER)).encode())
         self.assertEqual(LEAVES, self.verify(self.side.pictures)["markers"]["match"], "the map's other place was read")
         self.assertEqual(1, self.verify(copy)["markers"]["differs"])
 
@@ -237,10 +248,10 @@ class ReachingTheLocation(MarkedCase):
         self.assertEqual(1, found["markers"]["checked"])
         self.assertTrue(found["partial"])
 
-    def test_cancel_before_the_markers_are_read_leaves_none(self):
+    def test_cancel_before_the_markers_are_read_counts_none(self):
         found = self.verify(full=True, cancel=lambda: True)
         self.assertEqual("cancelled", found["stopped"])
-        self.assertIsNone(found["markers"])
+        self.assertEqual(0, found["markers"]["checked"])
 
     def test_a_sample_reads_at_most_its_bound_and_each_folder_once(self):
         reads = []
@@ -254,9 +265,20 @@ class ReachingTheLocation(MarkedCase):
 
     def test_a_full_run_reads_every_marked_folder_and_reports_progress(self):
         seen = []
-        found = self.verify(full=True, progress=lambda checked, rows, folders: seen.append(folders))
+        found = self.verify(full=True, progress=lambda checked, rows, folders: seen.append((rows, folders)))
         self.assertEqual(LEAVES, found["markers"]["checked"])
-        self.assertEqual(sorted(seen), seen)
+        self.assertEqual(sorted(seen, key=lambda each: each[1]), seen)
+        self.assertEqual({found["rows"]}, {rows for rows, _folders in seen}, "the total is the photo rows, always")
+
+    def test_a_sample_whose_rows_run_out_of_time_still_has_its_marker_verdict(self):
+        copy = self.copy_of_pictures()
+        overwrite(os.path.join(self.marker_in(copy), ".tagpup"), ("%s %s\n" % (self.library_line(copy)[0], OTHER_FOLDER)).encode())
+        found = self.verify(copy, budget=0)
+        self.assertEqual("time", found["stopped"])
+        self.assertEqual((LEAVES, 1), (found["markers"]["checked"], found["markers"]["differs"]))
+        self.assertTrue(found["poor"])
+        refused = self.move(copy, budget=0)
+        self.assertIn("marker of a different folder", refused.refused)
 
     def test_a_sample_that_is_out_of_time_says_what_it_has(self):
         with mock.patch.object(roots_verify, "MARKER_BUDGET", 0):
@@ -269,8 +291,8 @@ class ReachingTheLocation(MarkedCase):
 class ChangingTheLocation(MarkedCase):
     def test_a_place_whose_markers_differ_is_refused_unless_the_owner_overrides(self):
         copy = self.copy_of_pictures()
-        overwrite(os.path.join(self.marker_in(copy), ".tagpup"), ("%s %s\n" % (OTHER_LIBRARY, OTHER_FOLDER)).encode())
-        refused = self.move(copy, apply=True)
+        overwrite(os.path.join(self.marker_in(copy), ".tagpup"), ("%s %s\n" % (self.library_line(copy)[0], OTHER_FOLDER)).encode())
+        refused =self.move(copy, apply=True)
         self.assertIn("marker of a different folder", refused.refused)
         self.assertEqual([self.side.pictures], self.places())
         allowed = self.move(copy, apply=True, override=True)

@@ -19,11 +19,13 @@ machine's own map is never touched), and looks at the disk. For each row:
 **Markers.** A library that has marked folders (tagpup.services.folder_ids; `folder_ids` rows) also has the
 marker read (`.tagpup`, tagpup.files.folder_marker) in each of the root's marked folders AT THE CANDIDATE, the
 row's `@name/rel` turned into a path by the same Roots built here, and counted: **matches** (the marker holds
-this library's entry for the id the row has), **differs** (it holds this library's entry for another id, or only
-other libraries' -- likely a different folder at that path), **unmarked** (no marker: the library predates
-marking, or the folder is new), **malformed** (a file of that name that is not a marker, hand-edited: counted and
+this library's entry for the id the row has), **differs** (it holds this library's entry for ANOTHER id -- likely a
+different folder at that path), **unmarked** (no marker, or none with an entry of ours: the library predates
+marking, the folder is new, or `mark` recorded the id and its publish was skipped; another library's line says
+nothing of our id), **malformed** (a file of that name that is not a marker, hand-edited: counted and
 never a reason to refuse), **unreadable** (the disk refused) and **not there** (the folder is not at the
-candidate). A sample reads at most MARKER_SAMPLE of them, each folder once, within MARKER_BUDGET; a full run all
+candidate). A sample reads at most MARKER_SAMPLE of them, each folder once, starting no read after MARKER_BUDGET (the worst
+case is that plus one look); the markers are read BEFORE the rows, so a sample that runs out of its row budget still has them; a full run all
 of them, with progress and cancel. Each read is made on the bounded thread as a listing is, so a share that does
 not answer stops it as "unreachable". A library with no `folder_ids` rows for the root (not marked, or behind
 migration 26) has `markers` None and nothing is said. Markers that DIFFER make the result poor (so Change
@@ -55,6 +57,7 @@ import functools
 import logging
 import os
 import random
+import stat
 import time
 
 from tagpup.core import paths
@@ -271,9 +274,11 @@ def _marker_state(folder, folder_id, library_id):
     """What the marker of `folder` says of `folder_id`: "match" | "differs" | "unmarked" | "malformed" |
     "unreadable" | "not_there". One stat and one read; OSError (a folder the disk refuses) escapes."""
     try:
-        os.stat(paths.stored(folder))
+        found = os.stat(paths.stored(folder))
     except (FileNotFoundError, NotADirectoryError):
         return "not_there"
+    if not stat.S_ISDIR(found.st_mode):
+        return "not_there"      # a file where the folder should be
     marker = folder_marker.read(folder)
     if marker.state == folder_marker.ABSENT:
         return "unmarked"
@@ -281,7 +286,13 @@ def _marker_state(folder, folder_id, library_id):
         return "malformed"
     if marker.state == folder_marker.UNREADABLE:
         return "unreadable"
-    return "match" if marker.entry_of(library_id) == folder_id else "differs"
+    # Only OUR entry for another id is evidence of another folder. No entry of ours says nothing of our id: `mark`
+    # records an id before it publishes the file, and a publish that was skipped leaves a row whose line is not in the
+    # file (two libraries over one folder). Sync reads it the same way (folder_marker.find / read_in).
+    ours = marker.entry_of(library_id)
+    if ours is None:
+        return "unmarked"
+    return "match" if ours == folder_id else "differs"
 
 
 class _Marks:
@@ -310,7 +321,7 @@ class _Marks:
         return dict(self.counts, rows=self.rows, checked=self.checked, partial=self.partial, line=self.line())
 
 
-def _marker_run(location, folders, library_id, marks, cancel, progress, deadline, seconds, tally):
+def _marker_run(location, folders, library_id, marks, cancel, progress, deadline, seconds, tally, total):
     """Read the marker of each of `folders` [(folder id, folder)] once, on the bounded thread; stops for a cancel
     or a share that does not answer (tally.stopped), or the deadline (marks.partial)."""
     for folder_id, folder in folders:
@@ -326,10 +337,11 @@ def _marker_run(location, folders, library_id, marks, cancel, progress, deadline
             return
         marks.counts["unreadable" if state == "error" else value] += 1
         marks.checked += 1
-        progress(tally.checked, marks.rows, tally.folders + marks.checked)
+        # The folder count is the listings' (the markers come first and are not listed folders): it never goes back.
+        progress(tally.checked, total, tally.folders)
 
 
-def _markers(library, name, roots, location, full, tally, cancel, progress, budget, seconds):
+def _markers(library, name, roots, location, full, tally, cancel, progress, budget, seconds, total=0):
     """The markers of the root's marked folders at `location`, as `_Marks.answer()`; None when the library has no
     marked folder of the root."""
     library_id, folders, bad = _marked_folders(library, name, roots)
@@ -341,8 +353,9 @@ def _markers(library, name, roots, location, full, tally, cancel, progress, budg
         chosen = sorted(folders, key=lambda each: paths.key(each[1]))
         random.Random(len(chosen)).shuffle(chosen)
         folders = chosen[:MARKER_SAMPLE]
-    deadline = None if budget is None or full else time.monotonic() + min(budget, MARKER_BUDGET)
-    _marker_run(location, folders, library_id, marks, cancel, progress, deadline, seconds, tally)
+    # The deadline is asked between reads: the worst case is MARKER_BUDGET plus one look (`seconds`), not MARKER_BUDGET.
+    deadline = None if budget is None or full else time.monotonic() + MARKER_BUDGET
+    _marker_run(location, folders, library_id, marks, cancel, progress, deadline, seconds, tally, total)
     return marks.answer()
 
 
@@ -517,14 +530,17 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
         answer["stopped"] = "unreachable"
         return _conclude(answer, total)
     tally = _Tally()
-    if full:
+    # The markers are read BEFORE the rows: a sample that runs out of its row budget must not drop the check (at most
+    # MARKER_SAMPLE stats and reads, or every marked folder in a full run).
+    answer["markers"] = _markers(library, name, roots, location, full, tally, cancel, progress, budget, seconds, total)
+    if tally.stopped:
+        pass
+    elif full:
         _full_run(location, by_folder, tally, cancel, progress, total, seconds)
     else:
         chosen = sample_of(by_folder, sample)
         deadline = None if budget is None else time.monotonic() + budget
         _sample_run(location, chosen, by_folder, tally, cancel, progress, deadline, total, seconds)
-    if not tally.stopped:
-        answer["markers"] = _markers(library, name, roots, location, full, tally, cancel, progress, budget, seconds)
     answer.update(checked=tally.checked, matches=tally.matches, differs=tally.differs, unread=tally.unread, missing=tally.missing,
                   unreadable=tally.unreadable + counts["not_converting"], folders=tally.folders,
                   stopped=tally.stopped)
