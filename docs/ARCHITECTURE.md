@@ -2756,7 +2756,11 @@ indexer already keeps the lens tag -- check first). Author is not used and stays
 **People by id, stage 2:**
 - The 4 names with no person tag: **create the tag**. The name that matches two tags (1 face): **remove the
   tags** -- to be confirmed with the owner by name before anything is written (the tags also sit on photos'
-  people lists). The 2 names that sit on a group tag (7 faces): **unmatch those faces**.
+  people lists). The names that sit on a group tag (counted 2026-10-09: 4 names, 65 photos in photo_index):
+  *owner, 2026-10-09 (replaces "unmatch those faces")*: **do not unname them on their own** -- note them in
+  a list of names to review (a name with no person tag or only a group tag, per library), so the owner
+  decides each later, possibly linking the name to a person in the library the photos belong to (a tag that came
+  from another library). Until then they are left as they are.
 - Deleting a person tag that faces still use: **refuse with a message, with a "force" that unnames the faces**.
 - History from before ids: **translate old entries so they stay undoable**.
 - The two rules (a tag used on photos gets no children; a group tag is never put on a photo as a person):
