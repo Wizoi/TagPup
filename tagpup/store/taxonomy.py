@@ -89,8 +89,10 @@ def people_filing(db_path):
             return {}, [vocabulary.NEW_LIBRARY_FACE_ROOT]
         roots = {name.strip().lower(): name.strip() for (name,) in conn.execute(
             "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name}
-        found = {}
+        found, groups = {}, set(group_tags(conn))
         for tag_path in tags(conn):
+            if tag_path in groups:
+                continue   # a group of people is not filed as a person (#986)
             if "/" in tag_path and vocabulary.key(vocabulary.root_of(tag_path)) in roots:
                 found.setdefault(vocabulary.key(vocabulary.leaf_of(tag_path)), []).append(tag_path)
         return {leaf: sorted(each) for leaf, each in found.items()}, sorted(roots.values())
@@ -102,10 +104,10 @@ def _read_people_paths(conn):
     """{lowercased leaf name: tag path} of everyone the tree on `conn` files under a
     people root, leaving out anyone filed in two places."""
     roots = people_roots(conn)
-    mapping = {}
+    mapping, groups = {}, set(group_tags(conn))
     for tag_path in tags(conn):
-        if "/" not in tag_path or vocabulary.key(vocabulary.root_of(tag_path)) not in roots:
-            continue
+        if tag_path in groups or "/" not in tag_path or vocabulary.key(vocabulary.root_of(tag_path)) not in roots:
+            continue   # a group of people is not a person to file under (#986)
         leaf = vocabulary.key(vocabulary.leaf_of(tag_path))
         mapping[leaf] = None if leaf in mapping and mapping[leaf] != tag_path else tag_path
     return {k: v for k, v in mapping.items() if v}
@@ -169,6 +171,16 @@ def people_vocabulary(db_path=None, conn=None):
             own.close()
 
 
+def group_tags(conn):
+    """The tags of the face nodes that have a node under them: group tags, which are not people
+    (#986). The same reading as person_ids.People's `parents`. None without a tree."""
+    if not tree_exists(conn):
+        return []
+    return [tag for (tag,) in conn.execute(
+        "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND id IN"
+        " (SELECT DISTINCT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL)") if tag]
+
+
 def read_people_vocabulary(conn):
     """The PeopleVocabulary of the library open on `conn`: a new library's while its tree
     is empty (people_roots)."""
@@ -177,7 +189,7 @@ def read_people_vocabulary(conn):
     roots = [name for (name,) in conn.execute(
         "SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")]
     faces = conn.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1").fetchall()
-    return PeopleVocabulary.from_rows(roots, faces)
+    return PeopleVocabulary.from_rows(roots, faces, group_tags(conn))
 
 
 # ---- The tree's nodes ------------------------------------------------------------------

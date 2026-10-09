@@ -154,6 +154,7 @@ def _touched(before, after):
     """(keywords, roots) whose meaning as a person differs between two vocabularies."""
     keys = {k for k in set(before.by_keyword) | set(after.by_keyword)
             if before.by_keyword.get(k) != after.by_keyword.get(k)}
+    keys |= before.groups ^ after.groups   # a person given a tag under them, or a group emptied (#986)
     return keys, before.roots ^ after.roots
 
 
