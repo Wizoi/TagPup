@@ -416,7 +416,7 @@ def _sample_run(location, chosen, by_folder, tally, cancel, progress, deadline, 
         if cancel():
             tally.stopped = "cancelled"
             return
-        if deadline is not None and time.monotonic() > deadline:
+        if deadline is not None and time.monotonic() >= deadline:
             tally.stopped = "time"
             return
         state, value = _list_bounded(location, by_folder[key][0], seconds)
