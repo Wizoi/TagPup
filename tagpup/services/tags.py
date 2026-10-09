@@ -110,8 +110,9 @@ def set_flags(library, node_id, has_face=None, hidden=None):
 
 def usage(library, node_id):
     """The photos carrying a node's tag or one under it, which deleting it would change:
-    {"tag", "used", "count", "affected_photos", "faces_named"}, the photos the first 100 of them and `faces_named` how many
-    faces name the node or a person under it (deleting needs `force`, which unnames them)."""
+    {"tag", "used", "count", "affected_photos", "faces_named", "history_rows_if_forced"}, the photos the first 100 of them and
+    `faces_named` how many faces name the node or a person under it (deleting needs `force`, which unnames them and records them
+    in History: `history_rows_if_forced`, three rows a face)."""
     node = _node(library, node_id)
     carrying = list(photos.carrying(library.path, node["tag"]))
     conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -120,7 +121,7 @@ def usage(library, node_id):
     finally:
         conn.close()
     return {"tag": node["tag"], "used": bool(carrying), "count": len(carrying),
-            "affected_photos": carrying[:100], "faces_named": named}
+            "affected_photos": carrying[:100], "faces_named": named, "history_rows_if_forced": 3 * named}
 
 
 def delete(library, node_id, action, target, exiftool_path, force=False):

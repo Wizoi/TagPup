@@ -89,8 +89,8 @@ class PersonInUse(PersonProblem):
     def __init__(self, faces, tags):
         self.faces, self.tags = faces, list(tags)
         what = ", ".join(self.tags[:3]) + (" and %d more" % (len(self.tags) - 3) if len(self.tags) > 3 else "")
-        super().__init__("%d face(s) are named %s: unname them first, or delete with force (which unnames them)."
-                         % (faces, what))
+        super().__init__("%d face(s) are named %s: unname them first, or delete with force (which unnames them and records them "
+                         "in History: about %d rows)." % (faces, what, 3 * faces))
 
 
 class PersonHasNoChildren(PersonProblem):

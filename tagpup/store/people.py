@@ -299,6 +299,11 @@ def tree_edit(conn):
     whose name now means another node, or none, is given its id (person_ids.follow_tree). The
     caller commits."""
     from tagpup.store import taxonomy   # taxonomy imports this module
+    # The write lock first, THEN the reads: Python's sqlite3 opens a transaction only at the first write, so an edit that read the
+    # tree first decided from what another process (the server beside a CLI run) committed before it wrote. The in-process lock
+    # does not reach across processes; SQLite's does, and the busy timeout waits for it.
+    if not conn.in_transaction:
+        db.begin(conn, immediate=True)
     before = taxonomy.read_people_vocabulary(conn)
     nodes = derived.tree_before(conn)
     ids = person_ids.read(conn)

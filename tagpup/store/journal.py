@@ -756,7 +756,8 @@ def _person_gone(conn, inverse):
             continue
         other = known.id_of(change.new["name"])
         if other is not None:
-            reasons.append("face %d named a person who is gone, and %s is called the same: undoing would give the face to them"
+            reasons.append("face %d named a person who is gone, and %s is called the same, so undoing would give the face to them:"
+                           " undo this change BEFORE a person is made or renamed to that name, or name the face by hand"
                            % (change.key[0], known.node_names.get(other, "another person")))
     return reasons
 
@@ -941,6 +942,15 @@ def record(conn, operation, changes, summary=None, schema_version=None):
 PERSON_DELETED = "person deleted (force): faces unnamed"
 PERSON_MERGED = "person merged: faces renamed"
 
+#: What History says of those two changes: honest about what an undo gives back (the tree rows are not journaled).
+PERSON_NOTES = {
+    PERSON_DELETED: "the faces return as unresolved names; the deleted person and the photos' keywords are not restored",
+    PERSON_MERGED: "the faces return as unresolved names; the merged person and the photos' keywords are not restored",
+}
+
+#: Rows a face costs the journal when a person is deleted with force or merged: name, name_source and tag_id.
+ROWS_A_FACE = 3
+
 
 def read_faces(conn, face_ids):
     """{face id: (name, name_source, tag_id)} of `face_ids` as they stand, to be handed to record_faces after the write. Chunked."""
@@ -971,7 +981,7 @@ def record_faces(conn, operation, before):
             continue
         changes.append(RowChange("update", "faces", (face_id,), dict(zip(columns, was)), dict(zip(columns, left)),
                                  "face identity"))
-    return record(conn, operation, changes, {"faces": len(changes)}) if changes else None
+    return record(conn, operation, changes, {"faces": len(changes), "note": PERSON_NOTES.get(operation, "")}) if changes else None
 
 
 def apply(db_path, operation, edits, summary=None, also=None):

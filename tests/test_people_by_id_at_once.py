@@ -32,7 +32,73 @@ print(current)
 """
 
 
+#: Process A edits the tree and HOLDS its transaction open until B is at its own edit (the pattern of finding #1046's migration test);
+#: B must then read the tree after A committed -- it joins the node A renamed into, which it could not know if it had read first.
+HELD = """
+import os, sys, time
+sys.path.insert(0, {root!r})
+from tagpup.store import db, taxonomy
+folder = {folder!r}
+
+def edit(conn):
+    taxonomy.move_branch(conn, {old!r}, {new!r})
+    open(os.path.join(folder, "a_is_in"), "w").close()
+    deadline = time.time() + 20
+    while not os.path.exists(os.path.join(folder, "b_is_at_its_edit")) and time.time() < deadline:
+        time.sleep(0.02)
+    time.sleep(1.0)    # B is waiting for the lock now
+
+db.write_with_connection({path!r}, edit)
+"""
+
+WAITING = """
+import os, sys, time
+sys.path.insert(0, {root!r})
+from tagpup.store import db, taxonomy
+folder = {folder!r}
+deadline = time.time() + 20
+while not os.path.exists(os.path.join(folder, "a_is_in")) and time.time() < deadline:
+    time.sleep(0.02)
+open(os.path.join(folder, "b_is_at_its_edit"), "w").close()
+started = time.time()
+db.write_with_connection({path!r}, lambda conn: taxonomy.move_branch(conn, {old!r}, {new!r}))
+print(round(time.time() - started, 2))
+"""
+
+
 class TwoProcessesEditTheTree(TwoSams, unittest.TestCase):
+    def test_the_second_edit_reads_the_tree_after_the_first_committed(self):
+        """Fix round 2: a tree edit read the tree before it held the write lock, so an edit another process committed in between
+        was not seen -- the second moved a node into a place the first had just taken. The edit now takes the lock first
+        (people.tree_edit: BEGIN IMMEDIATE) and reads inside it."""
+        self.make_library()
+        sam_t, sam_i = self.node(SAM_T), self.node(SAM_I)
+        write(self.path, lambda conn: faces.name(conn, [self.faces[0]], sam_t))
+        write(self.path, lambda conn: faces.name(conn, [self.faces[1], self.faces[2]], sam_i))
+        folder = os.path.dirname(self.path)
+        env = dict(os.environ, TAGPUP_HOME=self.home.root)
+        first = processes.start([sys.executable, "-c", HELD.format(root=ROOT, folder=folder, path=self.path, old=SAM_I,
+                                                                  new="Family/Ingersoll/Samuel")],
+                                env=env, stdout=-1, stderr=-1, text=True)
+        second = processes.start([sys.executable, "-c", WAITING.format(root=ROOT, folder=folder, path=self.path, old=SAM_T,
+                                                                      new="Family/Ingersoll/Samuel")],
+                                 env=env, stdout=-1, stderr=-1, text=True)
+        out_a, err_a = first.communicate(timeout=120)
+        out_b, err_b = second.communicate(timeout=120)
+        self.assertEqual(0, first.returncode, err_a)
+        self.assertEqual(0, second.returncode, err_b)
+        self.assertGreaterEqual(float(out_b.strip()), 0.8, "the second waited for the first's lock")
+        # B saw A's rename: Family/Ingersoll/Samuel was a node, so Thackeray's Sam JOINED it (a merge), and nothing was half done.
+        self.assertIsNone(self.node(SAM_T))
+        self.assertEqual(sam_i, self.node("Family/Ingersoll/Samuel"))
+        self.assertEqual([(sam_i, "Samuel")] * 3, [self.face(each)[:2] for each in self.faces])
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        try:
+            self.assertEqual([0, 0], [person_ids.out_of_step(conn, table).rows for table in person_ids.TABLES])
+        finally:
+            conn.close()
+
+
     def test_two_processes_renaming_two_people_leave_no_half_edit(self):
         self.make_library()
         sam_t, sam_i = self.node(SAM_T), self.node(SAM_I)

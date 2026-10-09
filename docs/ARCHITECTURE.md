@@ -2780,11 +2780,14 @@ be split across a merge: the id is the key only when every writer writes it. Siz
 
 **Part B as built** *(2026-10-09; branch worktree-agent-a7c53f38d987029d9; phases 4 and 5 together)*, and what was decided in building it:
 - **The id is the key; the name is its cache.** `faces.tag_id` and `photo_people.tag_id` hold the node; `name` is the node's leaf, kept in step by
-  every writer and by the tree operations (`person_ids.follow_faces`, `follow_listed`, `follow_tree`; `settle_faces` and `fill` give an id to a
-  name that is exactly one person's; `out_of_step(spelling=)` finds a cache that differs). A row with a name and no id is an *unresolved name*
+  every writer and by the tree operations (`person_ids.follow_faces`, `follow_listed`, `follow_tree`; `out_of_step(spelling=)` finds a cache
+  that differs; `fill` is migration 21's one-time backfill and nothing else). A row with a name and no id is an *unresolved name*
   (the review list's, phase 7). **One door:** `person_ids.target` / `resolve` turn what a caller sends -- an id, a tag path or a name -- into one
   Person or a refusal (`StalePerson` 404, `AmbiguousPerson` and `GroupNotPerson` 400, the sentence naming the candidates' tags);
-  `People.settle` is the rule for a name with no id. Nothing else decides who a name is.
+  `People.settle` drops the id of a node that is gone and keeps the cache; **it gives a name with no id none**, however unique the name has become
+  (round 2). **One owner links an unresolved name: `person_ids.link_added`**, for a name a person was ADDED under (`follow_tree` after an edit
+  of the tree; the journal for a node its change inserted or renamed). Otherwise a writer that knows the id writes it, a keyword is resolved by
+  its path, and the owner links the rest (the names to review).
 - **Writers** (`store/faces.py`): `name`, `name_if_unnamed`, `name_unnamed`, `set_names`, `reinstate`, `revert_automatic`, `unname*`, `exclude`, `insert`,
   `unname_person`, `rename_unresolved` write the id with the name in one statement; a bare name two people have is refused, never guessed
   (a detected face given such a name stays unnamed). The keyword writer no longer drops "a person the file already names by their leaf": two
@@ -2805,6 +2808,16 @@ be split across a merge: the id is the key only when every writer writes it. Siz
   decided as nobody) and then deletes. **The two rules.** (a) *no children under a person that faces or photos carry* -- for person tags only (owner's
   answer to question 1): refused for an owner's action (the tree view's add, a move under a person, the keyword writer's new tag); never for what a
   file holds (the indexer reads a path as it finds it). (b) *a group tag is never a person* (part A) is refused where an owner would set it.
+- **Review round 2 (2026-10-09).** The ownership question of round 1, answered: see "`person_ids.link_added`" above. `settle` filled any
+  unresolved name that was unique NOW, so a rename of one of two same-named people and then any rebuild of the photo, face write or journal
+  replay linked a hand-decided face to the other; it no longer fills. `person_ids.repair` and the doctor put names and dead ids right and
+  link nothing; a journal undo of an entry that recorded only a name leaves an unresolved name; fixtures state who a face is. A tree edit takes
+  the write lock BEFORE it reads the tree (`people.tree_edit`: BEGIN IMMEDIATE), so two processes cannot decide from a stale tree
+  (`tests/test_people_by_id_at_once.py` holds one transaction open until the other is at its edit). The undo of a force delete or a merge is
+  refused while another person is called what the face is called (undo before re-creating the person); a merge of two people called alike
+  cannot be undone, and History says what an undo does not give back. Cost, measured on a copy of photo_index: the biggest person (7,468
+  faces) takes 8.0 s to force delete and writes 22,404 change_rows (the whole journal held 17,053); the rehearsal that refuses a bad merge
+  before any file is written takes 6.6 s for it. The refusal text and `usage` say the rows ("about N rows", `history_rows_if_forced`).
 - **Review round 1 (2026-10-09), what changed.** (1) *One rule for linking an unresolved name after a tree edit*
   (`person_ids.follow_tree`): only the rows of a name NO ONE had before the edit and a person has after it (a node made, moved or renamed
   into it) are linked; a name that became one person's because a same-named node LEFT (rename away, merge, force delete) was ambiguous

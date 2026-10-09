@@ -209,10 +209,12 @@ class Operations(TwoSams, unittest.TestCase):
     def test_deleting_a_person_faces_name_is_refused_with_the_count(self):
         result = tags_service.delete(self.library, self.sam_i, "remove", None, "exiftool")
         self.assertIn("2 face(s) are named", result.refused)
+        self.assertIn("about 6 rows", result.refused, "the cost of force in History is said before it is asked for")
         self.assertEqual(self.sam_i, self.node(SAM_I))
         self.assertEqual(self.sam_i, self.face(self.faces[1])[0])
         usage = tags_service.usage(self.library, self.sam_i)
         self.assertEqual(2, usage["faces_named"], "the editor is told before it asks")
+        self.assertEqual(6, usage["history_rows_if_forced"])
 
     def test_a_force_delete_is_one_journaled_change_of_the_faces_and_history_puts_them_back(self):
         """Fix round 1 (the single owner of an undoable record of a face's identity change is the journal): the faces a force
@@ -226,10 +228,15 @@ class Operations(TwoSams, unittest.TestCase):
         self.assertTrue(tags_service.delete(self.library, self.sam_i, "remove", None, "exiftool", force=True).ok)
         changes = look(self.path, "SELECT id, summary FROM changes WHERE operation = ?", (journal.PERSON_DELETED,))
         self.assertEqual(1, len(changes))
-        self.assertEqual({"faces": 2, "rows": {"faces": 2}}, json.loads(changes[0][1]), "counts only")
+        summary = json.loads(changes[0][1])
+        self.assertEqual({"faces": 2, "rows": {"faces": 2}}, {key: summary[key] for key in ("faces", "rows")}, "counts only")
+        self.assertIn("not restored", summary["note"], "History says what an undo does not give back")
+        self.assertEqual(6, look(self.path, "SELECT COUNT(*) FROM change_rows WHERE change_id = ?", (changes[0][0],))[0][0],
+                         "three rows a face: what the refusal and the dry run say")
         # The other Sam is called the same: undoing would give the two faces to them, so it is refused, and nothing changes.
         refused = journal_service.undo(self.library, changes[0][0], apply=True, exiftool_path="exiftool")
         self.assertTrue(refused.errors or refused.refused, "undo of a person's faces onto another person is refused")
+        self.assertIn("undo this change BEFORE a person is made or renamed to that name", str(refused.refused) + str(refused.errors))
         self.assertEqual([(None, None, None)] * 2, [self.face(self.faces[1]), self.face(self.faces[2])])
 
     def test_the_undo_of_a_force_delete_nobody_else_shares_puts_the_decision_back_as_a_name(self):
@@ -251,7 +258,9 @@ class Operations(TwoSams, unittest.TestCase):
         from tagpup.store import journal
         self.assertTrue(self.merge(SAM_I, SAM_T, apply=True).ok)
         changes = look(self.path, "SELECT summary FROM changes WHERE operation = ?", (journal.PERSON_MERGED,))
-        self.assertEqual([{"faces": 2, "rows": {"faces": 2}}], [json.loads(each[0]) for each in changes])
+        summaries = [json.loads(each[0]) for each in changes]
+        self.assertEqual([{"faces": 2, "rows": {"faces": 2}}], [{key: each[key] for key in ("faces", "rows")} for each in summaries])
+        self.assertIn("the merged person and the photos' keywords are not restored", summaries[0]["note"])
 
     def test_force_unnames_the_faces_in_the_same_transaction_and_they_are_not_nobody(self):
         result = tags_service.delete(self.library, self.sam_i, "remove", None, "exiftool", force=True)
