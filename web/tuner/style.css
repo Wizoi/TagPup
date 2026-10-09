@@ -2155,7 +2155,16 @@ body {
 .names-crop { width: 56px; height: 56px; object-fit: cover; border-radius: 4px; background: var(--bg-tertiary); }
 .names-choices { display: flex; flex-direction: column; gap: 6px; margin-top: 0.4rem; }
 .names-choice { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.names-person, .names-group { min-width: 14rem; max-width: 100%; }
+.names-person, .names-group {
+    min-width: 14rem;
+    max-width: 100%;
+    padding: 4px 6px;
+    font-family: inherit;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
 .names-confirm { margin-top: 0.4rem; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 6px; }
 .names-sentence { margin: 0 0 0.4rem 0; }
 .names-toggle { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85rem; }

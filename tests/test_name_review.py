@@ -219,6 +219,27 @@ class NamesToReview(TwoSams, unittest.TestCase):
         self.assertEqual((1, 1), (inspect.all_checks(self.library)["names_to_review"]["waiting"],
                                   inspect.all_checks(self.library)["names_to_review"]["set_aside"]))
 
+    def test_a_name_in_two_spellings_is_one_entry_and_a_link_takes_both(self):
+        write(self.path, lambda conn: name_without_a_person(conn, [self.faces[1]], "wren quill", None))
+        found = name_review.entries(self.library)
+        quill = next(each for each in found["entries"] if each["key"] == "wren quill")
+        self.assertEqual((3, ["Wren Quill", "wren quill"]), (quill["faces"], quill["spellings"]))
+        done = name_review.resolve(self.library, "wren quill", name_review.LINK, person_id=self.node(WREN), apply=True)
+        self.assertTrue(done.ok, done.message())
+        self.assertEqual({(self.node(WREN), "Wren Halloway")}, {self.face(each)[:2] for each in self.faces})
+        self.assertEqual(1, len(self.changes(journal.PERSON_LINKED)), "one change for the name, whatever its spellings")
+
+    def test_each_library_has_its_own_list_and_its_own_set_aside_names(self):
+        from tagpup.core.library import Library
+        from tagpup.store import schema
+        other_path = self.home.library("second.db")
+        schema.ensure(other_path)
+        other = Library(other_path)
+        name_review.resolve(self.library, QUILL, name_review.DISMISS, apply=True)
+        self.assertEqual(1, name_review.count(self.library))
+        self.assertEqual(0, name_review.count(other), "another library holds none of this library's names")
+        self.assertEqual([], look(other_path, "SELECT * FROM name_review_dismissals"))
+
     # ---- how it fails ----------------------------------------------------------------------------
 
     def test_a_name_settled_in_another_window_is_refused_the_second_time_and_nothing_is_done_twice(self):
