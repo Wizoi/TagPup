@@ -199,9 +199,13 @@ def rename(library, node_id, new_name, exiftool_path):
         return result
 
     # The faces named for the node are named by its id: the tree edit gives them the new name in its own transaction (the
-    # cache of a leaf), so nothing is left saying the old one. Counted before, since it is the node's faces that follow.
-    result.details["faces_renamed"] = _faces_of(library, node["id"]) if node["has_face"] else 0
+    # cache of a leaf), so nothing is left saying the old one. Counted AFTER the write: the faces of the people under the
+    # node (a group's faces are those of everyone under it; their path changed), and for a person, those that now carry the
+    # new name.
+    under = [each["id"] for each in taxonomy.branch(library.path, old)] if node["has_face"] else []
     _rename_in_place(library, old, new, exiftool_path, result)
+    leaf = len(under) == 1
+    result.details["faces_renamed"] = _faces_of(library, under, named=vocabulary.leaf_of(new) if leaf else None)
     _tree_changed(library)
     return result
 
@@ -320,11 +324,11 @@ def rename_person(library, person, new_name, exiftool_path):
     if there and there["id"] != found.id:
         result.refuse("A person is filed at '%s' already: merge them instead (Merge tags), or choose another name." % new_tag)
         return result
-    result.details["faces_renamed"] = _faces_of(library, found.id)
     alone = _alone(library, found)   # before the tree moves: a bare keyword spelled so is theirs only if nobody else is called so
     try:
         # The node first, with its faces' cache in the same transaction; then the photo files.
         _rename_in_place(library, found.tag, new_tag, exiftool_path, result)
+        result.details["faces_renamed"] = _faces_of(library, [found.id], named=new_name)   # counted after the write
         # A photo naming them by the bare name carries no tag of the tree's, and was not rewritten above; with the tree
         # moved, the bare name named nobody (#87). Only a name nobody else has is theirs.
         bare = list(photos.carrying(library.path, found.name)) if alone else []
@@ -342,11 +346,17 @@ def rename_person(library, person, new_name, exiftool_path):
     return result
 
 
-def _faces_of(library, person_id):
-    """How many faces name the person `person_id`."""
+def _faces_of(library, person_ids_, named=None):
+    """How many faces name any of the people `person_ids_` -- and, with `named`, now carry that name -- read now."""
+    if not person_ids_:
+        return 0
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        return person_ids.faces_using(conn, [person_id]).get(person_id, 0)
+        marks = ",".join("?" * len(person_ids_))
+        if named is None:
+            return conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id IN (%s)" % marks, list(person_ids_)).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id IN (%s) AND name = ?" % marks,
+                            list(person_ids_) + [named]).fetchone()[0]
     finally:
         conn.close()
 

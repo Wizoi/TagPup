@@ -71,6 +71,14 @@ class Operations(TwoSams, unittest.TestCase):
                          [self.face(each)[:2] for each in self.faces])
         self.assertEqual([(self.sam_t, "Sam", "keyword"), (self.sam_i, "Samuel", "face")], self.listed(self.photo))
 
+    def test_renaming_a_group_counts_the_faces_under_it_after_the_write(self):
+        """Fix round 1: faces_renamed was counted before the write, and a group (not a person) counted none."""
+        result = tags_service.rename(self.library, self.node("Family/Ingersoll"), "Ingersoll House", "exiftool")
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual(2, result.details["faces_renamed"], "the two faces of the Sam under it")
+        self.assertEqual(self.sam_i, self.node("Family/Ingersoll House/Sam"))
+        self.assertEqual([(self.sam_i, "Sam")] * 2, [self.face(self.faces[1])[:2], self.face(self.faces[2])[:2]])
+
     def test_rename_never_merges_into_a_person_who_is_there(self):
         result = self.rename(self.sam_i, "Wren Halloway")      # a free name: fine
         self.assertTrue(result.ok)
