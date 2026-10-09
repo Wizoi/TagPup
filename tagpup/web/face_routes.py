@@ -52,20 +52,19 @@ def decided(library):
     return lambda: identify_jobs.decided_faces(library, identify_cache.of(library))
 
 
-def person_arg(values, id_key="person_id", name_key="person_name"):
-    """The person a request names, for `values` (a JSON body or the query): the id of their node when it carries one (what a
-    page that has the person sends), else the name, trimmed (the CLI, the MCP, a page not reloaded since the update). None when
-    it names nobody. 400 for an id that is not a number. A name two people have, a group, and an id that is no person are
-    answered by the service that is given them: 400 naming the candidates, 400, and 404."""
-    raw = values.get(id_key)
-    if raw is not None and raw != "":
-        if isinstance(raw, bool):
-            abort(400, description="Invalid '%s' parameter" % id_key)
+def person_arg(person_id, name):
+    """The person a request names, from its `person_id` and its name (the handler reads both: `body.get("person_id")`,
+    `body.get("person_name")`): the id of their node when it carries one (what a page that has the person sends), else the
+    name, trimmed (the CLI, the MCP, a page not reloaded since the update). None when it names nobody. 400 for an id that is not
+    a number. A name two people have, a group, and an id that is no person are answered by the service that is given
+    them: 400 naming the candidates, 400, and 404."""
+    if person_id is not None and person_id != "":
+        if isinstance(person_id, bool):
+            abort(400, description="Invalid 'person_id' parameter")
         try:
-            return int(raw)
+            return int(person_id)
         except (TypeError, ValueError):
-            abort(400, description="Invalid '%s' parameter" % id_key)
-    name = values.get(name_key)
+            abort(400, description="Invalid 'person_id' parameter")
     return str(name).strip() or None if name is not None else None
 
 
@@ -333,7 +332,7 @@ def face_match():
     was another person's."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    face_id, person = body.get("face_id"), person_arg(body)
+    face_id, person = body.get("face_id"), person_arg(body.get("person_id"), body.get("person_name"))
     if face_id is None or person is None:
         abort(400, description="Missing face_id or person_name")
     try:

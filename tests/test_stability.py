@@ -34,7 +34,7 @@ def native(path):
 
 def face_names(photo_index):
     """The name of each face resolution reads, in its order."""
-    return [row[4] for row in store_faces.for_clustering(photo_index.conn)]
+    return [row[4].name if row[4] else None for row in store_faces.for_clustering(photo_index.conn)]
 
 
 class TestStability(unittest.TestCase):

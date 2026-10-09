@@ -29,7 +29,7 @@ from handler_harness import Library  # noqa: E402
 
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
-from tagpup.store import derived  # noqa: E402
+from tagpup.store import derived, person_ids  # noqa: E402
 
 #: Where the machine has ExifTool; the checkout's settings are not read.
 EXIFTOOL = own_home.installed_exiftool()
@@ -475,6 +475,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
         add_people(conn, photo, ["Jane Doe"])
         conn.commit()
         conn.close()
+        person_ids.repair(self.TEST_DB)   # a face named for a person holds their id, as every writer leaves it
 
         status, body = self.post(
             "/api/taxonomy/rename", {"tag_id": person_id, "new_name": "Jane Smith"}
@@ -498,6 +499,7 @@ class TestTaxonomyRename(TaxonomyTestBase):
         add_face(conn, "D:/case.jpg", box="[]", embedding=b"", name="jane doe")
         conn.commit()
         conn.close()
+        person_ids.repair(self.TEST_DB)   # a face named for a person holds their id, as every writer leaves it
 
         status, body = self.post("/api/taxonomy/rename", {"tag_id": person_id, "new_name": "Jane Smith"})
         self.assertEqual(status, 200, body)

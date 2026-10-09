@@ -38,14 +38,14 @@ EXCLUSION_REASONS = validation.EXCLUSION_REASONS
 
 def who_is(library, person, result):
     """(the person as a store writer takes it -- the node's id, or a name no person is filed under --, the name to show) for
-    `person`: an id, a tag path, a Person or a name. None, with `result` refused, for what is refused before anything else
+    `person`: an id, a Person, a Ref or a name. None, with `result` refused, for what is refused before anything else
     is asked: a name that is not a name, a name two people have, a group. NotFound for an id that is no person (merged or
     removed in another window; nobody is made of it)."""
     person = person_ids.wire(person)
     if isinstance(person, str) or person is None:
+        # A name is a name: "People/Sam" is a tag, and names nobody (tagpup.core.validation).
         text = (person or "").strip()
-        is_path = vocabulary.SEPARATOR in vocabulary.normalize(text)
-        problem = None if is_path else validation.problem("name", text)
+        problem = validation.problem("name", text)
         if problem:
             result.refuse(problem)
             return None
@@ -54,9 +54,6 @@ def who_is(library, person, result):
             found = people_service.resolve(library, text)
         except Refused as why:
             result.refuse(str(why))
-            return None
-        if found is None and is_path:
-            result.refuse("No person is filed at %s." % text)
             return None
         return (found.id, found.name) if found else (text, text)
     _library_there(library)
@@ -445,9 +442,9 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     return result
 
 
-def _shown(conn, persons):
+def _shown(conn, persons, known=None):
     """{person: the name to show} for the persons (wire form: an id, or a name no person is filed under) of a guess."""
-    names = person_ids.read(conn).node_names
+    names = (known or person_ids.read(conn)).node_names
     return {person: (names.get(person, str(person)) if isinstance(person, int) else person) for person in persons}
 
 
@@ -483,11 +480,11 @@ def propose_guesses(library, named, photo_path=None, folder=None):
     return len(unnamed), _closest_named(unnamed, people, matrix)
 
 
-def _decide_guesses(conn, proposed):
+def _decide_guesses(conn, proposed, known=None):
     """([(face_id, person, photo)] to name, how many were left for a person gone) of `proposed`, decided on `conn`. A person is
     their id, or a name no person is filed under."""
     given = faces.people_given(conn, {person for found in proposed.values() for _fid, person in found})
-    known = person_ids.read(conn)
+    known = known or person_ids.read(conn)
     chosen, gone = [], 0
     for face_photo, faces_proposed in proposed.items():
         # Only the photos a person is proposed for, each by an index. Reading every
@@ -517,15 +514,16 @@ def _write_guesses(conn, proposed):
     # the old spelling, the connection being in no transaction until it wrote
     # (docs/findings.md, #645).
     db.begin(conn, immediate=True)
-    chosen, gone = _decide_guesses(conn, proposed)
+    known = person_ids.read(conn)
+    chosen, gone = _decide_guesses(conn, proposed, known)
     # A bulk guess, not a per-face human decision, so it is left as an automatic
     # assignment that re-clustering may revise. Only the faces still unnamed and in
     # play are named, name_if_unnamed's guard, and only those are counted: in one write
     # whose photos are rebuilt once (faces.name_unnamed; docs/findings.md, #659).
-    named = set(faces.name_unnamed(conn, {face_id: person for face_id, person, _photo in chosen}))
+    named = set(faces.name_unnamed(conn, {face_id: person for face_id, person, _photo in chosen}, known=known))
     return ([(person, face_photo) for face_id, person, face_photo in chosen if face_id in named], gone,
             {face_id: person for face_id, person, _photo in chosen if face_id in named},
-            _shown(conn, [person for _fid, person, _photo in chosen]))
+            _shown(conn, [person for _fid, person, _photo in chosen], known))
 
 
 def name_guesses(library, proposed):
@@ -861,8 +859,8 @@ def named_counts(library, folder=None):
 def known_faces(db_path):
     """Every named face that is not excluded, as tagpup.core.clustering.KnownFaces: what a
     face is compared with to say who it is, KEYED BY PERSON (person_ids.key_of: the node's id, or the name's key for a name no
-    person is filed under -- two people called alike are two). It was each person's mean face, with no
-    years (docs/findings.md, #71).
+    person is filed under -- two people called alike are two), `labels` holding each one's Ref. It was each person's mean face,
+    with no years (docs/findings.md, #71).
 
     Reads only the named faces, and of each photo only its Date Taken fields. Reading
     every face and its crop is 225,000 rows and ten seconds on a cold cache, and the
@@ -874,5 +872,5 @@ def known_faces(db_path):
     finally:
         conn.close()
     return clustering.KnownFaces.of(
-        (person_ids.key_of(person.id, person.name), np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path)
+        (person_ids.key_of(person.id, person.name), np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path, person)
         for person, emb_bytes, photo_path, year in rows)

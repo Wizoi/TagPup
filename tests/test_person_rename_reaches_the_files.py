@@ -5,6 +5,9 @@ person -- renamed the faces and the index's people lists, then skipped the tree 
 files ("target already exists; leave the tree alone"). The files kept the old path, and
 the next scan of those folders brought the old name straight back. And whatever the
 files did, the reply was a bare "success".
+
+Rename Person renames the ONE person picked and never merges (owner, 2026-10-09): a name that is a person's already is refused,
+and joining two people is the tag Merge, which rewrites the files first and takes the old tag out of the tree once none carries it.
 """
 import json
 import os
@@ -98,19 +101,33 @@ class PersonRenameReachesTheFiles(unittest.TestCase):
         self.assertEqual(200, status, reply)
         return reply
 
-    def test_renaming_into_an_existing_person_rewrites_the_files(self):
+    def test_renaming_into_an_existing_person_is_refused_and_changes_nothing(self):
         self.execute("INSERT INTO tag_taxonomy (id, tag, name, parent_id, has_face)"
                      " VALUES (3, 'People/%s', '%s', 1, 1)" % (NEW, NEW))
         photo = self.add_photo("regatta.jpg")
 
-        reply = self.rename()
+        status, reply = self.requests.post("/api/person/rename", {"old_name": OLD, "new_name": NEW})
 
-        self.assertTrue(reply["success"], reply)
+        self.assertEqual(400, status, reply)
+        self.assertIn("merge them instead", reply["error"])
+        self.assertIn("People/" + OLD, self.hierarchical(photo), "the file is as it was")
+        self.assertEqual({"People/" + OLD, "People/" + NEW, "People"} & {r[0] for r in self.rows("SELECT tag FROM tag_taxonomy")},
+                         {"People/" + OLD, "People/" + NEW, "People"})
+
+    def test_merging_two_people_rewrites_the_files_and_the_old_tag_goes(self):
+        self.execute("INSERT INTO tag_taxonomy (id, tag, name, parent_id, has_face)"
+                     " VALUES (3, 'People/%s', '%s', 1, 1)" % (NEW, NEW))
+        photo = self.add_photo("regatta.jpg")
+
+        status, reply = self.requests.post("/api/tags/merge", {"from": "People/" + OLD, "into": "People/" + NEW, "apply": True})
+
+        self.assertEqual(200, status, reply)
         written = self.hierarchical(photo)
         self.assertIn("People/" + NEW, written)
         self.assertNotIn("People/" + OLD, written, "the file still names the old person")
         tree = {r[0] for r in self.rows("SELECT tag FROM tag_taxonomy")}
         self.assertNotIn("People/" + OLD, tree)
+        self.assertEqual({(3, NEW)}, set(self.rows("SELECT tag_id, name FROM faces")), "the face is the person it was merged into")
 
     def test_it_reports_the_photos_it_could_not_rewrite(self):
         self.add_photo("regatta.jpg")

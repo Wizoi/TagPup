@@ -100,13 +100,14 @@ def tally(library, selection):
         everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
-    tags = _kept([(tag, count) for tag, count in found["tags"]])
-    people = _kept(found["people"])
+    tags = _kept([(tag, count) for tag, count in found["tags"]], lambda each: each[0])
+    people = _kept(found["people"], lambda each: each[0].name)
     nameless = set(found["nameless"])
     return {"total": found["total"],
             "tags": [{"tag": tag, "count": count} for tag, count in tags[0]], "more_tags": tags[1],
-            "people": [{"name": name, "count": count, "has_node": name not in nameless, "person": everyone.of_name(name)}
-                       for name, count in people[0]],
+            "people": [{"name": person.name, "count": count, "has_node": person not in nameless,
+                        "person": everyone.of_row(person.id, person.name), "person_id": person.id}
+                       for person, count in people[0]],
             "more_people": people[1],
             "folders": folders}
 
@@ -123,16 +124,16 @@ def _folders(conn, selection):
     return {"count": len(counted), "listed": listed}
 
 
-def _kept(counted):
-    """([(name, count)] at most MAX_TALLIED of them -- the most used, then in the shared alphabetical order --, how many
-    were left out)."""
+def _kept(counted, name_of):
+    """([(thing, count)] at most MAX_TALLIED of them -- the most used, then in the shared alphabetical order of `name_of(each)`
+    --, how many were left out)."""
     if len(counted) > MAX_TALLIED:
-        counted = sorted(counted, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0])))
+        counted = sorted(counted, key=lambda each: (-each[1], vocabulary.tag_sort_key(name_of(each))))
         left = len(counted) - MAX_TALLIED
         counted = counted[:MAX_TALLIED]
     else:
         left = 0
-    return sorted(counted, key=lambda each: vocabulary.tag_sort_key(each[0])), left
+    return sorted(counted, key=lambda each: vocabulary.tag_sort_key(name_of(each))), left
 
 
 def token_of(photo_ids):

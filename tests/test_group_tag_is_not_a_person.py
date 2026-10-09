@@ -97,15 +97,17 @@ class InTheLibrary(unittest.TestCase):
         self.assertEqual([CORA], self.listed(self.person))
 
     def test_the_doctor_counts_the_photos_a_writer_that_did_not_follow_left(self):
-        # add_path writes the tree and rebuilds nothing, as an older writer: the lists are as they were.
+        # add_path writes the tree and rebuilds nothing, as an older writer: the lists are as they were. Three photos are
+        # out of date: the two that lose the person who is a group now, and the one that names Cora by a path with no node
+        # when it was listed (no id then) and by a node now.
         self.write(lambda conn: taxonomy.add_path(conn, PERSON))
-        self.assertEqual(2, len(self.read(lambda conn: people.stale(conn))))
+        self.assertEqual(3, len(self.read(lambda conn: people.stale(conn))))
         stale = self.read(lambda conn: checks.people_out_of_date(conn))
-        self.assertEqual(2, stale.count)
+        self.assertEqual(3, stale.count)
 
     def test_the_rebuild_the_doctor_runs_mends_them_and_the_doctor_then_agrees(self):
         self.write(lambda conn: taxonomy.add_path(conn, PERSON))
-        self.assertEqual(2, self.write(lambda conn: people.rebuild(conn)))
+        self.assertEqual(3, self.write(lambda conn: people.rebuild(conn)))
         self.assertEqual([], self.listed(self.alone))
         self.assertEqual([CORA], self.listed(self.both))
         self.assertEqual(0, self.read(lambda conn: checks.people_out_of_date(conn)).count)
@@ -117,12 +119,12 @@ class InTheLibrary(unittest.TestCase):
         said = io.StringIO()
         with contextlib.redirect_stdout(said):
             self.assertEqual(1, doctor.rebuild_derived(self.lib.library.path), "a dry run")
-        self.assertIn("2 photo(s) list people the rule makes otherwise", said.getvalue())
+        self.assertIn("3 photo(s) list people the rule makes otherwise", said.getvalue())
         self.assertEqual(["Marlowe"], self.listed(self.alone), "a dry run writes nothing")
         said = io.StringIO()
         with contextlib.redirect_stdout(said):
             self.assertEqual(0, doctor.rebuild_derived(self.lib.library.path, apply=True))
-        self.assertIn("photos' people rebuilt: 2 photo(s) changed", said.getvalue())
+        self.assertIn("photos' people rebuilt: 3 photo(s) changed", said.getvalue())
         self.assertEqual([], self.listed(self.alone))
         self.assertEqual([CORA], self.listed(self.both))
         with contextlib.redirect_stdout(io.StringIO()):

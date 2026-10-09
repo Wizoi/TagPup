@@ -17,9 +17,9 @@ from service_fixture import TempLibrary  # noqa: E402
 from face_rows import people_of  # noqa: E402
 
 from tagpup.core import vocabulary  # noqa: E402
-from tagpup.core.result import NotFound, Result  # noqa: E402
+from tagpup.core.result import NotFound, Refused, Result  # noqa: E402
 from tagpup.services import tags  # noqa: E402
-from tagpup.store import db, derived, people as store_people, photos as store_photos, taxonomy  # noqa: E402
+from tagpup.store import db, derived, faces as store_faces, people as store_people, photos as store_photos, taxonomy  # noqa: E402
 
 
 class TreeCase(unittest.TestCase):
@@ -274,41 +274,67 @@ class Merging(TreeCase):
 
 
 class RenamingAPerson(TreeCase):
+    """Rename Person renames the ONE person picked (docs/ARCHITECTURE.md, "People by id, stage 2"; owner, 2026-10-09): the node
+    keeps its id, so the faces and the lists follow it and take the new name in the same transaction; another person called
+    alike is left alone; it never merges."""
+
     def setUp(self):
         super().setUp()
         # Both roots flagged as holding faces, as a library filing people there does.
-        self.node("People/Rowan Thackeray", has_face=1)
-        self.node("Family/Rowan Thackeray", has_face=1)
+        self.people_rowan = self.node("People/Rowan Thackeray", has_face=1)
+        self.family_rowan = self.node("Family/Rowan Thackeray", has_face=1)
 
-    def rename(self, old, new):
-        return tags.rename_person(self.lib.library, old, new, "exiftool")
+    def rename(self, who, new):
+        return tags.rename_person(self.lib.library, who, new, "exiftool")
 
-    def test_every_node_filed_under_the_name_and_the_photos_carrying_them(self):
+    def name(self, face_id, who):
+        db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name(conn, [face_id], who))
+
+    def test_the_one_picked_is_renamed_and_the_other_is_left(self):
         photo = self.photo("a.jpg", ["People/Rowan Thackeray"])
-        result = self.rename("Rowan Thackeray", "Rowan Vale")
+        result = self.rename(self.people_rowan, "Rowan Vale")
         self.assertTrue(result.ok, result.message())
-        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Vale", "People", "People/Rowan Vale"])
+        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Thackeray", "People", "People/Rowan Vale"])
+        self.assertEqual(self.id_of("People/Rowan Vale"), self.people_rowan, "the node keeps its id")
         self.assertEqual(self.rewrites, [([photo], "People/Rowan Thackeray", "People/Rowan Vale")])
         self.assertEqual(result.details["photos_affected"], 1)
 
-    def test_faces_whatever_their_case_and_each_photos_people(self):
-        # Listed by a face named in lower case; the keyword people come first, then
-        # whom only a face names, in the order the faces were found.
-        photo = self.photo("a.jpg", people=["Ada Pembrook"])
-        self.face(photo, [0, 0, 10, 10], name="rowan thackeray")
-        self.face(photo, [10, 10, 20, 20], name="Rowan Thackeray")
-        self.assertEqual(self.people(photo), ["Ada Pembrook", "rowan thackeray"])
-        result = self.rename("Rowan Thackeray", "Rowan Vale")
-        self.assertEqual(result.details["faces_renamed"], 2)
-        self.assertEqual(self.lib.rows("SELECT DISTINCT name FROM faces"), [("Rowan Vale",)])
-        self.assertEqual(self.people(photo), ["Ada Pembrook", "Rowan Vale"])
+    def test_a_name_two_people_have_is_refused_naming_them(self):
+        with self.assertRaises(Refused) as why:
+            self.rename("Rowan Thackeray", "Rowan Vale")
+        self.assertIn("Family/Rowan Thackeray", str(why.exception))
+        self.assertIn("People/Rowan Thackeray", str(why.exception))
+        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Thackeray", "People", "People/Rowan Thackeray"])
 
-    def test_a_photo_naming_them_by_a_bare_keyword_keeps_them(self):
+    def test_an_id_that_is_nobody_is_not_found_and_changes_nothing(self):
+        with self.assertRaises(NotFound):
+            self.rename(99999, "Rowan Vale")
+        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Thackeray", "People", "People/Rowan Thackeray"])
+
+    def test_its_faces_and_each_photos_people_follow_the_id(self):
+        # Listed by a face; the keyword people come first, then whom only a face names, in the order the faces were found.
+        photo = self.photo("a.jpg", people=["Ada Pembrook"])
+        self.face(photo, [0, 0, 10, 10], name="Rowan Thackeray")
+        other = self.photo("b.jpg")
+        self.face(other, [0, 0, 10, 10], name="Rowan Thackeray")
+        for face_id, who in zip((row[0] for row in self.lib.rows("SELECT id FROM faces ORDER BY id")),
+                                (self.people_rowan, self.family_rowan)):
+            self.name(face_id, who)
+        self.assertEqual(self.people(photo), ["Ada Pembrook", "Rowan Thackeray"])
+        result = self.rename(self.people_rowan, "Rowan Vale")
+        self.assertEqual(result.details["faces_renamed"], 1)
+        self.assertEqual(self.lib.rows("SELECT tag_id, name FROM faces ORDER BY id"),
+                         [(self.people_rowan, "Rowan Vale"), (self.family_rowan, "Rowan Thackeray")])
+        self.assertEqual(self.people(photo), ["Ada Pembrook", "Rowan Vale"])
+        self.assertEqual(self.people(other), ["Rowan Thackeray"], "the other Rowan is not renamed")
+
+    def test_a_photo_naming_them_by_a_bare_keyword_keeps_them_when_nobody_else_is_called_so(self):
         # Only the photos carrying the path were rewritten; once the tree moved, a bare
         # "Rowan Thackeray" named nobody, and the photo lost the person (#87).
+        self.lib.execute("DELETE FROM tag_taxonomy WHERE tag = 'Family/Rowan Thackeray'")
         photo = self.photo("a.jpg", ["Rowan Thackeray"])
         self.assertEqual(self.people(photo), ["Rowan Thackeray"])
-        result = self.rename("Rowan Thackeray", "Rowan Vale")
+        result = self.rename(self.people_rowan, "Rowan Vale")
         self.assertTrue(result.ok, result.message())
         self.assertEqual(self.people(photo), ["Rowan Vale"])
         # The bare name for the bare name: the keyword writer files it where the person
@@ -316,17 +342,33 @@ class RenamingAPerson(TreeCase):
         self.assertIn(([photo], "Rowan Thackeray", "Rowan Vale"), self.rewrites)
         self.assertEqual(result.details["photos_affected"], 1)
 
-    def test_into_a_name_filed_already_the_two_become_one(self):
+    def test_a_bare_keyword_two_people_have_is_not_rewritten_for_either(self):
+        photo = self.photo("a.jpg", ["Rowan Thackeray"])
+        result = self.rename(self.people_rowan, "Rowan Vale")
+        self.assertTrue(result.ok, result.message())
+        self.assertNotIn(([photo], "Rowan Thackeray", "Rowan Vale"), self.rewrites)
+
+    def test_into_a_name_filed_already_it_is_refused_and_nothing_is_merged(self):
         self.node("People/Rowan Vale")
         photo = self.photo("a.jpg", ["People/Rowan Thackeray"])
-        self.rename("Rowan Thackeray", "Rowan Vale")
-        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Vale", "People", "People/Rowan Vale"])
-        self.assertIn(([photo], "People/Rowan Thackeray", "People/Rowan Vale"), self.rewrites)
+        result = self.rename(self.people_rowan, "Rowan Vale")
+        self.assertIn("merge them instead", result.refused)
+        self.assertEqual(sorted(self.tree()), ["Family", "Family/Rowan Thackeray", "People", "People/Rowan Thackeray",
+                                               "People/Rowan Vale"])
+        self.assertEqual([], self.rewrites, "no photo %s was rewritten" % photo)
+
+    def test_a_name_no_person_tag_has_renames_those_faces_alone(self):
+        photo = self.photo("a.jpg")
+        self.face(photo, [0, 0, 10, 10], name="Tamsin Vey")
+        result = self.rename("Tamsin Vey", "Tamsin Vale")
+        self.assertEqual(result.details["faces_renamed"], 1)
+        self.assertEqual(self.lib.rows("SELECT tag_id, name FROM faces"), [(None, "Tamsin Vale")])
 
     def test_what_cannot_be_asked(self):
-        for old, new in (("", "X"), ("Rowan Thackeray", tags.UNMATCHED), ("Rowan Thackeray", "A/B")):
+        for old, new in ((self.people_rowan, tags.UNMATCHED), (self.people_rowan, "A/B"), (self.people_rowan, "")):
             self.assertTrue(self.rename(old, new).refused, (old, new))
-        self.assertEqual(self.rename("Rowan Thackeray", "Rowan Thackeray").changed, 0)
+        self.assertTrue(self.rename("", "X").refused)
+        self.assertEqual(self.rename(self.people_rowan, "Rowan Thackeray").changed, 0)
 
 
 class AnIndexBehindItsFiles(unittest.TestCase):

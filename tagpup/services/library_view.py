@@ -534,8 +534,10 @@ def navigator(library, section):
             tag_of = {group["id"]: group["tag"] for group in groups}
             everyone = person_ids.Directory.read(conn)
             # `group` is the navigator's own (the tag of the branch the person is filed in); `person` is the person.
-            return {"people": [{"name": name, "count": count, "group": group_of.get(name), "person": everyone.of_name(name)}
-                               for name, count in counted],
+            return {"people": [{"name": person.name, "count": count,
+                                "group": group_of.get(person_ids.key_of(person.id, person.name)),
+                                "person": everyone.of_row(person.id, person.name), "person_id": person.id}
+                               for person, count in counted],
                     "groups": [{"tag": group["tag"], "name": group["name"], "parent": tag_of.get(group["parent_id"]),
                                 "count": group["count"]}
                                for group in sorted(groups, key=lambda group: vocabulary.tag_sort_key(group["tag"]))],

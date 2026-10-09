@@ -321,12 +321,13 @@ def rename_person(library, person, new_name, exiftool_path):
         result.refuse("A person is filed at '%s' already: merge them instead (Merge tags), or choose another name." % new_tag)
         return result
     result.details["faces_renamed"] = _faces_of(library, found.id)
+    alone = _alone(library, found)   # before the tree moves: a bare keyword spelled so is theirs only if nobody else is called so
     try:
         # The node first, with its faces' cache in the same transaction; then the photo files.
         _rename_in_place(library, found.tag, new_tag, exiftool_path, result)
         # A photo naming them by the bare name carries no tag of the tree's, and was not rewritten above; with the tree
         # moved, the bare name named nobody (#87). Only a name nobody else has is theirs.
-        bare = list(photos.carrying(library.path, found.name)) if _alone(library, found) else []
+        bare = list(photos.carrying(library.path, found.name)) if alone else []
         if bare:
             rewritten, unwritten = _rewrite(library, bare, found.name, new_name, exiftool_path)
             _count(result, len(bare), rewritten, add_up=True)

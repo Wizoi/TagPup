@@ -1,8 +1,9 @@
 """Every answer that carries a person carries the `person` the pages label them by (docs/ARCHITECTURE.md, "People by id,
 stage 2", phase 3): `{id, name, tag, group, shared}`, `shared` and `group` decided once, in
 tagpup.core.vocabulary.person_labels, over everyone in the library. The answers keep every field they had (the pickers
-read `person` from part C); a name two people are called is `shared` with no id and no tag, since a name alone cannot say
-which; a name no person tag has, a group tag and a bucket are None.
+read `person` from part C); a row that names a person by the NAME alone, when two people are called it, is `shared` with no id
+and no tag, since a name alone cannot say which -- a row that holds the person's id (a face named for them, a photo's keyword
+path: part B) is exactly that person; a name no person tag has, a group tag and a bucket are None.
 
 Photos are rows as the indexer records them (tests/view_library.py); the tree's nodes are made by taxonomy.add_path.
 Fictional names: two cousins called Sam under two groups, and a group of people (Marlowe) with someone under it.
@@ -19,6 +20,7 @@ import web_client  # noqa: E402
 from face_rows import add_face  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
+from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.services import faces as face_service  # noqa: E402
 from tagpup.services import identify, library_view, selection  # noqa: E402
 from tagpup.services import people as people_service  # noqa: E402
@@ -134,30 +136,40 @@ class TheAnswers(Library):
         self.assertEqual(2, listed["Wren"]["count"], "the fields it had are still there")
 
     def test_the_navigators_people(self):
-        listed = {each["name"]: each for each in library_view.navigator(self.library, "people")["people"]}
+        every = library_view.navigator(self.library, "people")["people"]
+        listed = {each["name"]: each for each in every if each["name"] != "Sam"}
         self.assertEqual(self.person(WREN), listed["Wren"]["person"])
-        self.assertEqual(self.shared_sam(), listed["Sam"]["person"])
         self.assertEqual("Family/Thackeray", listed["Wren"]["group"], "the navigator's own `group` is untouched")
+        # The photos name the two Sams by their paths: two entries, each exactly the person (part B).
+        sams = sorted((each["person"]["tag"], each["person_id"], each["group"]) for each in every if each["name"] == "Sam")
+        self.assertEqual([(SAM_I, self.sam_i, "Family/Ingersoll"), (SAM_T, self.sam_t, "Family/Thackeray")], sams)
 
     def test_the_selections_tally(self):
         tally = selection.tally(self.library, selection.read(self.library, {"ids": [self.photo, self.other]}))
-        listed = {each["name"]: each for each in tally["people"]}
+        listed = {each["name"]: each for each in tally["people"] if each["name"] != "Sam"}
         self.assertEqual(self.person(WREN), listed["Wren"]["person"])
-        self.assertEqual(self.shared_sam(), listed["Sam"]["person"])
         self.assertTrue(listed["Wren"]["has_node"])
+        sams = sorted((each["person"]["tag"], each["person_id"], each["has_node"]) for each in tally["people"]
+                      if each["name"] == "Sam")
+        self.assertEqual([(SAM_I, self.sam_i, True), (SAM_T, self.sam_t, True)], sams, "two people, two entries")
 
     def test_the_five_nearest(self):
         def named():
-            return [1, 2], ["Wren", "Sam"], np.array([[0, 1, 0, 0], [1, 0, 0, 0]], dtype=np.float32)
+            return ([1, 2], [Ref(self.wren, "Wren"), Ref(None, "Sam")],
+                    np.array([[0, 1, 0, 0], [1, 0, 0, 0]], dtype=np.float32))
 
         found = identify.face_matches(self.library, self.stranger, named)
         self.assertEqual(["Wren", "Sam"], [each["name"] for each in found])
-        self.assertEqual([self.person(WREN), self.shared_sam()], [each["person"] for each in found])
+        self.assertEqual([self.person(WREN), self.shared_sam()], [each["person"] for each in found],
+                         "a face named for a person is that person; a bare 'Sam' is two people's name")
+        exact = identify.face_matches(self.library, self.stranger, lambda: ([1], [Ref(self.sam_i, "Sam")],
+                                                                          np.array([[1, 0, 0, 0]], dtype=np.float32)))
+        self.assertEqual([self.sam_ingersoll()], [each["person"] for each in exact])
         self.assertTrue(all("similarity" in each and "band" in each for each in found))
 
     def test_the_identify_pages_photo(self):
         def named():
-            return [1], ["Wren"], np.array([[0, 1, 0, 0]], dtype=np.float32)
+            return [1], [Ref(self.wren, "Wren")], np.array([[0, 1, 0, 0]], dtype=np.float32)
 
         details = identify.photo_details(self.library, self.path, named)
         faces = {each["id"]: each for each in details["faces"]}
@@ -235,12 +247,15 @@ class OnTheWire(unittest.TestCase):
         self.assertEqual(2, wren["count"], "its own fields are as they were")
         buckets = [each for each in first if each["name"] != "Wren"]
         self.assertTrue(all(each["person"] is None for each in buckets), "a bucket is nobody")
-        # Another Wren is filed; no face and no photo changed, so the queue itself is the cached one.
+        # Another Wren is filed; no face and no photo changed, so the queue itself is the cached one -- and its entry holds the
+        # person's id, so the label is exactly that Wren, now shared.
         taxonomy.add_path(self.vl.conn, "Family/Ingersoll/Wren")
         self.vl.conn.commit()
         second = self.client.get("/library/api/unmatched-faces/people").get_json()
         wren = [each for each in second if each["name"] == "Wren"][0]
-        self.assertEqual((None, True), (wren["person"]["id"], wren["person"]["shared"]))
+        self.assertEqual((self.vl.rows("SELECT id FROM tag_taxonomy WHERE tag = ?", WREN)[0][0], True),
+                         (wren["person"]["id"], wren["person"]["shared"]))
+        self.assertEqual(wren["person_id"], wren["person"]["id"])
 
     def test_naming_faces_in_bulk_says_whom(self):
         path = self.vl.path_of(self.vl.photo("A", "wren.jpg", tags=[WREN]))

@@ -13,7 +13,7 @@ from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, TwoSams, look, write
 
 from tagpup.core.result import NotFound  # noqa: E402
 from tagpup.services import faces as faces_service  # noqa: E402
-from tagpup.store import faces, journal, people, person_ids, taxonomy  # noqa: E402
+from tagpup.store import faces, people, person_ids, taxonomy  # noqa: E402
 
 
 class Writers(TwoSams, unittest.TestCase):
@@ -32,9 +32,11 @@ class Writers(TwoSams, unittest.TestCase):
         self.assertIn(SAM_I, result.refused)
         self.assertEqual((None, None, None), self.face(self.faces[0]), "nothing was written")
 
-    def test_a_tag_path_names_one_of_them(self):
-        faces_service.name_face(self.library, self.faces[0], SAM_I)
-        self.assertEqual(self.sam_i, self.face(self.faces[0])[0])
+    def test_a_tag_path_is_a_tag_and_not_a_name(self):
+        """The id is how a page names one of two people alike; a path typed as a name is refused as any name with a "/" is."""
+        result = faces_service.name_face(self.library, self.faces[0], SAM_I)
+        self.assertIn("/", result.refused)
+        self.assertEqual((None, None, None), self.face(self.faces[0]))
 
     def test_a_stale_id_is_not_found_and_makes_nobody(self):
         before = look(self.path, "SELECT COUNT(*) FROM tag_taxonomy")[0][0]
@@ -75,11 +77,18 @@ class Writers(TwoSams, unittest.TestCase):
         write(self.path, lambda conn: faces.name(conn, [self.faces[2]], self.sam_i))
         self.assertEqual([(self.sam_i, "Sam", "keyword")], self.listed(self.other))
 
-    def test_a_pet_and_a_friend_called_alike_are_told_apart_by_the_dog(self):
+    def test_a_pet_and_a_friend_called_alike_are_told_apart(self):
         max_pet, max_friend = self.node(MAX_PET), self.node(MAX_FRIEND)
         write(self.path, lambda conn: faces.set_names(conn, {self.faces[0]: max_pet, self.faces[2]: max_friend}))
-        self.assertEqual([(max_pet, "Max")], [(self.face(self.faces[0])[0], self.face(self.faces[0])[1])])
-        self.assertEqual(1, len(faces.person_ids.given(_conn(self.path), [max_pet])))
+        self.assertEqual([(max_pet, "Max"), (max_friend, "Max")],
+                         [self.face(self.faces[0])[:2], self.face(self.faces[2])[:2]])
+        conn = _conn(self.path)
+        try:
+            self.assertEqual({max_pet}, person_ids.given(conn, [max_pet]))
+            self.assertEqual({max_pet: 1, max_friend: 1}, person_ids.faces_using(conn, [max_pet, max_friend]))
+            self.assertEqual(1, faces.count_named(conn, max_pet), "a person's faces are counted by the node, not the name")
+        finally:
+            conn.close()
 
     def test_unnaming_clears_both(self):
         write(self.path, lambda conn: faces.name(conn, [self.faces[0]], self.sam_t))

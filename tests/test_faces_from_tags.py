@@ -154,8 +154,8 @@ class OneFaceOnePerson(Case):
         photo = self.photo("regatta_007.jpg")
         self.face(photo)
         self.tag(photo, "People/" + WREN)
-        _stamp, (ids, names, _matrix) = identify.decided_faces(self.library)
-        self.assertEqual([WREN], names)
+        _stamp, (ids, people_of, _matrix) = identify.decided_faces(self.library)
+        self.assertEqual([(self.node("People/" + WREN), WREN)], [(each.id, each.name) for each in people_of])
 
 
 class WhatIsNotNamed(Case):

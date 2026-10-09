@@ -84,7 +84,7 @@ class AssigningMany(Bulk):
         made = self.many(1)
         reply = self.tuner_post("faces/match-bulk", {"face_ids": [made[0][1]], "person_name": "Pairs"})
         self.assertEqual(400, reply.status_code)
-        self.assertIn("branch", reply.get_json()["error"])
+        self.assertIn("group of people, not a person", reply.get_json()["error"])
         self.assertEqual(0, self.files.writes)
 
     def test_a_person_the_tree_files_in_two_places_is_refused_before_a_name_is_given(self):

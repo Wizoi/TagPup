@@ -283,7 +283,7 @@ def person_rename():
     library = state.require()
     body = request.get_json(silent=True) or {}
     try:
-        result = tags_service.rename_person(library, face_routes.person_arg(body, "person_id", "old_name"),
+        result = tags_service.rename_person(library, face_routes.person_arg(body.get("person_id"), body.get("old_name")),
                                             body.get("new_name"), state.exiftool(library))
     except NotFound as missing:
         abort(404, description=str(missing))
@@ -321,7 +321,7 @@ def face_matches_unmatched():
 @routes.get("/api/person-faces")
 def person_faces():
     library = state.require()
-    person = face_routes.person_arg(request.args, "person_id", "name")
+    person = face_routes.person_arg(request.args.get("person_id"), request.args.get("name"))
     if person is None:
         abort(400, description="Missing 'name' parameter")
     limit, page = 100, 1
@@ -369,7 +369,7 @@ def unmatched_faces_people():
 @routes.get("/api/unmatched-faces/person-matches")
 def unmatched_faces_person_matches():
     library = state.require()
-    person = face_routes.person_arg(request.args, "person_id", "name")
+    person = face_routes.person_arg(request.args.get("person_id"), request.args.get("name"))
     if person is None:
         abort(400, description="Missing 'name' parameter")
     if not _library_there(library):
@@ -422,7 +422,7 @@ def faces_match_bulk():
     """Name many faces as one person (tagpup.services.faces.name_faces)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    face_ids, person = body.get("face_ids"), face_routes.person_arg(body)
+    face_ids, person = body.get("face_ids"), face_routes.person_arg(body.get("person_id"), body.get("person_name"))
     if not face_ids or not isinstance(face_ids, list) or person is None:
         abort(400, description="Missing or invalid face_ids or person_name")
     try:
