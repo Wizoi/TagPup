@@ -535,14 +535,31 @@ class TheDoctor(Library):
         self.assertEqual((node_id(self.path, "Family/Coast/" + ODA), ODA),
                          look(self.path, "SELECT tag_id, name FROM faces WHERE id = ?", (self.faces[0],))[0])
 
+    def test_repairing_only_the_people_does_not_rebuild_every_photos_derived_rows(self):
+        """Fix round 3: after the ids were put right the doctor compared the number of lines with whether any list was left, and so
+        rebuilt the keyword, folder and metadata rows of every photo though only the people were wrong."""
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import doctor
+        self.name([self.faces[0]], ODA)
+        write(self.path, lambda conn: conn.execute("UPDATE faces SET name = ? WHERE id = ?", (ODA.lower(), self.faces[0])))
+        with mock.patch.object(doctor.derived, "repair", side_effect=AssertionError("the photos were rebuilt")), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(0, doctor.rebuild_derived(self.path, apply=True))
+        self.assertEqual([0, 0], in_step(self.path))
+
     def test_the_tool_reports_and_with_apply_repairs(self):
         import io
         from contextlib import redirect_stdout
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
         import doctor
         self.name([self.faces[0]], ODA)
+        self.name([self.faces[1]], WREN)
         conn = db.connect(self.path)
         try:
+            conn.execute("UPDATE faces SET tag_id = NULL WHERE id = ?", (self.faces[1],))   # a name whose id was not written
             conn.execute("UPDATE faces SET name = ? WHERE id = ?", (ASH, self.faces[2]))   # a name two people have, no id
             people.rebuild(conn)
             conn.execute("UPDATE faces SET name = ? WHERE id = ?", (ODA.lower(), self.faces[0]))   # a cache the node does not spell so
@@ -555,6 +572,8 @@ class TheDoctor(Library):
         text = said.getvalue()
         self.assertIn("faces whose name is not their person's", text)
         self.assertIn("names with several person nodes: 1", text)
+        self.assertIn("names one person is called whose rows are linked to nobody: 1", text,
+                      "a name whose id was not written is reported, and linked only by the owner (people link-name)")
         self.assertNotIn(ASH, text, "names only with --show")
         said = io.StringIO()
         with redirect_stdout(said):
@@ -563,6 +582,7 @@ class TheDoctor(Library):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(0, doctor.rebuild_derived(self.path, apply=True))
         self.assertEqual([0, 0], in_step(self.path))
+        self.assertIsNone(self.face_id(self.faces[1]), "the repair links no name: the owner does")
 
 
     def test_a_name_on_a_branch_has_no_id_and_is_reported_with_the_node(self):

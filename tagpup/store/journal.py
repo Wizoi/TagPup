@@ -740,28 +740,6 @@ def _not_as_left(conn, change_id, changes):
     return reasons
 
 
-def _person_gone(conn, inverse):
-    """Why an undo would give a face to the wrong person: it puts back a face's person (`tag_id`) whose node is gone (a force
-    delete, a merge) while ANOTHER person is called what the face is called -- the settle that follows would link the face to
-    them. [] when the node is there, or nobody else has the name (the face is then an unresolved name, and relinks to a person
-    made for it)."""
-    wanted = [change for change in inverse if change.table == "faces" and change.action == "update" and change.new
-              and change.new.get("tag_id") is not None and change.new.get("name") is not None]
-    if not wanted or not person_ids.present(conn):
-        return []
-    known = person_ids.read(conn)
-    reasons = []
-    for change in wanted:
-        if change.new["tag_id"] in known.node_names:
-            continue
-        other = known.id_of(change.new["name"])
-        if other is not None:
-            reasons.append("face %d named a person who is gone, and %s is called the same, so undoing would give the face to them:"
-                           " undo this change BEFORE a person is made or renamed to that name, or name the face by hand"
-                           % (change.key[0], known.node_names.get(other, "another person")))
-    return reasons
-
-
 def _newer_overlapping(conn, change_id):
     """(id, operation) of each change after `change_id`, applied and not undone, that
     touched a row it touched."""
@@ -831,8 +809,8 @@ def _face_photos(conn, changes):
 
 def _named_by_name(conn, changes):
     """A change recorded before a face's person was an id wrote a face's NAME and not its id (a naming, an unnaming, a
-    guess): the faces it wrote still hold the id they had, which is another person's now, or none. Their id is put by
-    the name -- NULL, then person_ids.follow_faces gives it the one person that name is, or leaves it unresolved --
+    guess): the faces it wrote still hold the id they had, which is another person's now, or none. Their id is put aside --
+    NULL: an unresolved name for the owner, never guessed from the name; the journal knows no id --
     and nothing recorded is rewritten. A change that recorded the id is replayed as it was. Returns the faces."""
     ids = set()
     for change in changes:
@@ -941,11 +919,13 @@ def record(conn, operation, changes, summary=None, schema_version=None):
 #: What the journal calls the face rows a tree edit changed (taxonomy.delete_branch with force; people.merge_person).
 PERSON_DELETED = "person deleted (force): faces unnamed"
 PERSON_MERGED = "person merged: faces renamed"
+PERSON_LINKED = "name linked to its person: faces linked"
 
 #: What History says of those two changes: honest about what an undo gives back (the tree rows are not journaled).
 PERSON_NOTES = {
     PERSON_DELETED: "the faces return as unresolved names; the deleted person and the photos' keywords are not restored",
     PERSON_MERGED: "the faces return as unresolved names; the merged person and the photos' keywords are not restored",
+    PERSON_LINKED: "the faces return as unresolved names",
 }
 
 #: Rows a face costs the journal when a person is deleted with force or merged: name, name_source and tag_id.
@@ -1177,7 +1157,7 @@ def _undo_rows(conn, change_id):
     reasons = _not_as_left(conn, change_id, changes)
     inverse = [_inverse(change) for change in reversed(changes)]
     if not reasons:
-        reasons = _person_gone(conn, inverse) or _blocked(conn, inverse)
+        reasons = _blocked(conn, inverse)
     if reasons:
         raise Refusal(reasons)
     try:

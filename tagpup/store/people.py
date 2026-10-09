@@ -93,8 +93,8 @@ def rebuild(conn, photo_ids=None, known=None, ids=None):
     or two keywords once, two people called alike both), and settle each row written
     (person_ids.follow_listed; every row, when every photo is rebuilt). `known` is the tree's
     PeopleVocabulary, and `ids` its person_ids.People, each read from `conn` when not given.
-    A face of these photos with a name and no id (written by something that knew none) is given the person its name is, when
-    exactly one is called so (person_ids.follow_faces' rule). Returns how many photos' people changed. The caller commits."""
+    A face of these photos with a name and no id (written by something that knew none) stays an unresolved name: a rebuild
+    links nothing (person_ids.link_added is the one owner). Returns how many photos' people changed. The caller commits."""
     written, loose = [], []
     for photo_id, people in list(_differences(conn, photo_ids, known, loose)):
         conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))

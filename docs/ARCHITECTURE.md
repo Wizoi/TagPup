@@ -2808,14 +2808,19 @@ be split across a merge: the id is the key only when every writer writes it. Siz
   decided as nobody) and then deletes. **The two rules.** (a) *no children under a person that faces or photos carry* -- for person tags only (owner's
   answer to question 1): refused for an owner's action (the tree view's add, a move under a person, the keyword writer's new tag); never for what a
   file holds (the indexer reads a path as it finds it). (b) *a group tag is never a person* (part A) is refused where an owner would set it.
+- **Final round (2026-10-09).** Rename Person on a name no tag has, into a person's name, is a writer that knows the id and writes it
+  (`faces.rename_unresolved`; a name two people have is refused). A name that is exactly one person's but whose rows are linked to nobody (a
+  same-named person left) is REPORTED -- `person_ids.unresolved()` bucket `one`, the doctor, `checks.names_without_a_person` -- and linked
+  only by the owner: `people link-name <name> [--apply]` (`services.people.link_name`; a dry run; one journaled change of the faces,
+  undoable). The refusal of an undo (`_person_gone`) is gone with the fill it guarded against. The page action comes with part C's review list.
 - **Review round 2 (2026-10-09).** The ownership question of round 1, answered: see "`person_ids.link_added`" above. `settle` filled any
   unresolved name that was unique NOW, so a rename of one of two same-named people and then any rebuild of the photo, face write or journal
   replay linked a hand-decided face to the other; it no longer fills. `person_ids.repair` and the doctor put names and dead ids right and
   link nothing; a journal undo of an entry that recorded only a name leaves an unresolved name; fixtures state who a face is. A tree edit takes
   the write lock BEFORE it reads the tree (`people.tree_edit`: BEGIN IMMEDIATE), so two processes cannot decide from a stale tree
-  (`tests/test_people_by_id_at_once.py` holds one transaction open until the other is at its edit). The undo of a force delete or a merge is
-  refused while another person is called what the face is called (undo before re-creating the person); a merge of two people called alike
-  cannot be undone, and History says what an undo does not give back. Cost, measured on a copy of photo_index: the biggest person (7,468
+  (`tests/test_people_by_id_at_once.py` holds one transaction open until the other is at its edit). The undo of a force delete or a merge returns the
+  faces as unresolved names (the name and the decision back, the dead id dropped), never to another person called alike, because nothing links
+  an unresolved name by itself; History says what an undo does not give back (the person, the photos' keywords). Cost, measured on a copy of photo_index: the biggest person (7,468
   faces) takes 8.0 s to force delete and writes 22,404 change_rows (the whole journal held 17,053); the rehearsal that refuses a bad merge
   before any file is written takes 6.6 s for it. The refusal text and `usage` say the rows ("about N rows", `history_rows_if_forced`).
 - **Review round 1 (2026-10-09), what changed.** (1) *One rule for linking an unresolved name after a tree edit*

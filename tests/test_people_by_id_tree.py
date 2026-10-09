@@ -263,11 +263,25 @@ class Operations(TwoSams, unittest.TestCase):
         self.assertIn("not restored", summary["note"], "History says what an undo does not give back")
         self.assertEqual(6, look(self.path, "SELECT COUNT(*) FROM change_rows WHERE change_id = ?", (changes[0][0],))[0][0],
                          "three rows a face: what the refusal and the dry run say")
-        # The other Sam is called the same: undoing would give the two faces to them, so it is refused, and nothing changes.
-        refused = journal_service.undo(self.library, changes[0][0], apply=True, exiftool_path="exiftool")
-        self.assertTrue(refused.errors or refused.refused, "undo of a person's faces onto another person is refused")
-        self.assertIn("undo this change BEFORE a person is made or renamed to that name", str(refused.refused) + str(refused.errors))
-        self.assertEqual([(None, None, None)] * 2, [self.face(self.faces[1]), self.face(self.faces[2])])
+        # The other Sam is called the same. The undo puts the two faces back as they were -- a hand decision of a name -- and
+        # the person who held it is gone: they are unresolved names, NOT given to the other Sam (nothing links a name that
+        # merely became one person's: person_ids.link_added).
+        undone = journal_service.undo(self.library, changes[0][0], apply=True, exiftool_path="exiftool")
+        self.assertEqual([], undone.errors)
+        self.assertEqual([(None, "Sam", "manual")] * 2, [self.face(self.faces[1]), self.face(self.faces[2])])
+        self.assertEqual(self.sam_t, self.face(self.faces[0])[0], "the other Sam's face is theirs and no other is")
+        self.assertEqual(0, look(self.path, "SELECT COUNT(*) FROM faces WHERE tag_id = ? AND id <> ?", (self.sam_t, self.faces[0]))[0][0],
+                         "no face was given to the other Sam")
+
+    def test_the_undo_of_a_merge_of_two_people_called_alike_returns_the_faces_as_unresolved_names(self):
+        from tagpup.services import journal as journal_service
+        from tagpup.store import journal
+        self.assertTrue(self.merge(SAM_I, SAM_T, apply=True).ok)
+        change = look(self.path, "SELECT id FROM changes WHERE operation = ?", (journal.PERSON_MERGED,))[0][0]
+        undone = journal_service.undo(self.library, change, apply=True, exiftool_path="exiftool")
+        self.assertEqual([], undone.errors)
+        self.assertEqual([(None, "Sam", "manual")] * 2, [self.face(self.faces[1]), self.face(self.faces[2])],
+                         "the merged person is not restored, and the faces are not given to the person they were merged into")
 
     def test_the_undo_of_a_force_delete_nobody_else_shares_puts_the_decision_back_as_a_name(self):
         from tagpup.services import journal as journal_service

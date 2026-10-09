@@ -20,9 +20,13 @@ new person), `AmbiguousPerson` for a name two people have (naming the candidates
 group. A name no node is called resolves to None: the caller decides whether that makes a person (the
 tag first, as TagTuner's New Person does) or leaves an unresolved name.
 
-A name still fills a missing id when it names exactly one person (`follow_*`, `sync`): a name written by
-a path that knows no id (a face a detector gave a name, an older row) is linked once a person of that name
-exists, as stage 1 did for every row. It never moves an id that is set.
+A name with no id is an UNRESOLVED name, and nothing links it by chance: `follow_*`, `sync` and `settle` keep an id that
+is set (with its node's leaf as the cache), drop the id of a node that is gone, and give a missing one to NOBODY, however
+unique the name has become -- a name that became one person's because a same-named node left says nothing about who a row
+meant. Rows are linked by exactly three things: the writer that wrote the row and knew the id (`target`), `link_added` for
+a name a person was ADDED under (a node made, moved or renamed into it: `follow_tree`, and the journal), and the owner
+(`people link-name`; the names to review). A keyword's row is resolved by its path when it is written. It never moves an id
+that is set.
 
 The tree is read inside the writer's transaction, every time, and never kept: a rename committed by
 another process between two writes is what the second one reads. Ids are AUTOINCREMENT, never given
@@ -401,7 +405,8 @@ def _marks(chunk):
 
 def follow_faces(conn, photo_ids, known=None):
     """Settle each face of the photos `photo_ids` (People.settle): an id that is set stays with its name the node's
-    leaf; a face with a name and no id is given the person its name is, when it is one's. Returns faces changed.
+    leaf, the id of a node that is gone is dropped; a face with a name and no id stays an unresolved name (link_added is the
+    only thing that links one). Returns faces changed.
     idx_faces_photo_id finds them; the embedding is not read."""
     if not photo_ids or not present(conn):
         return 0
@@ -418,7 +423,8 @@ def follow_faces(conn, photo_ids, known=None):
 
 
 def settle_faces(conn, face_ids, known=None):
-    """Settle the faces `face_ids` (People.settle): the ones rebuild found with a name and no id. Returns faces changed."""
+    """Settle the faces `face_ids` (People.settle): an id that is set keeps its node's leaf for a name, a gone node's is dropped;
+    a face with a name and no id stays as it is. Returns faces changed."""
     if not face_ids or not present(conn):
         return 0
     known = known or read(conn)
@@ -536,7 +542,8 @@ def follow_tree(conn, before):
 
 
 def link_added(conn, keys, known=None):
-    """THE one place that links an unresolved name -- a face or a listed person with a name and no id -- to a person after the fact:
+    """THE one place that links an unresolved name -- a face or a listed person with a name and no id -- to a person after the fact
+    (and, as the owner's explicit action, `services.people.link_name`):
     the rows whose name's key is in `keys` are given the one person that name is. The callers say which names a person was ADDED
     under (a node made, moved or renamed into the name): `follow_tree`, for an edit of the tree, and the journal, for a node
     its change inserted or renamed. Nothing else links one: not `settle` (which has no memory of what changed), not a rebuild
@@ -578,8 +585,9 @@ def faces_using(conn, ids):
 
 
 def put_aside(conn, face_ids):
-    """The faces `face_ids` hold no id (NULL) until the settle that follows gives them the one person their name is: a
-    change recorded before the id was recorded wrote their name alone (the journal's _named_by_name). Returns rows changed."""
+    """The faces `face_ids` hold no id (NULL): a change recorded before the id was recorded wrote their name alone, and the id they
+    hold is another person's now (the journal's _named_by_name). They are unresolved names after it, not guessed. Returns rows
+    changed."""
     if not face_ids or not present(conn):
         return 0
     changed = 0
@@ -617,8 +625,8 @@ Disagreement = collections.namedtuple("Disagreement", "rows examples")
 
 
 def out_of_step(conn, table, examples=5, spelling=True):
-    """(rows of `table` that People.settle would change -- a name that is not its node's, an id of a node gone, a name
-    that is one person's and holds no id -- and a few of their ids: face ids, or photo ids for photo_people). Reads
+    """(rows of `table` that People.settle would change -- a name that is not its node's leaf, an id of a node gone; a name with no
+    id is not one: it is an unresolved name, see `unresolved` -- and a few of their ids: face ids, or photo ids for photo_people). Reads
     only. Without `spelling`, the cached name's spelling is let be: only an id that is missing, or of a node gone (migration
     21's own post-condition, which changes no name)."""
     if not present(conn):
@@ -644,33 +652,54 @@ def out_of_step(conn, table, examples=5, spelling=True):
     return Disagreement(rows, sorted(set(found))[:examples])
 
 
-Unresolved = collections.namedtuple("Unresolved", "none several branch")
+Unresolved = collections.namedtuple("Unresolved", "none several branch one")
 
 
 def unresolved(conn):
     """The names faces and photos' people hold with no id and no person to give one: those no person node is called
     (`none`) or more than one is (`several`), {name: rows of both tables}; and those called only by a
     branch -- a has_face node with nodes under it, such as Family/Coast, which is not a person
-    *(owner, 2026-10-04; docs/findings.md, #660)* -- (`branch`: {name: ([the branches' ids], rows)}).
+    *(owner, 2026-10-04; docs/findings.md, #660)* -- (`branch`: {name: ([the branches' ids], rows)}); and those exactly ONE
+    person is called but whose rows are not linked to them (`one`: {name: (the person's id, faces decided by hand, other
+    faces, listed people)}) -- a name that became one person's because a same-named node left, or a rename into a person's
+    name by something that did not know the id: nothing links it by itself (`link_added`), so it is on no person's page
+    until the owner links it (`link_name`; the CLI's `people link-name`).
     A row that holds an id is a person already, whatever its name is. Reported, not broken: no id is guessed, the
     names are left as they are, and the tree is the owner's to settle. Reads only."""
     if not present(conn):
-        return Unresolved({}, {}, {})
+        return Unresolved({}, {}, {}, {})
     known = read(conn)
-    none, several, branch = collections.Counter(), collections.Counter(), {}
+    none, several, branch, one = collections.Counter(), collections.Counter(), {}, {}
     for table in TABLES:
         for name, held, count in _pairs(conn, table):
             if held is not None and held in known.node_names:
                 continue
             why = known.why_not(name)
-            if why == "none":
+            if why is None and held is None and known.id_of(name) is not None:
+                one[name] = known.id_of(name)
+            elif why == "none":
                 none[name] += count
             elif why == "several":
                 several[name] += count
             elif why == "branch":
                 nodes, rows = branch.get(name, (sorted(known.branches[vocabulary.key(name)]), 0))
                 branch[name] = (nodes, rows + count)
-    return Unresolved(dict(none), dict(several), branch)
+    counted = {}
+    for name, person in one.items():
+        by_hand, by_guess = conn.execute(
+            "SELECT COALESCE(SUM(name_source = 'manual'), 0), COALESCE(SUM(COALESCE(name_source, '') <> 'manual'), 0)"
+            " FROM faces WHERE tag_id IS NULL AND name = ?", (name,)).fetchone()
+        listed = conn.execute("SELECT COUNT(*) FROM photo_people WHERE tag_id IS NULL AND name = ?", (name,)).fetchone()[0]
+        counted[name] = (person, by_hand, by_guess, listed)
+    return Unresolved(dict(none), dict(several), branch, counted)
+
+
+def unlinked_faces(conn, name):
+    """The ids of the faces called `name` (without case) that hold no id: what the owner's action `link_added(conn, {key(name)})`
+    -- the CLI's `people link-name`, the names to review -- would link, read first so the change can be journaled."""
+    key = vocabulary.key(name)
+    return [face_id for face_id, held in conn.execute("SELECT id, name FROM faces WHERE tag_id IS NULL AND name IS NOT NULL")
+            if vocabulary.key(held) == key]
 
 
 def repair(db_path):

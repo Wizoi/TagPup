@@ -69,6 +69,7 @@ from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import duplicate_rows as duplicate_rows_service
 from tagpup.services import faces_from_tags as faces_from_tags_service
+from tagpup.services import people as people_service
 from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import reread_fields as reread_fields_service
 from tagpup.services import identities
@@ -79,7 +80,7 @@ from tagpup.core import runs as run_tags
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
-from tagpup.core.result import NotFound
+from tagpup.core.result import NotFound, Refused
 from tagpup.services import tagging
 from tagpup.services import maintenance
 from tagpup.jobs import indexing as indexing_jobs
@@ -1470,6 +1471,41 @@ def sync(ctx, folder, apply_):
     console.print("In step." if result.details["in_step"] else "Not yet in step: sync again once indexing is done.")
     if result.errors:
         raise SystemExit(1)
+@cli.group("people")
+def people_command():
+    """The library's people (tagpup.services.people)."""
+
+
+@people_command.command("link-name")
+@click.argument("name")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Link them, as one change of the journal (`undo` returns them to unresolved names). Without it, only counts.")
+@click.pass_context
+def people_link_name(ctx, name, apply_):
+    """Link the faces and listed people called NAME that are linked to nobody to the one person NAME is.
+
+    A name that became one person's because a same-named person left (a rename, a merge, a delete) is not linked by anything:
+    it is on no person's page until you say it is that person (the doctor lists these names: "one person is called so but the
+    rows are not linked"). A face you decided by hand is linked too: this is you saying who it is. Refused, naming the
+    candidates, for a name two people have, and for a name nobody is called. A dry run unless --apply; counts only."""
+    library = _existing_library(ctx)
+    try:
+        result = people_service.link_name(library, name, apply=apply_)
+    except Refused as problem:   # a name two people have, a group: the sentence names them
+        console.print("Refused: %s" % problem, markup=False, soft_wrap=True)
+        raise SystemExit(1) from None
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details
+    console.print("%d face(s) decided by hand, %d other face(s) and %d listed person(s) are called %s and linked to nobody."
+                  % (counts["faces_by_hand"], counts["faces_by_guess"], counts["listed"], "that name"))
+    if counts["applied"]:
+        console.print("Linked %d row(s), as change %s (`history`, `undo`)." % (result.changed, counts["change"]))
+    else:
+        console.print("A dry run: nothing changed. --apply links them.")
+
+
 @cli.command("faces-from-tags")
 @click.option("--apply", "apply_", is_flag=True,
               help="Name the faces, as one change of the journal. Without it, only says how many it would.")
