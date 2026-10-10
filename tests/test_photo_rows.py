@@ -10,7 +10,6 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from tagpup.services import refresh_rows  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
 import photo_rows  # noqa: E402
 
@@ -42,7 +41,7 @@ class PhotoRows(unittest.TestCase):
         self.assertEqual(json.loads(tags), ["Activity/Sailing"])
         self.assertIn("Subject", json.loads(raw), "a read records the bare name too")
         self.assertTrue(taken.startswith("2024:07:04"), taken)
-        self.assertFalse(refresh_rows.never_read(raw))
+        self.assertTrue(any(":" not in key for key in json.loads(raw)), "a read records the bare names too")
 
     def test_an_unread_row_holds_the_path_and_nothing_else(self):
         mtime, size, tags, raw, taken = self.row(lambda conn: photo_rows.add_unread(conn, self.photo))

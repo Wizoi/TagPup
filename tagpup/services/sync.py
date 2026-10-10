@@ -361,7 +361,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     finally:
         conn.close()
 
-    edits = refresh_rows.edits_for(records, to_write, {}, found, identities, changed)
+    edits = refresh_rows.edits_for(records, to_write, found, identities, changed)
     moved_edits, occupied = relink_photos.edits_for(library, moves)
     by_folder = _missing_by_folder(missing)
     stops = {paths.key(root) for root in walked + roots}
