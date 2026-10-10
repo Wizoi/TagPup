@@ -50,6 +50,7 @@ from tagpup.core.library import Library
 from tagpup.files import images
 from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
+from tagpup.jobs import naming_faces
 from tagpup.jobs import recurring, watching
 from tagpup.services import damaged_photos, file_changes, folder_ids, folder_moves, indexing, search
 from tagpup.services import settings as library_settings_service
@@ -297,6 +298,10 @@ def index_folder(library, subfolders=True):
     return index
 
 
+#: Why an applied sync did not run (see sync).
+NAMING_SAYS = "Names are being given from tags; a sync waits until it finishes."
+
+
 def sync(library, folder=None, apply=False, index_new=True):
     """Bring `library` in step with its folders, or with `folder` (tagpup.services.sync):
     a dry run unless `apply`, with the ExifTool the library names. A dry run reads the
@@ -305,7 +310,15 @@ def sync(library, folder=None, apply=False, index_new=True):
     unless not `index_new`; they are indexed one at a time, after the sync returns.
 
     What the entry points call -- the CLI's `sync`, the MCP server's tool, the route --
-    and what a recurring job calls as sync(library, apply=True)."""
+    and what a recurring job calls as sync(library, apply=True), and the folder watcher.
+
+    An applied sync is refused, nothing read or written, while "Name faces from tags" writes names or groups in THIS process
+    (naming_faces.writing): grouping commits a name for every face it read at its start, and a sync that deletes, re-points or
+    adds photos beside it changes what it read. Here, not in a route, so the run-now, the scheduled job and the watcher are
+    closed alike whatever library the request named. The watcher's folder is brought in by its next notification or the daily
+    catch-up. Another process's apply (the CLI, the MCP server) cannot see this process's job."""
+    if apply and naming_faces.writing(library):
+        return sync_service.not_run(NAMING_SAYS, apply)
     settings = library_settings(library) if apply else peek_settings(library)
     queue = None
     if index_new:

@@ -35,6 +35,9 @@ ALLOWED = {
     "/api/library/selection/delete-check": "a read: what deleting would take",
     "/api/library/selection/tally": "a read: counts of a selection",
     "/api/taxonomy/delete-check": "a read: what deleting a node would change",
+    "/api/activity/jobs/run": "runs a recurring job now; the Activity page names the library in the body, so no route guard sees it: "
+                              "the sync job refuses itself while names are given (runtime.sync, tested in test_name_faces_routes), "
+                              "the others (snapshots, prune-journal) change no name, face or tag",
     "/api/activity/attention/check": "re-reads what needs attention; changes no name, face, tag or file",
     "/api/activity/models/unload": "frees the models in memory; no data",
     "/api/photo/open": "opens the file in the viewer; no data",

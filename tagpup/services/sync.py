@@ -558,8 +558,13 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
 def _not_run(stop, apply):
     """A sync that did not run -- the library's roots changed under it, or this machine does
     not place one: a refused Result with what the callers read of any, and why."""
+    return not_run(roots_service.stopped(stop), apply)
+
+
+def not_run(why, apply):
+    """A sync that did not run, `why` said: a refused Result with what the callers read of any."""
     result = Result()
-    result.refuse(roots_service.stopped(stop))
+    result.refuse(why)
     result.details.update(counts={}, in_step=False, changed={kind: 0 for kind in KINDS}, queued=0, warnings=[],
                           dry_run=not apply)
     return result

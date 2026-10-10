@@ -40,14 +40,14 @@ GUARDED = frozenset((
     "/api/folder/index-start", "/api/folder/add", "/api/sync/review/include", "/api/library/bulk/start",
     "/api/library/bulk/resume", "/api/photo/save-metadata", "/api/photos/bulk-tags", "/api/folder/auto-apply",
     "/api/photo/delete", "/api/sync", "/api/history/<int:change_id>/undo", "/api/faces/job/resume",
-    "/api/faces/job/undo", "/api/taxonomy/update", "/api/activity/jobs/run"))
+    "/api/faces/job/undo", "/api/taxonomy/update"))
 
-#: Routes of GUARDED that only write when the body says so: a rehearsal (Undo, sync without `apply`), or a recurring job
-#: that is not a sync (the one that writes), reads or changes nothing a name depends on.
+#: Routes of GUARDED that only write when the body says so: a rehearsal (Undo, sync without `apply`).
+#: A run-now of the recurring `sync` is not here: the Activity page names the library in the body, not the URL, so no route
+#: guard sees it; tagpup.runtime.sync refuses an applied sync itself, for that and the scheduled job and the watcher.
 WRITES_WHEN = {
     "/api/sync": lambda body: body.get("apply") is True,
     "/api/history/<int:change_id>/undo": lambda body: body.get("apply") is True,
-    "/api/activity/jobs/run": lambda body: body.get("job") == "sync",
 }
 
 
