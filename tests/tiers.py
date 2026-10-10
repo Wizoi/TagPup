@@ -26,6 +26,7 @@ SLOW = frozenset({
     "test_supervisor_hand_over",
     "test_launcher_hands_over",
     "test_install_app",
+    "test_install_hands_over",
 })
 
 SCENARIO = frozenset({
@@ -50,6 +51,19 @@ SCENARIO = frozenset({
     "test_damaged_photos_are_remembered",
     "test_rotate_keeps_the_photo",
     "test_taxonomy_lifecycle",
+    # Faces and tags kept in step across files, jobs and the CLI's journaled apply.
+    "test_bulk_faces_and_tags",
+    "test_naming_faces_job",
+    "test_faces_and_tags_in_step",
+    "test_faces_from_tags_in_a_folder",
+    "test_face_people_follow_file_changes",
+    # Two real processes on one library, and folders renamed or marked on disk.
+    "test_people_by_id_at_once",
+    "test_migration_28_and_the_newer_library",
+    "test_folder_ids",
+    "test_folder_ids_scenarios",
+    "test_relink_folders",
+    "test_reread_fields",
     # Roots: the folders a library holds, through a whole scenario.
     "test_roots_scenarios",
     "test_roots_adoption",
