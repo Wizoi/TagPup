@@ -3,7 +3,6 @@ import contextlib
 import functools
 import os
 import sys
-import json
 import logging
 from typing import List
 import click
@@ -81,7 +80,6 @@ from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
 from tagpup.core.result import NotFound, Refused
-from tagpup.services import tagging
 from tagpup.services import maintenance
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services.search import PhotoIndex, stored_mismatch
@@ -656,21 +654,18 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 @click.argument("directory", type=click.Path(exists=True, file_okay=False))
 @click.option("--k", default=15, help="Number of nearest neighbors to consider.")
 @click.option("--min-sim", default=0.35, type=float, help="Cosine similarity cutoff.")
-@click.option("--output", default=None,
-              help="Path to write the suggestions JSON file (default: <library>_suggestions.json beside the library).")
 @click.option("--add", "add_folder", is_flag=True,
               help="Add the folder to the library first when it does not hold it: each photo gets its row, as "
                    "TagPup's Add does. Without it, a folder the library does not hold is refused.")
 @click.pass_context
-def suggest(ctx, directory: str, k: int, min_sim: float, output: str, add_folder: bool = False):
-    """Phase 2: Suggest tags for untagged photos."""
+def suggest(ctx, directory: str, k: int, min_sim: float, add_folder: bool = False):
+    """Show the tags TagPup would suggest for the photos of a folder. Nothing is written."""
     runtime = get_runtime()
 
     # Load Index & Taxonomy
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
-    output = output or libraries.suggestions_file(db_path)
     library = Library(db_path)
     # Suggest records faces and vectors for every photo it looks at, each on its row: only
     # in the folders the library holds (tagpup.services.libraries.not_in).
@@ -746,190 +741,32 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str, add_folder
         console.print("[bold cyan]Applying event-level folder consensus...[/bold cyan]")
         suggestions_output = suggester.apply_folder_consensus(suggestions_output)
 
-        import numpy as np
+        # A preview: what TagPup would suggest. Nothing is written (a folder's suggestions are made
+        # and applied in TagPup's pages, whose Suggest keeps them in the library).
+        if suggestions_output:
+            table = Table(title="Generated Tag Suggestions Summary")
+            table.add_column("Photo File", style="green")
+            table.add_column("Top Suggested Tags (Confidence)", style="magenta")
+            table.add_column("Nearest Neighbors (Similarity)", style="cyan")
 
-        def convert_numpy_types(obj):
-            if isinstance(obj, dict):
-                return {k: convert_numpy_types(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [convert_numpy_types(item) for item in obj]
-            elif isinstance(obj, np.ndarray):
-                return obj.tolist()
-            elif isinstance(obj, np.integer):
-                return int(obj)
-            elif isinstance(obj, np.floating):
-                return float(obj)
-            elif isinstance(obj, np.bool_):
-                return bool(obj)
-            elif isinstance(obj, np.complexfloating):
-                return complex(obj)
-            elif isinstance(obj, np.float32):
-                return float(obj)
-            elif isinstance(obj, np.float64):
-                return float(obj)
-            elif isinstance(obj, np.int32):
-                return int(obj)
-            elif isinstance(obj, np.int64):
-                return int(obj)
-            # Handle any other numpy scalar types that might not be caught above
-            elif hasattr(obj, 'dtype') and hasattr(obj, 'item'):
-                # This catches numpy scalars like np.float32, np.int32 etc.
-                try:
-                    return obj.item()
-                except:
-                    return obj
-            return obj
+            for sugg in suggestions_output:
+                # Top 5 tags; '*' marks a tag that is a new recommendation.
+                tags = sugg.get("suggested_tags", [])
+                tags_str = ", ".join([f"{t['tag']}{'*' if t.get('is_new_recommendation') else ''} ({t['score']:.2f})" for t in tags[:5]])
+                if len(tags) > 5:
+                    tags_str += f" (+{len(tags) - 5} more)"
+                if not tags:
+                    tags_str = "[yellow]No tags suggested[/yellow]"
 
-        # Write suggestions to JSON
-        try:
-            # Convert all numpy types to native Python types
-            suggestions_converted = convert_numpy_types(suggestions_output)
+                neighbors = sugg.get("nearest_neighbors", [])
+                neighbors_str = ", ".join([f"{os.path.basename(n['path'])} ({n['similarity']:.2f})" for n in neighbors[:2]])
+                if not neighbors:
+                    neighbors_str = "[yellow]None[/yellow]"
 
-            with open(output, "w", encoding="utf-8") as f:
-                json.dump(suggestions_converted, f, indent=2)
-            console.print(f"[bold green]Suggestions successfully written to {output}[/bold green]\n")
-            
-            # Display a summary table
-            if suggestions_converted:
-                table = Table(title="Generated Tag Suggestions Summary")
-                table.add_column("Photo File", style="green")
-                table.add_column("Top Suggested Tags (Confidence)", style="magenta")
-                table.add_column("Nearest Neighbors (Similarity)", style="cyan")
-
-                for sugg in suggestions_converted:
-                    # Format suggested tags, limiting to top 5 for neatness
-                    # Appends '*' for tags that are new recommendations
-                    tags = sugg.get("suggested_tags", [])
-                    tags_str = ", ".join([f"{t['tag']}{'*' if t.get('is_new_recommendation') else ''} ({t['score']:.2f})" for t in tags[:5]])
-                    if len(tags) > 5:
-                        tags_str += f" (+{len(tags) - 5} more)"
-                    if not tags:
-                        tags_str = "[yellow]No tags suggested[/yellow]"
-
-                    # Format closest match
-                    neighbors = sugg.get("nearest_neighbors", [])
-                    neighbors_str = ", ".join([f"{os.path.basename(n['path'])} ({n['similarity']:.2f})" for n in neighbors[:2]])
-                    if not neighbors:
-                        neighbors_str = "[yellow]None[/yellow]"
-
-                    table.add_row(
-                        os.path.basename(sugg["path"]),
-                        tags_str,
-                        neighbors_str
-                    )
-                console.print(table)
-        except Exception as e:
-            console.print(f"[bold red]Error writing suggestions to disk: {e}[/bold red]")
+                table.add_row(os.path.basename(sugg["path"]), tags_str, neighbors_str)
+            console.print(table)
     finally:
         photo_index.close()
-
-@cli.command()
-@click.argument("suggestions_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("-Live", "live", is_flag=True, help="Write tags to files for real (modifies files).")
-@click.option("-MinScore", "min_score", default=suggesting.OFFER_A_TAG, type=float,
-              help="Write tags at or above this score (default: the value the app shows them from).")
-@click.option("--nobackup", is_flag=True,
-              help="Kept for scripts that pass it: a write keeps no _original copies; it is one change, which undo reverses.")
-@click.pass_context
-def write(ctx, suggestions_file: str, live: bool, min_score: float, nobackup: bool):
-    """Phase 3: Write suggested tags back to photos using ExifTool."""
-    # The library: its taxonomy files people, and its index is told what was written.
-    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
-    exiftool_path = get_exiftool_path(db_path)
-
-    write_suggestions_file(suggestions_file, db_path, exiftool_path, live=live,
-                           min_score=min_score, nobackup=nobackup)
-
-
-#: What `write` logs, under the name scripts/writer.py logged it.
-writer_log = logging.getLogger("tagpup_cli.writer")
-
-
-def write_suggestions_file(suggestions_file, db_path, exiftool_path, live=False,
-                           min_score=suggesting.OFFER_A_TAG, nobackup=False) -> bool:
-    """`write`: read the suggestions file, show what would be written, and with `live`
-    and a typed YES write it (tagpup.services.tagging.write_suggestions). True when
-    nothing failed.
-
-    `db_path` is the library: people are filed by its tree, and its index is told what
-    was written.
-    """
-    if not os.path.exists(suggestions_file):
-        writer_log.error(f"Suggestions file not found: {suggestions_file}")
-        return False
-
-    try:
-        with open(suggestions_file, "r", encoding="utf-8") as f:
-            suggestions = json.load(f)
-    except Exception as e:
-        writer_log.error(f"Error loading suggestions file: {e}")
-        return False
-
-    if not isinstance(suggestions, list):
-        # Might be a single entry wrapped or just invalid
-        if isinstance(suggestions, dict):
-            suggestions = [suggestions]
-        else:
-            writer_log.error("Invalid suggestions.json format. Expected array of objects.")
-            return False
-
-    library = Library(db_path)
-    write_tasks, missing = tagging.suggestion_writes(library, suggestions, min_score)
-    for path in missing:
-        writer_log.warning(f"File path does not exist, skipping: {path}")
-
-    if not write_tasks:
-        print("No tags or captions met the minimum score threshold to be written.")
-        return True
-
-    # Print summary/preview
-    print("\n--- Tag & Caption Writing Preview ---")
-    for path, tags, caption in write_tasks:
-        print(f"File: {path}")
-        if tags:
-            print(f"  Tags to append: {', '.join(tags)}")
-        if caption:
-            print(f"  Caption to set: \"{caption}\"")
-    print(f"Total files to modify: {len(write_tasks)}")
-    print(f"Write Mode: {'LIVE (files will be modified)' if live else 'PREVIEW (dry-run, no files changed)'}")
-    print("-------------------------------------")
-
-    if not live:
-        print("To write these tags and captions for real, run with the -Live flag.")
-        return True
-
-    # Ask for confirmation
-    confirm = input("Type 'YES' to confirm and write metadata to files: ").strip()
-    if confirm != "YES":
-        print("Aborted. No files were modified.")
-        return False
-
-    print("Writing metadata...")
-    executable = exiftool_path
-    if executable and not os.path.isabs(executable):
-        executable = os.path.abspath(executable)
-
-    try:
-        result = tagging.write_suggestions(library, write_tasks, executable, nobackup=nobackup)
-    except Exception as e:
-        writer_log.error(f"ExifTool writer error: {e}", exc_info=True)
-        return False
-    if result.refused:
-        # Nothing was written: a folder the library does not hold, say.
-        raise click.ClickException(result.refused)
-    for path, error in result.errors:
-        writer_log.error(f"Failed to write metadata to {path}: {error}")
-
-    print(f"Finished writing metadata. Success: {result.changed}, Errors: {len(result.errors)}")
-    skipped = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
-    if skipped:
-        print(f"Skipped {skipped} photo(s) found damaged; nothing was written to them. Restore them from a backup:")
-        for path, why in result.skipped[-skipped:]:
-            print(f"  {path}: {why}")
-    change = result.details.get("change")
-    if change:
-        print(f"Recorded as change {change}; `undo {change}` shows what undoing it would put back.")
-    return not result.errors
 
 @cli.command()
 @click.argument("query")
@@ -1052,19 +889,6 @@ def stats(ctx):
             console.print(roots_table)
     finally:
         photo_index.close()
-
-@cli.command("export-tree")
-@click.argument("output", type=click.Path(dir_okay=False))
-@click.pass_context
-def export_tree(ctx, output: str):
-    """Write the library's tag tree to OUTPUT as JSON: a copy to keep or read. The tree
-    itself lives in the library."""
-    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
-    if not os.path.exists(db_path):
-        raise click.ClickException("There is no library at %s." % db_path)
-    count = store_taxonomy.export_json(db_path, output)
-    console.print(f"Wrote {count} tag(s) to [bold cyan]{output}[/bold cyan].")
-
 
 @cli.command()
 @click.option("--apply", "apply_", is_flag=True, help="Back the library up, then compact it. Without it, only says how much would be freed.")

@@ -91,8 +91,7 @@ class OneOwner(unittest.TestCase):
                 for name in files:
                     if name.endswith(".py"):
                         yield os.path.join(base, name)
-        for name in ("tagpup_cli.py", "runner.py"):
-            yield os.path.join(ROOT, name)
+        yield os.path.join(ROOT, "tagpup_cli.py")
 
     def test_nothing_else_reads_the_values(self):
         # Callers ask for a decision; the numbers are clustering's alone.

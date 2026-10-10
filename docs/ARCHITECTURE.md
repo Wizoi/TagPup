@@ -28,7 +28,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Tags, people, captions taken apart; the person tag | `tagpup/core/vocabulary.py`, `tagpup/store/taxonomy.py` | `tests/test_vocabulary.py` |
 | A person by the id of their tag-tree node | `tagpup/store/person_ids.py` | `tests/test_person_ids.py` |
 | ExifTool | `tagpup/files/exiftool_session.py` | `tests/test_exiftool_single_owner.py` |
-| Writing a photo file's fields | `tagpup/files/field_values.py`, `tagpup/files/keywords.py`, `tagpup/services/file_changes.py` | `tests/test_file_journal.py` |
+| Writing a photo file's fields | `tagpup/files/field_values.py`, `tagpup/services/file_changes.py` | `tests/test_file_journal.py` |
 | Child processes | `tagpup/core/processes.py` | `tests/test_processes_single_owner.py` |
 | The graphics card, one process at a time | `tagpup/ml/gpu.py` (turns through `tagpup/runtime.py`) | `tests/test_gpu_single_owner.py` |
 | Models built once, from a library's settings | `tagpup/runtime.py` | `tests/test_models_single_owner.py` |
@@ -100,7 +100,7 @@ Imports only go down:
 | Layer | Package | Owns | May import |
 |---|---|---|---|
 | core | `tagpup.core` | Pure rules: path identity (and a root's row form, `paths.to_row` / `from_row`), a library's name and the files that belong to it (`Library`), the tag vocabulary (leaf, root, person), people derivation, suggestion scoring, clustering decisions; and `core.machine`, the one place the store asks for the machine's map of the roots | nothing but `core` |
-| config | `tagpup.config` | `TAGPUP_HOME` and where the libraries are (its `data/`), which ExifTool the machine has, where this machine keeps each root (`machine_roots.json`, read, and written only when an adoption finds the root missing from it; it registers its reader with `tagpup.core.machine` when imported, and `core.machine` imports it itself when asked with none registered, so no entry point has to remember to), and the one reading of an old `config.ini`, for stamping a library that holds no settings yet (phase 7.6). A library's settings are its own (`tagpup.services.settings`). Never written by the app (#100) | `core` (to spell and check a root's locations) |
+| config | `tagpup.config` | `TAGPUP_HOME` and where the libraries are (its `data/`), which ExifTool the machine has, where this machine keeps each root (`machine_roots.json`, read, and written only when an adoption finds the root missing from it; it registers its reader with `tagpup.core.machine` when imported, and `core.machine` imports it itself when asked with none registered, so no entry point has to remember to), and nothing of an old `config.ini`, which no code reads (phase 7.6). A library's settings are its own (`tagpup.services.settings`). Never written by the app (#100) | `core` (to spell and check a root's locations) |
 | logs | `tagpup.logs` | Each program's log file in `data/logs/`, each line carrying the runs under way (`tagpup.core.runs`), and reading them back, bounded, for the Activity page. Set up by entry points | `core`, `config` |
 | supervisor | `tagpup.supervisor` | The always-on process (phase 8): runs the web server as its child, restarts it, moves it onto a newer installed version once drained, one per home; and the names it shares with the server (the token, `data/server.json`, the exit code for ports another holds), which `tagpup.web` reads | `core`, `config`, `logs` |
 | launcher | `tagpup.launcher` | Replacing a running server with the version being launched, without the always-on process (#726): each server's record of where it answers -- its ports, version, and a token, the launcher's authority to drain it -- in the user's own folder (`%LOCALAPPDATA%\TagPup\servers`); and `make_way`, a launcher's: ask the version, drain another, end it once drained or hung, serve; and `hand_over`, an install's: the same `make_way`, opening no page, then the installed version started on the old one's ports (#795) | `core`, `config`, `logs`, `supervisor` |
@@ -120,7 +120,7 @@ Guard tests, each of which fails the build. The ones marked *exists* are in plac
 - Photo paths spelled and compared only by `tagpup.core.paths`. *Exists:* `tests/test_paths_single_owner.py`.
 - Tags taken apart only by `tagpup.core.vocabulary`. *Exists:* `tests/test_vocabulary.py`.
 - SQL only inside `tagpup.store`. *Exists:* `tests/test_sql_single_owner.py`.
-- `config.ini` read only by `tagpup.config.config_ini`, called only by the one-time stamping of a library's settings (`tagpup.runtime.library_settings`); inside `tagpup/`, only `tagpup.config` finds folders from `__file__`. *Exists:* `tests/test_config_single_owner.py`.
+- `config.ini` read by nothing (an old file in a home is ignored, never written or deleted); inside `tagpup/`, only `tagpup.config` finds folders from `__file__`. *Exists:* `tests/test_config_single_owner.py`.
 - A model (CLIP, the face models) built only by `tagpup.runtime`, and what it is made of only in its own `tagpup.ml` module. *Exists:* `tests/test_models_single_owner.py`.
 - The graphics card's turns taken only through `tagpup.runtime` (and each model's own check before it loads), its lock made only by `tagpup.ml.gpu`, and every module that loads weights checks for a turn first. *Exists:* `tests/test_gpu_single_owner.py`.
 - ExifTool and `Image.open` only inside `tagpup.files`.
@@ -202,8 +202,8 @@ programs only. A moved module takes every importer with it and leaves nothing at
   one Waitress process: TagPup (browse, tag, the library views, search) on port 8090 and TagTuner (Identify
   Faces, the tag tree, settings, roots, history) on 8080. The library comes from the URL. It listens on this
   PC only (127.0.0.1 and ::1) until phase 10 adds logins. Also served: the Activity page (`/activity/`, the
-  background work of every library, loopback only). The desktop **Runner** (`runner.py`), the **CLI**
-  (`tagpup_cli.py`: index, sync, write, search, history, undo, jobs, folder-ids, roots, ...) and the **MCP
+  background work of every library, loopback only). The **CLI**
+  (`tagpup_cli.py`: index, sync, search, history, undo, jobs, folder-ids, roots, ...) and the **MCP
   server** (`python -m tagpup.mcp`, for Claude: reads give counts and ids, names and paths only with
   `reveal=true`) are the other entry points. All build one `Runtime` and call services.
 - **One composition root** (`tagpup.runtime.Runtime`): models built once from the library's own settings,

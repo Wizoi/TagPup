@@ -354,8 +354,6 @@ class TheMachineMap(unittest.TestCase):
         roots = config.roots_of({"pictures": LOGICAL})
         self.assertEqual(paths.to_row(DESKTOP + "\\a.jpg", roots), "@pictures/a.jpg")
         self.assertIs(config.roots_of({"pictures": LOGICAL}), roots)   # prepared once per content
-        self.assertEqual(config.describe_machine({"pictures": LOGICAL}),
-                         [{"name": "pictures", "logical": LOGICAL, "locations": [DESKTOP], "mapped": True}])
         self.assertEqual(config.propose_row(DESKTOP + "\\a.jpg", {"pictures": LOGICAL}), "@pictures/a.jpg")
 
     def test_malformed_is_an_error_naming_the_file_never_an_identity(self):

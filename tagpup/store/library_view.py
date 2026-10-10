@@ -427,14 +427,6 @@ def _scope(conn, source, reads=None):
     raise ValueError("no such kind of source: %r" % (kind,))
 
 
-def resolve_tag(conn, tag):
-    """The tag of the node a typed keyword names: itself when the tree has exactly it (that wins), else the node
-    it is without case and with its segments trimmed, as photo_tags ties a photo's keywords to nodes
-    (derived.Tree: the lowest id when two differ only in case); `tag` as typed when there is none, which holds
-    nothing."""
-    return _Reads(conn).tag(tag)
-
-
 def spellings(conn, name):
     """The names `photo_people` holds that are `name` -- the same person without regard to case -- as it holds
     them: usually one. One pass of the name index (400 names on photo_index: 4 ms)."""

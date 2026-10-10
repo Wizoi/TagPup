@@ -5,8 +5,7 @@ reloader drops the folder queue and the identify cache and can orphan an indexer
 a half-made change is what is running. This copies the code into a version folder of
 its own and writes launchers that run that copy, with TAGPUP_HOME set to this checkout
 so that data/ -- the libraries, which hold their own settings -- stays where it is.
-Nothing is copied or expected beside it: config.ini is read only to stamp a library
-that holds no settings yet (tagpup.config). Saving a file here then changes
+Nothing is copied or expected beside it: config.ini is not read. Saving a file here then changes
 nothing that is running. Installing again makes a new version and moves the launchers
 to it; the two before it are kept, to go back to by editing current.txt.
 
@@ -16,7 +15,7 @@ to it; the two before it are kept, to go back to by editing current.txt.
 Start the apps with the launchers it writes: TagPup.cmd and TagTuner.cmd (one server
 for both; the second started opens its page in the running one -- or, when the running
 one is another version, has it finish what it is doing and starts in its place:
-tagpup.launcher), TagPup Runner.cmd,
+tagpup.launcher),
 and TagPup CLI.cmd for indexing and the other CLI commands. It also writes TagPup
 Background.pyw, the always-on process's launcher (tagpup.supervisor), which the Startup
 shortcut scripts/startup.py makes runs: it reads current.txt, so installing again moves
@@ -80,9 +79,13 @@ LAUNCHERS = {
     # --installed: this folder, where scripts/startup.py marks the always-on process chosen.
     "TagPup.cmd": ("tagpup_web.py", '--open tagpup --installed "%~dp0."'),
     "TagTuner.cmd": ("tagpup_web.py", '--open tuner --installed "%~dp0."'),
-    "TagPup Runner.cmd": ("runner.py", ""),
     "TagPup CLI.cmd": ("tagpup_cli.py", ""),
 }
+
+#: Launchers an earlier install wrote for a program that is gone (the Tk runner, retired
+#: 2026-10-09). The next install removes one, but only a file this installer wrote.
+RETIRED_LAUNCHERS = ("TagPup Runner.cmd",)
+WRITTEN_BY = "rem Written by scripts/install_app.py."
 
 LAUNCHER = (
     "@echo off\r\n"
@@ -307,6 +310,26 @@ def leave_what_is_open(destination, removing, say):
     return [name for name in removing if name not in held]
 
 
+def retire_launcher(destination, name, say=print):
+    """Remove the launcher `name` a past install wrote and nothing starts now. A file of that
+    name this installer did not write (no WRITTEN_BY line) is the owner's and stays."""
+    path = os.path.join(destination, name)
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            written_here = WRITTEN_BY in handle.read()
+        if not written_here:
+            say("left alone   %s (not written by this installer)" % path)
+            return False
+        os.remove(path)
+    except OSError as error:
+        say("could not remove %s: %s" % (path, error))
+        return False
+    say("removed      %s (the program it started is gone)" % path)
+    return True
+
+
 def install(destination, home, python, name=None, apply=False, say=print, shortcuts_in=(), hand_over=False):
     """Install a new version, and make shortcuts to the apps in each folder of
     `shortcuts_in`. Returns (the version's name, the versions removed). `hand_over`: what
@@ -353,6 +376,8 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
                            % (version, ", ".join(sorted(set(missing))), previous))
     with open(os.path.join(folder, "VERSION.txt"), "w", encoding="utf-8") as handle:
         handle.write("%s\nfrom %s\n" % (name, REPO_ROOT))
+    for old_launcher in RETIRED_LAUNCHERS:
+        retire_launcher(destination, old_launcher, say)
     for launcher, (script, args) in LAUNCHERS.items():
         # newline="" keeps the CRLFs the template already has: cmd.exe wants them.
         with open(os.path.join(destination, launcher), "w", encoding="utf-8", newline="") as handle:

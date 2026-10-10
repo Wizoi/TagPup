@@ -60,7 +60,7 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
     # The server runs with the sandbox as its TAGPUP_HOME, so library names resolve to
     # its data/. The copy keeps the library's settings -- suggestions made with a
     # different model would be measuring something else; a library not stamped yet is
-    # stamped below with what stamping it at home would give.
+    # stamped below with the defaults, as it would be at home.
     target = os.path.join(sandbox, "data", "measured.db")
     started = time.time()
     source = tagpup_db.connect(tagpup_db.readonly_uri(source_db), uri=True)
@@ -72,7 +72,7 @@ def build_sandbox(source_db, photos, sandbox, copies, code_root=REPO_ROOT):
         source.close()
     home = runtimes.peek_settings(Library(source_db))
     if not home.stamped:
-        library_settings.stamp(Library(target), home.values)
+        library_settings.stamp(Library(target))
     print("  copied %.1f GB in %.1fs" % (os.path.getsize(target) / 1e9, time.time() - started))
     # A copy that holds roots points, through the machine's map, at the real photos: the sandbox
     # gets a map of its own, placing each root inside it.

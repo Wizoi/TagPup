@@ -2,10 +2,10 @@
 records one change in the library's journal, copies nothing, writes what the plan said
 only while every row is what the plan read, and counts what the writes changed.
 
-tagpup.services.maintenance is what the maintenance scripts and the MCP server's write
-tools both run on (docs/ARCHITECTURE.md, phase 7). Each operation is tested here through
-its service: removing duplicate faces, merging duplicate person tags, and re-reading
-rows from their files. The scripts' own tests check what they print.
+tagpup.services.maintenance is what the CLI and the MCP server's write tools run on
+(docs/ARCHITECTURE.md, phase 7). Each operation is tested here through its service:
+removing duplicate faces and merging duplicate person tags (re-reading rows from their
+files: tests/test_refresh_rows.py).
 """
 import json
 import os
@@ -19,10 +19,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import duplicate_faces, maintenance, person_tags, refresh_rows  # noqa: E402
+from tagpup.services import duplicate_faces, maintenance, person_tags  # noqa: E402
 from tagpup.store import db, journal, schema  # noqa: E402
 from face_rows import add_face  # noqa: E402
-import test_refresh_rows_from_files as refresh_fixture  # noqa: E402
 
 PHOTO = r"D:\Pictures\Regatta\start.jpg"
 OTHER = r"D:\Pictures\Regatta\finish.jpg"
@@ -291,82 +290,6 @@ class MergeDuplicatePersonTags(LibraryCase):
         self.assertIn("no tag_taxonomy table", result.refused)
         self.assertIsNone(result.details["change"])
 
-
-class RefreshRows(refresh_fixture.RefreshRowsFromFiles):
-    """The refresh, called as the MCP server calls it. Inherits the script's tests too."""
-
-    def refresh(self, **kwargs):
-        from tagpup.files.metadata import MetadataExtractor
-        self.read = []
-        with mock.patch.object(MetadataExtractor, "batch_read", autospec=True,
-                               side_effect=self.fake_batch_read):
-            return refresh_rows.refresh_rows(Library(self.db), "exiftool.exe", **kwargs)
-
-    def backups(self):
-        folder = Library(self.db).backups
-        return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
-
-    def ids(self, *names):
-        conn = db.connect(db.readonly_uri(self.db), uri=True)
-        try:
-            return sorted(conn.execute("SELECT id FROM photos WHERE path = ?", (self.files[n],)).fetchone()[0]
-                          for n in names)
-        finally:
-            conn.close()
-
-    def test_a_dry_run_plans_by_id_and_changes_nothing(self):
-        before = self.rows()
-        result = self.refresh()
-        self.assertEqual(before, self.rows())
-        self.assertEqual([], self.backups())
-        self.assertEqual((5, True, True), (result.details["rehearsal"]["rows"], result.details["rehearsal"]["exact"],
-                                           result.details["rehearsal"]["derived_exact"]))
-        self.assertEqual(self.ids("garbled", "stale_keywords", "stale_stat", "never_read"),
-                         sorted(result.details["ids"]["to_write"]))
-        self.assertEqual(self.ids("twice"), result.details["ids"]["captions_only"])
-        self.assertEqual((5, 0), (result.attempted, result.changed))
-
-    def test_an_apply_records_a_change_and_counts_rows_changed(self):
-        result = self.refresh(apply=True)
-        self.assertEqual([], self.backups())
-        self.assertIsInstance(result.details["change"], int)
-        self.assertEqual((5, 5), (result.attempted, result.changed))
-        self.assertEqual({"from_files": 4, "captions": 1}, result.details["changed"])
-        self.assertEqual([], result.skipped)
-
-    def test_the_librarys_people_are_read_once_a_run_not_once_a_photo(self):
-        # The script read the tree's people again for every batch and every photo read,
-        # each on a connection of its own. Through the script, so the old one is measured
-        # the same way.
-        from tagpup.store import taxonomy
-        with mock.patch.object(taxonomy, "people_vocabulary", wraps=taxonomy.people_vocabulary) as read:
-            self.run_script()
-        self.assertEqual(4, len(self.read), "the fixture has four files to read")
-        self.assertLessEqual(read.call_count, 2)
-
-    def test_a_row_saved_after_the_read_is_skipped_by_id_and_the_rest_written(self):
-        real = self.fake_batch_read
-
-        def read_then_the_app_saves(extractor, paths, people=None):
-            records = real(extractor, paths, people)
-            self_conn = db.connect(self.db)
-            self_conn.execute("UPDATE photos SET mtime = 2000000.0 WHERE path = ?", (self.files["stale_stat"],))
-            self_conn.commit()
-            self_conn.close()
-            return records
-
-        self.fake_batch_read = read_then_the_app_saves
-        before = self.rows()
-        result = self.refresh(apply=True)
-        # The saved row is skipped, by id, and keeps its save; the other four are written
-        # (the whole change was refused, and a second run read every file again). A
-        # second run reads the skipped one again.
-        self.assertEqual((5, 4, None), (result.attempted, result.changed, result.refused))
-        self.assertEqual([("photos %d" % self.ids("stale_stat")[0], "not what the plan read: mtime changed")],
-                         result.skipped)
-        self.assertEqual(2000000.0, self.rows()[self.files["stale_stat"]][3], "the app's save is kept")
-        for name in ("garbled", "stale_keywords", "twice"):
-            self.assertNotEqual(before[self.files[name]], self.rows()[self.files[name]], name)
 
 
 if __name__ == "__main__":

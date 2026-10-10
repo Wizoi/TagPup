@@ -15,7 +15,7 @@ faces deliberately excluded. The newer one is a bare re-detection. So the rule i
 whichever row knows something, and a group whose copies disagree about a name is left
 alone for a person to look at rather than resolved by guesswork.
 
-scripts/dedupe_faces.py and the MCP server's tool both call `dedupe_faces`, on the
+The MCP server's tool calls `dedupe_faces`, on the
 maintenance scaffold (tagpup.services.maintenance).
 """
 import collections

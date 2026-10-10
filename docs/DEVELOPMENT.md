@@ -30,7 +30,7 @@ through the CLI where no reloader can reach them.
 
 **Run the apps from an installed copy** to stop that. `scripts/install_app.py` (a dry
 run; `--apply` to install) copies the code into `%LOCALAPPDATA%\TagPup\versions\<when>-<commit>`
-and writes `TagPup.cmd`, `TagTuner.cmd`, `TagPup Runner.cmd` and `TagPup CLI.cmd` beside
+and writes `TagPup.cmd`, `TagTuner.cmd` and `TagPup CLI.cmd` beside
 it. They run that copy with `TAGPUP_HOME` set to the checkout, so `data/` -- the
 libraries, which hold their own settings -- stays where it is. Saving a file in the repository changes nothing they are
 running. To update, install again; the two versions before stay, and `current.txt`
@@ -149,8 +149,8 @@ A test that makes a library, or needs settings, logs or anything else a library 
 beside it, takes a home of its own from `tests/own_home.py`: `own_home.for_class(cls)`
 in `setUpClass`, `own_home.for_test(self)` in a test, then `home.library("x.db")`.
 Without one, the servers create libraries in the checkout's `data/`, where the owner's
-are, and stamp them from the checkout's `config.ini`. A test that needs an old
-`config.ini` to stamp from writes it with `home.write_old_config({...})`. A server a test starts holds its library
+are, and read the checkout's `data/`. A test that shows an old `config.ini` is ignored
+writes it with `home.write_old_config({...})`. A server a test starts holds its library
 until the process ends, so a home it still holds is deleted once the process has gone.
 
 ## Traps
@@ -255,9 +255,6 @@ lists every place that may still copy a whole library, and why.
 | script | what it does |
 | --- | --- |
 | `scripts/verify_workflow.py` | End-to-end pass over both apps against a throwaway copy of a database. |
-| `scripts/refresh_rows_from_files.py` | Re-reads the photos whose rows no longer describe their files, and fixes rows that list a caption twice. `tagpup.services.refresh_rows`; MCP tool `refresh_rows`. Planning reads the files, so a dry run is slow. |
-| `scripts/merge_duplicate_person_tags.py` | Removes a bare person tag where a `People/<name>` already names them. `tagpup.services.person_tags`; MCP tool `merge_duplicate_person_tags`. |
-| `scripts/dedupe_faces.py` | Removes face rows that copy another face of the same photo and know no more than it; disputed copies are left for a person. `tagpup.services.duplicate_faces`; MCP tool `dedupe_faces`. |
 | `scripts/backfill_document_ids.py` | Gives already-indexed photos the identity new ones get. Resumable. |
 | `scripts/relink_renamed_photos.py` | Re-points index rows at photos renamed under them, by identity then `PreservedFileName`. |
 

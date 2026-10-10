@@ -29,13 +29,6 @@ def _field(meta, *names):
             yield base, value
 
 
-def preserved_name(meta):
-    """The name a photo had before Smart Rename first renamed it, or None."""
-    for _base, value in _field(meta, "PreservedFileName"):
-        return str(value).strip()
-    return None
-
-
 def caption_for_name(meta):
     """The caption a photo's new name carries: the first of its description, caption
     and title fields to hold one, in the order ExifTool gave them."""

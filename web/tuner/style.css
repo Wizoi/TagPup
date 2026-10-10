@@ -215,14 +215,6 @@ body {
     margin-bottom: 4px;
 }
 
-.photo-subtitle {
-    font-size: 11px;
-    color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
 .photo-badge {
     display: inline-block;
     font-size: 10px;

@@ -3,7 +3,8 @@ plan allows one.
 
 The rule in CLAUDE.md: bulk operations dry-run by default, --apply to write, and back
 up first. Every script here dry-runs; six of them wrote without a backup, among them
-dedupe_faces and relink_renamed_photos, which delete and re-point face rows. Three had
+dedupe_faces and relink_renamed_photos, which delete and re-point face rows (the first is
+now only an MCP tool). Three had
 their own copy of a backup function.
 
 Phase 7.5 (docs/ARCHITECTURE.md) replaced the copy -- 1.4 GB of photo_index for each
@@ -82,7 +83,7 @@ def bulk_scripts():
 
 class EveryBulkScriptRecordsAChange(unittest.TestCase):
     def test_there_are_bulk_scripts_to_check(self):
-        self.assertGreaterEqual(len(list(bulk_scripts())), 5)
+        self.assertGreaterEqual(len(list(bulk_scripts())), 2)   # relink_renamed_photos, backfill_document_ids
 
     def test_each_one_records_a_change_or_may_copy_the_library(self):
         missing = [name for name, source in bulk_scripts()

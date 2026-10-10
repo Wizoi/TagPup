@@ -77,11 +77,6 @@ def new_id():
     return str(uuid.uuid4())
 
 
-def is_id(text):
-    """Is `text` a lowercase UUID, as an entry holds one?"""
-    return bool(text) and re.fullmatch(_UUID.decode(), str(text)) is not None
-
-
 def parse(data):
     """The entries [(library id, folder id)] of a marker's bytes, or None when they are not a
     list of entries (see the module). A library twice is not a list either: which id is its

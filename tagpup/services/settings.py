@@ -1,7 +1,7 @@
 """A library's settings: what it holds, with the defaults filled in, and changing them
 (docs/ARCHITECTURE.md, phase 7.6).
 
-They lived in config.ini, one file for the machine, which nothing in the pages showed:
+They lived in config.ini, one file for the machine (no longer read, by anything), which nothing in the pages showed:
 the CLIP model a library's vectors were made with, the face-detection thresholds,
 Suggest's candidate words, the rename format and the ExifTool program. A library opened
 on another machine, or with the file edited, was read with settings it was not made
@@ -10,8 +10,8 @@ this is their one owner:
 
 - `of` gives a library's settings, every one declared in
   tagpup.core.validation.SETTINGS, a default for any the library does not hold. A
-  library that holds none is stamped first, once: from what config.ini says, if the
-  home has one, else with the defaults.
+  library that holds none (or only some) is given the defaults for the rest; one
+  that holds none is stamped with them first, once.
 - `stamp` writes them all, as one journaled change named for where they came from; a
   new library is stamped with the defaults when it is made (tagpup.services.libraries).
 - `change` writes the ones asked, as a journaled change, so each is in the library's
@@ -23,9 +23,8 @@ this is their one owner:
 - A stamp is a library's first settings: undoing one is refused (STAMPS;
   tagpup.services.journal), as it would leave the library holding none.
 
-The layer below the entry points never reads config.ini: `of` and `read` are handed what
-it says (`config_ini`, a callable returning {key: value}, or None), and only
-tagpup.runtime hands it (tests/test_config_single_owner.py).
+Nothing reads config.ini (tests/test_config_single_owner.py). The owner's file may still
+be on disk; it is ignored, not deleted.
 """
 import os
 from dataclasses import dataclass
@@ -41,7 +40,6 @@ from tagpup.store import settings as store_settings
 DEFAULTS = validation.setting_defaults()
 
 #: The journal's name for each kind of change to the settings.
-FROM_CONFIG = "stamp settings from config.ini"
 WITH_DEFAULTS = "stamp settings with the defaults"
 FROM_REPLACED = "stamp settings from the library it replaced"
 CHANGE = "change settings"
@@ -56,9 +54,13 @@ REREAD_RESIZED = "library.reread_resized_pictures"
 #: undone); nothing sets them on its own (owner, 2026-09-26).
 STAMPED = {key: value for key, value in DEFAULTS.items() if key != ROOTS}
 
+#: A stamp no code makes any more: the live libraries' journals hold one each, so it is
+#: still known as a stamp (and not undone).
+RETIRED_STAMPS = frozenset({"stamp settings from config.ini"})
+
 #: The stamps: a library's first settings, which cannot be undone -- undone, the library
-#: held none, and the next read stamped it again, from config.ini if one was still there.
-STAMPS = frozenset({FROM_CONFIG, WITH_DEFAULTS, FROM_REPLACED})
+#: held none, and the next read stamped it again.
+STAMPS = frozenset({WITH_DEFAULTS, FROM_REPLACED}) | RETIRED_STAMPS
 NOT_UNDONE = "A library's first settings cannot be undone; change them instead."
 
 _TRUE = frozenset({"true", "yes", "on", "1"})
@@ -192,67 +194,51 @@ def _filled(held):
 
 
 def _stamping(found):
-    """What stamping gives, from `found` -- {key: value} config.ini says, or None when
-    the home has none: (values, the keys taken from it, the keys it held a value the
-    validator refuses for, left at their default)."""
-    values, taken, refused = dict(STAMPED), [], []
+    """What stamping gives: the defaults, with those of `found` ({key: value}, or None) that
+    are settings of a library's and that the validator allows."""
+    values = dict(STAMPED)
     for key, value in (found or {}).items():
         if key not in values:
-            continue   # data_dir, default_db: where the libraries are is not a setting
+            continue   # the roots are never stamped; a key that is no setting is nothing
         text = _as_text(value)
-        if validation.problem(validation.setting_kind(key), text):
-            refused.append(key)
-            continue
-        values[key] = text
-        taken.append(key)
-    return values, sorted(taken), sorted(refused)
+        if not validation.problem(validation.setting_kind(key), text):
+            values[key] = text
+    return values
 
 
-def _found(config_ini):
-    return config_ini() if callable(config_ini) else config_ini
-
-
-def read(library, config_ini=None):
-    """The library's settings without writing anything: those it holds, or, for one
-    never stamped -- or not made yet -- what stamping it would give (`stamped` False)."""
+def read(library):
+    """The library's settings without writing anything: those it holds (a default for any
+    it does not), or, for one never stamped -- or not made yet -- the defaults
+    (`stamped` False)."""
     held = store_settings.read_only(library.path) if os.path.exists(library.path) else {}
-    if held:
-        return LibrarySettings(_filled(held), stamped=True)
-    values, _taken, _refused = _stamping(_found(config_ini))
-    return LibrarySettings(_filled(values), stamped=False)
+    return LibrarySettings(_filled(held), stamped=bool(held))
 
 
-def of(library, config_ini=None):
-    """The library's settings, a default for any it does not hold. A library holding
-    none is stamped first (`stamp`), from what `config_ini` says -- a callable returning
-    config.ini's {key: value}, or None when the home has none."""
+def of(library):
+    """The library's settings, a default for any it does not hold. A library holding none
+    is stamped with the defaults first (`stamp`)."""
     held = store_settings.read(library.path)
     if not held:
-        stamp(library, _found(config_ini))
+        stamp(library)
         held = store_settings.read(library.path)
     return LibrarySettings(_filled(held), stamped=bool(held))
 
 
-def stamp(library, found=None, operation=None):
-    """Write every setting to a library that holds none, as one journaled change: from
-    `found` ({key: value}, what config.ini says) where it gives an allowed value, else
-    the default. Named `operation` (one of STAMPS) when given -- FROM_REPLACED for a
-    library made again in place of one deleted, with that one's settings -- else
-    FROM_CONFIG when there was a config.ini, WITH_DEFAULTS when not. A library already
+def stamp(library, found=None, operation=WITH_DEFAULTS):
+    """Write every setting to a library that holds none, as one journaled change: the
+    defaults, but for those `found` ({key: value}: the settings of the library this one
+    replaces) gives an allowed value for. Named `operation` (WITH_DEFAULTS, or
+    FROM_REPLACED for a library made again in place of one deleted). A library already
     stamped, by another process meanwhile say, is left as it is (changed 0)."""
-    values, taken, refused = _stamping(found)
-    if operation is None:
-        operation = FROM_CONFIG if found is not None else WITH_DEFAULTS
-    if operation not in STAMPS:
+    values = _stamping(found)
+    if operation not in STAMPS - RETIRED_STAMPS:
         raise ValueError("%r is not a stamp" % operation)
-    result = Result(attempted=len(values), details={"operation": operation, "from_config": taken,
-                                                    "refused": refused})
+    result = Result(attempted=len(values), details={"operation": operation})
     if store_settings.read(library.path):
         return result
     edits = [journal.insert(store_settings.TABLE, {"key": key, "value": value}) for key, value in values.items()]
     try:
-        applied = journal.apply(library.path, operation, edits, summary={
-            "settings": len(values), "from_config": taken, "refused": refused})
+        applied = journal.apply(library.path, operation, edits, summary={"settings": len(values)})
     except journal.Refusal:
         # Another process stamped it between the read and the write: its stamp stands.
         return result

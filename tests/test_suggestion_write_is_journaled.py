@@ -1,4 +1,4 @@
-"""The CLI's `write` of a suggestions file is one change of photo files, which undo
+"""The write of suggested tags is one change of photo files, which undo
 reverses (docs/findings.md, #266).
 
 It wrote each photo through its own ExifTool session with no record of what the files
@@ -7,30 +7,24 @@ beside each file. It now goes through the journal the page's bulk writes use
 (tagpup.services.file_changes). Real ExifTool, on JPEGs made here; the rows seeded as
 the indexer stores them.
 """
-import json
 import os
 import sys
 import unittest
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_file_journal import EXIFTOOL, FilesCase, field_of, keywords_of  # noqa: E402
 
-from tagpup_cli import write_suggestions_file  # noqa: E402
+from tagpup.services import tagging  # noqa: E402
 
 
-class TheClisWrite(FilesCase):
+class TheWrite(FilesCase):
     def setUp(self):
         super().setUp()
         self.a, self.b = self.make("a.jpg"), self.make("b.jpg", ["Beach", "Relay"])
-        self.suggestions = os.path.join(self.home.root, "suggestions.json")
-        with open(self.suggestions, "w", encoding="utf-8") as handle:
-            json.dump([{"path": path, "suggested_tags": [{"tag": "Activity/Rowing", "score": 0.9}]}
-                       for path in (self.a, self.b)], handle)
 
     def write(self):
-        with mock.patch("builtins.input", return_value="YES"):
-            return write_suggestions_file(self.suggestions, self.library.path, EXIFTOOL, live=True)
+        return not tagging.write_suggestions(
+            self.library, [(path, ["Activity/Rowing"], "") for path in (self.a, self.b)], EXIFTOOL).errors
 
     def test_is_a_change_that_undo_reverses(self):
         captions = {path: field_of(path, "XMP:Description") for path in (self.a, self.b)}
@@ -53,19 +47,14 @@ class TheClisWrite(FilesCase):
 
     def test_a_photo_found_damaged_is_skipped_and_said(self):
         # Nothing is written into a photo found damaged (tagpup.services.libraries.
-        # leave_out_damaged): skipped, returned with why, and the CLI says so.
-        import contextlib
-        import io
-        from tagpup.services import damaged_photos, tagging
+        # leave_out_damaged): skipped, and returned with why.
+        from tagpup.services import damaged_photos
         stat = os.stat(self.b)
         damaged_photos.remember(self.library, [(self.b, (stat.st_mtime, stat.st_size), damaged_photos.INCOMPLETE,
                                                 "the last 70000 bytes are zeros", 70000)])
-        said = io.StringIO()
-        with contextlib.redirect_stdout(said):
-            self.assertTrue(self.write())
+        self.assertTrue(self.write())
         self.assertEqual(["Beach", "Relay"], keywords_of(self.b))
         self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(self.a))
-        self.assertIn("Skipped 1 photo(s) found damaged", said.getvalue())
         result = tagging.write_suggestions(self.library, [(self.b, ["Activity/Rowing"], "")], EXIFTOOL)
         self.assertEqual(1, result.details["skipped_damaged"])
         self.assertEqual([self.b], [path for path, _why in result.skipped])

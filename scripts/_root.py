@@ -1,7 +1,7 @@
 """Puts the repository root on sys.path, so code in scripts/ can import tagpup.
 
 Everything in scripts/ is imported with scripts/ itself on sys.path, and a script run
-directly (`python scripts/refresh_rows_from_files.py`) has only that. A module here
+directly (`python scripts/relink_renamed_photos.py`) has only that. A module here
 that imports tagpup does `import _root` first; tests/test_layers.py fails one that
 does not, since it would work or not depending on what happened to be imported before.
 """

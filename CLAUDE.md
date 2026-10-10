@@ -31,6 +31,12 @@ node --test tests/frontend/*.test.mjs
 .venv/Scripts/python.exe -m ruff check .
 ```
 
+`tools/run_tests.py --fast` runs only the fast tier (`tests/tiers.py`: scenario tests, which run a
+whole job, a crash or two writers at once, and slow ones, the hand-over and the 68,000-photo library,
+are left out) for the loop while editing. The default is every tier, and that is the commit gate. A
+file that fails is run once more alone: if it passes, the report says "flaky: passed alone" and keeps
+the first output; if it fails twice it fails.
+
 The linter runs inside the Python suite (`tests/test_lint.py`), so a finding fails the
 build. `ruff.toml` selects rules that catch defects, not style; if one is wrong for
 this codebase, add it there with a comment saying why rather than working around it.
@@ -97,7 +103,8 @@ months while reporting success. In the pages, `pathKey` / `samePath` (`web/commo
 words, the rename format and ExifTool's path are each library's own (`settings`, read
 through `tagpup.services.settings`, changed only by a journaled change). An entry point
 reads them from the library it was given (`tagpup.runtime.library_settings`); nothing
-reads `config.ini` but the one-time stamping of a library that has none. `tagpup/config.py`
+reads `config.ini`, not even to stamp a library that has no settings (that gets the
+defaults; an old file in a home is ignored, left on disk, never written). `tagpup/config.py`
 owns only where the libraries are (`TAGPUP_HOME/data`) and where ExifTool is found by
 default. 26 places once read `config.ini` and disagreed on four things. A test that
 selects or creates a library runs with a `TAGPUP_HOME` of its own.

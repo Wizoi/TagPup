@@ -517,19 +517,6 @@ def reinstate(conn, prior):
     return done
 
 
-def named_by_id(conn, face_ids):
-    """{face id: Ref} of the faces among `face_ids` that carry a person and are not excluded: who a job that unnames or
-    rules out faces in chunks keeps from its start (a chunk run again after a stop finds them gone)."""
-    found = {}
-    for chunk in _chunks(face_ids):
-        # By the primary key, the rest decided here: with the name and the exclusion in the WHERE the planner scans
-        # idx_faces_identify (every named face) for each chunk.
-        found.update((face_id, Ref(tag_id, name)) for face_id, tag_id, name, excluded in conn.execute(
-            "SELECT f.id, f.tag_id, f.name, f.excluded FROM faces f WHERE f." + _in(chunk), chunk)
-            if name is not None and not excluded)
-    return found
-
-
 def name(conn, face_ids, person):
     """Name faces as a person's decision (name_source 'manual'), which re-clustering does
     not revise. `person` is an id, a tag path or a name (person_ids.target: refused when the id is stale, the name two
@@ -540,12 +527,6 @@ def name(conn, face_ids, person):
         "UPDATE faces SET " + _assign(conn) + ", name_source = 'manual' WHERE " + _in(chunk) + " AND excluded = 0",
         list(given) + chunk).rowcount for chunk in _chunks(face_ids))
     return _rebuilt(conn, _photos_of(conn, face_ids), changed, known=known)
-
-
-def decided_by_hand(conn, face_id):
-    """Did a person decide this face's name -- or that it is nobody (name_source 'manual')?"""
-    row = conn.execute("SELECT name_source FROM faces WHERE id = ?", (face_id,)).fetchone()
-    return bool(row) and row[0] == "manual"
 
 
 def confirm(conn, face_id):

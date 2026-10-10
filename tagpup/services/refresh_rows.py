@@ -24,7 +24,7 @@ people, captions, raw_metadata, mtime, size, and the DocumentID where the row ha
 The files are only read, never written (no DocumentID is minted); embeddings and faces
 are untouched. Rows that only list a caption more than once are fixed from the row.
 
-scripts/refresh_rows_from_files.py and the MCP server's tool both call `refresh_rows`,
+The MCP server's tool calls `refresh_rows`,
 on the maintenance scaffold (tagpup.services.maintenance). Planning reads the files, so
 a dry run takes as long as the reading.
 """

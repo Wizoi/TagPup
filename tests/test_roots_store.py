@@ -24,7 +24,7 @@ import roots_library as rl  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import machine, paths  # noqa: E402
 from tagpup.store import db, faces, folders, inspection, journal  # noqa: E402
-from tagpup.store import added_folders, damaged_files, embeddings, file_journal, people  # noqa: E402
+from tagpup.store import added_folders, damaged_files, embeddings, file_journal  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 from tagpup.store import settings as store_settings  # noqa: E402
@@ -144,7 +144,7 @@ class EveryReadAnswersNative(TwoLibraries):
                     store_photos.stored_spelling(conn, path), store_photos.row_as_recorded(conn, path) is not None,
                     faces.count_for_photo(conn, side.real[0]), faces.counts_on(conn, side.real[0]),
                     inspection.ids_of_stored(conn, [path]), inspection.ids_of_files(conn, [path, side.real[0]]),
-                    people.of_photo(conn, side.real[0]), folders.holds(conn, os.path.dirname(path)),
+                    folders.holds(conn, os.path.dirname(path)),
                     embeddings.stamps_by_path(conn, [path]), store_photos.count_under(conn, side.pictures))
         self.same(ask)
 
@@ -649,7 +649,7 @@ class TheMapProviderIsNeverForgotten(unittest.TestCase):
         self.assertEqual("10", count)
 
     def test_each_script_that_opens_a_library_reads_a_rooted_one(self):
-        for script in ("relink_renamed_photos", "dedupe_faces", "merge_duplicate_person_tags", "backfill_document_ids"):
+        for script in ("relink_renamed_photos", "backfill_document_ids"):
             with self.subTest(script=script):
                 _before, count = self.read_in_a_fresh_interpreter(script)
                 self.assertEqual("10", count)

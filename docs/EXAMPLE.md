@@ -14,12 +14,9 @@ Here is a quick reference table of the most common commands you will use in Tagp
 
 | Workflow / Task | Command | Description |
 | :--- | :--- | :--- |
-| **Launch Dashboard** | `python runner.py` | Starts the graphical GUI dashboard launcher. |
 | **Index Library** | `run.bat index "path/to/photos"` | Scans photos, extracts CLIP vectors, and detects faces in a single pass. |
 | **Cluster Faces** | `run.bat cluster-faces` | Performs DBSCAN clustering on face embeddings and resolves names. |
-| **Suggest Tags** | `run.bat suggest "path/to/untagged"` | Analyzes untagged photos and writes `data/<library>_suggestions.json` beside the library. |
-| **Preview Suggests** | `run.bat write data\photo_index_suggestions.json` | Displays a table preview of tags proposed for writing. |
-| **Apply Tags (Live)** | `run.bat write data\photo_index_suggestions.json -Live` | Appends flat/hierarchical tags and captions directly to photo files. |
+| **Suggest Tags** | `run.bat suggest "path/to/untagged"` | Shows a table of the tags TagPup would suggest for the photos of a folder; writes nothing. |
 | **Semantic Search** | `run.bat search "your text query"` | Finds the top 10 visually closest matches to a natural language query. |
 | **Start TagTuner UI** | `python tagpup_web.py --open tuner` | Launches the local server and web browser client for manual face matching. |
 | **Index Stats** | `run.bat stats` | Displays overall database metrics, top tags, and resolved people. |
@@ -115,31 +112,12 @@ Now, point the tool at your directory of newly imported, untagged photos.
 # Suggest tags for the untagged directory
 run.bat suggest "D:\Photos\2026_Imports"
 ```
-- **What happens**: The tool generates a visual embedding for each new image, detects any faces and matches them against the database face index (applying a 1.0 confidence boost on hits), retrieves nearest visual neighbors, and writes the results beside the library, to `data\photo_index_suggestions.json` for `photo_index` (`--output` to put them elsewhere).
+- **What happens**: The tool generates a visual embedding for each new image, detects any faces and matches them against the database face index (applying a 1.0 confidence boost on hits), retrieves nearest visual neighbors, and prints a table of the tags it would suggest. Nothing is written.
 
 ---
 
 ### Scenario D: Reviewing and Applying Suggestions
-Always preview the suggestions before modifying your images.
-
-#### 1. Dry Run / Preview (Safe)
-```cmd
-run.bat write data\photo_index_suggestions.json
-```
-Prints a summary table showing which tags will be added to which files. No files are modified yet.
-
-#### 2. Live Write (Apply tags)
-Once you are satisfied, apply the tags to your images:
-```cmd
-run.bat write data\photo_index_suggestions.json -Live -MinScore 0.60
-```
-- **What happens**: 
-  - Filters out suggestions with a score lower than `0.60`.
-  - Prompts you to type `YES` to confirm.
-  - Appends flat tags to `XMP:Subject` and `IPTC:Keywords` (including C# XPKeywords).
-  - Appends hierarchical paths to `XMP:HierarchicalSubject`.
-  - Generates tags-based captions and writes them to Description/XPComment fields.
-  - Records the write as one change; `run.bat undo <change>` shows what undoing it would put back, and `--apply` does.
+Suggest and apply tags in TagPup's pages: open a folder, run **Suggest**, review what it offers, and apply. The write is one change of the library's History; `run.bat undo <change>` shows what undoing it would put back, and `--apply` does.
 
 ---
 

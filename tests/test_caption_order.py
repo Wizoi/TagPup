@@ -261,15 +261,6 @@ class AForgedToken(unittest.TestCase):
                 with self.assertRaises(Refused):
                     library_view.view(vl.library, "all", after=token, limit=1, order=order)
 
-    def test_the_route_answers_400(self):
-        app, home = web_client.app_for(self, "tagpup")
-        vl = ViewLibrary(self, "library", home=home)
-        vl.photo("A", "a.jpg", caption="Bay")
-        raw = '["caption",0,"x%sud800",1]' % chr(92)
-        token = base64.urlsafe_b64encode(raw.encode("ascii")).decode("ascii").rstrip("=")
-        reply = app.test_client().get("/library/api/library/view", query_string={"kind": "all", "order": "caption", "after": token})
-        self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
-
 
 class TheRoute(unittest.TestCase):
     def test_the_ids_route_takes_the_caption_orders(self):

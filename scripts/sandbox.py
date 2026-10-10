@@ -1,6 +1,6 @@
 """What the measurement scripts share: a private copy of a library, a free port, a clean-up that tells.
 
-scripts/measure_identify_faces.py, measure_suggest_folder.py and measure_grid.py each run the app in a
+scripts/measure_identify_faces.py, measure_suggest_folder.py and measure_select_list.py each run the app in a
 sandbox: the library copied through SQLite's backup API under a temporary TAGPUP_HOME, the library's roots
 placed at empty sandbox folders by the sandbox's own machine map, a server on a free port, all deleted
 afterwards. The sandbox is a home of its own (`environment`, `enter`: tagpup.config.own_home_environment, what

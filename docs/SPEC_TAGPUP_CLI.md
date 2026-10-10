@@ -22,13 +22,7 @@ The tool is built as a modular Python application with script wrappers. It relie
                        [TagTaxonomy]             ---> [TagSuggester] (Face Match)
                                |                              | (Aggregate & Score)
                                v                              v
-                       [photo_index.db: tree]   ---> [photo_index_suggestions.json]
-                                                              |
-                                                              v
-                                                      [write_suggestions (ExifTool)]
-                                                              |
-                                                              v
-                                                      [Tagged Image]
+                       [photo_index.db: tree]   ---> [a table of suggested tags (a preview)]
 ```
 
 - **`tagpup_cli.py` (CLI entry point)**: Unified Command Line Interface using `click` and `rich`.
@@ -40,7 +34,7 @@ The tool is built as a modular Python application with script wrappers. It relie
 - **`tagpup/services/identities.py` (Identity Clustering)**: Performs density-based clustering (**DBSCAN**) of a library's faces to resolve and assign names to visual identities based on co-occurrence tagging patterns, by the rules in `tagpup/core/clustering.py`.
 - **`tagpup/store/taxonomy.py` (Hierarchical Tag Taxonomy)**: Builds and updates a tree of all known hierarchical paths (e.g. `Family/Immediate/John Doe`). Resolves leaf tags to their ancestors.
 - **`tagpup/services/suggester.py` (Tag Suggestion Engine)**: Scores tags using cosine similarity of nearest visual neighbors and boosts matched tags if specific face embeddings are recognized in the target image. It is given its models.
-- **`tagpup/services/tagging.py` (`suggestion_writes`, `write_suggestions`)**: What `write` writes -- the tags at or above the score, and the caption made from them (`tagpup/core/suggesting.py`) -- written back to photos using ExifTool as one change of photo files (`tagpup/services/file_changes.py`), each file recorded in the index as it is written; `undo <change>` puts the files back. No `_original` copies are made. The CLI reads the suggestions file, shows the preview and asks for confirmation.
+- **`tagpup/services/tagging.py` (`write_suggestions`)**: Writes (path, tags, caption) back to photos using ExifTool as one change of photo files (`tagpup/services/file_changes.py`), each file recorded in the index as it is written; `undo <change>` puts the files back. No `_original` copies are made. No CLI command calls it since the JSON suggest/write flow was retired (2026-10-09); TagPup's pages write through the same journal.
 
 ---
 
@@ -132,8 +126,8 @@ Tags and captions are written back using ExifTool:
 
   This matters because indexing runs repeatedly: the kr-track taxonomy had been cleaned
   from 51 such duplicates to zero once before, and the next index run recreated them
-  all. `scripts/merge_duplicate_person_tags.py` merges any that already exist (dry-run
-  by default, `--apply` to write); it removed 53 across 129 photos here.
+  all. The MCP tool `merge_duplicate_person_tags` merges any that already exist (a rehearsal
+  unless `apply`); it removed 53 across 129 photos here.
 - **Per-Photo Locking**:A photo is locked for the duration of its processing by creating a
   file in `data/locks/`, named for the MD5 of its absolute path -- exclusive creation makes this
   atomic between processes. The lock records the holding process's pid, host and acquisition
@@ -220,22 +214,12 @@ Scans and indexes a photo library recursively: one or more directories, in one r
   - `--no-subfolders`: Only the photos directly in each DIRECTORY (`images.photos_in`): what sync queues for a folder the library holds, whose subfolders may be folders to review or ignored.
 
 #### 2. `suggest`
-Analyzes untagged photos and generates tag recommendations.
+Shows the tags TagPup would suggest for the photos of a folder, as a table. Nothing is written: no file, and no suggestions file (`--output` and the `write` command that read one were retired 2026-10-09); TagPup's Suggest keeps a folder's suggestions in the library and applies them.
 - **Usage**: `run.bat [global-options] suggest <DIRECTORY>`
 - **Options**:
   - `--k INTEGER`: Number of nearest neighbors to consider (default: `15`).
   - `--min-sim FLOAT`: Cosine similarity cutoff (default: `0.35`).
-  - `--output TEXT`: Path to write the output suggestions JSON file (default: `<library>_suggestions.json` beside the library, e.g. `data/photo_index_suggestions.json`; never the working folder).
   - `--add`: Add DIRECTORY to the library first when the library does not hold every folder of photos under it: the folder is recorded as added, as TagPup's Add does (`index` then reads its photos). Without it such a folder is refused, exit code 1, with a message naming the folder and the library: Suggest records faces and vectors on each photo's row, and a row makes its folder the library's -- kept in step, watched, its new files indexed (`tagpup.services.libraries.not_in`).
-
-#### 3. `write`
-Refused, exit code 1 and nothing written, when the library does not hold the folder of a photo the file names (`tagpup.services.libraries.refuse_writes`): "<folder> is not in <library>. Add it to <library> first."
-Writes suggested tags and descriptions back to photo file metadata using ExifTool.
-- **Usage**: `run.bat [global-options] write <SUGGESTIONS_FILE>`
-- **Options**:
-  - `-Live`: Write tags to files for real (actually modifies image files on disk).
-  - `-MinScore FLOAT`: Write tags at or above this score (default: `0.60`, `tagpup.core.suggesting.OFFER_A_TAG`, the value TagPup shows a tag from).
-  - `--nobackup`: Kept for scripts that pass it; a write makes no `_original` copies. It is recorded as one change, which `undo` reverses.
 
 #### 4. `search`
 Semantic natural language query against indexed visual vectors.
@@ -337,9 +321,6 @@ Puts on a photo the people its faces name and its keywords do not (`tagpup.servi
 
 ### `thumbs warm [--folder FOLDER] [--limit N] [--apply]`
 Makes the library's thumbnails ahead of the first time each is asked for (`tagpup.services.thumbnails.warm`; ARCHITECTURE.md, phase 9a-2): a 300 px JPEG of each photo, kept under `cache/<library>/thumbs` beside the library, which the library views show instead of decoding every photo's file again. A dry run unless `--apply`: it reads the library and each file's size and modified time -- never the picture -- and says how many photos already have a thumbnail for their file as it is now, how many need one and about how much they will take (the average entry already kept, or 30 KB when none is), how many have no file there, how many are damaged (recorded so, or found not to decode: they are not decoded again until their file changes, and nothing is kept for them), and how many could not be reached (a share away). It writes nothing, not even the cache folder. With `--apply` it makes them, four at a time, and prints its progress after each 500 photos; a library behind this version's schema is brought up to date first, and the thumbnails of photos the library no longer holds (a restore, a delete outside TagPup) are deleted. It can be stopped (Ctrl+C) and run again: every thumbnail is written whole or not at all, what was made is found there, and the run goes on from it. `--limit N` stops after making N, so a large library can be filled in parts. `--folder` limits it to the photos under that folder. The cache is not bounded (the owner's decision: 1.5 to 3 GB for photo_index) and every entry can be made again; a photo that leaves the library takes its thumbnail with it. Exit status 1 when the library holds a root this machine does not place, or when the cache folder cannot be written (the thumbnails were made and not kept: it says so).
-
-### `export-tree OUTPUT`
-Writes the library's tag tree to OUTPUT as JSON (`{"paths": [...]}`): a copy to keep or read. The tree lives in the library; nothing reads this file back.
 
 ### `jobs`
 Lists each recurring job for the library `--db` names, or for every library in the data folder: its period, why it is scheduled (`safety`, `retention`, `catch-up`: only what no event announces is), when it last ran, how that run ended (`running`, `done`, `failed`, `abandoned`), what it changed as counts, and when it is due next. The runs are recorded in each library (`job_runs`). Only the web server -- the always-on process -- runs what is due, looking every ten minutes; the CLI runs a job only when told to, with `jobs run`, and the MCP server never. A job is due a period after its last run that ended started -- an hour sooner for a period of a day or more, since the server looks every ten minutes; an hour after a failed one -- so a missed period runs once. A library that has not had this version's migrations is left alone (`behind`) until an app opens it: running a job never migrates a library.

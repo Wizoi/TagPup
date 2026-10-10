@@ -53,7 +53,7 @@ class WhatAnInstallIs(InstallCase):
         name, _ = self.install()
         folder = os.path.join(self.dest, "versions", name)
         for part in ("scripts", "tagpup", os.path.join("web", "tagpup"), os.path.join("web", "tuner"), "tagpup_web.py",
-                     "tagpup_cli.py", "runner.py", "VERSION.txt"):
+                     "tagpup_cli.py", "VERSION.txt"):
             self.assertTrue(os.path.exists(os.path.join(folder, part)), part)
         # The libraries and the settings stay in the home.
         self.assertFalse(os.path.exists(os.path.join(folder, "data")))
@@ -72,6 +72,31 @@ class WhatAnInstallIs(InstallCase):
             # It installs a new commit first, then reads which version to run.
             self.assertLess(text.index("--if-changed"), text.index("set /p TAGPUP_VERSION"))
             self.assertNotIn("\n", text.replace("\r\n", ""), "cmd.exe wants CRLF throughout")
+
+    def test_the_retired_runner_launcher_is_removed_when_this_installer_wrote_it(self):
+        path = os.path.join(self.dest, "TagPup Runner.cmd")
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write("@echo off\r\nrem Written by scripts/install_app.py. Runs the installed runner.py.\r\n")
+        self.install()
+        self.assertFalse(os.path.exists(path))
+        self.assertNotIn("TagPup Runner.cmd", install_app.LAUNCHERS)
+        self.assertTrue(any("removed" in line and "Runner.cmd" in line for line in self.said), self.said)
+        self.assertTrue(os.path.exists(os.path.join(self.dest, "TagPup.cmd")))
+
+    def test_a_file_of_that_name_the_installer_did_not_write_stays(self):
+        path = os.path.join(self.dest, "TagPup Runner.cmd")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("my own script\n")
+        self.install()
+        self.assertTrue(os.path.exists(path))
+        self.assertTrue(any("left alone" in line for line in self.said), self.said)
+
+    def test_a_dry_run_leaves_the_retired_launcher(self):
+        path = os.path.join(self.dest, "TagPup Runner.cmd")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("rem Written by scripts/install_app.py.\n")
+        self.install(apply=False)
+        self.assertTrue(os.path.exists(path))
 
     def test_a_version_is_named_for_when_and_which_commit(self):
         name = install_app.version_name(datetime.datetime(2026, 9, 23, 20, 5, 0))

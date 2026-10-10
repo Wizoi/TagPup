@@ -3,9 +3,9 @@ what the runtime builds its models from (docs/ARCHITECTURE.md, phase 7.6).
 
 They lived in config.ini, one file for the machine, which nothing in the pages showed:
 a library opened on another machine, or with the file edited, was read with settings
-it was not made with, and nothing said so. Now a new library is stamped with the
-defaults, a library in use is stamped once from the config.ini beside it (so nothing
-changes for it), and a change is a journaled change -- in the library's history, and
+it was not made with, and nothing said so. Now a library is stamped with the defaults
+when it is made, or when it is first opened holding none; a config.ini beside it is never
+read; and a change is a journaled change -- in the library's history, and
 undoable -- refused through the validator.
 
 The libraries here are made as the apps make them (tagpup.services.libraries.create) or
@@ -33,7 +33,8 @@ from tagpup.services import settings  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
 
 #: An old home's config.ini that differs from the defaults in every setting it names --
-#: and names two that are no settings of a library's.
+#: and names two that are no settings of a library's. Nothing reads it; a home holding
+#: one shows that.
 OLD_CONFIG = {
     "paths": {"exiftool": "C:/Tools/exiftool-12.exe", "data_dir": "elsewhere", "default_db": "harbour"},
     "model": {"name": "ViT-B-32", "pretrained": "openai", "preserve_full_frame": "false",
@@ -83,7 +84,7 @@ class Stamping(ALibrary):
         self.assertEqual(stamp["operation"], settings.WITH_DEFAULTS)
         self.assertEqual(stamp["rows"], {"settings": {"insert": len(settings.STAMPED)}})
 
-    def test_a_library_in_use_is_stamped_once_from_config_ini(self):
+    def test_a_library_holding_none_is_stamped_with_the_defaults_whatever_config_ini_says(self):
         self.home.write_old_config(OLD_CONFIG)
         library = self.library_in_use()
         self.assertEqual({}, settings_rows(library))
@@ -91,22 +92,12 @@ class Stamping(ALibrary):
         found = runtimes.library_settings(library)
 
         self.assertTrue(found.stamped)
-        self.assertEqual(found.embedder, {"model_name": "ViT-B-32", "pretrained": "openai",
-                                          "preserve_full_frame": False, "max_aspect_ratio": 2.0,
-                                          "force_image_size": None})
-        self.assertEqual(found.faces, {"min_face_size": 32, "confidence_threshold": 0.9,
-                                       "mtcnn_thresholds": [0.5, 0.6, 0.7]})
-        self.assertEqual(found.candidate_words, ["Kayak", "Lighthouse"])
-        self.assertEqual(found.rename_format, "{index} ~ {grouping} ~ {caption}")
-        self.assertEqual(found.exiftool, "C:/Tools/exiftool-12.exe")
-        self.assertNotIn("paths.data_dir", settings_rows(library), "where the libraries are is not a setting")
+        self.assertEqual(found.values, settings.DEFAULTS)
+        self.assertEqual(settings_rows(library), settings.STAMPED)
         [stamp] = history(library)
-        self.assertEqual(stamp["operation"], settings.FROM_CONFIG)
-        self.assertEqual(stamp["summary"]["refused"], [])
-
-        # Once: the file edited afterwards changes nothing for the library.
-        self.home.write_old_config({"model": {"name": "ViT-L-14"}})
-        self.assertEqual(runtimes.library_settings(library).embedder["model_name"], "ViT-B-32")
+        self.assertEqual(stamp["operation"], settings.WITH_DEFAULTS)
+        # Once: reading again stamps nothing more.
+        runtimes.library_settings(library)
         self.assertEqual(1, len(history(library)))
 
     def test_without_config_ini_a_library_in_use_gets_the_defaults(self):
@@ -114,13 +105,50 @@ class Stamping(ALibrary):
         self.assertEqual(runtimes.library_settings(library).values, settings.DEFAULTS)
         self.assertEqual([settings.WITH_DEFAULTS], [c["operation"] for c in history(library)])
 
-    def test_a_value_the_validator_refuses_is_stamped_as_its_default(self):
-        self.home.write_old_config({"faces": {"min_face_size": "twenty", "confidence_threshold": "0.9"}})
-        library = self.library_in_use()
-        found = runtimes.library_settings(library)
-        self.assertEqual(found["faces.min_face_size"], settings.DEFAULTS["faces.min_face_size"])
-        self.assertEqual(found["faces.confidence_threshold"], "0.9")
-        self.assertEqual(history(library)[0]["summary"]["refused"], ["faces.min_face_size"])
+    def test_a_library_holding_some_settings_gets_the_defaults_for_the_rest_and_is_not_stamped(self):
+        library = self.new_library()
+        change = settings.change(library, {"candidates.tags": "Kayak"}).details["change"]
+        conn = db.connect(library.path)
+        try:
+            conn.execute("DELETE FROM settings WHERE key IN ('renaming.format', 'faces.min_face_size')")
+            conn.commit()
+        finally:
+            conn.close()
+        before = history(library)
+        for read in (runtimes.library_settings, runtimes.peek_settings):
+            found = read(library)
+            self.assertTrue(found.stamped)
+            self.assertEqual(found["candidates.tags"], "Kayak")
+            self.assertEqual(found["renaming.format"], settings.DEFAULTS["renaming.format"])
+            self.assertEqual(found["faces.min_face_size"], settings.DEFAULTS["faces.min_face_size"])
+        self.assertEqual(before, history(library), "no stamp was written for %d" % change)
+        self.assertNotIn("renaming.format", settings_rows(library))
+
+    def test_a_copy_of_a_stamped_library_holds_the_settings_it_had(self):
+        # A snapshot restore, or a library file copied to another name.
+        import shutil
+        library = self.new_library()
+        settings.change(library, {"candidates.tags": "Kayak"})
+        copy = os.path.join(self.home.data, "restored.db")
+        shutil.copyfile(library.path, copy)
+        found = runtimes.library_settings(Library(copy))
+        self.assertEqual(found["candidates.tags"], "Kayak")
+        self.assertEqual(settings_rows(Library(copy)), settings_rows(library))
+        self.assertEqual(history(library), history(Library(copy)))
+
+    def test_two_libraries_are_stamped_each_for_itself(self):
+        first, second = self.library_in_use("one.db"), self.library_in_use("two.db")
+        settings.change(self.new_library("three.db"), {"candidates.tags": "Kayak"})
+        runtimes.library_settings(first)
+        self.assertEqual({}, settings_rows(second))
+        self.assertEqual(runtimes.library_settings(second).values, settings.DEFAULTS)
+
+    def test_a_library_that_is_not_there_reads_as_the_defaults_and_is_not_made(self):
+        missing = Library(self.home.library("nowhere.db"))
+        found = runtimes.peek_settings(missing)
+        self.assertFalse(found.stamped)
+        self.assertEqual(found.values, settings.DEFAULTS)
+        self.assertFalse(os.path.exists(missing.path))
 
     def test_a_look_writes_nothing(self):
         # The MCP server's inspections and the doctor read a library without writing.
@@ -128,9 +156,13 @@ class Stamping(ALibrary):
         library = self.library_in_use()
         found = runtimes.peek_settings(library)
         self.assertFalse(found.stamped)
-        self.assertEqual(found.embedder["model_name"], "ViT-B-32")
+        self.assertEqual(found.values, settings.DEFAULTS)
         self.assertEqual({}, settings_rows(library))
         self.assertEqual([], history(library))
+
+    def test_the_stamp_from_config_ini_that_the_journals_hold_is_still_not_undone(self):
+        # The live libraries' journals each hold one, made before the file stopped being read.
+        self.assertIn("stamp settings from config.ini", settings.STAMPS)
 
     def test_a_library_stamped_meanwhile_is_left_as_it_is(self):
         library = self.new_library()
@@ -498,10 +530,9 @@ class TheLockHoldsForEveryCaller(ALibrary):
 
 class AStampIsNotUndone(ALibrary):
     """Undoing a library's stamp emptied its settings; the next read stamped it again,
-    from config.ini if one was still there. Found in review of f127e47."""
+    again. Found in review of f127e47."""
 
     def test_undoing_a_stamp_is_refused_and_writes_nothing(self):
-        self.home.write_old_config(OLD_CONFIG)
         for library in (self.new_library("harbour.db"), self.library_in_use("quarry.db")):
             runtimes.library_settings(library)
             before = settings_rows(library)
@@ -524,7 +555,7 @@ class AStampIsNotUndone(ALibrary):
 
 class TheCliLooksWithoutStamping(ALibrary):
     """The CLI's read-only commands stamped the library they were asked about -- a
-    migration and a journaled change, from whichever config.ini the home held -- where
+    migration and a journaled change -- where
     the doctor, the MCP tools and the refresh script peek. Found in review of f127e47."""
 
     def cli(self, library, *args):
@@ -534,7 +565,6 @@ class TheCliLooksWithoutStamping(ALibrary):
         return result
 
     def test_stats_list_index_search_and_inspect_stamp_nothing(self):
-        self.home.write_old_config(OLD_CONFIG)
         library = self.library_in_use()
         photo = os.path.join(self.home.root, "jetty.jpg")
         from PIL import Image

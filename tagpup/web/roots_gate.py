@@ -32,7 +32,7 @@ HEADER = "X-TagPup-Roots-Problem"
 
 #: What an /api/ path may be asked while the library's roots are not placed.
 LET_THROUGH = ("/api/roots", "/api/databases", "/api/server", "/api/rules", "/api/apps", "/api/activity",
-               "/api/history", "/api/jobs", "/api/browse-folder")
+               "/api/history", "/api/browse-folder")
 
 #: How long a look is trusted, in seconds.
 FRESH = 1.0

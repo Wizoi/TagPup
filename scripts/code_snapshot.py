@@ -13,7 +13,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FOLDERS = ("scripts", "tagpup", "web")
 
 #: The programs people start, at the top of the repository.
-LAUNCHERS = ("tagpup_web.py", "tagpup_cli.py", "runner.py")
+LAUNCHERS = ("tagpup_web.py", "tagpup_cli.py")
 
 
 def copy_code(destination, code_root=REPO_ROOT, launchers=False):
