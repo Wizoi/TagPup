@@ -248,7 +248,7 @@ services as write tools, and has `history` and `undo` too, each a dry run unless
 The two scripts not on the scaffold still back the database up first through
 `db.backup()`: SQLite's backup API, into `backups/` beside the library
 (`data/backups/` for the libraries in `data/`). Each library keeps its newest five
-(`db.KEEP_BACKUPS`); making a sixth deletes the oldest. `tests/test_bulk_scripts_back_up.py`
+(`db.KEEP_BACKUPS`), none older than 30 days (`db.BACKUP_DAYS`, never the newest); making a sixth deletes the oldest. `tests/test_bulk_scripts_back_up.py`
 lists every place that may still copy a whole library, and why.
 
 | script | what it does |

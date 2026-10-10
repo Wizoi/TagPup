@@ -363,19 +363,30 @@ def compact(db_path):
 #: *(owner, 2026-09-24)*.
 KEEP_BACKUPS = 5
 
+#: ... and none older than this many days: a one-off `before-*` copy of a bulk write is for the
+#: mistake noticed within the month, and 18.7 GB of older ones sat in backups/ because only the
+#: count limited them. The daily, weekly and monthly snapshots (tagpup.store.snapshots) are
+#: kept by their own rule and are not these files. The newest copy is never taken by age: it
+#: is the one just made.
+BACKUP_DAYS = 30
 
-def prune_backups(folder, library_name, keep=KEEP_BACKUPS):
-    """Delete all but the newest `keep` backups of `library_name` in `folder`, with the
-    -wal and -shm files beside them. Newest by the time in the name. Returns the paths
-    deleted."""
+
+def prune_backups(folder, library_name, keep=KEEP_BACKUPS, days=BACKUP_DAYS, now=None):
+    """Delete all but the newest `keep` backups of `library_name` in `folder`, and any
+    but the newest older than `days`, with the -wal and -shm files beside them. Newest by
+    the time in the name. Returns the paths deleted."""
     import os
     import re
 
     stamped = re.compile(r"^%s\.before-.*-(\d{8}_\d{6})\.db$" % re.escape(library_name))
     copies = sorted((match.group(1), name) for name in os.listdir(folder)
                     for match in [stamped.match(name)] if match)
+    cutoff = time.strftime("%Y%m%d_%H%M%S", time.localtime((time.time() if now is None else now) - days * 86400))
+    last = len(copies) - 1
+    doomed = [each for index, each in enumerate(copies)
+              if not keep or index < len(copies) - keep or (each[0] < cutoff and index < last)]
     deleted = []
-    for _stamp, name in copies[:-keep] if keep else copies:
+    for _stamp, name in doomed:
         for suffix in ("", "-wal", "-shm"):
             path = os.path.join(folder, name + suffix)
             if os.path.exists(path):
