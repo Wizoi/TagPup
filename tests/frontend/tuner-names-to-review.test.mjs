@@ -10,9 +10,9 @@ import { loadApp, FakeServer, flush, click, closeAllApps } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
-const SAM_FRIEND = { id: 40, name: "Sam", tag: "Friends/Sam", group: "Friends", shared: true };
-const SAM_PET = { id: 41, name: "Sam", tag: "Pets/Sam", group: "Pets", shared: true };
-const WREN = { id: 52, name: "Wren", tag: "Family/Ingersoll/Wren", group: "", shared: false };
+const SAM_FRIEND = { id: 40, name: "Sam", tag: "Friends/Sam" };
+const SAM_PET = { id: 41, name: "Sam", tag: "Pets/Sam" };
+const WREN = { id: 52, name: "Wren", tag: "Family/Ingersoll/Wren" };
 
 const QUILL = {
   key: "wren quill", name: "Wren Quill", why: "none", faces: 3, faces_by_hand: 2, listed: 2, keyword_photos: 1, rows: 5,
@@ -133,8 +133,8 @@ describe("the dialog", () => {
     assert.match(sam.querySelector(".names-why").textContent, /Two or more people are called this/);
     const options = [...sam.querySelectorAll(".names-person optgroup")].map((group) => ({
       label: group.label, options: [...group.querySelectorAll("option")].map((option) => option.textContent) }));
-    assert.deepEqual(options[0], { label: "It could be", options: ["Sam · Friends", "Sam · Pets"] });
-    assert.ok(options[1].options.includes("Wren"), "everyone else is offered too");
+    assert.deepEqual(options[0], { label: "It could be", options: ["Friends/Sam", "Pets/Sam"] });
+    assert.ok(options[1].options.includes("Family/Ingersoll/Wren"), "everyone else is offered too");
   });
 
   test("nothing is written by opening it", async (t) => {
@@ -219,7 +219,7 @@ describe("linking a name to a person", () => {
     await flush(ctx.window, 10);
     assert.deepEqual(ctx.resolves()[1], { key: "wren quill", action: "link", apply: true, person_id: 52 });
     const result = ctx.document.querySelector("#names-modal .names-result").textContent;
-    assert.match(result, /^Linked Wren Quill to Wren: 3 faces and 2 listed people\./);
+    assert.match(result, /^Linked Wren Quill to Family[/]Ingersoll[/]Wren: 3 faces and 2 listed people\./);
     assert.match(result, /1 photo keeps the old keyword in its file/);
     assert.match(result, /History can undo it \(change 77\)\./);
     assert.deepEqual(ctx.entries().map((entry) => entry.dataset.key), ["sam"], "the entry is gone");

@@ -11,7 +11,7 @@ import { loadApp, FakeServer, flush, click, closeAllApps } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
-const SAM_FRIEND = { id: 40, name: "Sam", tag: "Friends/Sam", group: "Friends", shared: false };
+const SAM_FRIEND = { id: 40, name: "Sam", tag: "Friends/Sam" };
 const TREE = [
   { id: 1, tag: "Friends", parent_id: null, name: "Friends", has_face: 1 },
   { id: 2, tag: "Friends/Sam", parent_id: 1, name: "Sam", has_face: 1 },

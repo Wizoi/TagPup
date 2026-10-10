@@ -198,7 +198,7 @@ function crops(entry) {
     })));
 }
 
-/** The people an entry can be linked to: those it could mean first, then everyone, each by label with the tag as its hover. */
+/** The people an entry can be linked to: those it could mean first, then everyone, each by its tag, which tells two of a name apart. */
 function personSelect(entry) {
     const select = buildElement('select', { className: 'names-person', attrs: { 'aria-label': `The person ${entry.name} is` } });
     select.append(buildElement('option', { text: 'Choose a person...', attrs: { value: '' } }));
@@ -206,7 +206,7 @@ function personSelect(entry) {
     const group = (label, people) => {
         const options = people.filter(person => person && !seen.has(person.id)).map(person => {
             seen.add(person.id);
-            return buildElement('option', { text: personLabel(person), title: personTitle(person), attrs: { value: String(person.id) } });
+            return buildElement('option', { text: person.tag || personLabel(person), title: personTitle(person), attrs: { value: String(person.id) } });
         });
         if (options.length) select.append(buildElement('optgroup', { attrs: { label } }, options));
     };

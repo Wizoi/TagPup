@@ -40,13 +40,11 @@ The Result's details, in every operation:
     remaining  {what: how many} re-read after the write, where the operation offers it
     behind     of a dry run on a library behind this version: the migrations it lacks,
                and no rehearsal (the rehearsal runs once an app has opened it)
-    pruned     changes whose values the journal's retention took away after the apply
 """
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from tagpup.core.result import Result
-from tagpup.services import journal as journal_service
 from tagpup.store import journal, schema
 
 
@@ -123,7 +121,6 @@ def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
     if not applied.settled:
         result.fail("the people and dates of the photos it touched",
                     "not rebuilt yet; they are, the next time the library is opened")
-    result.details["pruned"] = journal.prune(library.path, keep=lambda: journal_service.kept_operations(library))[0]
     if remaining is not None:
         result.details["remaining"] = remaining(library)
     return result

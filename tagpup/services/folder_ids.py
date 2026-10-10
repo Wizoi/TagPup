@@ -67,7 +67,6 @@ from tagpup.core import paths
 from tagpup.core.result import Result
 from tagpup.files import folder_marker, images
 from tagpup.services import folder_follow, maintenance, relink_photos
-from tagpup.services import journal as journal_service
 from tagpup.services import roots as roots_service
 from tagpup.store import added_folders, db, journal
 from tagpup.store import folder_ids as store
@@ -275,8 +274,6 @@ def _apply(library):
         written += 1
     result.changed = written
     result.details["changed"]["markers"] = written
-    if applied is not None:
-        result.details["pruned"] = journal.prune(library.path, keep=lambda: journal_service.kept_operations(library))[0]
     return result
 
 

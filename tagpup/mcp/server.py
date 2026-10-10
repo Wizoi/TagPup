@@ -48,7 +48,7 @@ INSTRUCTIONS = (
     "maintenance operations (refresh_rows, sync, merge_duplicate_person_tags, dedupe_faces), each "
     "a rehearsal unless called with apply=true, which records it as one change of the "
     "library's journal; and the journal itself: `history`, `undo` (a rehearsal unless "
-    "applied) and `prune_journal`. Call "
+    "applied). Call "
     "`libraries` first; every other tool names one of them. Answers give counts and ids. "
     "Paths, names and tags -- tags name people -- are given only with reveal=true: the "
     "library is photographs of real people, many of them minors. Ask for them only when "
@@ -332,13 +332,11 @@ def build():
         return _answer(act, reveal, writes=True)
 
     @tool("The library's journal: every change a maintenance operation applied, newest first (up to "
-          "`limit`), each with its id, operation, status (applied, derived_pending, undone, pruned), "
+          "`limit`), each with its id, operation, status (applied, derived_pending, undone), "
           "the schema version it was made at, when it was made, applied and undone, its summary "
           "(counts), and how many rows of each table it inserted, updated and deleted. With `change`, "
           "that change alone and the keys (ids) of every row it wrote; with reveal=true too, each "
-          "column's value before and after (a BLOB by its size), which can name people. Changes stay "
-          "undoable for %d days; then pruning keeps the summary and drops the values."
-          % library_journal.RETENTION_DAYS)
+          "column's value before and after (a BLOB by its size), which can name people.")
     def history(library: str, change: Optional[int] = None, reveal: bool = False,
                 limit: int = 20) -> dict[str, Any]:
         return _answer(lambda: library_journal.history(find_library(library, photos=False), change, reveal, limit), reveal)
@@ -357,21 +355,6 @@ def build():
             # A change of photo files is undone file by file, through the library's ExifTool.
             exiftool = runtimes.exiftool(found, runtimes.peek_settings(found))
             return written(library_journal.undo(found, change, apply=apply, exiftool_path=exiftool), found)
-        return _answer(act, writes=True)
-
-    @write_tool("Prune the library's journal: the changes older than `days` (%d unless given) keep their "
-                "summary and lose their values, and can no longer be undone. The default is a dry run "
-                "saying how many changes and values it would take away; apply=true does it. The changes of a bulk time shift "
-                "that can still be resumed are never taken (`kept`, and `note` says it)."
-                % library_journal.RETENTION_DAYS)
-    def prune_journal(library: str, days: int = library_journal.RETENTION_DAYS,
-                      apply: bool = False) -> dict[str, Any]:
-        def act():
-            found = find_library(library, photos=False, writes=True)
-            result = library_journal.prune(found, days, apply=apply)
-            return {"ok": result.ok, "dry_run": not apply, "changes": result.attempted,
-                    "pruned": result.changed, "values": result.details["values"], "days": days,
-                    "kept": result.details["kept"], "note": result.details["note"]}
         return _answer(act, writes=True)
 
     return server

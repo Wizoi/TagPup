@@ -92,12 +92,5 @@ class ThroughTheServices(JournalLibrary):
         self.assertIn("did not restore every row exactly", result.output)
         self.assertEqual(after, self.dump())
 
-    def test_prune_journal_is_a_dry_run_unless_applied(self):
-        self.run_service(person_tags.merge_duplicate_person_tags, apply=True)
-        self.assertIn("0 change(s) older than 90 days would be pruned", self.cli("prune-journal"))
-        self.assertIn("1 change(s) older than 0 days would be pruned", self.cli("prune-journal", "--days", "0"))
-        self.assertEqual([(1, "merge_duplicate_person_tags", "applied")], self.changes())
-
-
 if __name__ == "__main__":
     unittest.main()

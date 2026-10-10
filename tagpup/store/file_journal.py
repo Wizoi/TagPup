@@ -444,16 +444,3 @@ def finish(db_path, change_id):
         return states
 
     return db.write_with_connection(db_path, work, label="finish change %d" % change_id)
-
-
-def prune(conn, change_ids):
-    """Delete the files of pruned changes. The caller's transaction."""
-    if not has_table(conn):
-        return 0
-    deleted = 0
-    change_ids = list(change_ids)
-    for start in range(0, len(change_ids), CHUNK):
-        chunk = change_ids[start:start + CHUNK]
-        deleted += conn.execute("DELETE FROM change_files WHERE change_id IN (%s)" % ",".join("?" * len(chunk)),
-                                chunk).rowcount
-    return deleted

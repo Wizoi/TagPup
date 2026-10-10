@@ -486,20 +486,6 @@ class TheJournal(Library):
         journal.undo(self.path, applied.change_id)
         self.assertEqual((None, None), look(self.path, "SELECT tag_id, name FROM faces WHERE id = ?", (self.faces[0],))[0])
 
-    def test_a_change_that_recorded_the_name_alone_is_replayed_by_the_name(self):
-        """Entries from before the id was recorded: the undo puts the name back and nothing else decides who it is -- the face is
-        an unresolved name (for the names to review), however unique the name is now: a journal that knows only a name does
-        not guess (person_ids.link_added is the one place that links one)."""
-        oda = node_id(self.path, "Family/Coast/" + ODA)
-        self.name([self.faces[0]], ODA)
-        applied = journal.apply(self.path, "unname", [journal.update(
-            "faces", (self.faces[0],), {"name": ODA}, {"name": None, "name_source": "manual"}, kind="unnamed")])
-        journal.undo(self.path, applied.change_id)
-        self.assertIsNone(self.face_id(self.faces[0]))
-        self.assertEqual(ODA, look(self.path, "SELECT name FROM faces WHERE id = ?", (self.faces[0],))[0][0])
-        self.assertEqual(oda, node_id(self.path, "Family/Coast/" + ODA), "the person is still there, and not linked")
-        self.assertEqual([0, 0], in_step(self.path))
-
     def test_a_face_deleted_and_put_back_rehearses_exactly(self):
         self.name([self.faces[0]], ODA)
         edits = [journal.delete("faces", (self.faces[0],), {"name": ODA})]
@@ -573,7 +559,7 @@ class TheDoctor(Library):
         self.assertIn("faces whose name is not their person's", text)
         self.assertIn("names with several person nodes: 1", text)
         self.assertIn("names one person is called whose rows are linked to nobody: 1", text,
-                      "a name whose id was not written is reported, and linked only by the owner (people link-name)")
+                      "a name whose id was not written is reported, and linked only by the owner (the names to review)")
         self.assertNotIn(ASH, text, "names only with --show")
         said = io.StringIO()
         with redirect_stdout(said):

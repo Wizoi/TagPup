@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 
-from tagpup.store import checks, db, derived, people, schema
+from tagpup.store import checks, db, derived, people, schema, taxonomy
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 import doctor  # noqa: E402
@@ -132,11 +132,6 @@ class TheRules(Library):
         self.conn.commit()
         self.assertEqual({"generations not kept": 1}, self.broken())
 
-    def test_the_counters_an_older_version_made_again(self):
-        self.conn.execute("CREATE TABLE faces_generation (id INTEGER PRIMARY KEY, generation INTEGER)")
-        self.conn.commit()
-        self.assertEqual({"generations not kept": 1}, self.broken())
-
     def test_missing_files_are_counted_by_folder_not_as_broken(self):
         self.photo("gone.jpg", on_disk=False)
         self.assertEqual({}, self.broken())
@@ -163,6 +158,26 @@ class TheDoctor(Library):
         _broken, shown = self.run_doctor(5)
         self.assertIn("Wren Halloway at the lake.jpg", "\n".join(shown))
         self.assertEqual(1, doctor.main(["--db", self.db_path]))
+
+    def test_people_sharing_a_leaf_are_counted_and_named_only_when_asked(self):
+        for tag in ("People/Sam Quill", "Pets/Sam Quill", "People/Wren Halloway"):
+            taxonomy.add_node(self.conn, tag, root_has_face=1)
+        self.conn.commit()
+        self.assertEqual({"sam quill": ["People/Sam Quill", "Pets/Sam Quill"]}, checks.people_sharing_a_leaf(self.conn))
+        broken, lines = self.run_doctor()
+        self.assertEqual(0, broken, "reported, not broken")
+        text = "\n".join(lines)
+        self.assertIn("people sharing a leaf: 1 name(s), 2 people", text)
+        self.assertNotIn("Sam", text)
+        _broken, shown = self.run_doctor(5)
+        self.assertIn("People/Sam Quill  |  Pets/Sam Quill", "\n".join(shown))
+        self.assertNotIn("Wren", "\n".join(shown), "a leaf one person has is not listed")
+
+    def test_no_line_when_no_leaf_is_shared(self):
+        taxonomy.add_node(self.conn, "People/Wren Halloway", root_has_face=1)
+        self.conn.commit()
+        self.assertEqual({}, checks.people_sharing_a_leaf(self.conn))
+        self.assertNotIn("sharing a leaf", "\n".join(self.run_doctor()[1]))
 
     def test_changes_nothing(self):
         self.face(self.photo("a.jpg"), name="Wren Halloway", rebuilt=False)

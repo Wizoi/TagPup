@@ -100,10 +100,7 @@ DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta"
 #: every inserted photo changed since.
 #:
 #: A face's `tag_id` is NOT one: it is the person (docs/ARCHITECTURE.md, "People by id, stage 2"), recorded
-#: with the change like any column, and `name` beside it is only its cache (`cache_columns`). A change
-#: recorded before that -- one that wrote a face's name and not its id -- is replayed by the name: the id of
-#: the rows it wrote is put by the name and the tree as they stand (`_derive`, `_named_by_name`), and nothing
-#: in the journal is rewritten.
+#: with the change like any column, and `name` beside it is only its cache (`cache_columns`).
 DERIVED_COLUMNS = {"photos": ("taken", "year")}
 
 
@@ -155,12 +152,6 @@ ADOPTION = "roots adopt"
 
 #: The change that gives a root's address back its two leading backslashes (#914): no rows either.
 ADDRESS_REPAIR = "roots repair-address"
-
-#: How long a change stays undoable. Pruning then deletes its values and keeps its
-#: summary, and the change becomes `pruned`. An undo is for a mistake noticed in use,
-#: and three months is long enough to notice one; a deleted face's crop and vector are
-#: 8 KB a face, which is what a change holds for longer (docs/findings.md).
-RETENTION_DAYS = 90
 
 #: The steps of an apply and an undo, in order; `_reached` is told of each.
 STEPS = ("forward written", "forward committed", "undo written", "undo committed")
@@ -807,22 +798,6 @@ def _face_photos(conn, changes):
     return found
 
 
-def _named_by_name(conn, changes):
-    """A change recorded before a face's person was an id wrote a face's NAME and not its id (a naming, an unnaming, a
-    guess): the faces it wrote still hold the id they had, which is another person's now, or none. Their id is put aside --
-    NULL: an unresolved name for the owner, never guessed from the name; the journal knows no id --
-    and nothing recorded is rewritten. A change that recorded the id is replayed as it was. Returns the faces."""
-    ids = set()
-    for change in changes:
-        if change.table != "faces" or change.key is None:
-            continue
-        values = [d for d in (change.old, change.new) if d]
-        if any("name" in d and "tag_id" not in d for d in values):
-            ids.add(change.key[0])
-    person_ids.put_aside(conn, sorted(ids))
-    return ids
-
-
 def _derive(conn, changes):
     """Rebuild what `changes` touched of the derived data: the people of each photo whose
     keywords or faces changed or whose keywords a changed node names, the dates of each photo
@@ -839,7 +814,6 @@ def _derive(conn, changes):
     if nodes:
         changed += people.follow_nodes(conn, nodes)
     if photo_ids:
-        _named_by_name(conn, changes)
         person_ids.follow_faces(conn, sorted(photo_ids))
         changed += people.rebuild(conn, sorted(photo_ids))
     if nodes:
@@ -1051,7 +1025,7 @@ def refusal(conn, change_id):
     (tagpup.services.file_changes) are refused by it, and the history lists by it which
     changes can be undone (tagpup.services.journal.undo_refusals).
 
-    No such change; pruned; not finished; not applied. A change of files: a newer change
+    No such change; not finished; not applied. A change of files: a newer change
     not undone wrote one of its files (file_journal.newer_overlapping). A change of rows:
     made at another schema version, or a newer change not undone wrote one of its rows.
     The caller's connection."""
@@ -1067,9 +1041,6 @@ def refusal(conn, change_id):
         # rule below, while it is the newest.
         return ["change %d (%s): a migration is not undone" % (change_id, _operation)]
     files = _writes_files(conn, change_id)
-    if status == "pruned":
-        return ["change %d was pruned: %s gone, so it cannot be undone"
-                % (change_id, "what its files held is" if files else "its values are")]
     if status in ("derived_pending", "planned"):
         return ["change %d is not finished; it is, the next time the library is opened" % change_id]
     if status != "applied":
@@ -1436,79 +1407,3 @@ def history(db_path, limit=20, change_id=None, values=False):
         return entries
     finally:
         conn.close()
-
-
-def _cutoff(days, now):
-    return time.strftime(TIME, time.localtime((time.time() if now is None else now) - days * 86400))
-
-
-def _eligible(conn, cutoff):
-    """[(id, operation)] of the changes pruning at `cutoff` could take the values of: applied or undone, and no newer than the
-    newest made before it. A newer change is never pruned before an older one, so an undo's check of the changes after it sees
-    every one that kept its rows."""
-    last = conn.execute("SELECT MAX(id) FROM changes WHERE created <= ?", (cutoff,)).fetchone()[0]
-    if last is None:
-        return []
-    return conn.execute(
-        "SELECT id, operation FROM changes WHERE id <= ? AND status IN ('applied', 'undone') ORDER BY id", (last,)).fetchall()
-
-
-def _prunable(conn, cutoff, keep):
-    """The ids of the changes pruning at `cutoff` takes the values of: the eligible ones (_eligible) except those named by an
-    operation in `keep`. THE ONE PLACE this is decided: a prune of any age leaves `keep`'s changes whole. The caller says what
-    to keep (a bulk time shift that can be resumed needs its changes to tell which photos a chunk shifted), and there is no
-    default, so a new caller must decide."""
-    return [cid for cid, operation in _eligible(conn, cutoff) if operation not in keep]
-
-
-def prunable(db_path, days=RETENTION_DAYS, now=None, *, keep):
-    """(changes, values) pruning after `days` would take away, leaving the changes named by the operations in `keep`. Reads only."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        if not has_journal(conn):
-            return 0, 0
-        ids = _prunable(conn, _cutoff(days, now), keep)
-        values = 0
-        for start in range(0, len(ids), CHUNK):
-            chunk = ids[start:start + CHUNK]
-            values += conn.execute("SELECT COUNT(*) FROM change_rows WHERE change_id IN (%s)"
-                                   % ",".join("?" * len(chunk)), chunk).fetchone()[0]
-        return len(ids), values
-    finally:
-        conn.close()
-
-
-def held_back(db_path, days=RETENTION_DAYS, now=None, *, keep):
-    """{operation: changes} that pruning after `days` would take but for `keep`. Reads only."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        if not has_journal(conn):
-            return {}
-        held = {}
-        for _cid, operation in _eligible(conn, _cutoff(days, now)):
-            if operation in keep:
-                held[operation] = held.get(operation, 0) + 1
-        return held
-    finally:
-        conn.close()
-
-
-def prune(db_path, days=RETENTION_DAYS, now=None, *, keep):
-    """Take the values of every change older than `days` out of the journal: its summary
-    stays, and it becomes `pruned`, no longer undoable. The changes named by the operations in `keep` are
-    left whole. `keep` may be a function, called INSIDE the write transaction, after the lock is taken, so that what it names
-    cannot be stale by the time the cutoff and the eligible changes are read. Returns (changes pruned, values deleted)."""
-    schema.ensure(db_path)
-
-    def work(conn):
-        ids = _prunable(conn, _cutoff(days, now), keep() if callable(keep) else keep)
-        deleted = 0
-        for start in range(0, len(ids), CHUNK):
-            chunk = ids[start:start + CHUNK]
-            marks = ",".join("?" * len(chunk))
-            deleted += conn.execute("DELETE FROM change_rows WHERE change_id IN (%s)" % marks, chunk).rowcount
-            deleted += file_journal.prune(conn, chunk)
-            conn.execute("UPDATE changes SET status = 'pruned' WHERE id IN (%s)" % marks, chunk)
-        return len(ids), deleted
-
-    return db.write_with_connection(db_path, work, label="prune the journal")

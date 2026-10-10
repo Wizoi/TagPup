@@ -37,7 +37,8 @@ WEIGHTS = {"create_model_and_transforms", "MTCNN", "InceptionResnetV1"}
 
 TURNS = re.compile(r"\b(gpu|card)\b.*\.(hold|try_hold|ensure|release_if_idle)\(|\bgpu\.Card\(")
 LOCKS = re.compile(r"msvcrt\.locking|fcntl\.flock|\bcard\.lock\b|TAGPUP_GPU_LOCK")
-LOCKS_ONLY = re.compile(r"msvcrt\.locking|fcntl\.flock|\bcard\.lock\b")
+ON_THE_CARD_BY_FAISS = re.compile(r"get_num_gpus|index_cpu_to_gpu|StandardGpuResources|GpuIndex|index_cpu_to_all_gpus")
+LOCKS_ONLY =re.compile(r"msvcrt\.locking|fcntl\.flock|\bcard\.lock\b")
 
 
 def loads_weights(source):
@@ -103,6 +104,16 @@ class TheCardHasOneOwner(unittest.TestCase):
             if relative != BYTE_LOCK:
                 problems += lines_matching(CALLS_THE_SYSTEM_LOCK, relative)
         self.assertEqual([], problems, "\n\nLock a byte through tagpup.core.byte_lock:\n\n" + "\n".join(problems))
+
+    def test_no_index_is_put_on_the_card(self):
+        # The vector index had a branch that moved FAISS onto a GPU when it saw one, outside the owner's turn.
+        problems = []
+        for relative in python_sources():
+            if relative != OWNER:
+                problems += lines_matching(ON_THE_CARD_BY_FAISS, relative)
+        self.assertEqual([], problems, "\n\nThe vector index is on the CPU; the card is tagpup.ml.gpu's:\n\n"
+                         + "\n".join(problems))
+        self.assertTrue(ON_THE_CARD_BY_FAISS.search("index = faiss.index_cpu_to_gpu(res, 0, flat)"))
 
     def test_the_guard_recognises_what_it_forbids(self):
         unchecked = ("from facenet_pytorch import MTCNN\n"

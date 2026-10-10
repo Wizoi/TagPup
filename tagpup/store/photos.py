@@ -544,6 +544,21 @@ def vectors(conn, model):
                         " WHERE e.model = ? ORDER BY e.photo_id", (model,)).fetchall()
 
 
+def vector_dim(conn, model):
+    """The length of the vectors held under `model`, read from one of them; None when there is none.
+    The vectors' bytes are four to a number (float32)."""
+    row = conn.execute("SELECT length(vector) / 4 FROM embeddings WHERE model = ? LIMIT 1", (model,)).fetchone()
+    return row[0] if row else None
+
+
+def stamps_with_vectors(conn, model):
+    """(path, mtime, size, holds a vector under `model`) of every photo, native paths: all the
+    indexer needs to know whether a file is as it was. None of the JSON of the row is read."""
+    return store_roots.natives(conn, conn.execute(
+        "SELECT p.path, p.mtime, p.size, EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)"
+        " FROM photos p", (model,)).fetchall(), 0)
+
+
 def counts(conn, model):
     """(photos, photos holding a vector under `model`)."""
     return conn.execute("SELECT (SELECT COUNT(*) FROM photos),"

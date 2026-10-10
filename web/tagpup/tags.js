@@ -2,7 +2,7 @@
 // offer, and turning what someone typed into a tag, asking where to file a new one.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { PeopleDirectory, leafOf, personLabel, rootOf, samePerson, sortedTags, tagProblem } from './common/vocabulary.js';
+import { PeopleDirectory, leafOf, rootOf, samePerson, sortedTags, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { isJustLooking } from './looking.js';
@@ -230,9 +230,6 @@ export function updatePeopleDatalist() {
     sortedTags(byPerson.values()).forEach(p => {
         const opt = document.createElement('option');
         opt.value = p;
-        // Where a name is shared the entry says which: `Sam · Pets`, beside the full tag it inserts.
-        const known = state.people.ofTag(p);
-        if (known && known.shared) opt.label = personLabel(known);
         peopleDatalist.appendChild(opt);
     });
 }

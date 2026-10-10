@@ -65,7 +65,7 @@ class NamesToReview(TwoSams, unittest.TestCase):
         sam = self.listed_entry("Sam")
         self.assertEqual(("several", 1), (sam["why"], sam["faces"]))
         self.assertEqual({SAM_T, SAM_I}, {person["tag"] for person in sam["candidates"]})
-        self.assertTrue(all(person["shared"] for person in sam["candidates"]), "the page labels each with its group")
+        self.assertTrue(all(set(person) == {"id", "name", "tag"} for person in sam["candidates"]), "each is told by its tag")
         self.assertEqual({"Family", "Pets", "Friends", "People", "Family/Thackeray", "Family/Ingersoll"},
                          {group["tag"] for group in found["groups"]}, "a person is no place for a person")
 

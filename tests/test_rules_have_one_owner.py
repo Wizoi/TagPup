@@ -154,7 +154,10 @@ class TheLengthOfAPhotosVector(unittest.TestCase):
 
         class Index:
             def __init__(self, d):
-                self.index = type("Vectors", (), {"d": d})() if d else None
+                self.d = d
+
+            def stored_dim(self):
+                return self.d
 
         self.assertIsNone(search.stored_mismatch(Index(1280), "ViT-bigG-14"))
         self.assertIsNone(search.stored_mismatch(Index(None), "ViT-bigG-14"))

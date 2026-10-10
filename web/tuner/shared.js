@@ -1,7 +1,7 @@
 // What every feature uses: the address bar, the names the library knows.
 import { api } from './common/api.js';
 import { choosePerson } from './common/person-choice.js';
-import { GROUP_SEPARATOR, PeopleDirectory, personLabel, personTitle, sortedTags } from './common/vocabulary.js';
+import { PeopleDirectory, personLabel, personTitle, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import { upper } from './hooks.js';
 import { modeSelect, showMatchedToggle } from './elements.js';
@@ -76,17 +76,12 @@ export function fetchKnownPeople() {
 /**
  * Who typed text means: the person (their id with them), after asking which when two people have the name, or a name no tag has.
  * Resolves to {person}, or {name, exists} -- `exists`: faces or photos already hold the name (hidden from autocomplete, or no tag
- * yet), so it is not a new person -- or null when nothing was typed or the question was declined. A label (`Sam · Pets`) that
- * finds nobody is refused, never made a person's name: the people have not been read yet.
+ * yet), so it is not a new person -- or null when nothing was typed or the question was declined.
  */
 export function resolveTyped(text, title = 'Which person?') {
     const found = state.people.match(text);
     if (found.kind === 'person') return Promise.resolve({ person: found.person });
     if (found.kind === 'new') {
-        if (found.name.includes(GROUP_SEPARATOR)) {
-            alert(`"${found.name}" is a person's label, and the page has not read the people yet: try again in a moment.`);
-            return Promise.resolve(null);
-        }
         return Promise.resolve({
             name: found.name, exists: state.everyKnownPerson.includes(found.name) || state.allKnownPeople.includes(found.name),
         });
@@ -110,7 +105,7 @@ export function personGone(status) {
     if (upper.fetchPeopleWithCounts) upper.fetchPeopleWithCounts(true, true);
 }
 
-/** The label of the person a list row names (its nested `person`, else the id looked up, else the name). */
+/** The name of the person a list row names (its nested `person`, else the id looked up, else the name). */
 export function labelOfPerson(name, personId = null, person = null) {
     const found = person || (personId !== null && personId !== undefined ? state.people.ofId(personId) : null);
     return found ? personLabel(found) : String(name ?? '');
@@ -123,7 +118,7 @@ export function suggestedWho(face) {
     return known || { id, name: face.suggested_name };
 }
 
-/** What shows for a face's suggested person: their label (`Sam · Pets` where a name is shared). */
+/** What shows for a face's suggested person: their name. */
 export function suggestedLabel(face) {
     return labelOfPerson(face.suggested_name, face.suggested_person_id !== undefined ? face.suggested_person_id : null);
 }
@@ -134,13 +129,13 @@ export function titleOfPerson(name, personId = null, person = null) {
     return found ? personTitle(found) : String(name ?? '');
 }
 
-// Update global datalist elements with known people: a name, or the label of each of two people who share it.
+// Update global datalist elements with known people: a name (two people who share it are one entry: typing it asks which).
 function updatePeopleDatalist() {
     const datalist = document.getElementById('people-datalist');
     if (!datalist) return;
     datalist.innerHTML = '';
     const offered = new Map();
-    // A person with a tag is offered by their label; a name only faces hold (no tag) by the name.
+    // A person with a tag is offered by their name; a name only faces hold (no tag) by the name too.
     for (const person of state.people.all()) offered.set(personLabel(person), person);
     const named = new Set(state.people.all().map(person => person.name.toLowerCase()));
     for (const name of state.allKnownPeople) {

@@ -17,7 +17,7 @@
 // row below is selected is its whole), and `selectedRows` turns a view's sources back into the rows -- so the address
 // holds the selection and Back, Forward and a bookmark restore it.
 import { baseName, pathKey } from './common/paths.js';
-import { compareTagNames, leafOf, personLabel } from './common/vocabulary.js';
+import { compareTagNames, leafOf } from './common/vocabulary.js';
 
 /** The most rows one section draws; the rest are said in a line and reached by the filter. */
 export const NAV_MAX_ROWS = 1500;
@@ -142,18 +142,18 @@ export function indexPeople(list, groups = [], unfiled = 0) {
     for (const each of Array.isArray(list) ? list : []) {
         if (!each || typeof each.name !== 'string') continue;
         // A person is their id when the server has one (two people called alike are two rows: `p:${name}` collided); a name
-        // no node is stays the name. `tag` is the person's path, `shared` that another person has the name.
+        // no node is stays the name. `tag` is the person's path.
         const identity = each.person_id !== undefined && each.person_id !== null ? each.person_id : each.name;
         const record = each.person && typeof each.person === 'object' ? each.person : {};
         people.push({
             id: `p:${identity}`, name: each.name, count: Number(each.count) || 0, groupTag: each.group || null, children: [],
             personId: each.person_id === undefined ? null : each.person_id, tag: typeof record.tag === 'string' ? record.tag : null,
-            shared: record.shared === true,
-            // What a row shows where its branch is not above it (a flat list, a filter's result): the name, and the group where
-            // another person has it (`Sam · Thackeray`).
-            label: personLabel({ name: each.name, group: record.group, shared: record.shared === true }),
         });
     }
+    // Two rows of one name are two people: each is asked for by its tag, not as the name (which is everyone called it).
+    const called = new Map();
+    for (const person of people) called.set(person.name.toLowerCase(), (called.get(person.name.toLowerCase()) || 0) + 1);
+    for (const person of people) person.shared = called.get(person.name.toLowerCase()) > 1;
     people.sort((a, b) => compareTagNames(a.name, b.name) || compareTagNames(a.tag || '', b.tag || ''));
     const byPersonTag = new Map();
     for (const person of people) {
@@ -192,8 +192,8 @@ export function personSource(person) {
     return person.shared && person.tag ? person.tag : person.name;
 }
 
-function navPersonRow(person, level = 1, labelled = false) {
-    const shown = labelled ? person.label : person.name;
+function navPersonRow(person, level = 1) {
+    const shown = person.name;
     return {
         id: person.id, level, label: shown, count: person.count,
         title: `${person.shared && person.tag ? person.tag : person.name}${person.groupTag ? ` (${person.groupTag})` : ''}\n${navPlural(person.count, 'photo', 'photos')}`,
@@ -203,8 +203,8 @@ function navPersonRow(person, level = 1, labelled = false) {
     };
 }
 
-function navPeopleRow(node, level, expanded, labelled = false) {
-    if (!node.group) return navPersonRow(node, level, labelled);
+function navPeopleRow(node, level, expanded) {
+    if (!node.group) return navPersonRow(node, level);
     const open = expanded.has(node.id);
     const people = node.unfiled ? node.people.length : navPeopleUnder(node);
     return {
@@ -326,7 +326,7 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
     if (section === 'people') {
         if (!needle) {
             // In a tree the branch above a person says which; in a flat list the row does.
-            navWalk(index.tops, 1, expanded, (node, depth, open) => navPeopleRow(node, depth, open, !index.grouped), out);
+            navWalk(index.tops, 1, expanded, (node, depth, open) => navPeopleRow(node, depth, open), out);
             return navCapped(out, index.grouped ? treeCap : cap, out.length);
         }
         for (const group of index.groups.values()) {
@@ -337,8 +337,8 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
             out.push(row);
         }
         for (const person of index.people) {
-            if (!navMatches(person.name, needle) && !navMatches(person.label, needle)) continue;
-            const row = navPersonRow(person, 1, true);
+            if (!navMatches(person.name, needle)) continue;
+            const row = navPersonRow(person, 1);
             row.hint = person.groupTag || '';
             out.push(row);
         }

@@ -241,15 +241,14 @@ copying the library: applied only where every row is still what the plan read, e
 refused whole, naming the rows. It returns a `Result` whose `changed` is what the write
 changed, read from the database, not what was planned, and whose `details["change"]`
 is the change's id. `tagpup_cli.py history` lists the changes, `undo <id>` rehearses
-taking one back and `undo <id> --apply` does, and `prune-journal` lets changes older than
-90 days go. The MCP server (`tagpup.mcp`) calls the same services as write tools, and
-has `history`, `undo` and `prune_journal` too, each a dry run unless called with
+taking one back and `undo <id> --apply` does. The MCP server (`tagpup.mcp`) calls the same
+services as write tools, and has `history` and `undo` too, each a dry run unless called with
 `apply=true`, showing paths and names only with `reveal=true`.
 
 The two scripts not on the scaffold still back the database up first through
 `db.backup()`: SQLite's backup API, into `backups/` beside the library
 (`data/backups/` for the libraries in `data/`). Each library keeps its newest five
-(`db.KEEP_BACKUPS`); making a sixth deletes the oldest. `tests/test_bulk_scripts_back_up.py`
+(`db.KEEP_BACKUPS`), none older than 30 days (`db.BACKUP_DAYS`, never the newest); making a sixth deletes the oldest. `tests/test_bulk_scripts_back_up.py`
 lists every place that may still copy a whole library, and why.
 
 | script | what it does |

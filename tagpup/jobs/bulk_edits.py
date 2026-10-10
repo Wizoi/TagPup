@@ -34,9 +34,8 @@ resume's settle; if it cannot be, the resume is refused (COULD_NOT_SETTLE) and n
 from a file that may already be shifted shifts it twice. The state records the change of the chunk in flight (`journal_chunk`),
 before that change writes a file, and a resume refuses when the journal no longer holds it (a snapshot restored over it).
 
-The journal's prune never takes the changes of a time shift that has a record to resume from (services.journal.kept_operations
-decides, store.journal._prunable applies it to every prune), so the account a resume reads cannot be pruned away; the
-refusals on a pruned or missing change are a defence for a journal changed some other way. A change planned and committed
+The journal is never pruned, so the account a resume reads stays; the refusal on a missing change is a defence for a journal
+changed some other way (a snapshot restored). A change planned and committed
 whose record of it was not written (a death between the two) is not named, and a snapshot restore that removes exactly that
 change goes unseen: accepted.
 
@@ -634,10 +633,6 @@ JOURNAL_LOST = ("The library's journal no longer holds the last change of this b
                 "which photos of the last chunk were already shifted cannot be told, and a resume could shift them twice. "
                 "It was not resumed; nothing was changed.")
 
-#: ... when the journal's retention took the files of the change: the record of what the last chunk wrote is gone.
-JOURNAL_PRUNED = ("The library's journal pruned the record of this bulk edit's last chunk, so which photos of it were already "
-                  "shifted cannot be told, and a resume could shift them twice. It cannot be resumed safely; nothing was changed.")
-
 #: What the status of a resumed job says while it runs, when a chunk was in flight: the journal's account of what was written
 #: decides, and a photo whose shift an undo took back is not in it.
 RESUME_SAYS = ("Resumed: the photos of the last chunk that the journal shows shifted are left alone and the rest are shifted. "
@@ -741,7 +736,7 @@ def _settle_flight(library, job, state):
     if job.chunk is not None:
         lost = bulk_edit.journal_lost(library, job.operation, int(job.chunk))
         if lost is not None:
-            raise Refused(JOURNAL_PRUNED if lost == bulk_edit.PRUNED else JOURNAL_LOST)
+            raise Refused(JOURNAL_LOST)
     file_changes.settle(library, job.exiftool_path, job.operation)
     asked = job.ids[done:flight]
     wanted = set(asked)

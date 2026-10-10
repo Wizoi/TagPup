@@ -1561,8 +1561,7 @@ MIGRATIONS = (
 #: older change's rows mean: an undo writes the columns it recorded and the derived ones are made
 #: again from them (journal._derive), so it blocks no undo of a change made before it
 #: (journal.schema_gap_blocker). Version 21's `faces.tag_id` was derived from the name then; it is the
-#: person since 29 (journal.cache_columns), and a change recorded before that is replayed by the name
-#: (journal._named_by_name). tests/test_person_ids.py holds each to the columns it really adds.
+#: person since 29 (journal.cache_columns). tests/test_person_ids.py holds each to the columns it really adds.
 ADDS_DERIVED_COLUMNS = {21: {"faces": ("tag_id",)}}
 
 LATEST = MIGRATIONS[-1].version
@@ -1666,37 +1665,6 @@ def ensure(db_path):
     return applied
 
 
-#: The counters migration 2 replaced. A version of the app from before it, still running
-#: while a new one opens the library, makes them again on its next load, and nothing
-#: would take them away: the library says it is current (docs/findings.md, #55).
-LEGACY_COUNTERS = ("faces_generation", "taxonomy_generation")
-
-
-def legacy_counters(conn):
-    """The tables and triggers of LEGACY_COUNTERS the library on `conn` still has."""
-    return sorted(name for kind, name in conn.execute("SELECT type, name FROM sqlite_master")
-                  if (kind == "table" and name in LEGACY_COUNTERS)
-                  or (kind == "trigger" and name.startswith(tuple(c + "_" for c in LEGACY_COUNTERS))))
-
-
-def _drop_legacy_counters(db_path, conn):
-    if not legacy_counters(conn):
-        return
-    with db.lock_for(db_path):
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            for kind, name in conn.execute("SELECT type, name FROM sqlite_master").fetchall():
-                if kind == "trigger" and name.startswith(tuple(c + "_" for c in LEGACY_COUNTERS)):
-                    conn.execute("DROP TRIGGER IF EXISTS %s" % name)
-            for name in LEGACY_COUNTERS:
-                conn.execute("DROP TABLE IF EXISTS %s" % name)
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
-    logger.info("%s: took away the counters an older version made again", db_path)
-
-
 def _ensure(db_path):
     conn = db.connect(db_path, timeout=30.0)
     try:
@@ -1704,7 +1672,6 @@ def _ensure(db_path):
         if found > LATEST:
             raise NewerLibrary(os.path.basename(db_path), found, LATEST)
         if found == LATEST:
-            _drop_legacy_counters(db_path, conn)
             return []
         with db.lock_for(db_path):
             conn.execute("BEGIN IMMEDIATE")

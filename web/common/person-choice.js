@@ -2,15 +2,13 @@
  * "Which one?": the question a page asks when a name is two people's.
  *
  * Typing "Sam" where a Sam under Friends and a Sam under Pets both exist cannot be answered by the page, and must not be
- * answered by the first in the list. The people are offered with their labels (`Sam · Friends`) and the full tag in each one's
- * title, and the answer is the person chosen -- an object with the id -- or null when the question is declined (Cancel, Escape, a
+ * answered by the first in the list. The people are offered by name with the full tag beside each, and the answer is the person chosen -- an object with the id -- or null when the question is declined (Cancel, Escape, a
  * click on the backdrop). One question at a time: asking again while one is open gets the same answer as the first.
  *
  * Built from the pages' shared modal classes (`.modal-overlay.active`), so a page's shortcuts leave their keys alone while it
  * is open (web/common/dialog.js).
  */
 import { buildElement } from './dom.js';
-import { personLabelNode } from './person-label.js';
 import { personTitle } from './vocabulary.js';
 
 // The question being asked, with the ids of the people it asks about: the same question asked again gets the same answer; a question
@@ -33,7 +31,7 @@ export function choosePerson(people, { title = 'Which person?', about = '' } = {
             className: 'person-choice-option', title: personTitle(person), data: { personId: person.id },
         }, [
             buildElement('input', { attrs: { type: 'radio', name: 'person-choice', value: String(index), checked: index === 0 } }),
-            buildElement('span', { className: 'person-choice-label' }, [personLabelNode(person)]),
+            buildElement('span', { className: 'person-choice-label', text: String(person.name ?? '') }),
             buildElement('span', { className: 'person-choice-tag', text: person.tag ? ` ${personTitle(person)}` : '' }),
         ]));
         const cancel = buildElement('button', { className: 'btn btn-secondary btn-cancel', text: 'Cancel', attrs: { type: 'button' } });

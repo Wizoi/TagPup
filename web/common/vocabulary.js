@@ -91,23 +91,14 @@ export function samePerson(a, b) {
     return Boolean(left) && left === leafOf(b).toLowerCase();
 }
 
-// ---- How a person is labelled -------------------------------------------------------
+// ---- How a person is shown -----------------------------------------------------------------
 //
-// Where two people share a leaf (two cousins called Sam under Family/Thackeray and Family/Ingersoll), every
-// list, chip and hover shows the group too, and only then. The server decides who shares and which tail of
-// the path tells them apart (tagpup.core.vocabulary.person_labels, over everyone in the library) and sends each
-// person as {id, name, tag, group, shared}; the page only joins them, here, and no page builds the string
-// itself or compares two people by it: they compare ids. tests/fixtures/person_labels.json is the table
-// this and the server are held to (tests/frontend/person-labels.test.mjs, tests/test_person_labels.py).
+// A person is the whole tag path and their name is its leaf: shown, never compared. Two people called alike are told apart by
+// the tag in the title and in the "which one?" question (person-choice.js), not by a group joined to the name.
 
-/** What stands between a person's name and their group: "Sam · Thackeray". */
-export const GROUP_SEPARATOR = ' \u00b7 ';
-
-/** What is shown for a person: their name, and, when another person has it too, the group that tells them apart. */
+/** What is shown for a person: their name. */
 export function personLabel(person) {
-    if (!person) return '';
-    const name = String(person.name ?? '');
-    return person.shared && person.group ? `${name}${GROUP_SEPARATOR}${person.group}` : name;
+    return person ? String(person.name ?? '') : '';
 }
 
 /** The full tag of a person, for the element's title and the screen reader: where they are filed. */
@@ -116,8 +107,8 @@ export function personTitle(person) {
     return String(person.tag || person.name || '');
 }
 
-/** What to show for the person a row names: the label of its `person` (the nested {id, name, tag, group, shared} the server sends),
- *  else the name it holds under `field`. A name two people have arrives as a person with no group: just the name. */
+/** What to show for the person a row names: the name of its `person` (the nested {id, name, tag} the server sends), else the
+ *  name it holds under `field`. */
 export function personLabelOf(row, field = 'name') {
     if (!row) return '';
     return row.person ? personLabel(row.person) : String(row[field] ?? '');
@@ -143,10 +134,9 @@ export function personFields(person) {
 
 // ---- The people of a library, by id --------------------------------------------------------
 //
-// /api/people?records=1 answers every person with a tag as {id, name, tag, group, shared}. The pages hold them in a
-// PeopleDirectory and ask it who a text is -- a tag path names exactly one person, a bare name names one only when nobody else is
-// called it -- and compare people by id, never by label or by leaf. A name two people have is `shared`: a page offers both, with
-// their labels, and never picks one for the owner. tests/frontend/person-directory.test.mjs holds it to the owner's real case: a pet
+// /api/people?records=1 answers every person with a tag as {id, name, tag}. The pages hold them in a PeopleDirectory and ask it
+// who a text is -- a tag path names exactly one person, a bare name names one only when nobody else is called it -- and compare
+// people by id, never by leaf. A name two people have is `shared`: a page asks which one, and never picks one for the owner. tests/frontend/person-directory.test.mjs holds it to the owner's real case: a pet
 // and a friend of one name.
 
 const textKey = (text) => String(text ?? '').trim().toLowerCase();
@@ -204,31 +194,24 @@ export class PeopleDirectory {
         return value.includes('/') ? this.ofTag(value) : this.only(value);
     }
 
-    /** The person whose label -- what a picker's option shows, `Sam · Friends` -- is `text`, without case; null for none. */
-    ofLabel(text) {
-        const wanted = textKey(text);
-        if (!wanted) return null;
-        return this.records.find(each => textKey(personLabel(each)) === wanted) || null;
-    }
-
     /**
-     * What typed text means, for a picker that offers people by their labels:
-     *   { kind: 'person', person } -- a label, a tag path, or a name one person has;
+     * What typed text means, for a picker that offers people by name:
+     *   { kind: 'person', person } -- a tag path, or a name one person has;
      *   { kind: 'choose', people } -- a name two or more people have: the owner is asked which, never given the first;
      *   { kind: 'new', name } -- a name nobody has; { kind: 'none' } -- nothing was typed.
      */
     match(text) {
         const value = String(text ?? '').trim();
         if (!value) return { kind: 'none' };
-        const labelled = this.ofLabel(value) || this.ofTag(value);
-        if (labelled) return { kind: 'person', person: labelled };
+        const filed = this.ofTag(value);
+        if (filed) return { kind: 'person', person: filed };
         const called = this.called(value);
         if (called.length === 1) return { kind: 'person', person: called[0] };
         if (called.length > 1) return { kind: 'choose', people: called };
         return { kind: 'new', name: value };
     }
 
-    /** Every person, by name and then group (the order the server sends them in), as a copy. */
+    /** Every person, by name and then tag (the order the server sends them in), as a copy. */
     all() {
         return this.records.slice();
     }
