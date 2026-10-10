@@ -86,6 +86,7 @@ def report(db_path, show=0, out=print):
         empty = checks.empty_folders(conn)
         nameless = checks.names_without_a_person(conn)
         to_review = checks.names_to_review(conn)
+        sharing = checks.people_sharing_a_leaf(conn)
         words = search_index.present(conn)
         identity, marked = folder_ids.identity(conn), folder_ids.count(conn)
     finally:
@@ -151,6 +152,11 @@ def report(db_path, show=0, out=print):
                 "person id, and none is guessed)" % (label, len(found), sum(found.values())))
             for name, count in sorted(found.items(), key=lambda pair: (-pair[1], pair[0]))[:show]:
                 out("    %6d  %s" % (count, name))
+    if sharing:
+        out("people sharing a leaf: %d name(s), %d people (reported, not broken: two people called alike are asked for by path; "
+            "rename one by hand in TagTuner's Rename Person)" % (len(sharing), sum(len(tags) for tags in sharing.values())))
+        for leaf, tags in sorted(sharing.items())[:show]:
+            out("    %s" % "  |  ".join(tags))
     if nameless.one:
         out("names one person is called whose rows are linked to nobody: %d, on %d face(s) decided by hand, %d other face(s) and %d "
             "listed person(s) (reported, not broken: nothing links them by itself, so they are on no person's page; "
