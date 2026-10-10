@@ -48,20 +48,26 @@ class AFileThatRanNothingFails(unittest.TestCase):
         self.assertIn("no tests", output)
 
 
-class AFailedRunIsKept(unittest.TestCase):
+class RunsMain(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.mkdtemp(prefix="tagpup_run_tests_logs_")
         self.addCleanup(shutil.rmtree, self.folder, True)
 
-    def main(self, results):
+    def main(self, results, again=None, argv=()):
+        """`again` is what a failed file does when it is run a second time alone."""
         printed = io.StringIO()
+        second = again or (lambda module: (module, False, 0, 0.1, "FAILED again"))
         with mock.patch.object(run_tests, "FAILED_RUNS", self.folder), \
                 mock.patch.object(run_tests, "run", return_value=results), \
+                mock.patch.object(run_tests, "run_one", side_effect=second) as reruns, \
                 mock.patch.object(run_tests, "test_files", return_value=[r[0] for r in results]), \
                 contextlib.redirect_stdout(printed):
-            code = run_tests.main([])
+            code = run_tests.main(list(argv))
+        self.reruns = [call.args[0] for call in reruns.call_args_list]
         return code, printed.getvalue()
 
+
+class AFailedRunIsKept(RunsMain):
     def test_the_failed_files_output_is_on_disk_and_named(self):
         code, printed = self.main([
             ("test_fictional_a", True, 4, 0.1, "Ran 4 tests in 0.1s\n\nOK"),
@@ -89,6 +95,75 @@ class AFailedRunIsKept(unittest.TestCase):
         kept = sorted(os.listdir(self.folder))
         self.assertEqual(len(kept), run_tests.KEEP_FAILED_RUNS)
         self.assertNotIn("run_tests-20260101-000000.log", kept)
+
+
+class AFileThatFailsUnderLoadIsRunAgainAlone(RunsMain):
+    """A failed file is run once more alone: a pass is reported as flaky, never hidden, and
+    two failures fail the run."""
+
+    FAILS = ("test_fictional_b", False, 2, 0.2, "Traceback: the Kestrel file broke\nRan 2 tests in 0.2s\n\nFAILED")
+    PASSES = lambda self, module: (module, True, 2, 0.1, "Ran 2 tests in 0.1s\n\nOK")  # noqa: E731
+
+    def test_a_file_that_passes_alone_passes_the_run_and_says_so(self):
+        code, printed = self.main([self.FAILS], again=self.PASSES)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.reruns, ["test_fictional_b"])
+        self.assertIn("flaky: passed alone: test_fictional_b", printed)
+        self.assertIn("the Kestrel file broke", printed)
+        self.assertIn("0 file(s) failed", printed)
+
+    def test_the_first_failure_of_a_flaky_file_is_kept(self):
+        self.main([self.FAILS], again=self.PASSES)
+        kept = [os.path.join(self.folder, n) for n in os.listdir(self.folder)]
+        self.assertEqual(len(kept), 1)
+        with open(kept[0], encoding="utf-8") as handle:
+            self.assertIn("the Kestrel file broke", handle.read())
+
+    def test_a_file_that_fails_twice_fails_the_run_with_both_outputs(self):
+        code, printed = self.main([self.FAILS])
+        self.assertEqual(code, 1)
+        self.assertIn("1 file(s) failed", printed)
+        self.assertIn("the Kestrel file broke", printed)
+        self.assertIn("failed again, alone", printed)
+        self.assertNotIn("flaky: passed alone", printed)
+
+    def test_a_file_that_passed_is_not_run_again(self):
+        self.main([("test_fictional_a", True, 4, 0.1, "Ran 4 tests in 0.1s\n\nOK")])
+        self.assertEqual(self.reruns, [])
+
+    def test_no_retry_runs_nothing_again(self):
+        code, _printed = self.main([self.FAILS], again=self.PASSES, argv=["--no-retry"])
+        self.assertEqual(code, 1)
+        self.assertEqual(self.reruns, [])
+
+
+class TheTiersAreReportedAndChosen(unittest.TestCase):
+    def test_each_tier_that_ran_has_a_line(self):
+        from tests import tiers
+        slow = sorted(tiers.SLOW)[0]
+        scenario = sorted(tiers.SCENARIO)[0]
+        lines = run_tests.tier_lines([
+            ("test_fictional_fast", True, 3, 2.0, ""), (scenario, True, 5, 10.0, ""), (slow, True, 1, 30.0, "")], 2)
+        self.assertEqual(3, len(lines))
+        self.assertTrue(lines[0].lstrip().startswith("fast"))
+        self.assertIn("scenario", lines[1])
+        self.assertIn("slow", lines[2])
+
+    def test_fast_leaves_the_other_tiers_out_and_the_default_leaves_none(self):
+        from tests import tiers
+        names = ["test_fictional_fast", sorted(tiers.SCENARIO)[0], sorted(tiers.SLOW)[0]]
+        seen = {}
+        for argv in ([], ["--fast"], ["--no-slow"], ["--all"]):
+            with mock.patch.object(run_tests, "test_files", return_value=names), \
+                    mock.patch.object(run_tests, "run", side_effect=lambda modules, jobs: (
+                        [(m, True, 1, 0.1, "") for m in modules])) as ran, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                run_tests.main(argv)
+            seen[tuple(argv)] = ran.call_args.args[0]
+        self.assertEqual(names, seen[()])
+        self.assertEqual(names, seen[("--all",)])
+        self.assertEqual(names[:2], seen[("--no-slow",)])
+        self.assertEqual(names[:1], seen[("--fast",)])
 
 
 if __name__ == "__main__":

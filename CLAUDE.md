@@ -26,6 +26,12 @@ node --test tests/frontend/*.test.mjs
 .venv/Scripts/python.exe -m ruff check .
 ```
 
+`tools/run_tests.py --fast` runs only the fast tier (`tests/tiers.py`: scenario tests, which run a
+whole job, a crash or two writers at once, and slow ones, the hand-over and the 68,000-photo library,
+are left out) for the loop while editing. The default is every tier, and that is the commit gate. A
+file that fails is run once more alone: if it passes, the report says "flaky: passed alone" and keeps
+the first output; if it fails twice it fails.
+
 The linter runs inside the Python suite (`tests/test_lint.py`), so a finding fails the
 build. `ruff.toml` selects rules that catch defects, not style; if one is wrong for
 this codebase, add it there with a comment saying why rather than working around it.
