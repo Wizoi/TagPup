@@ -68,5 +68,18 @@ history section named. The rules these produce are in [INVARIANTS.md](INVARIANTS
 | 2026-10-04 | Search is built on SQLite FTS5 after research of comparable managers (#728). |
 | 2026-10-04 | Library views: several rows selectable at once, People by branch, one sort (#668-#675, #712-#714). |
 
+## Keeping the project small (2026-10-09 / 2026-10-10)
+
+| Date | Decision |
+|---|---|
+| 2026-10-09 | A feature freeze, and the rules of CLAUDE.md "Keeping the project small": branches of about 1,200 lines or fewer, at most two review rounds, a severity on every finding (only `data` and `wrong` block), one migration in flight, a new feature states its live count, each branch removes as much as it adds. |
+| 2026-10-10 | One-offs are fixed by hand and flagged, not auto-corrected: a case affecting about 5-20 photos gets a check that lists them (counts by default, names behind the reveal rule), not repair code with special conditions and tests. |
+| 2026-10-10 | A person's id represents the ENTIRE TAG PATH (the model of Windows Live Photo Gallery). The leaf name is never identity; the shared-leaf case (a pet and a person under different roots) was an early design mistake, fixed by hand. Tagging by typing a name stays: it resolves to a path, and two matches ask "which one?" by path. Supersedes the 2026-10-09 short-label-when-shared design. |
+| 2026-10-10 | Folder markers (`.tagpup`) are deleted end to end: sync keeps its name/size/time pairing; a folder renamed and re-saved before the next sync is flagged missing and renamed back by hand. Reverses 2026-10-08. |
+| 2026-10-10 | Names to review: the acting UI is replaced by the doctor's list once the owner has settled the names by hand. |
+| 2026-10-10 | Camera search table (`search_gear`) and `photo_meta` are dropped with migration 30; a camera search scans the stored metadata. |
+| 2026-10-10 | The big photo_index library is archived out of `data/` (snapshot first; kept as a scale-test copy). |
+| 2026-10-10 | Machinery with zero live use is deletion-first, each deletion its own small branch, taken in the domain registers' order (untracked reports/One-off register - *.md): `relink-folders`, `reread-fields`, `dedupe-spelled-rows`, `backfill_document_ids`, journal prune, name-only face replay, `legacy_counters`, `faces_pending`. The supervisor class, the Activity file-access probes, the resumable bulk-edit job, roots adoption/Verify, damaged-photo handling and the legacy read-only CLI commands wait for the owner's yes, one at a time. |
+
 To find the rest, search [findings.md](findings.md) and `docs/history/findings_closed_*.md` for `decided` and
 `(owner`; a row marked so is a decision, with the commit that built it.
