@@ -486,11 +486,6 @@ def change_back(name, path=None, expected=None):
         return {"changed": True, "places": places, "previous": before}
 
 
-def describe_machine(library_roots, path=None):
-    """Each of a library's roots with where this machine keeps it, for TagTuner's gear."""
-    return roots_of(library_roots, path).describe()
-
-
 def propose_row(native_path, library_roots, path=None):
     """The root-relative form a native path would have, "@name/under/it", or None when it
     is under no root of the library. Pure: nothing is written and no disk is asked."""

@@ -28,7 +28,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Tags, people, captions taken apart; the person tag | `tagpup/core/vocabulary.py`, `tagpup/store/taxonomy.py` | `tests/test_vocabulary.py` |
 | A person by the id of their tag-tree node | `tagpup/store/person_ids.py` | `tests/test_person_ids.py` |
 | ExifTool | `tagpup/files/exiftool_session.py` | `tests/test_exiftool_single_owner.py` |
-| Writing a photo file's fields | `tagpup/files/field_values.py`, `tagpup/files/keywords.py`, `tagpup/services/file_changes.py` | `tests/test_file_journal.py` |
+| Writing a photo file's fields | `tagpup/files/field_values.py`, `tagpup/services/file_changes.py` | `tests/test_file_journal.py` |
 | Child processes | `tagpup/core/processes.py` | `tests/test_processes_single_owner.py` |
 | The graphics card, one process at a time | `tagpup/ml/gpu.py` (turns through `tagpup/runtime.py`) | `tests/test_gpu_single_owner.py` |
 | Models built once, from a library's settings | `tagpup/runtime.py` | `tests/test_models_single_owner.py` |

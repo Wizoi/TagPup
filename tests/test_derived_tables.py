@@ -287,8 +287,11 @@ class TheFolderTree(ALibrary):
         self.assertEqual((2, 2), (at("2024", "Coast")["direct"], at("2024", "Coast")["recursive"]))
         self.assertEqual((0, 10), (at()["direct"], at()["recursive"]))
         self.assertEqual(10, sum(found["direct"] for found in tree.values()), "every photo is directly in one folder")
+        from tagpup.store import roots as store_roots
         for found in tree.values():
-            self.assertEqual(derived.recursive_count(self.conn, found["path"]), found["recursive"],
+            where, params = store_roots.sql_under(self.conn, "path", found["path"])
+            self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM photos WHERE " + where, params).fetchone()[0],
+                             found["recursive"],
                              "the roll-up and the range of photos.path say the same")
 
     def test_the_recursive_count_is_one_seek_of_the_paths_index(self):

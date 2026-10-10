@@ -641,9 +641,3 @@ def folder_tree(conn):
     return [{"id": folder_id, "parent_id": parent_id, "path": path, "name": name,
              "direct": direct.get(folder_id, 0), "recursive": total[folder_id]}
             for folder_id, parent_id, path, name in native]
-
-
-def recursive_count(conn, folder):
-    """How many photos are in `folder` (native) or below it: one range of photos.path's index."""
-    where, params = store_roots.sql_under(conn, "path", folder)
-    return conn.execute("SELECT COUNT(*) FROM photos WHERE " + where, params).fetchone()[0]

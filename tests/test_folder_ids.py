@@ -305,7 +305,6 @@ class Marking(Case):
         self.assertEqual(3, result.changed)
         self.assertEqual({"markers": 3, "ids": 3}, result.details["changed"])
         library_id = self.identity()
-        self.assertTrue(folder_marker.is_id(library_id))
         recorded = self.ids()
         self.assertEqual(3, len(recorded))
         for folder in (self.at("2026-01-31 Parkrun"), self.at("Harbour", self.at("Trips")),

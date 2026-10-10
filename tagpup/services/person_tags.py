@@ -79,15 +79,6 @@ def _plan(library):
         work=[(node_ids[tag], tag) for tag in bare])
 
 
-def remove_nodes(library, tags):
-    """Take the nodes `tags` out of the tree, under the library's write lock. Returns how
-    many were removed, not how many were asked for."""
-    def delete(conn):
-        return sum(store_taxonomy.remove_node(conn, tag) for tag in tags)
-
-    return db.write_with_connection(library.path, delete, label="merge duplicate person tags")
-
-
 def _edits(planned):
     """Each bare node, by id, while it still spells the tag the plan found."""
     return [journal.delete("tag_taxonomy", (node_id,), {"tag": tag}) for node_id, tag in planned.work]
