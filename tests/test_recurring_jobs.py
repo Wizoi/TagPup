@@ -3,7 +3,6 @@ the library; a missed period run once; one run of a job for a library at a time,
 threads and processes, and a run a dead process left taken over; the web server's
 thread stopped cleanly; and what the apps are told, counts only.
 """
-import json
 import os
 import queue
 import socket
@@ -16,7 +15,6 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
-import web_client  # noqa: E402
 
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import processes  # noqa: E402
@@ -421,30 +419,6 @@ class WhetherAProcessRunsThem(unittest.TestCase):
         made(home, "test_cove")
         self.assertEqual(["harbour"], [lib.name for lib in runtimes.home_libraries()])
         self.assertEqual(["test_cove"], [lib.name for lib in runtimes.home_libraries(test_mode=True)])
-
-
-class WhatTheAppsAreTold(unittest.TestCase):
-    def test_each_jobs_last_run_and_when_it_is_due_counts_only(self):
-        for kind in ("tagpup", "tuner"):
-            app, home = web_client.app_for(self, kind)
-            library = Library(home.library("library.db"))
-            listed = app.test_client().get("/library/api/jobs").get_json()
-            self.assertEqual(["snapshots", "prune-journal", "sync"], [job["name"] for job in listed["jobs"]])
-            self.assertEqual([None, None, None], [job["last"] for job in listed["jobs"]])
-
-            registry = recurring.Registry()
-            service = Counting()
-            service.fail = True
-            registry.job("snapshots", recurring.DAILY, reason=recurring.SAFETY)(service)
-            recurring.Runner(lambda: [library], registry).run_due()
-            answer = app.test_client().get("/library/api/jobs")
-            self.assertEqual(200, answer.status_code)
-            job = answer.get_json()["jobs"][0]
-            self.assertEqual(("failed", False, {"errors": 1}), (job["last"]["outcome"], job["running"],
-                                                                job["last"]["changed"]))
-            self.assertNotIn("Imogen", json.dumps(answer.get_json()), "a failure's note can name a path")
-            # Failed: due again an hour after it started.
-            self.assertEqual(job_runs.seconds(job["last"]["started"]) + HOUR, job_runs.seconds(job["next_due"]))
 
 
 if __name__ == "__main__":

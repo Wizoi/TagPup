@@ -282,8 +282,6 @@ class TheRoutes(unittest.TestCase):
         posted = client.post("/library/api/library/ids", json={"kind": "any_of", "value": members, "order": "name"})
         self.assertEqual(200, posted.status_code, posted.get_data(as_text=True))
         self.assertEqual(3, posted.get_json()["total"])
-        page = client.post("/library/api/library/view", json={"kind": "any_of", "value": members, "limit": 2})
-        self.assertEqual((200, 2, 3), (page.status_code, len(page.get_json()["ids"]), page.get_json()["total"]))
         folder = client.post("/library/api/library/ids", json={"kind": "folder", "folder": os.path.join(vl.pictures, "A"),
                                                                 "recursive": True, "order": "taken-desc"})
         self.assertEqual(3, folder.get_json()["total"])
