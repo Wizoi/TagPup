@@ -1,78 +1,69 @@
-"""The maintenance scripts journal what they apply, and the CLI's `history` and `undo`
+"""The maintenance services journal what they apply, and the CLI's `history` and `undo`
 take it back (docs/ARCHITECTURE.md, phase 7.5).
 
-End to end: each script run as a person runs it, a dry run and then --apply, and the
-change it prints undone through `tagpup_cli.py undo`. The refresh's script is run the
-same way by tests/test_refresh_rows_from_files.py; the MCP tools by
-tests/test_mcp_write_tools.py.
+End to end: each service run as the MCP server runs it, a dry run and then apply, and the
+change it records undone through `tagpup_cli.py undo`. The refresh is run the same way by
+tests/test_refresh_rows.py; the MCP tools by tests/test_mcp_write_tools.py.
 """
-import contextlib
-import io
 import os
-import re
 import sys
 import unittest
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from journal_library import JournalLibrary  # noqa: E402
 
 from click.testing import CliRunner  # noqa: E402
 
-import dedupe_faces as dedupe_script  # noqa: E402
-import merge_duplicate_person_tags as merge_script  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import duplicate_faces, maintenance, person_tags  # noqa: E402
 from tagpup_cli import cli  # noqa: E402
 
 
-class ThroughTheScripts(JournalLibrary):
-    def script(self, module, *arguments):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            module.main(["--db", self.db_path] + list(arguments))
-        return out.getvalue()
+class ThroughTheServices(JournalLibrary):
+    def run_service(self, service, apply=False):
+        """The Result of `service` on the library, a dry run unless `apply`."""
+        return service(Library(self.db_path), apply=apply)
 
     def cli(self, *arguments):
         result = CliRunner().invoke(cli, ["--db", self.db_path] + list(arguments))
         self.assertIsNone(result.exception, result.output)
         return result.output
 
-    def round_trip(self, module):
+    def round_trip(self, name, service):
         """A dry run, which rehearses and writes nothing; --apply, which records a change;
         `history`; and `undo`, rehearsed and then applied, which puts every row back."""
         before = self.dump()
-        dry = self.script(module)
+        dry = maintenance.rehearsed(self.run_service(service))
         self.assertIn("the undo restored every one exactly", dry)
         self.assertEqual(before, self.dump())
         self.assertEqual([], self.changes())
 
-        applied = self.script(module, "--apply")
+        applied = self.run_service(service, apply=True)
         self.assertNotEqual(before, self.dump())
-        self.assertNotIn("backed up", applied)
-        change = int(re.search(r"Recorded as change (\d+)", applied).group(1))
+        change = applied.details["change"]
 
         listed = self.cli("history")
-        self.assertIn("%d  %s  applied" % (change, module.__name__), listed)
+        self.assertIn("%d  %s  applied" % (change, name), listed)
         for secret in ("Rowan Thackeray", "Imogen Vale", "Maren Oakhollow", self.home.root):
             self.assertNotIn(secret, listed, "history names values without --reveal")
         self.assertIn("every one came back exactly", self.cli("undo", str(change)))
         self.assertIn("Undid change %d" % change, self.cli("undo", str(change), "--apply"))
         self.assertEqual(before, self.dump())
-        self.assertIn("%d  %s  undone" % (change, module.__name__), self.cli("history", "--change", str(change)))
+        self.assertIn("%d  %s  undone" % (change, name), self.cli("history", "--change", str(change)))
 
     def test_dedupe_faces(self):
         # A second copy of a face the library already has, knowing no more.
         self.execute("INSERT INTO faces (photo_id, box, embedding, prob, excluded)"
                      " SELECT photo_id, box, embedding, prob, 0 FROM faces WHERE id = ?", (self.ids["copy"],))
-        self.round_trip(dedupe_script)
+        self.round_trip("dedupe_faces", duplicate_faces.dedupe_faces)
 
     def test_merge_duplicate_person_tags(self):
-        self.round_trip(merge_script)
+        self.round_trip("merge_duplicate_person_tags", person_tags.merge_duplicate_person_tags)
 
     def test_an_undo_that_is_refused_says_why_and_writes_nothing(self):
-        applied = self.script(merge_script, "--apply")
-        change = int(re.search(r"Recorded as change (\d+)", applied).group(1))
+        change = self.run_service(person_tags.merge_duplicate_person_tags, apply=True).details["change"]
         self.execute("INSERT INTO tag_taxonomy (id, tag, name) SELECT ?, 'Rowan Thackeray', 'Rowan Thackeray'",
                      (self.ids["Rowan Thackeray"],))
         after = self.dump()
@@ -84,8 +75,7 @@ class ThroughTheScripts(JournalLibrary):
     def test_an_undo_whose_rehearsal_is_not_exact_is_not_applied(self):
         from unittest import mock
         from tagpup.store import journal
-        applied = self.script(merge_script, "--apply")
-        change = int(re.search(r"Recorded as change (\d+)", applied).group(1))
+        change = self.run_service(person_tags.merge_duplicate_person_tags, apply=True).details["change"]
         after = self.dump()
         real = journal._again
 
@@ -103,7 +93,7 @@ class ThroughTheScripts(JournalLibrary):
         self.assertEqual(after, self.dump())
 
     def test_prune_journal_is_a_dry_run_unless_applied(self):
-        self.script(merge_script, "--apply")
+        self.run_service(person_tags.merge_duplicate_person_tags, apply=True)
         self.assertIn("0 change(s) older than 90 days would be pruned", self.cli("prune-journal"))
         self.assertIn("1 change(s) older than 0 days would be pruned", self.cli("prune-journal", "--days", "0"))
         self.assertEqual([(1, "merge_duplicate_person_tags", "applied")], self.changes())

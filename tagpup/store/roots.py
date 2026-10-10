@@ -494,24 +494,6 @@ def row_value(roots, table, column, value, key=None):
     return value
 
 
-def native_value(roots, table, column, value, key=None):
-    """row_value, the other way: what this machine reads."""
-    if roots.identity or value is None:
-        return value
-    if table == "photos":
-        if column == "path":
-            return paths.from_row(value, roots) if value and value.startswith(paths.ROOT_MARK) else value
-        if column == "raw_metadata":
-            return raw_to_native(value, roots)
-    elif table == "folder_ids" and column == "path":
-        return paths.from_row(value, roots) if value and value.startswith(paths.ROOT_MARK) else value
-    elif table == "suggestions" and column == "raw":
-        return suggested_to_native(value, roots)
-    elif table == "settings" and column == "value" and key in FOLDER_SETTINGS:
-        return folders_to_native(value, roots)
-    return value
-
-
 def row_values(roots, table, values, key=None):
     """{column: value} as the library holds them (row_value). `key` is the row's key, for
     the settings; found in `values` when it is there."""

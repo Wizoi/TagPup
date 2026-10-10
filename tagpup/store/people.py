@@ -172,14 +172,6 @@ def on_faces_alone(conn, folder=None):
         " WHERE pp.source = 'face'" + where + " ORDER BY pp.photo_id, pp.position", params).fetchall()]
 
 
-def of_photo(conn, photo_path):
-    """The people of one photo, in order; [] without a row."""
-    where, params = store_roots.sql_equals(conn, "path", photo_path)
-    return [name for (name,) in conn.execute(
-        "SELECT pp.name FROM photo_people pp JOIN photos p ON p.id = pp.photo_id WHERE " + where
-        + " ORDER BY pp.position", params)]
-
-
 def _touched(before, after):
     """(keywords, roots) whose meaning as a person differs between two vocabularies."""
     keys = {k for k in set(before.by_keyword) | set(after.by_keyword)

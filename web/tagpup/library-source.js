@@ -22,7 +22,7 @@ import { state } from './state.js';
 import { forgetSelectedIds, newIdSelection, reconcileIdSelection } from './selected.js';
 
 /**
- * The kinds a view is, as GET /api/library/view names them: the sources a navigator row holds -- `keyword_only` a keyword's
+ * The kinds a view is, as GET /api/library/ids names them: the sources a navigator row holds -- `keyword_only` a keyword's
  * node without the nodes under it, `year_other` the photos of a year whose date names no month of it -- and `any_of`, the
  * union of a list of them (the rows selected together, #672; its value is the list, each { kind, value, recursive }) -- and
  * `search` (phase 9e): its value { all_of, any_of, none_of, words }, three lists of sources and the words typed (search.js).

@@ -1,4 +1,4 @@
-"""The library views' routes (tagpup.web.tagpup_routes: /api/library/navigator, /api/library/view, /api/photo-thumb;
+"""The library views' routes (tagpup.web.tagpup_routes: /api/library/navigator, /api/library/ids, /api/photo-thumb;
 docs/SPEC_TAGPUP_GUI.md): Flask's test client, no port, no thread, no sleep, in a home of its own.
 
 What the owner is told, in a sentence and not a traceback, is asserted for each refusal; the thumbnail's cache headers
@@ -47,20 +47,17 @@ class Routes(unittest.TestCase):
         return self.client.get("/library" + path, **kwargs)
 
     def view(self, **query):
-        reply = self.get("/api/library/view", query_string=query)
+        reply = self.get("/api/library/ids", query_string=query)
         return reply, reply.get_json()
 
 
 class TheView(Routes):
-    def test_all_is_ordered_by_date_taken_with_the_undated_last_and_has_a_total_and_cards(self):
+    def test_all_is_ordered_by_date_taken_with_the_undated_last_and_has_a_total(self):
         reply, found = self.view(kind="all")
         self.assertEqual(200, reply.status_code)
         self.assertEqual([self.c, self.a, self.b, self.d], found["ids"])
-        self.assertEqual((4, None, 200), (found["total"], found["next"], found["limit"]))
+        self.assertEqual((4, True), (found["total"], found["complete"]))
         self.assertEqual({"kind": "all", "value": None, "recursive": False}, found["source"])
-        self.assertEqual([self.c, self.a, self.b, self.d], [card["id"] for card in found["cards"]])
-        self.assertEqual("a.jpg", found["cards"][1]["name"])
-        self.assertTrue(found["cards"][1]["thumb"].startswith("/api/photo-thumb?id=%d&v=" % self.a))
 
     def test_a_json_answer_is_never_kept_by_the_browser(self):
         self.assertIn("no-store", self.view(kind="all")[0].headers["Cache-Control"])
@@ -95,26 +92,10 @@ class TheView(Routes):
                 reply, found = self.view(kind="keyword", value=tag)
                 self.assertEqual((200, [], 0), (reply.status_code, found["ids"], found["total"]))
 
-    def test_pages_follow_the_next_token(self):
-        seen, token = [], None
-        while True:
-            query = {"kind": "all", "limit": 3}
-            if token:
-                query["after"] = token
-            _, found = self.view(**query)
-            seen += found["ids"]
-            token = found["next"]
-            if not token:
-                break
-        self.assertEqual([self.c, self.a, self.b, self.d], seen)
-
     def test_a_request_that_means_nothing_is_a_400_with_a_sentence(self):
         for query, said in ((dict(kind="nope"), "kind must be one of"), (dict(), "kind must be one of"),
                             (dict(kind="folder"), "needs a value"), (dict(kind="year", value="x"), "A year is"),
-                            (dict(kind="month", value="2024-13"), "A month is"), (dict(kind="all", limit="0"), "limit must be"),
-                            (dict(kind="all", limit="-3"), "limit must be"), (dict(kind="all", limit="ten"), "limit must be"),
-                            (dict(kind="all", after="forged!"), "not one this server made"),
-                            (dict(kind="all", after="A" * 10000), "not one this server made"),
+                            (dict(kind="month", value="2024-13"), "A month is"),
                             (dict(kind="keyword", value="   "), "needs a value")):
             with self.subTest(query=query):
                 reply, found = self.view(**query)
@@ -123,17 +104,14 @@ class TheView(Routes):
                 self.assertIn(said, found["error"])
                 self.assertNotIn("Traceback", found["error"])
 
-    def test_a_huge_limit_is_capped_not_refused(self):
-        self.assertEqual(500, self.view(kind="all", limit="1000000")[1]["limit"])
-
     def test_it_answers_this_pc_only(self):
-        for path in ("/api/library/view?kind=all", "/api/library/navigator?section=dates", "/api/photo-thumb?id=%d" % self.a):
+        for path in ("/api/library/ids?kind=all", "/api/library/navigator?section=dates", "/api/photo-thumb?id=%d" % self.a):
             with self.subTest(path=path):
                 self.assertEqual(403, self.get(path, environ_overrides=REMOTE).status_code)
 
-    def test_a_library_no_photo_was_indexed_in_is_an_empty_page(self):
+    def test_a_library_no_photo_was_indexed_in_is_an_empty_list(self):
         ViewLibrary(self, "emptied", home=self.home)
-        found = self.client.get("/emptied/api/library/view?kind=all").get_json()
+        found = self.client.get("/emptied/api/library/ids?kind=all").get_json()
         self.assertEqual(([], 0), (found["ids"], found["total"]))
 
 
@@ -181,7 +159,7 @@ class TheThumbnail(Routes):
         self.assertEqual("ok", reply.headers["X-TagPup-Thumb"])
 
     def test_a_card_s_url_is_kept_by_the_browser_for_a_year(self):
-        card = self.view(kind="all")[1]["cards"][1]
+        card = self.get("/api/library/cards", query_string={"ids": "%d,%d" % (self.c, self.a)}).get_json()["cards"][1]
         reply = self.get(card["thumb"])
         self.assertEqual(200, reply.status_code)
         self.assertEqual("private, max-age=31536000, immutable", reply.headers["Cache-Control"])
@@ -287,16 +265,16 @@ class ALibraryThatIsNotReady(unittest.TestCase):
         app.testing = True
         client = app.test_client()
         with mock.patch.object(web_libraries.library_actions, "bring_up_to_date", side_effect=RuntimeError("locked")):
-            for url in ("/behind/api/library/view?kind=all", "/behind/api/library/navigator?section=folders",
+            for url in ("/behind/api/library/ids?kind=all", "/behind/api/library/navigator?section=folders",
                         "/behind/api/photo-thumb?id=1"):
                 reply = client.get(url)
                 self.assertIn(reply.status_code, (409, 404), url)
                 if reply.status_code == 409:
                     self.assertIn("has not been brought up to date", reply.get_json()["error"])
-            reply = client.get("/behind/api/library/view?kind=all")
+            reply = client.get("/behind/api/library/ids?kind=all")
             self.assertEqual(409, reply.status_code)
             self.assertIn("behind", reply.get_json()["error"])
-        reply = client.get("/behind/api/library/view?kind=all")
+        reply = client.get("/behind/api/library/ids?kind=all")
         self.assertEqual(200, reply.status_code, "opened by the app as it opens any library, it is ready")
 
 
@@ -316,11 +294,13 @@ class ARootedLibrary(unittest.TestCase):
         copy = os.path.join(self.home.root, "Copy", "Pictures")
         shutil.copytree(self.side.pictures, copy, copy_function=shutil.copy2)
         config.set_location(rl.NAME, copy)
-        reply = self.client.get("/harbour/api/library/view", query_string={"kind": "folder", "folder": self.folder})
+        reply = self.client.get("/harbour/api/library/ids", query_string={"kind": "folder", "folder": self.folder})
         self.assertEqual(200, reply.status_code)
         found = reply.get_json()
         self.assertEqual(4, found["total"])
-        self.assertTrue(all(card["path"].startswith(copy) for card in found["cards"]), "the first place's spelling")
+        cards = self.client.get("/harbour/api/library/cards",
+                                query_string={"ids": ",".join(str(each) for each in found["ids"])}).get_json()["cards"]
+        self.assertTrue(all(card["path"].startswith(copy) for card in cards), "the first place's spelling")
         self.assertEqual(rl.NAME, reply.headers["X-TagPup-Roots-Moved"])
 
     def test_a_thumbnail_by_id_is_untouched_by_the_ingress_and_survives_the_move(self):
@@ -339,7 +319,7 @@ class ARootedLibrary(unittest.TestCase):
     def test_a_root_this_machine_does_not_place_is_the_gates_409_with_its_sentence(self):
         os.remove(config.machine_roots_path())
         roots_gate.forget(self.side.library)
-        for url in ("/harbour/api/library/view?kind=all", "/harbour/api/library/navigator?section=folders",
+        for url in ("/harbour/api/library/ids?kind=all", "/harbour/api/library/navigator?section=folders",
                     "/harbour/api/photo-thumb?id=1"):
             reply = self.client.get(url)
             self.assertEqual(409, reply.status_code, url)
@@ -348,7 +328,7 @@ class ARootedLibrary(unittest.TestCase):
 
     def test_a_library_with_no_roots_is_served_as_it_always_was(self):
         plain = rl.Side(self.home, "plain", real=1, bulk=0, outside=0)
-        reply = self.client.get("/plain/api/library/view?kind=all")
+        reply = self.client.get("/plain/api/library/ids?kind=all")
         self.assertEqual(200, reply.status_code)
         self.assertEqual(3, reply.get_json()["total"])
         self.assertIsNotNone(plain)

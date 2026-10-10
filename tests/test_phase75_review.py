@@ -6,16 +6,14 @@
 - An undo whose row would break a UNIQUE constraint (tag_taxonomy.tag, photos.path) is
   refused naming the row and the column, before writing; and an IntegrityError SQLite
   raises all the same is a refusal, never a traceback.
-- The maintenance scripts print their errors and exit non-zero (the refresh's script,
-  in tests/test_refresh_rows_guards.py).
+- The maintenance services carry their errors in the Result (the refresh, in
+  tests/test_refresh_rows_guards.py).
 - journal.rehearse works for every shape of insert the journal allows.
 - A refresh skips a row saved during its run instead of refusing the whole change
-  (journal: skippable edits; tests/test_refresh_rows_guards.py through the script).
+  (journal: skippable edits; tests/test_refresh_rows_guards.py).
 - One keyword spelling, in tagpup.core.vocabulary.
 - journal.history of one change lists its keys without reading its values.
 """
-import contextlib
-import io
 import json
 import os
 import re
@@ -25,13 +23,12 @@ from unittest import mock
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
-sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from journal_library import MODEL, JournalLibrary, jpeg, vector  # noqa: E402
 
-import dedupe_faces as dedupe_script  # noqa: E402
-import merge_duplicate_person_tags as merge_script  # noqa: E402
 from tagpup.core import vocabulary  # noqa: E402
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import duplicate_faces, maintenance, person_tags  # noqa: E402
 from tagpup.services import journal as library_journal  # noqa: E402
 from tagpup.store import journal, people  # noqa: E402
 
@@ -259,66 +256,60 @@ class SkippableEdits(JournalLibrary):
         self.assertEqual(["document_ids.py", "face_people.py", "refresh_rows.py", "relink_photos.py", "reread_fields.py"], using)
 
 
-class ScriptsReportErrors(JournalLibrary):
-    """#3: dedupe and merge print result.errors and exit non-zero (the refresh's script
-    in tests/test_refresh_rows_guards.py)."""
+class ServicesReportErrors(JournalLibrary):
+    """#3: dedupe and merge carry result.errors (the refresh's, in tests/test_refresh_rows_guards.py)."""
 
-    def run_script(self, module, *arguments):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            code = module.main(["--db", self.db_path] + list(arguments))
-        return code, out.getvalue()
+    def run_service(self, service, apply=False):
+        return service(Library(self.db_path), apply=apply)
 
     def dedupe_ready(self):
         self.execute("INSERT INTO faces (photo_id, box, embedding, prob, excluded)"
                      " SELECT photo_id, box, embedding, prob, 0 FROM faces WHERE id = ?", (self.ids["copy"],))
 
-    def failed_write(self, module):
+    def failed_write(self, service):
         before = self.dump()
         with mock.patch.object(journal, "_write", side_effect=RuntimeError("disk I/O error")):
-            code, out = self.run_script(module, "--apply")
-        self.assertEqual(1, code, out)
-        self.assertIn("FAILED: the write: RuntimeError: disk I/O error", out)
-        self.assertIn("Nothing was recorded", out)
+            result = self.run_service(service, apply=True)
+        self.assertEqual(1, len(result.errors), result.errors)
+        self.assertIn("FAILED: the write: RuntimeError: disk I/O error", maintenance.failed(result))
+        self.assertIn("Nothing was recorded", maintenance.recorded(result, self.db_path))
         self.assertEqual(before, self.dump())
 
-    def failed_rebuild(self, module):
+    def failed_rebuild(self, service):
         with mock.patch.object(journal, "_derive", side_effect=RuntimeError("database is locked")):
             with self.assertLogs("tagpup.store.journal", "ERROR"):
-                code, out = self.run_script(module, "--apply")
-        self.assertEqual(1, code, out)
-        self.assertRegex(out, r"Recorded as change \d+")
-        self.assertIn("FAILED: the people and dates of the photos it touched: not rebuilt yet", out)
+                result = self.run_service(service, apply=True)
+        self.assertEqual(1, len(result.errors), result.errors)
+        self.assertIsInstance(result.details["change"], int)
+        self.assertTrue(any(line.startswith("FAILED: the people and dates of the photos it touched: not rebuilt yet")
+                            for line in maintenance.failed(result)), maintenance.failed(result))
         self.assertEqual("derived_pending", self.changes()[0][2])
 
     def test_merge_a_failed_write(self):
-        self.failed_write(merge_script)
+        self.failed_write(person_tags.merge_duplicate_person_tags)
 
     def test_merge_a_failed_rebuild(self):
-        self.failed_rebuild(merge_script)
+        self.failed_rebuild(person_tags.merge_duplicate_person_tags)
 
     def test_dedupe_a_failed_write(self):
         self.dedupe_ready()
-        self.failed_write(dedupe_script)
+        self.failed_write(duplicate_faces.dedupe_faces)
 
     def test_dedupe_a_failed_rebuild(self):
         self.dedupe_ready()
-        self.failed_rebuild(dedupe_script)
+        self.failed_rebuild(duplicate_faces.dedupe_faces)
 
     def test_a_failed_rehearsal_is_reported_too(self):
         with mock.patch.object(journal, "rehearse", side_effect=RuntimeError("disk I/O error")):
-            code, out = self.run_script(merge_script)
-        self.assertEqual(1, code, out)
-        self.assertIn("FAILED: the rehearsal: RuntimeError: disk I/O error", out)
+            result = self.run_service(person_tags.merge_duplicate_person_tags)
+        self.assertIn("FAILED: the rehearsal: RuntimeError: disk I/O error", maintenance.failed(result))
 
-    def test_a_clean_apply_exits_zero(self):
-        code, out = self.run_script(merge_script, "--apply")
-        self.assertEqual(0, code, out)
-        self.assertNotIn("FAILED", out)
+    def test_a_clean_apply_has_no_errors(self):
+        result = self.run_service(person_tags.merge_duplicate_person_tags, apply=True)
+        self.assertEqual([], maintenance.failed(result))
 
     def test_recorded_copes_with_no_change(self):
         from tagpup.core.result import Result
-        from tagpup.services import maintenance
         self.assertEqual("Nothing was recorded: no change was written.",
                          maintenance.recorded(Result(details={"change": None}), self.db_path))
 

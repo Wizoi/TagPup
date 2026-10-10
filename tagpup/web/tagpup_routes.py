@@ -666,23 +666,6 @@ def _source_asked():
             request.args.get("after"), request.args.get("limit"))
 
 
-@routes.route("/api/library/view", methods=["GET", "POST"])
-def library_page():
-    """A page of the photos of a source, ordered by Date Taken, with the total and the cards
-    (tagpup.services.library_view.view)."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
-    library = state.require()
-    kind, value, recursive, order, after, limit = _source_asked()
-    try:
-        return jsonify(library_view.view(library, kind, value, recursive, after, limit, order))
-    except (Refused, NotFound, paths.RootsError) as why:
-        return _view_error(why)
-    except Exception as e:
-        logger.error("Error reading a page of the library: %s", e, exc_info=True)
-        return responses.error(500, str(e))
-
-
 @routes.route("/api/library/ids", methods=["GET", "POST"])
 def library_ids():
     """The whole ordered id list of a source, for a grid that jumps to the middle of it

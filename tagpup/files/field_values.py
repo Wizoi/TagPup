@@ -8,7 +8,7 @@ after a crash, or back in an undo, through the one writer, so a file is written 
 way whichever of the three it is.
 
 A field written with an empty value is cleared: ExifTool reads an empty list as "no
-change", so a cleared field is an explicit '-FIELD=' (tagpup.files.keywords), in the one
+change", so a cleared field is an explicit '-FIELD=' (tagpup.core.fields), in the one
 command that sets the rest. It was a second command, and a crash between the two left a
 file holding neither what it held nor what it was to hold (docs/findings.md, #271). The
 photo's identity goes in that command too (#282).
@@ -19,9 +19,11 @@ from exiftool.exceptions import ExifToolNotRunning
 
 from tagpup.core import fields, paths
 from tagpup.files import exiftool_session, identity
-from tagpup.files.keywords import MIME_TYPE
 
 logger = logging.getLogger(__name__)
+
+#: What ExifTool says a file is. A photo's starts with "image/".
+MIME_TYPE = "File:MIMEType"
 
 #: Photos read in one ExifTool command.
 READ_BATCH = 200

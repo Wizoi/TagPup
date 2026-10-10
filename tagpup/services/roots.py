@@ -152,16 +152,6 @@ def old_place_sentence(library, original, canonical_path):
             "Nothing was done. Use the folder at the current place." % (original, previous, name, first, canonical_path))
 
 
-def canonical_all(library, many):
-    """canonical for each of a list; a dict has its keys made so."""
-    roots = _roots_of(library)
-    if roots is None:
-        return many
-    if isinstance(many, dict):
-        return {paths.canonical(each, roots): value for each, value in many.items()}
-    return [paths.canonical(each, roots) for each in many]
-
-
 def _one(each, roots):
     """A path, or a (path, ...) tuple whose first is one (a suggestion's write)."""
     if isinstance(each, str):

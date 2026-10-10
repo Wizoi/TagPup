@@ -919,15 +919,3 @@ def without_identity(conn):
     roots = store_roots.roots_for(conn)
     return [paths.from_row(path, roots) for (path,) in conn.execute(
         "SELECT path FROM photos WHERE document_id IS NULL OR document_id = ''") if path]
-
-
-def record_identity(conn, photo_path, document_id, stat=None, before=None):
-    """Record a photo's document_id; with `stat`, the mtime and size the file has now it
-    was written to, where the row described the file at `before`, its stamp just before
-    the write (_describes_before), over which its vectors are carried. Returns rows
-    changed. The caller commits."""
-    where, params = store_roots.sql_equals(conn, "path", photo_path)
-    if stat is not None:
-        _stamp(conn, photo_path, stat.st_mtime, stat.st_size, before=before)
-    return conn.execute("UPDATE photos SET document_id = ? WHERE " + where,
-                        (document_id,) + params).rowcount

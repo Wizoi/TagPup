@@ -339,11 +339,6 @@ def refuse_child_of_person(conn, tag):
             raise person_ids.PersonHasNoChildren(above, faces, photos)
 
 
-def people_nodes(db_path, name):
-    """The nodes holding faces whose name is `name`: where that person is filed."""
-    return _nodes(db_path, "WHERE name = ? AND has_face = 1", (name,))
-
-
 def tag_embeddings(db_path, tag):
     """How many CLIP embeddings the library caches for the word `tag`."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
@@ -509,25 +504,6 @@ def set_branch_flags(conn, path, has_face=None, hidden=None):
                                        (value,) + params).rowcount
         return changed
 
-
-
-# ---- The JSON file beside a library ----------------------------------------------------
-#
-# The tree lived in a JSON file beside each library, whose name decided which library it
-# belonged to. The table is its only home since phase 4 (docs/findings.md, #13, #61); a
-# copy is written only when asked for.
-
-def export_json(db_path, target):
-    """Write the tree's paths to `target` as JSON, {"paths": [...]}, a copy to keep or to
-    read. Returns how many paths."""
-    conn = db.connect(db.readonly_uri(db_path), uri=True)
-    try:
-        paths_ = sorted(tags(conn))
-    finally:
-        conn.close()
-    with open(target, "w", encoding="utf-8") as f:
-        json.dump({"paths": paths_}, f, indent=2)
-    return len(paths_)
 
 
 def seed(db_path):

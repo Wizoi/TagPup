@@ -271,7 +271,7 @@ class WhileTheIndexIsBeingMade(unittest.TestCase):
                 if method == "get":
                     reply = client.get("/library/api/library/ids", query_string={"kind": "search", "value": words("harbour")})
                 else:
-                    reply = client.post("/library/api/library/view", json={"kind": "search", "value": {"words": "harbour"}})
+                    reply = client.post("/library/api/library/ids", json={"kind": "search", "value": {"words": "harbour"}})
                 self.assertEqual(503, reply.status_code, reply.get_data(as_text=True))
                 self.assertEqual("5", reply.headers.get("Retry-After"))
                 self.assertIn("being made now", reply.get_json()["error"])

@@ -1,6 +1,6 @@
 """dedupe_faces keeps the copy a person decided about, and never drops an exclusion.
 
-Of tagpup.services.duplicate_faces, which scripts/dedupe_faces.py runs.
+Of tagpup.services.duplicate_faces, which the MCP tool dedupe_faces runs.
 
 Two copies of one face -- same photo, same box -- are merged by keeping the copy that
 "knows something". A name counted for more than anything else, so a name clustering

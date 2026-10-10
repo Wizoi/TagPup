@@ -1053,19 +1053,6 @@ def stats(ctx):
     finally:
         photo_index.close()
 
-@cli.command("export-tree")
-@click.argument("output", type=click.Path(dir_okay=False))
-@click.pass_context
-def export_tree(ctx, output: str):
-    """Write the library's tag tree to OUTPUT as JSON: a copy to keep or read. The tree
-    itself lives in the library."""
-    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
-    if not os.path.exists(db_path):
-        raise click.ClickException("There is no library at %s." % db_path)
-    count = store_taxonomy.export_json(db_path, output)
-    console.print(f"Wrote {count} tag(s) to [bold cyan]{output}[/bold cyan].")
-
-
 @cli.command()
 @click.option("--apply", "apply_", is_flag=True, help="Back the library up, then compact it. Without it, only says how much would be freed.")
 @click.pass_context
