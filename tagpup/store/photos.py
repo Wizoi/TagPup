@@ -65,12 +65,6 @@ def _dated_paths(conn, photo_paths):
 MTIME_TOLERANCE = 0.1
 
 
-def sized_rows(conn):
-    """(id, path, size, tags JSON, captions JSON) of every photo whose size is known: no raw metadata, no
-    BLOB. What the merging of the rows of one file starts from (tagpup.services.duplicate_rows)."""
-    return conn.execute("SELECT id, path, size, tags, captions FROM photos WHERE size IS NOT NULL").fetchall()
-
-
 def same_mtime(row_mtime, file_mtime):
     """Are a row's modified time and its file's the same (within MTIME_TOLERANCE)? The one rule: the scan, refresh
     and the MCP's comparison of a row with its file go by it. None for either is no."""
