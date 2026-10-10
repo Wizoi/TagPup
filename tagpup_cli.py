@@ -952,7 +952,7 @@ def _files_line(files):
 @click.pass_context
 def history(ctx, change_id, limit, reveal):
     """The library's journal: the changes bulk operations applied, newest first, each
-    undoable with `undo` until it is pruned."""
+    undoable with `undo`."""
     library = _existing_library(ctx)
     try:
         found = library_journal.history(library, change_id, reveal, limit)
@@ -980,7 +980,6 @@ def history(ctx, change_id, limit, reveal):
         for row in entry.get("values", []):
             console.print("  %s %s %s: %s -> %s" % (row["action"], row["table"], "/".join(str(k) for k in row["key"]),
                                                    row["old"], row["new"]), markup=False)
-    console.print("Changes stay undoable for %d days." % found["retention_days"])
 
 
 def _say_rehearsal(result):
@@ -1026,24 +1025,6 @@ def undo(ctx, change_id, apply_):
         console.print("Added folder(s) pointed back: %s." % ("none (left as they are)" if back is None else back))
     for what, error in result.errors:
         console.print("[yellow]%s: %s[/yellow]" % (what, error))
-
-
-@cli.command("prune-journal")
-@click.option("--days", default=library_journal.RETENTION_DAYS, type=int, show_default=True,
-              help="Changes older than this lose their values and can no longer be undone.")
-@click.option("--apply", "apply_", is_flag=True, help="Prune. Without it, only says what would go.")
-@click.pass_context
-def prune_journal(ctx, days, apply_):
-    """Let old changes go: each keeps its summary, and loses the values an undo needs."""
-    library = _existing_library(ctx)
-    result = library_journal.prune(library, days, apply=apply_)
-    if not apply_:
-        console.print("%d change(s) older than %d days would be pruned (%d value(s)). --apply prunes them."
-                      % (result.attempted, days, result.details["values"]))
-    else:
-        console.print("Pruned %d change(s), %d value(s)." % (result.changed, result.details["values"]))
-    if result.details["note"]:
-        console.print(result.details["note"])
 
 
 @cli.command("relink-folders")

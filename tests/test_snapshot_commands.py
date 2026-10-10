@@ -28,7 +28,7 @@ class TheJobAndTheCommands(Base):
         runner = recurring.Runner(lambda: [self.library], clock=lambda: NOON)
         ran = {o.job: o for o in runner.run_due() if o.ran}
         # Sync runs too, and fails here: this runner was given no Runtime.
-        self.assertEqual({"snapshots", "prune-journal", "sync"}, set(ran))
+        self.assertEqual({"snapshots", "sync"}, set(ran))
         self.assertEqual(3, ran["snapshots"].result.changed)
         run = [r for r in job_runs.runs(self.library.path) if r.job == "snapshots"][0]
         self.assertEqual(("done", 3, snapshots.disk(self.library.path)),
@@ -72,7 +72,6 @@ class TheJobAndTheCommands(Base):
         listed = self.cli("jobs")
         self.assertEqual(0, listed.exit_code, listed.output)
         self.assertIn("snapshots", listed.output)
-        self.assertIn("prune-journal", listed.output)
 
         self.change_tags('["Beach", "Harbour"]')
         name = snapshots.listed(self.library.path, "daily")[0].name

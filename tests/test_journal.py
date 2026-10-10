@@ -403,31 +403,6 @@ class HistoryAndPruning(JournalLibrary):
         face = next(v for v in values if v["table"] == "faces")
         self.assertEqual(("<2048 bytes>", None), (face["old"]["embedding"], face["new"]))
 
-    def test_pruning_keeps_the_summary_and_drops_the_values(self):
-        import time
-        first, second = self.two_changes()
-        values = self.query("SELECT COUNT(*) FROM change_rows")[0][0]
-        self.assertEqual((0, 0), journal.prunable(self.db_path, keep=()))
-        later = time.time() + (journal.RETENTION_DAYS + 1) * 86400
-        self.assertEqual((2, values), journal.prunable(self.db_path, now=later, keep=()))
-        self.assertEqual((2, values), journal.prune(self.db_path, now=later, keep=()))
-        self.assertEqual([(first, "dedupe_faces", "pruned"), (second, "refresh_rows", "pruned")], self.changes())
-        self.assertEqual([(0,)], self.query("SELECT COUNT(*) FROM change_rows"))
-        self.assertEqual({"redundant": 1}, journal.history(self.db_path, change_id=first)[0]["summary"]["counts"])
-        with self.assertRaisesRegex(journal.Refusal, "change %d was pruned" % first):
-            journal.undo(self.db_path, first)
-
-    def test_a_newer_change_is_never_pruned_before_an_older_one(self):
-        first, second = self.two_changes()
-        # The older stamped later than the newer, as a clock set back would leave them:
-        # it goes with the newer, or an undo of the older could not see the newer's rows.
-        self.execute("UPDATE changes SET created = '2999-01-01 00:00:00' WHERE id = ?", (first,))
-        self.execute("UPDATE changes SET created = '2000-01-01 00:00:00' WHERE id = ?", (second,))
-        self.assertEqual(2, journal.prunable(self.db_path, days=1, keep=())[0])
-        self.execute("UPDATE changes SET created = '2000-01-01 00:00:00' WHERE id = ?", (first,))
-        self.execute("UPDATE changes SET created = '2999-01-01 00:00:00' WHERE id = ?", (second,))
-        self.assertEqual(1, journal.prunable(self.db_path, days=1, keep=())[0])
-
     def test_a_library_without_a_journal_has_no_history(self):
         bare = self.home.library("bare.db")
         conn = db.connect(bare)
@@ -435,7 +410,6 @@ class HistoryAndPruning(JournalLibrary):
         conn.commit()
         conn.close()
         self.assertEqual([], journal.history(bare))
-        self.assertEqual((0, 0), journal.prunable(bare, keep=()))
 
 
 class TheSchemaMovedOn(unittest.TestCase):

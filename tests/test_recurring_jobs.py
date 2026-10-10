@@ -160,8 +160,8 @@ class WhatIsDue(Base):
         with self.assertRaises(ValueError):
             registry.job("sync", recurring.DAILY, reason=recurring.CATCH_UP)(lambda library, run: Result())
 
-    def test_the_registry_holds_the_snapshots_and_pruning_the_journal(self):
-        self.assertEqual({"snapshots": "daily", "prune-journal": "weekly", "sync": "daily"},
+    def test_the_registry_holds_the_snapshots_and_the_sync(self):
+        self.assertEqual({"snapshots": "daily", "sync": "daily"},
                          {job.name: job.period.name for job in recurring.JOBS})
         self.assertTrue(all(job.per_library for job in recurring.JOBS))
 
@@ -202,7 +202,7 @@ class EachJobSaysWhyItIsScheduled(unittest.TestCase):
         self.assertEqual([], registry.names())
 
     def test_each_registered_job_has_one_and_the_apps_are_told_it(self):
-        self.assertEqual({"snapshots": "safety", "prune-journal": "retention", "sync": "catch-up"},
+        self.assertEqual({"snapshots": "safety", "sync": "catch-up"},
                          {job.name: job.reason for job in recurring.JOBS})
         self.assertEqual(("safety", "retention", "catch-up"), recurring.REASONS)
         registry = recurring.Registry()

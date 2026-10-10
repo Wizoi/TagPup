@@ -58,7 +58,6 @@ def generations_kept(conn):
     broken += ["trigger generation_%s_%s" % (n, event) for n in generations.NAMES
                for event in ("insert", "delete", "update")
                if ("trigger", "generation_%s_%s" % (n, event)) not in objects]
-    broken += ["left over: %s" % name for name in schema.legacy_counters(conn)]
     return _check("generations not kept", broken)
 
 
