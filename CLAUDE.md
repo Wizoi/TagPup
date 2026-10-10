@@ -215,6 +215,26 @@ reported 60 done, and wrote nothing; the paths did not match and nothing said so
   alone can answer. The cheapest correct change first: no extra backup, no workaround
   around the model where the model can be fixed.
 
+## Keeping the project small (owner, 2026-10-09: a feature freeze, and these rules)
+
+The project grew 43k to 103k lines of code and 44k to 110k of tests in two weeks
+(reports/Project health review 2026-10-09.md, untracked). Accuracy held; scope did not.
+
+- **No new feature until the owner lifts the freeze.** Allowed: deletion, simplification,
+  docs, test speed, bug fixes for something the owner hit, and installing what is merged.
+- **A branch is about 1,200 lines or fewer, one concern.** A larger piece is cut into
+  merges that each leave the trunk whole (the last one, identity stage 2, was 10,800 lines).
+- **At most two review rounds**, the ownership question in the second. A finding carries a
+  severity: `data` (can lose or corrupt data), `wrong` (a wrong result the owner sees),
+  `low`. Only `data` and `wrong` block a merge; `low` rows are batched into the findings.
+- **One migration in flight at a time**: no new migration until the last one is installed
+  and has run on the three live libraries.
+- **A new feature's brief states its live count** (how many rows or cases in the three
+  libraries it touches). Under about 20, it is a one-off script, not a feature.
+- **Each branch removes at least as many concepts, shims or tests as it adds**, or says why.
+- **Test files are named for what they test, never for a review round** (`..._followup`,
+  `..._third_review` are renamed or merged when touched).
+
 ## Performance work
 
 Read this before claiming anything got faster. Every line of it was paid for by
