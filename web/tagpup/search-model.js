@@ -36,7 +36,7 @@ export function pickerNames(keywords, people) {
             if (!person.groupTag && branches.has(key)) continue;   // a branch is never a person (#660)
             if (person.groupTag) personNodes.add(joinTag(person.groupTag, person.name).toLowerCase());
             names.push({
-                member: { kind: 'person', value: personSource(person), recursive: false }, label: person.label || person.name, hint: person.groupTag || '',
+                member: { kind: 'person', value: personSource(person), recursive: false }, label: person.name, hint: person.groupTag || '',
                 count: person.count, what: 'person', words: [key],
             });
         }
@@ -96,13 +96,13 @@ export function memberKey(member) {
 
 /**
  * What a chip of a search's list says, and its tooltip: { text, title }. A source the picker does not offer is "within" it. A
- * person who shares a name is told by their tag (the source), and shown by their label (`Sam · Thackeray`) when the people are
- * read (`people`, the navigator's index): the tag stays in the tooltip.
+ * person who shares a name is told by their tag (the source), and shown by their name when the people are read (`people`, the
+ * navigator's index): the tag stays in the tooltip.
  */
 export function chipLabel(member, people = null) {
     if (member.kind === 'person') {
         const known = people && people.byPersonTag ? people.byPersonTag.get(String(member.value).toLowerCase()) : null;
-        if (known && known.label) return { text: known.label, title: `${member.value}: photos naming them` };
+        if (known) return { text: known.name, title: `${member.value}: photos naming them` };
         return { text: String(member.value), title: `${member.value}: photos naming them` };
     }
     if (member.kind === 'keyword') return { text: String(member.value), title: `${member.value}, and every tag under it` };

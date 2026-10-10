@@ -38,9 +38,8 @@ import { boxInContainedImage, onImageZoomChange, onImageZoomDismiss, zoomLayer, 
 import { samePath } from './common/paths.js';
 import { attachPersonFaces, forgetPersonFaces, hidePersonFaces } from './common/person-faces.js';
 import { choosePerson } from './common/person-choice.js';
-import { personLabelNodeOf } from './common/person-label.js';
 import {
-    GROUP_SEPARATOR, leafOf, nameProblem, personFields, personLabel, personLabelOf, personTitleOf, sameNamed, sameTagPerson,
+    leafOf, nameProblem, personFields, personLabel, personLabelOf, personTitleOf, sameNamed, sameTagPerson,
 } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -253,7 +252,7 @@ function faceBox(face, placed, faces) {
     button.style.top = `${placed.top}px`;
     button.style.width = `${placed.width}px`;
     button.style.height = `${placed.height}px`;
-    if (face.name) button.append(buildElement('span', { className: 'face-box-name' }, [personLabelNodeOf(face)]));
+    if (face.name) button.append(buildElement('span', { className: 'face-box-name', text: personLabelOf(face) }));
     button.addEventListener('click', (event) => {
         event.stopPropagation();
         openFacePanel(face.id, { focus: true });
@@ -438,10 +437,9 @@ function suggestionButtons(face) {
             attrs: { type: 'button' },
             title: (match.band === 'likely'
                 ? `Looks like ${shown}. Click to name this face and add them to the photo.`
-                : `Possibly ${shown}: a weaker match, so look first. Click to name this face and add them to the photo.`)
-                + (match.person && match.person.shared ? ` (${personTitleOf(match)})` : ''),
+                : `Possibly ${shown}: a weaker match, so look first. Click to name this face and add them to the photo.`),
         }, [
-            buildElement('span', { className: 'face-panel-suggestion-name' }, [personLabelNodeOf(match)]),
+            buildElement('span', { className: 'face-panel-suggestion-name', text: shown }),
             buildElement('span', { className: 'face-panel-suggestion-percent', text: `${percent}%` }),
         ]);
         attachPersonFaces(button, whoOf(match));
@@ -536,9 +534,6 @@ export async function nameFaceAs(face, who) {
             });
             if (!person) return false;
             rawName = person.tag;
-        } else if (String(rawName).includes(GROUP_SEPARATOR)) {
-            say(`"${rawName}" is a person's label, and the page has not read the people yet: try again in a moment.`);
-            return false;
         }
     }
     const name = person ? person.name : leafOf(rawName);

@@ -135,9 +135,9 @@ export function drawJumps(data) {
     if (!selectionPeopleJump || !selectionKeywordJump || !data) return;
     // Only a name that is one person node of the tree is a person to open a view of (the server says: `has_node`); a branch, a name
     // two nodes share or one no node has is listed, without a link (#866).
-    // A person who shares a name is opened by their tag (exactly them), and listed by their label.
+    // A person who shares a name is opened by their tag (exactly them).
     const people = sortedTags(data.people, each => personLabelOf(each)).map(each => ({
-        spec: { kind: 'person', value: each.person && each.person.shared && each.person.tag ? each.person.tag : each.name, recursive: false },
+        spec: { kind: 'person', value: each.person && each.person.tag && state.people.shared(each.name) ? each.person.tag : each.name, recursive: false },
         label: personLabelOf(each), count: each.count, linked: each.has_node !== false,
     }));
     const tags = sortedTags(data.tags, each => each.tag)

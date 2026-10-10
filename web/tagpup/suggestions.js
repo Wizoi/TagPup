@@ -3,7 +3,7 @@
 import { api } from './common/api.js';
 import { attachPersonFaces } from './common/person-faces.js';
 import { samePath } from './common/paths.js';
-import { leafOf, peopleListHas, personLabelOf, personTitleOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
+import { leafOf, peopleListHas, personLabelOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     btnFolderAutoApply, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
@@ -359,8 +359,7 @@ export function renderSuggestionsPanel(photoPath) {
             chip.className = 'suggestion-chip';
             chip.style.cursor = 'pointer';
             chip.textContent = pct ? `${shown} · ${pct}%` : shown;
-            chip.title = `Click to add ${shown} to this photo.`
-                + (isPerson && item.person && item.person.shared ? ` (${personTitleOf(item, key)})` : '');
+            chip.title = `Click to add ${shown} to this photo.`;
             if (isPerson) {
                 chip.tabIndex = 0;      // focusable, so the keyboard sees their faces as well
                 attachPersonFaces(chip, item.person && item.person.id !== null && item.person.id !== undefined ? item.person : name);
@@ -382,7 +381,7 @@ export function personChips(list) {
     const chips = [];
     for (const item of list || []) {
         const person = item.person;
-        const called = person && person.shared && (person.id === null || person.id === undefined) ? state.people.called(item.name) : [];
+        const called = person ? [] : state.people.called(item.name);
         if (called.length > 1) called.forEach(each => chips.push({ ...item, name: each.tag, person: each }));
         else chips.push(item);
     }

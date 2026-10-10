@@ -4,7 +4,7 @@
  * the server's shapes (/api/people?records=1, a face's `person` and `suggestion_person`, a match's `person`, a suggestion's
  * `person`). Names are made up.
  *
- * What the page must do: show `Sam · Friends` and `Sam · Pets` wherever the name is shared and the plain name where it is not;
+ * What the page must do: show the name, with the tag in the title where the name is shared;
  * never take the second Sam for the first (a photo that has one may be given the other, a face that is one may not be offered
  * again as that one); and name a face by the person's id, with the exact keyword written first.
  */
@@ -14,9 +14,9 @@ import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApp
 
 afterEach(() => closeAllApps());
 
-const SAM_FRIEND = { id: 40, name: "Sam", tag: "Friends/Sam", group: "Friends", shared: true };
-const SAM_PET = { id: 41, name: "Sam", tag: "Pets/Sam", group: "Pets", shared: true };
-const WREN = { id: 52, name: "Wren", tag: "Family/Ingersoll/Wren", group: "", shared: false };
+const SAM_FRIEND = { id: 40, name: "Sam", tag: "Friends/Sam" };
+const SAM_PET = { id: 41, name: "Sam", tag: "Pets/Sam" };
+const WREN = { id: 52, name: "Wren", tag: "Family/Ingersoll/Wren" };
 const RECORDS = [SAM_FRIEND, SAM_PET, WREN];
 
 const TAXONOMY = [
@@ -103,16 +103,16 @@ async function openPhoto(t, options = {}) {
 }
 
 describe("a face named as one of two people called alike", () => {
-  test("is told by its label on its box, in the panel and on the strip", async (t) => {
+  test("is told by its name on its box, in the panel and on the strip, and its tag is the title", async (t) => {
     const ctx = await openPhoto(t);
     click(ctx.window, ctx.layer().querySelector(".face-boxes-toggle"));
-    assert.equal(ctx.boxes()[0].querySelector(".face-box-name").textContent, "Sam · Friends");
-    assert.match(ctx.boxes()[0].getAttribute("aria-label"), /Face 1 of 2: Sam · Friends/);
+    assert.equal(ctx.boxes()[0].querySelector(".face-box-name").textContent, "Sam");
+    assert.match(ctx.boxes()[0].getAttribute("aria-label"), /Face 1 of 2: Sam/);
     assert.equal(ctx.boxes()[0].title, "Friends/Sam. Click to change it.");
-    assert.equal(ctx.document.querySelector(".face-card-label").textContent, "Sam · Friends");
+    assert.equal(ctx.document.querySelector(".face-card-label").textContent, "Sam");
     click(ctx.window, ctx.boxes()[0]);
     await flush(ctx.window, 4);
-    assert.equal(ctx.panel().querySelector(".face-panel-who").textContent, "Sam · Friends");
+    assert.equal(ctx.panel().querySelector(".face-panel-who").textContent, "Sam");
   });
 
   test("a name nobody shares is shown as it is", async (t) => {
@@ -122,16 +122,15 @@ describe("a face named as one of two people called alike", () => {
 });
 
 describe("the panel of the second face", () => {
-  test("offers the OTHER Sam, by label, and not the one the first face already is; the title says which", async (t) => {
+  test("offers the OTHER Sam, and not the one the first face already is", async (t) => {
     const ctx = await openPhoto(t);
     await ctx.openFace(1);
     const offered = [...ctx.panel().querySelectorAll(".face-panel-suggestion")];
-    assert.deepEqual(offered.map((button) => button.querySelector(".face-panel-suggestion-name").textContent), ["Sam · Pets", "Wren"]);
-    assert.match(offered[0].title, /Looks like Sam · Pets\. Click to name this face/);
-    assert.match(offered[0].title, /\(Pets\/Sam\)/);
+    assert.deepEqual(offered.map((button) => button.querySelector(".face-panel-suggestion-name").textContent), ["Sam", "Wren"]);
+    assert.match(offered[0].title, /Looks like Sam\. Click to name this face/);
   });
 
-  test("clicking Sam · Pets writes the exact keyword first, then names the face by id -- though the photo has the other Sam", async (t) => {
+  test("clicking the pet Sam writes the exact keyword first, then names the face by id -- though the photo has the other Sam", async (t) => {
     const ctx = await openPhoto(t);
     await ctx.openFace(1);
     click(ctx.window, ctx.panel().querySelector(".face-panel-suggestion"));
@@ -145,13 +144,13 @@ describe("the panel of the second face", () => {
     assert.ok(ctx.server.calls.indexOf(saved[0]) < ctx.server.calls.indexOf(named[0]), "the tag before the face");
   });
 
-  test("a hover shows the faces of THAT Sam, by id, under the label", async (t) => {
+  test("a hover shows the faces of THAT Sam, by id", async (t) => {
     const ctx = await openPhoto(t);
     await ctx.openFace(1);
     ctx.panel().querySelector(".face-panel-suggestion").dispatchEvent(new ctx.window.MouseEvent("mouseenter"));
     await ctx.wait(190);
     const popup = ctx.$("person-faces-popup");
-    assert.equal(popup.querySelector(".person-faces-name").textContent, "Sam · Pets");
+    assert.equal(popup.querySelector(".person-faces-name").textContent, "Sam");
     assert.deepEqual([...popup.querySelectorAll("img")].map((img) => img.getAttribute("src")), ["/photo_index/api/face-crop?id=21"]);
   });
 
@@ -165,7 +164,8 @@ describe("the panel of the second face", () => {
     await ctx.wait();
     const question = ctx.document.querySelector(".person-choice");
     assert.ok(question, "the page asks");
-    assert.deepEqual([...question.querySelectorAll(".person-choice-label")].map((each) => each.textContent), ["Sam · Friends", "Sam · Pets"]);
+    assert.deepEqual([...question.querySelectorAll(".person-choice-tag")].map((each) => each.textContent.trim()), ["Friends/Sam", "Pets/Sam"],
+      "the paths tell the two apart");
     assert.equal(ctx.posts("/api/face/match").length, 0, "nothing is written until the owner says which");
     question.querySelector('input[value="1"]').click();
     question.querySelector('input[value="1"]').dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
@@ -221,8 +221,8 @@ describe("the strip's suggested face", () => {
     const ctx = await openPhoto(t, { faces });
     const card = [...ctx.document.querySelectorAll(".face-card")].find((each) => each.classList.contains("face-card-actionable") && /\?/.test(each.textContent));
     assert.ok(card, "the suggested face is actionable: the photo has the other Sam, not this one");
-    assert.equal(card.querySelector(".face-card-label").textContent, "Sam · Pets?");
-    assert.match(card.title, /Closest match: Sam · Pets/);
+    assert.equal(card.querySelector(".face-card-label").textContent, "Sam?");
+    assert.match(card.title, /Closest match: Sam/);
     click(ctx.window, card);
     await ctx.wait(80);
     assert.equal(ctx.posts("/api/face/match")[0].body.person_id, 41);
@@ -233,17 +233,16 @@ describe("the strip's suggested face", () => {
     const ctx = await openPhoto(t, { faces });
     const settled = ctx.document.querySelector(".face-card-settled");
     assert.ok(settled);
-    assert.match(settled.title, /Sam · Friends is already tagged on this photo/);
+    assert.match(settled.title, /Sam is already tagged on this photo/);
   });
 });
 
 describe("the add-person list", () => {
-  test("offers each Sam as a person of their own, by tag, with the label beside it", async (t) => {
+  test("offers each Sam as a person of their own, by tag", async (t) => {
     const ctx = await openPhoto(t);
-    const options = [...ctx.document.querySelectorAll("#people-datalist option")].map((option) => [option.value, option.label]);
-    assert.deepEqual(options.filter(([value]) => value.endsWith("/Sam")),
-      [["Friends/Sam", "Sam · Friends"], ["Pets/Sam", "Sam · Pets"]]);
-    assert.equal(options.filter(([value]) => value === "Sam").length, 0, "a bare name two people have is no one of them");
-    assert.ok(options.some(([value]) => value === "Family/Ingersoll/Wren"));
+    const options = [...ctx.document.querySelectorAll("#people-datalist option")].map((option) => option.value);
+    assert.deepEqual(options.filter((value) => value.endsWith("/Sam")), ["Friends/Sam", "Pets/Sam"]);
+    assert.equal(options.filter((value) => value === "Sam").length, 0, "a bare name two people have is no one of them");
+    assert.ok(options.includes("Family/Ingersoll/Wren"));
   });
 });
