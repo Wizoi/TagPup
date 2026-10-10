@@ -355,7 +355,7 @@ def _faces_of(library, person_ids_, named=None):
 
 def _alone(library, found):
     """Is nobody else called what `found` (a Person) is? A bare keyword spelled so is theirs only then."""
-    return people_service.directory(library).of_name(found.name)["shared"] is False
+    return people_service.directory(library).of_name(found.name) is not None
 
 
 def _shared_by(library, source, target):

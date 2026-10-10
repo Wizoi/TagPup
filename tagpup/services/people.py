@@ -1,11 +1,9 @@
 """The people a library knows.
 
-A person is told to the pages as `{"id", "name", "tag", "group", "shared"}` (tagpup.store.person_ids.Directory):
-`shared` says another person has the same leaf and `group` the tail of the path that tells them apart, so a
-page can label "Sam \u00b7 Thackeray" (web/common/vocabulary.js personLabel) without deciding either. Every
-answer that carries a person carries that as `person`, beside the name it has always held, which is unchanged
-(identity by id, stage 2, part A; the pages read it since part C). `person` is None for a name no person tag
-has, and has no id (and no tag) for a name two people are called.
+A person is told to the pages as `{"id", "name", "tag"}` (tagpup.store.person_ids.Directory): the id stands for the
+whole tag path and the name is its leaf, shown and never the identity. Every answer that carries a person carries that
+as `person`, beside the name it has always held, which is unchanged. `person` is None for a name no person tag has and
+for a name two people are called (a name alone cannot say which; a typed one is asked "which one?" by path).
 """
 from tagpup.core import vocabulary
 from tagpup.core.result import NotFound, Refused
@@ -35,20 +33,11 @@ def resolve(library, ref):
 
 def for_reading(library, person):
     """`person` as a READ may ask for them: the id of their node when it is a name one person has (or a path), the name as it
-    is for one no node is, a `SharedName` for a name two or more people have -- the union, which is what the name always
-    showed; nothing is created or linked --; a bucket or an id is as it is. NotFound for an id that is nobody's, Refused for a
-    group. Writes never come through here: they refuse a shared name (resolve)."""
+    is for one no node is; a bucket or an id is as it is. NotFound for an id that is nobody's, Refused for a group and for a
+    name two people have (the sentence names their paths: the page asks which one). Nothing is created or linked."""
     if isinstance(person, str) and person in vocabulary.BUCKETS.values():
         return person
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        found = person_ids.resolve(conn, person)
-    except person_ids.AmbiguousPerson:
-        return person_ids.SharedName(str(person).strip())
-    except person_ids.PersonProblem as problem:
-        translate(problem)
-    finally:
-        conn.close()
+    found = resolve(library, person)
     return found.id if found else person
 
 

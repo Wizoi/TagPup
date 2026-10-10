@@ -51,17 +51,6 @@ CHUNK = 500
 #: One person: the id of the node, its tag (the path) and its name (the leaf).
 Person = collections.namedtuple("Person", "id tag name")
 
-class SharedName(str):
-    """A name two or more people have, asked for by a page that has only the name (an open page not reloaded since part B).
-    A READ answers for all of them together (the union: what the name always showed); a write never takes one (people.translate:
-    refused, naming the candidates). Reads create and link no one."""
-
-
-#: Everyone called one name -- a READ's answer for a name two people have (a page that has only the name): the ids of the people and
-#: the name. `target` passes it through; only readers take it (faces._carries), no writer.
-Many = collections.namedtuple("Many", "ids name")
-
-
 class PersonProblem(Exception):
     """A person could not be resolved. `str()` is the sentence a person reads."""
 
@@ -296,8 +285,6 @@ def resolve(conn, ref, known=None):
 def target(conn, ref, known=None):
     """(the id, the name) a row naming `ref` is written with: the Person's, or -- for a name no person is filed under --
     (None, the name trimmed), an unresolved name. Raises as `resolve` does; (None, None) for no person at all."""
-    if isinstance(ref, Many):
-        return ref
     found = resolve(conn, ref, known)
     if found is not None:
         return found.id, found.name
@@ -321,25 +308,20 @@ def matches(face, target):
 
 
 class Directory:
-    """The people of a library as the pages are told of them: each a dict
-    `{"id", "name", "tag", "group", "shared"}` (docs/ARCHITECTURE.md, "People by id, stage 2", "The
-    wire"). `shared` and `group` are tagpup.core.vocabulary.person_labels', computed over EVERY person of
-    the library, so a list of one Sam still says which Sam. Read once for one answer, from the tree as it
-    stands now, and never kept: a rename in another process is what the next answer reads.
+    """The people of a library as the pages are told of them: each a dict `{"id", "name", "tag"}` (docs/ARCHITECTURE.md, "People
+    by id, stage 2", "The wire"). A person is the whole tag path; the name is its leaf, shown and never the identity. Read once
+    for one answer, from the tree as it stands now, and never kept: a rename in another process is what the next answer reads.
 
-    A row that names a person by ID (every answer that has the row's `tag_id`) gets `of_id`, exactly the
-    person. A row that names one by NAME alone gets `of_name`: the person when exactly one is called it, the
-    same fields with no id and no tag when two are (`shared`, and nothing says which), and None when none is --
-    a name no person tag has, a group, a bucket such as Unknown Faces. `of_row` is the two: the id when the row
+    A row that names a person by ID (every answer that has the row's `tag_id`) gets `of_id`, exactly the person. A row that names
+    one by NAME alone gets `of_name`: the person when exactly one is called it, and None when none is -- a name no person tag has,
+    a group, a bucket such as Unknown Faces -- or when two are: a name alone cannot say which, so it is nobody's (the doctor flags
+    people sharing a leaf; a typed name two people have is asked "which one?" by path). `of_row` is the two: the id when the row
     holds one."""
 
     def __init__(self, nodes):
-        nodes = list(nodes)
-        labels = vocabulary.person_labels([(node_id, tag) for node_id, tag, _name in nodes])
         self._records, self._by_key, self._by_tag, self._by_id = [], {}, {}, {}
         for node_id, tag, name in sorted(nodes, key=lambda node: (vocabulary.tag_sort_key(node[2]), node[1])):
-            label = labels.get(node_id, vocabulary.PersonLabel(False, ""))
-            record = {"id": node_id, "name": name, "tag": tag, "group": label.group, "shared": label.shared}
+            record = {"id": node_id, "name": name, "tag": tag}
             self._records.append(record)
             self._by_key.setdefault(vocabulary.key(name), []).append(record)
             self._by_tag[vocabulary.normalize(tag).lower()] = record
@@ -350,7 +332,7 @@ class Directory:
         return cls(People.read(conn).listing)
 
     def records(self):
-        """Everyone, by name (vocabulary.tag_sort_key), then by group: a copy of each."""
+        """Everyone, by name (vocabulary.tag_sort_key), then by tag: a copy of each."""
         return [dict(record) for record in self._records]
 
     def of_id(self, person_id):
@@ -361,11 +343,7 @@ class Directory:
     def of_name(self, name):
         """The person called `name` (without case), or None; see the class."""
         found = self._by_key.get(vocabulary.key(name))
-        if not found:
-            return None
-        if len(found) == 1:
-            return dict(found[0])
-        return {"id": None, "name": str(name).strip(), "tag": None, "group": "", "shared": True}
+        return dict(found[0]) if found and len(found) == 1 else None
 
     def of_row(self, tag_id, name):
         """The person a row of faces or photo_people is: by its id when it holds one that is a person, else by

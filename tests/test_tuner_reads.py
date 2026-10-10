@@ -145,8 +145,7 @@ class PeopleWithCounts(TunerReads):
         self.face(self.photo("c.jpg"), name="Ansel Ditmore")
         answer = self.requests.get("/api/people-with-counts")
         self.assertEqual([("Ansel Ditmore", 2)], [(each["name"], each["count"]) for each in answer])
-        self.assertEqual(["Ansel Ditmore", "People/Ansel Ditmore", "", False],
-                         [answer[0]["person"][key] for key in ("name", "tag", "group", "shared")])
+        self.assertEqual(["Ansel Ditmore", "People/Ansel Ditmore"], [answer[0]["person"][key] for key in ("name", "tag")])
 
 
 if __name__ == "__main__":
