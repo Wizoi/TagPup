@@ -168,8 +168,9 @@ class TwoClicksAndBusyLibraries(RoutesCase):
     def test_the_writes_that_would_be_written_over_are_refused_while_names_are_given(self):
         # #871: the plan was read, and grouping commits a name for every face it read.
         import json
-        guarded = {"/harbour" + path: {} for path in sorted(name_faces_routes.GUARDED) if path != "/api/sync"}
-        guarded["/harbour/api/sync"] = {"apply": True}
+        import re
+        writing = {"/api/sync": {"apply": True}, "/api/history/<int:change_id>/undo": {"apply": True}}
+        guarded = {"/harbour" + re.sub(r"<[^>]+>", "1", path): writing.get(path, {}) for path in sorted(name_faces_routes.GUARDED)}
         with self.while_names_are_given():
             for kind, client in self.apps.items():
                 for url, body in guarded.items():
@@ -179,6 +180,7 @@ class TwoClicksAndBusyLibraries(RoutesCase):
                         self.assertEqual(tuner_routes.NAMING_REFUSAL, answer.get_json()["error"])
             # Reads are not refused: a sync's rehearsal, a photo's faces, the status of the job itself.
             self.assertNotEqual(409, self.apps["tuner"].post("/harbour/api/sync", json={}).status_code)
+            self.assertNotEqual(409, self.apps["tuner"].post("/harbour/api/history/1/undo", json={}).status_code, "a rehearsal")
             self.assertEqual(200, self.apps["tagpup"].get("/harbour/api/photo-faces", query_string={"path": self.single}).status_code)
             self.assertEqual(200, self.apps["tuner"].get(CURRENT).status_code)
             # TagTuner's own writes were already refused, now in the same words.
@@ -190,6 +192,43 @@ class TwoClicksAndBusyLibraries(RoutesCase):
             answer = self.apps["tagpup"].post(url, json=body)
             self.assertNotEqual(tuner_routes.NAMING_REFUSAL, (answer.get_json(silent=True) or {}).get("error"),
                                 "and let go after: %s" % url)
+
+    def test_an_applied_sync_does_not_run_while_names_are_given_however_it_is_asked(self):
+        """The Activity page's Run now names the library in the body, not the URL, so no route guard sees it; the scheduled job
+        and the folder watcher call the same runtime.sync. It refuses itself, and runs after."""
+        from types import SimpleNamespace
+
+        from tagpup import runtime
+        from tagpup.jobs import recurring
+        from tagpup.services import sync as sync_service
+        from tagpup.web import lifecycle as web_lifecycle
+
+        def run_now(name, library=None):
+            job = recurring.JOBS.get(name)
+            result = job.call(library, SimpleNamespace(given={"runtime": SimpleNamespace(sync=runtime.sync)}))
+            ran.append(result)
+            return SimpleNamespace(ran=True, run_id=1, library=library)
+
+        ran = []
+        tasks = {"recurring jobs": SimpleNamespace(registry=recurring.JOBS, start_job=run_now)}
+        background = SimpleNamespace(task=tasks.get, busy=lambda: [])
+        app = web.create_app("tagpup", startup=None, lifecycle=web_lifecycle.Lifecycle(background=background))
+        app.testing = True
+        page = app.test_client()      # as the page posts: no library in the URL, the library in the body
+        asked = {"job": "sync", "library": self.library.name}
+        real = sync_service.sync
+        with mock.patch.object(sync_service, "sync", wraps=real) as service:
+            with self.while_names_are_given():
+                self.assertEqual(200, page.post("/api/activity/jobs/run", json=asked).status_code)
+                refused = runtime.sync(self.library, folder=None, apply=True)         # what the watcher calls
+                self.assertEqual(runtime.NAMING_SAYS, ran[-1].refused)
+                self.assertEqual(runtime.NAMING_SAYS, refused.refused)
+                self.assertEqual(0, service.call_count, "no sync was begun")
+                self.assertFalse(runtime.sync(self.library, apply=False).refused, "a rehearsal reads")
+            self.assertEqual(1, service.call_count)
+            after = runtime.sync(self.library, apply=True)
+            self.assertNotEqual(runtime.NAMING_SAYS, after.refused, "and runs when the names are written")
+            self.assertEqual(2, service.call_count)
 
     def test_the_faces_are_held_against_writes_while_the_names_are_given(self):
         seen = []

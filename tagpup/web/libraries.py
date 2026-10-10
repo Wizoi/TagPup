@@ -57,6 +57,15 @@ def names_a_library(first):
     return first not in libraries.ROUTES and first not in PAGE_FILES and not first.endswith(PAGE_SUFFIXES)
 
 
+#: What a request for a library that is being brought up to date is told (the pages wait it out: web/common/api.js).
+UPDATING_SENTENCE = "This library is being brought up to date by a new version of TagPup. This is sent again in a moment."
+RETRY_AFTER_SECONDS = 2
+
+
+class Updating(Exception):
+    """The library a request names is being migrated just now."""
+
+
 class LibraryFromUrl:
     """WSGI middleware: /<name>/<rest> becomes <rest> for the app, with the Library in
     `environ["tagpup.library"]` and /<name> on SCRIPT_NAME, so url_for still builds the
@@ -85,6 +94,8 @@ class LibraryFromUrl:
         # without its generations every cache on it goes stale. When that cannot happen
         # just now, the library is served as it is and the next request tries again:
         # failing the request failed every page and file (docs/findings.md, #57).
+        if library_actions.updating(library.path):
+            raise Updating(library.path)   # being migrated: __call__ answers 503 at once, holding no thread on the lock
         try:
             library_actions.bring_up_to_date(library.path)
         except library_actions.NewerLibrary:
@@ -105,6 +116,22 @@ class LibraryFromUrl:
             start_response("409 CONFLICT", [("Content-Type", "text/plain; charset=utf-8")])
         return [body]
 
+    @staticmethod
+    def _refuse_updating(environ, start_response):
+        """503 with Retry-After and X-TagPup-Updating, as a drain answers (tagpup.web.lifecycle): the API's JSON is
+        waited out and sent again by the pages; a browser shown a page gets a short text that asks again by itself."""
+        headers = [("Retry-After", str(RETRY_AFTER_SECONDS)), ("X-TagPup-Updating", "1"), ("Cache-Control", "no-store")]
+        if "/api/" in (environ.get("PATH_INFO") or "") + "/":
+            body = json.dumps({"success": False, "updating": True, "error": UPDATING_SENTENCE}).encode("utf-8")
+            kind = "application/json"
+        else:
+            body = ('<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="%d">'
+                    '<title>Updating</title><body style="font-family:sans-serif;margin:3em"><p>%s</p></body>'
+                    % (RETRY_AFTER_SECONDS, UPDATING_SENTENCE)).encode("utf-8")
+            kind = "text/html; charset=utf-8"
+        start_response("503 SERVICE UNAVAILABLE", headers + [("Content-Type", kind), ("Content-Length", str(len(body)))])
+        return [body]
+
     def __call__(self, environ, start_response):
         path = environ.get("PATH_INFO") or "/"
         environ["tagpup.library"] = None
@@ -115,6 +142,8 @@ class LibraryFromUrl:
                 library = self.resolve(name)
             except library_actions.NewerLibrary as e:
                 return self._refuse_newer(environ, start_response, str(e))
+            except Updating:
+                return self._refuse_updating(environ, start_response)
             if library is None:
                 start_response("404 NOT FOUND", [("Content-Type", "text/plain; charset=utf-8")])
                 return [("There is no library called %s" % name).encode("utf-8")]
