@@ -294,18 +294,6 @@ Reads again, for the metadata fields ExifTool is asked for now -- the camera's L
 
 **`--folder FOLDER`** limits it to the photos under that folder and its subfolders (`tagpup.services.folder_scope`); a folder the library holds no photo under is refused (exit status 1). Naming a folder is also what allows files on a network share to be read: without `--folder` or **`--shares`**, a photo whose path is on a share (a UNC path or a mapped network drive) is counted and never opened or looked at.
 
-### `people link-name NAME [--apply]`
-Links the faces and listed people called NAME that are linked to nobody to the one person NAME is (`tagpup.services.people.link_name`,
-`tagpup.store.person_ids.link_added`). Nothing else links an unresolved name that merely became one person's -- a same-named person
-renamed, merged or deleted -- so such a name is on no person's page until the owner says so; `tools/doctor.py` lists them ("names one
-person is called whose rows are linked to nobody"). A face decided by hand is linked too: this is the owner saying who it is. A dry run
-unless `--apply`; counts only (faces decided by hand, other faces, listed people). The owner's other choices for a name -- make a person under a
-group, link the name to another person, unname the faces, set it aside -- are TagTuner's **Names to review** (`tagpup.services.name_review`,
-`/api/names-to-review`); `tools/doctor.py` prints "names to review: N waiting, M set aside" and the MCP's `checks` answer carries
-`names_to_review` (counts by reason; a name only with `reveal`). Applied, it is one journaled change of the faces
-(`history`; `undo` returns them to unresolved names). Refused (exit status 1), naming the candidates, for a name two people have, and for a
-name nobody is called or a group.
-
 ### `faces-from-tags [--apply] [--again] [--folder FOLDER]`
 **`--folder FOLDER`** (#994) limits the plan and the write to the photos under that folder and its subfolders (`tagpup.services.folder_scope`; the folder is spelled by its root's first place, so a second location of a root works, and its photos are one range of the path index: `Run` never takes in `Run2`). Only the photos read are fewer: the rule, the people their tags name, the decided faces a face is compared with and the gate of a person with no decided face are the whole library's, so the folder's plan is the whole-library plan restricted to the folder's photos. A folder the library holds no photo under (outside its roots, never indexed, mistyped) is refused with a sentence and exit status 1, never read as nothing to do. A second `--apply` needs `--again` whichever folder the first was for. What is left to name after the write is counted in the folder. The journaled change keeps its scope in its summary (`whole library`, or `folder` and the folder as stored): `history --change N` prints the scope and `--reveal` the folder (a path can name people; History's dialog and listings never carry it), and the refusal of a second apply says where the earlier one was.
 

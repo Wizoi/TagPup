@@ -573,7 +573,7 @@ class TheDoctor(Library):
         self.assertIn("faces whose name is not their person's", text)
         self.assertIn("names with several person nodes: 1", text)
         self.assertIn("names one person is called whose rows are linked to nobody: 1", text,
-                      "a name whose id was not written is reported, and linked only by the owner (people link-name)")
+                      "a name whose id was not written is reported, and linked only by the owner (the names to review)")
         self.assertNotIn(ASH, text, "names only with --show")
         said = io.StringIO()
         with redirect_stdout(said):

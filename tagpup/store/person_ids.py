@@ -25,7 +25,7 @@ is set (with its node's leaf as the cache), drop the id of a node that is gone, 
 unique the name has become -- a name that became one person's because a same-named node left says nothing about who a row
 meant. Rows are linked by exactly three things: the writer that wrote the row and knew the id (`target`), `link_added` for
 a name a person was ADDED under (a node made, moved or renamed into it: `follow_tree`, and the journal), and the owner
-(`people link-name`; the names to review). A keyword's row is resolved by its path when it is written. It never moves an id
+(the names to review). A keyword's row is resolved by its path when it is written. It never moves an id
 that is set.
 
 The tree is read inside the writer's transaction, every time, and never kept: a rename committed by
@@ -543,7 +543,7 @@ def follow_tree(conn, before):
 
 def link_added(conn, keys, known=None):
     """THE one place that links an unresolved name -- a face or a listed person with a name and no id -- to a person after the fact
-    (and, as the owner's explicit action, `services.people.link_name`):
+    (and, as the owner's explicit action, the names to review):
     the rows whose name's key is in `keys` are given the one person that name is. The callers say which names a person was ADDED
     under (a node made, moved or renamed into the name): `follow_tree`, for an edit of the tree, and the journal, for a node
     its change inserted or renamed. Nothing else links one: not `settle` (which has no memory of what changed), not a rebuild
@@ -684,7 +684,7 @@ def unresolved(conn):
     person is called but whose rows are not linked to them (`one`: {name: (the person's id, faces decided by hand, other
     faces, listed people)}) -- a name that became one person's because a same-named node left, or a rename into a person's
     name by something that did not know the id: nothing links it by itself (`link_added`), so it is on no person's page
-    until the owner links it (`link_name`; the CLI's `people link-name`).
+    until the owner links it (the names to review).
     A row that holds an id is a person already, whatever its name is. Reported, not broken: no id is guessed, the
     names are left as they are, and the tree is the owner's to settle. Reads only."""
     if not present(conn):
@@ -795,19 +795,9 @@ def samples(conn, key, limit=4):
     return sorted(face_ids)[:limit], sorted(set(photo_ids))[:limit]
 
 
-def unlinked_counts(conn, name):
-    """(faces decided by hand, other faces, listed people) called `name` (without case) that hold no id: what `link_added` for
-    that name would link, counted for the owner's dry run."""
-    by_hand, by_guess = conn.execute(
-        "SELECT COALESCE(SUM(name_source = 'manual'), 0), COALESCE(SUM(COALESCE(name_source, '') <> 'manual'), 0)"
-        " FROM faces WHERE tag_id IS NULL AND name = ? COLLATE NOCASE", (name,)).fetchone()
-    listed = conn.execute("SELECT COUNT(*) FROM photo_people WHERE tag_id IS NULL AND name = ? COLLATE NOCASE", (name,)).fetchone()[0]
-    return by_hand, by_guess, listed
-
-
 def unlinked_faces(conn, name):
     """The ids of the faces called `name` (without case) that hold no id: what the owner's action `link_added(conn, {key(name)})`
-    -- the CLI's `people link-name`, the names to review -- would link, read first so the change can be journaled."""
+    -- the names to review -- would link, read first so the change can be journaled."""
     key = vocabulary.key(name)
     return [face_id for face_id, held in conn.execute("SELECT id, name FROM faces WHERE tag_id IS NULL AND name IS NOT NULL")
             if vocabulary.key(held) == key]

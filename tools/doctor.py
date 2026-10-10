@@ -154,7 +154,7 @@ def report(db_path, show=0, out=print):
     if nameless.one:
         out("names one person is called whose rows are linked to nobody: %d, on %d face(s) decided by hand, %d other face(s) and %d "
             "listed person(s) (reported, not broken: nothing links them by itself, so they are on no person's page; "
-            "`tagpup_cli.py people link-name <name> --apply` links one)"
+            "TagTuner's names to review links one)"
             % (len(nameless.one), sum(each[1] for each in nameless.one.values()), sum(each[2] for each in nameless.one.values()),
                sum(each[3] for each in nameless.one.values())))
         for name, (_person, by_hand, by_guess, listed_people) in sorted(
@@ -241,7 +241,7 @@ def rebuild_derived(db_path, apply=False, out=print):
 def _person_ids_wrong(conn):
     """A line for each table whose rows hold a name that is not their person's (tagpup.store.person_ids: the id is the person and
     the name a cache of the node's leaf) or an id of a node that is gone. A name with no id is not this: it is reported by
-    names_without_a_person, and linked only by the owner (`people link-name`)."""
+    names_without_a_person, and linked only by the owner (the names to review)."""
     return ["%d row(s) of %s hold a name that is not their person's" % (found.rows, table)
             for table in person_ids.TABLES for found in [person_ids.out_of_step(conn, table)] if found.rows]
 

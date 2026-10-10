@@ -52,56 +52,6 @@ def for_reading(library, person):
     return found.id if found else person
 
 
-def link_name(library, name, apply=False):
-    """Link every face and listed person called `name` that is linked to nobody to the one person that name is: the OWNER's action
-    for a name that is one person's but whose rows were never linked (tagpup.store.person_ids.unresolved, `one`), since nothing
-    links one by itself. A dry run unless `apply`; counts only. Applied: one journaled change of the faces, in the transaction that
-    links them (History's undo returns them to unresolved names). Refused, naming the candidates, for a name two people have;
-    refused for a name nobody is called or a group. details: `faces_by_hand`, `faces_by_guess`, `listed`, `applied`; applied:
-    `change`."""
-    from tagpup.core.result import Result
-    from tagpup.store import journal
-    result = Result(attempted=1)
-    name = str(name or "").strip()
-    if not name:
-        result.refuse("Name the person to link.")
-        return result
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        try:
-            person = person_ids.read(conn).person(name)
-        except person_ids.PersonProblem as problem:
-            translate(problem)
-        if person is None:
-            result.refuse("No person is called %s: there is no one to link the name to." % name)
-            return result
-        counts = person_ids.unlinked_counts(conn, name)
-    finally:
-        conn.close()
-    result.details.update(faces_by_hand=counts[0], faces_by_guess=counts[1], listed=counts[2], applied=False)
-    if not apply or not any(counts):
-        return result
-
-    def link(connection):
-        known = person_ids.read(connection)
-        if known.person(name) is None:
-            return None
-        before = journal.read_faces(connection, person_ids.unlinked_faces(connection, name))
-        changed = person_ids.link_added(connection, {vocabulary.key(name)}, known)
-        return changed, journal.record_faces(connection, journal.PERSON_LINKED, before)
-
-    try:
-        done = db.write_with_connection(library.path, link, label="link a name to its person")
-    except person_ids.PersonProblem as problem:
-        translate(problem)
-    if done is None:
-        result.refuse("No person is called %s now." % name)
-        return result
-    result.changed = done[0]
-    result.details.update(applied=True, change=done[1])
-    return result
-
-
 def tags_by_id(library):
     """{id: tag} of everyone the tree files as a person, read now: the tag a person is written as."""
     return {record["id"]: record["tag"] for record in records(library, include_hidden=True)}
