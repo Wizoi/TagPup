@@ -53,7 +53,7 @@ def library_history():
         why_not = journal_service.refusals(library, found["changes"])
     except Exception as e:
         return responses.error(500, str(e))
-    return jsonify({"library": library.name, "retention_days": found["retention_days"],
+    return jsonify({"library": library.name,
                     "changes": [_listed(entry, why_not.get(entry["id"])) for entry in found["changes"]]})
 
 

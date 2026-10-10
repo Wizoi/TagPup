@@ -37,7 +37,6 @@ from typing import Any, Callable, Dict, Optional
 from tagpup.core import runs
 from tagpup.core.result import Result
 from tagpup.services import job_runs
-from tagpup.services import journal as journal_service
 from tagpup.services import snapshots as snapshot_service
 
 logger = logging.getLogger(__name__)
@@ -144,12 +143,6 @@ def _snapshots(library, run):
     """A daily snapshot of the library, and from it the weekly and the monthly when theirs
     are due (tagpup.services.snapshots)."""
     return snapshot_service.take(library, now=run.now, force=run.forced)
-
-
-@JOBS.job("prune-journal", WEEKLY, reason=RETENTION)
-def _prune_journal(library, run):
-    """Let the journal's changes older than its retention go (tagpup.services.journal.prune)."""
-    return journal_service.prune(library, apply=True)
 
 
 @JOBS.job("sync", DAILY, reason=CATCH_UP)

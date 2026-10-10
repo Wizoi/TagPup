@@ -406,7 +406,7 @@ class RecoveryOfANewerLibrary(unittest.TestCase):
         self.assertEqual([], schema.ensure(self.path))
 
     def test_every_cli_writer_is_refused_with_the_backups_named(self):
-        for command in (["undo", "1", "--apply"], ["sync", "--apply"], ["prune-journal", "--apply"], ["stats"]):
+        for command in (["undo", "1", "--apply"], ["sync", "--apply"], ["stats"]):
             with self.subTest(command=command):
                 before = fingerprint(self.path)
                 result = self.cli(*command)
@@ -444,7 +444,7 @@ class RecoveryOfANewerLibrary(unittest.TestCase):
         before = fingerprint(self.path)
         for name, arguments in (("refresh_rows", {"apply": True}), ("sync", {"apply": True}), ("sync", {}),
                                 ("merge_duplicate_person_tags", {"apply": True}), ("dedupe_faces", {"apply": True}),
-                                ("undo", {"change": 1, "apply": True}), ("prune_journal", {"apply": True})):
+                                ("undo", {"change": 1, "apply": True})):
             with self.subTest(tool=name, arguments=arguments):
                 with self.assertRaises(ToolError) as refused:
                     call(name, library="library", **arguments)
@@ -462,7 +462,7 @@ class RecoveryOfANewerLibrary(unittest.TestCase):
         with mock.patch.object(server, "find_library", side_effect=lambda *a, **k: Library(self.path)):
             for name, arguments in (("sync", {"apply": True}), ("refresh_rows", {"apply": True}),
                                     ("merge_duplicate_person_tags", {"apply": True}), ("dedupe_faces", {"apply": True}),
-                                    ("undo", {"change": 1, "apply": True}), ("prune_journal", {"apply": True})):
+                                    ("undo", {"change": 1, "apply": True})):
                 with self.subTest(tool=name):
                     try:
                         call(name, library="library", **arguments)

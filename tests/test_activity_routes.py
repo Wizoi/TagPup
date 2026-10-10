@@ -236,9 +236,9 @@ class ScheduledJobs(Base):
 
     def test_how_many_runs_are_listed(self):
         for day in range(4):
-            self.ran(self.harbour, "prune-journal", self.NOON + day * 86400, "done")
+            self.ran(self.harbour, "snapshots", self.NOON + day * 86400, "done")
         jobs = self.jobs_of(self.client().get("/api/activity/jobs?runs=2").get_json(), "harbour")
-        self.assertEqual(2, len(jobs["prune-journal"]["runs"]))
+        self.assertEqual(2, len(jobs["snapshots"]["runs"]))
 
 
 class RunNow(Base):

@@ -19,7 +19,6 @@ import test_bulk_edits_progress_record as F  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.jobs import bulk_edits  # noqa: E402
 from tagpup.services import bulk_edit, file_changes  # noqa: E402
-from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, file_journal  # noqa: E402
 
 
@@ -186,36 +185,6 @@ class ARestoredJournal(HardCrash):
         self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
         self.assertEqual(writes, self.files.writes)
 
-    def test_no_prune_takes_the_changes_of_a_job_that_can_be_resumed_and_says_so(self):
-        handle = self.crash_with_chunk_two_applied()
-        others = self.vl.rows("SELECT COUNT(*) FROM changes WHERE operation NOT LIKE 'bulk time shift%'")[0][0]
-        dry = journal_service.prune(self.library, 0)
-        self.assertEqual(others, dry.attempted)
-        self.assertEqual({bulk_edit.operation_of("time_shift", handle)}, journal_service.kept_operations(self.library))
-        self.assertEqual(2, dry.details["kept"])
-        self.assertEqual([int(handle)], [int(each) for each in dry.details["kept_jobs"]])
-        self.assertIn("kept for a resumable bulk job: 2", dry.details["note"])
-        applied = journal_service.prune(self.library, 0, apply=True)
-        self.assertEqual(others, applied.changed)
-        self.assertEqual(0, self.vl.rows(
-            "SELECT COUNT(*) FROM changes WHERE status = 'pruned' AND operation LIKE 'bulk time shift%'")[0][0])
-        self.resume_and_finish(handle)
-        self.assert_every_photo_shifted_once()
-        self.assertEqual(3, journal_service.prune(self.library, 0, apply=True).changed, "once the job is done its changes go too")
-
-    def test_guard_a_change_pruned_some_other_way_is_refused_saying_so_and_writes_nothing(self):
-        # A defence: no prune reaches it any more (the test above); here the rows are edited as a journal changed otherwise would be.
-        handle = self.crash_with_chunk_two_applied()
-        chunk = bulk_edit.read_state(self.library, handle)["journal_chunk"]
-        db.write_with_connection(self.library.path, lambda conn: [
-            conn.execute("DELETE FROM change_files WHERE change_id = ?", (chunk,)),
-            conn.execute("UPDATE changes SET status = 'pruned' WHERE id = ?", (chunk,))])
-        writes = self.files.writes
-        reply = self.post("resume", {"job": handle})
-        self.assertEqual(400, reply.status_code, reply.get_data(as_text=True))
-        self.assertIn("pruned", reply.get_json()["error"])
-        self.assertEqual(writes, self.files.writes)
-
     def test_a_snapshot_restored_below_the_record_with_other_operations_reusing_the_ids_is_refused(self):
         handle = self.crash_after_file_written(55)
         chunk = bulk_edit.read_state(self.library, handle)["journal_chunk"]
@@ -289,50 +258,6 @@ class ARestoredJournal(HardCrash):
         self.assertEqual(200, reply.status_code)
         self.assertIn("A chunk you undid is shifted again", reply.get_json()["message"])
         self.finish(handle)
-
-    def test_the_prune_asks_what_to_keep_inside_its_transaction(self):
-        handle = self.crash_with_chunk_two_applied()
-        operation = bulk_edit.operation_of("time_shift", handle)
-        real, calls = journal_service.kept_operations, []
-
-        def late(library):
-            calls.append(1)
-            return set() if len(calls) == 1 else real(library)     # a job began between the first look and the write
-        with mock.patch.object(journal_service, "kept_operations", late):
-            journal_service.prune(self.library, 0, apply=True)
-        self.assertEqual(0, self.vl.rows("SELECT COUNT(*) FROM changes WHERE status = 'pruned' AND operation = ?", operation)[0][0])
-
-    def test_a_sync_applys_prune_leaves_a_record_older_than_ninety_days_its_changes(self):
-        from tagpup.services import maintenance
-        from tagpup.store import journal
-        handle = self.crash_with_chunk_two_applied()
-        operation = bulk_edit.operation_of("time_shift", handle)
-        db.write_with_connection(self.library.path, lambda conn: conn.execute(
-            "UPDATE changes SET created = '2020-01-01 00:00:00'"))
-        photo_id = self.ids[0]
-        caption = self.vl.rows("SELECT captions FROM photos WHERE id = ?", photo_id)[0][0]
-
-        def plan(library):
-            return maintenance.Plan(size=1, counts={"things": 1}, ids={"things": [photo_id]}, work=[photo_id])
-
-        def edits(planned):
-            return [journal.update("photos", (photo_id,), {"captions": caption}, {"captions": '["Harbour"]'})]
-        self.assertTrue(maintenance.run(self.library, "test_op", plan, edits, apply=True).changed)
-        self.assertEqual(0, self.vl.rows("SELECT COUNT(*) FROM changes WHERE status = 'pruned' AND operation = ?", operation)[0][0])
-        self.assertGreater(self.vl.rows("SELECT COUNT(*) FROM change_files")[0][0], 0)
-        self.resume_and_finish(handle)
-        self.assert_every_photo_shifted_once()
-
-    def test_prune_journal_on_the_command_line_says_what_it_kept(self):
-        import tagpup_cli
-        from click.testing import CliRunner
-        self.crash_with_chunk_two_applied()
-        for flags in ([], ["--apply"]):
-            with mock.patch.object(tagpup_cli, "_existing_library", lambda ctx: self.library):
-                out = CliRunner().invoke(tagpup_cli.prune_journal, ["--days", "0"] + flags)
-            self.assertEqual(0, out.exit_code, out.output)
-            self.assertIn("kept for a resumable bulk job: 2", out.output)
-
 
 class AnUndoIsNotAResumesToFinish(HardCrash):
     def test_a_chunk_being_undone_by_another_live_process_is_unsettled_and_the_resume_is_refused(self):
