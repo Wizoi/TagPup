@@ -68,7 +68,7 @@ def covers(conn, folder):
 
 def follow(conn, old, new):
     """Point what was added at `old`, or under it, at `new` instead: the folder was renamed
-    (tagpup.services.folder_moves). An entry whose new place was added already is left as it
+    (tagpup.services.folder_follow). An entry whose new place was added already is left as it
     is; nothing is merged. Returns the records changed. The caller commits."""
     if not _there(conn):
         return 0

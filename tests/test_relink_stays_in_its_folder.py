@@ -1,4 +1,4 @@
-"""relink_renamed_photos.py only matches a dead row to a renamed file beside it.
+"""Sync's pairing (relink_photos.pair) only matches a dead row to a renamed file beside it.
 
 Matching is by the stem of the name a file was renamed from, and camera names repeat
 across a library. Every folder's matches were merged into one dict keyed by stem
@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from tagpup.store import db  # noqa: E402
 from tagpup.core import paths  # noqa: E402
-import relink_renamed_photos  # noqa: E402
+from tagpup.services import relink_photos  # noqa: E402
 from tagpup.store import schema  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -81,9 +81,14 @@ class RelinkStaysInItsFolder(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def plan(self):
+        """[{from, to}] and [unmatched] of the dead rows, as sync pairs them against the files it found: every photo
+        of the two folders, read once."""
         from tagpup.files import exiftool_session
+        found = [os.path.join(folder, name) for folder in (self.meet_a, self.meet_b) for name in os.listdir(folder)]
         with mock.patch.object(exiftool_session, "ExifToolSession", FakeExifTool):
-            return relink_renamed_photos.plan_for(self.db)
+            lookup, by_identity = relink_photos.claims_of(found)
+        pairs, unmatched = relink_photos.pair([self.dead_a, self.dead_b], lookup, by_identity, {}, set())
+        return [{"from": old, "to": new} for old, new in pairs], unmatched
 
     def test_a_row_is_not_matched_to_a_file_in_another_folder(self):
         moves, unmatched = self.plan()
@@ -96,11 +101,6 @@ class RelinkStaysInItsFolder(unittest.TestCase):
         by_from = {m["from"]: m["to"] for m in moves}
         self.assertEqual(paths.key(by_from[self.dead_b]),
                          paths.key(os.path.join(self.meet_b, "Classic - 02.jpg")))
-
-    def test_each_file_of_a_dead_rows_folder_is_read_once(self):
-        # docs/findings.md, #340: the preserved names and the identities were two reads of the folder.
-        self.plan()
-        self.assertEqual(sorted(FakeExifTool.reads), sorted(set(FakeExifTool.reads)), FakeExifTool.reads)
 
 
 if __name__ == "__main__":

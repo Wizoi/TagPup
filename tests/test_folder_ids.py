@@ -164,11 +164,11 @@ class Case(unittest.TestCase):
 class TheServicesImportInAnyOrder(unittest.TestCase):
     """Sync, the move of a folder, the journal and folder ids import one another through the maintenance scaffold; each
     is imported first in an interpreter of its own (a constant of one read from another at import time failed when
-    folder_moves was the first)."""
+    folder_follow was the first)."""
 
     def test_each_module_can_be_the_first(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        for name in ("folder_moves", "folder_ids", "sync", "journal", "maintenance"):
+        for name in ("folder_follow", "folder_ids", "sync", "journal", "maintenance"):
             done = processes.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, %r); "
                                   "import tagpup.services.%s" % (root, name)], capture_output=True, text=True,
                                  timeout=120)

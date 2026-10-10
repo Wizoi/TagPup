@@ -263,11 +263,10 @@ def build():
 
     @write_tool("Re-read the photos whose rows no longer describe their files, and record what the "
                 "files hold (tags, people, captions, raw metadata, modified time and size, a missing "
-                "DocumentID); rows that only list a caption twice are fixed from the row. `folder` "
+                "DocumentID). `folder` "
                 "limits it to the rows under a folder. SLOW even as a dry run: planning reads every "
                 "stale photo's file with ExifTool, which on a whole library can take many minutes; "
-                "ask about one folder first. Files are only read, never written. `changed_by_kind` "
-                "splits rows changed from their files and captions alone. Before applying, the "
+                "ask about one folder first. Files are only read, never written. Before applying, the "
                 "person should close TagPup and TagTuner: an open page holds rows in memory, and "
                 "its next save writes back what it held before the refresh." + APPLY + REVEAL,
                 name="refresh_rows")

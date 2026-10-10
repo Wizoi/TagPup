@@ -65,12 +65,6 @@ def _dated_paths(conn, photo_paths):
 MTIME_TOLERANCE = 0.1
 
 
-def sized_rows(conn):
-    """(id, path, size, tags JSON, captions JSON) of every photo whose size is known: no raw metadata, no
-    BLOB. What the merging of the rows of one file starts from (tagpup.services.duplicate_rows)."""
-    return conn.execute("SELECT id, path, size, tags, captions FROM photos WHERE size IS NOT NULL").fetchall()
-
-
 def same_mtime(row_mtime, file_mtime):
     """Are a row's modified time and its file's the same (within MTIME_TOLERANCE)? The one rule: the scan, refresh
     and the MCP's comparison of a row with its file go by it. None for either is no."""
@@ -850,19 +844,6 @@ def rows_to_check(conn, folder=None):
     return store_roots.natives(conn, conn.execute(query, params).fetchall(), 0, raw=(5,))
 
 
-def raw_in_chunks(conn, size=2000):
-    """Every photo as (id, path as stored, mtime, size, raw_metadata JSON), in lists of `size`, in id
-    order: what tagpup.services.reread_fields sorts by the read each row's metadata came from. The text is
-    read a chunk at a time and not kept, since a library's rows hold 671 bytes of it on average (photo_index, counted 2026-10-09); nothing else of the
-    row is, so no BLOB."""
-    cursor = conn.execute("SELECT id, path, mtime, size, raw_metadata FROM photos ORDER BY id")
-    while True:
-        rows = cursor.fetchmany(size)
-        if not rows:
-            return
-        yield store_roots.natives(conn, rows, 1)
-
-
 def stamps(conn, folder=None):
     """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what
     sync compares with the disk (tagpup.services.sync). Nothing else of the row is read."""
@@ -882,7 +863,7 @@ def row_as_recorded(conn, stored_path):
         raw=(3,))
 
 
-# ---- What relink_renamed_photos reads ---------------------------------------------------
+# ---- What pairing a missing row with a file reads ---------------------------------------------------
 
 def all_paths(conn):
     """Every photo's path, as stored."""
@@ -895,14 +876,6 @@ def identities(conn):
     roots = store_roots.roots_for(conn)
     return {paths.from_row(path, roots): str(doc_id).strip() for path, doc_id in conn.execute(
         "SELECT path, document_id FROM photos WHERE document_id IS NOT NULL") if path and doc_id}
-
-
-def evidence(conn):
-    """(id, path as stored, size, taken, document_id) of every photo: what a folder that was
-    renamed is told from the folders beside it by (tagpup.services.folder_moves). Nothing
-    large is read: no raw metadata, no vector."""
-    return store_roots.natives(
-        conn, conn.execute("SELECT id, path, size, taken, document_id FROM photos").fetchall(), 1)
 
 
 def evidence_under(conn, folder):
@@ -924,13 +897,3 @@ def tags_by_photo(conn):
         except (TypeError, ValueError):
             continue
     return found
-
-
-# ---- What backfill_document_ids reads and writes ----------------------------------------
-
-def without_identity(conn):
-    """The paths, as stored, of photos with no document_id recorded. Raises on a library
-    from before the column."""
-    roots = store_roots.roots_for(conn)
-    return [paths.from_row(path, roots) for (path,) in conn.execute(
-        "SELECT path FROM photos WHERE document_id IS NULL OR document_id = ''") if path]

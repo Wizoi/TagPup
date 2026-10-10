@@ -14,8 +14,7 @@ photo_index's 68,466 rows on 2026-10-02:
   beside them in 228. One Make is the empty text.
 * The lens: NONE in the libraries as they stand. Not one of photo_index's 68,324 rows holds a lens field (counted 2026-10-09):
   the indexer asked ExifTool for no LensModel, LensMake or LensID before then. It asks now (tagpup.core.fields.METADATA_FIELDS),
-  so a photo read from now on has them, and `tagpup_cli.py reread-fields` (tagpup.services.reread_fields) reads the photos read
-  before. `gear` reads them where a row has them: ExifTool's names EXIF:LensModel (the lens's own name, "EF24-70mm f/2.8L II
+  so a photo read from now on has them; the photos read before are read again when they change (sync), not by a command. `gear` reads them where a row has them: ExifTool's names EXIF:LensModel (the lens's own name, "EF24-70mm f/2.8L II
   USM"), XMP:LensModel and Composite:LensID, with EXIF:LensMake ("Canon", "Sigma") before a name that does not say it. Run
   without print conversion a LensID is a number (Canon, Tamron: 137, 61182), the lens's eight bytes as hex pairs (Nikon) or
   readable text (Google: "Pixel 8 Pro back camera 6.9mm f/1.68", on 13 of 1,499 kr-track photos); the first two are no lens.

@@ -1,7 +1,7 @@
 """Folder ids: a `.tagpup` marker in each leaf folder, so a renamed or moved folder is followed
 exactly (docs/ARCHITECTURE.md, "Folder ids"; owner, 2026-10-08).
 
-Following a renamed folder by what its photos hold (tagpup.services.folder_moves) is evidence,
+Following a renamed folder by what its photos hold (folder_follow.pair_by_evidence) is evidence,
 and it fails where the evidence is thin. A folder that carries an id of its own follows any
 rename. It is opt-in: nothing here runs unless the owner runs `folder-ids mark`, and a library
 that never does has no marker written for it and no identifier stamped.
@@ -39,7 +39,7 @@ id recorded for it is written by the next run. Two libraries marking one folder 
 instant could still replace each other's entry (a rename cannot compare first); the read-back
 after the rename counts it (`lost`) and the next run puts the entry back.
 
-**follow** (a sync's, the watcher's -- any scope, a folder's sync included -- and `relink-folders`'): the one
+**follow** (a sync's, the watcher's -- any scope, a folder's sync included -- ): the one
 step that decides "this new folder is a marked folder that was lost" before anything is queued. When the sync
 found a file missing or moved and the library has marked folders, a row of `folder_ids` whose folder is among
 those of the missing or moved rows and is gone, and a marker carrying that id for this library in a folder the
@@ -49,7 +49,7 @@ its parent's listing, one listing and no walk), points the rows directly in the 
 journaled change, `follow_folder_markers`, with no evidence needed beyond the id. It runs after the sync's own
 change and before the folders of new files are queued, so a followed folder is never queued as new. Per photo:
 the file of the same name in the new folder when it has no row; else a file with the same DocumentID, or the same
-size and Date Taken (folder_moves.pair_by_evidence), for a folder renamed and its photos renamed. A file that
+size and Date Taken (folder_follow.pair_by_evidence), for a folder renamed and its photos renamed. A file that
 already has a row is never a destination (relink_photos.edits_for). **A folder none of whose rows can go -- its
 files already have rows of their own, because they were indexed as new before anything followed, or none of its
 files is there -- is left, as it was, and reported (`left`): its id is not moved and it is not said to be followed,
@@ -58,7 +58,7 @@ library: of the folders carrying an id the one whose recorded folder is gone tak
 recorded folder that is there is reported and nothing follows it; two places for one lost id are ambiguous and
 nothing follows; a shared id never moves a row. Only positive evidence moves anything: a folder not found, a
 share not reachable, a folder that cannot be listed move nothing. A folder moved to another parent is found when
-the sync found its files new there or moved there; `relink-folders` looks beside the folder only.
+the sync found its files new there or moved there.
 """
 import collections
 import os
@@ -66,7 +66,7 @@ import os
 from tagpup.core import paths
 from tagpup.core.result import Result
 from tagpup.files import folder_marker, images
-from tagpup.services import folder_moves, maintenance, relink_photos
+from tagpup.services import folder_follow, maintenance, relink_photos
 from tagpup.services import roots as roots_service
 from tagpup.store import added_folders, db, journal
 from tagpup.store import folder_ids as store
@@ -350,7 +350,7 @@ def _pairs_for(conn, rows, new, exiftool_path):
             continue
         left.append(row)
     free = {key: stamp for key, stamp in files.items() if key not in known and key not in taken}
-    matched = folder_moves.pair_by_evidence(left, free, exiftool_path) if left and free else []
+    matched = folder_follow.pair_by_evidence(left, free, exiftool_path) if left and free else []
     return pairs + matched, len(pairs), len(matched), occupied, len(known)
 
 
@@ -358,7 +358,7 @@ def _near(lost, gone, known):
     """The folders a folder that is gone may be at, beside it: for each (id, path) of `lost`, the same path
     under each folder directly in the parent of the topmost folder gone (a renamed folder, and one holding it
     renamed: `Trips` to `Trips 2026` puts `Trips/Harbour` at `Trips 2026/Harbour`). One listing of that parent
-    and no walk; the same as folder_moves looks beside a folder. A candidate that is the recorded folder of
+    and no walk; the same as folder_follow looks beside a folder. A candidate that is the recorded folder of
     another marked folder (`known`, their keys) is not read: it is that folder, with an id of its own, and the
     folder that was renamed has a name nothing records. That keeps it to a read or two, not one for every
     sibling (a marker read cost 4 ms a file on a local disk here)."""
@@ -399,7 +399,7 @@ def look_follow(library, places=(), trees=(), row_folders=None, exiftool_path=No
         counts["marked"] = len(recorded)
         asked = recorded if row_folders is None else [
             each for each in recorded if paths.key(each[1]) in {paths.key(folder) for folder in row_folders}]
-        gone = folder_moves.Gone()
+        gone = folder_follow.Gone()
         lost = [(folder_id, path) for folder_id, path, _marked in asked
                 if not gone.there(path) and gone.unit(path) is not None] if library_id else []
         counts["gone"] = len(lost)
@@ -480,9 +480,9 @@ def look_follow(library, places=(), trees=(), row_folders=None, exiftool_path=No
         counts["occupied"] += len(occupied)
         reveal["occupied"] = occupied
     counts["photos_moved"] = len(edits)
-    setting_edits, followed = folder_moves.settings_edits_for(library, written)
+    setting_edits, followed = folder_follow.settings_edits_for(library, written)
     counts["settings_followed"] = len(followed)
-    added_follow, added_left = folder_moves.plan_added(added, written)
+    added_follow, added_left = folder_follow.plan_added(added, written)
     counts["added_renamed"], counts["added_left"] = len(added_follow), len(added_left)
     edits = edits + folder_edits + setting_edits
     return maintenance.Plan(size=len(edits), counts=dict(counts), reveal=reveal,

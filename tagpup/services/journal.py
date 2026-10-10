@@ -20,7 +20,7 @@ library's ExifTool, which the caller names.
 import logging
 
 from tagpup.core.result import NotFound, Result
-from tagpup.services import face_people, file_changes, folder_moves
+from tagpup.services import face_people, file_changes, folder_follow
 from tagpup.services import settings as library_settings
 from tagpup.store import journal
 
@@ -109,10 +109,10 @@ def undo(library, change_id, apply=False, exiftool_path=None):
         result.refuse("Nothing was written: %s" % e)
         return result
     result.changed = undone.rows
-    if journal.operation(library.path, change_id) in folder_moves.OPERATIONS:
+    if journal.operation(library.path, change_id) in folder_follow.OPERATIONS:
         # The folders added are a record the journal does not hold: they follow the rows back.
         try:
-            result.details["added_followed_back"] = folder_moves.undone(library, change_id)
+            result.details["added_followed_back"] = folder_follow.undone(library, change_id)
         except Exception as e:
             # The undo is written; only the record of the folders added was not pointed back.
             result.details["added_followed_back"] = None

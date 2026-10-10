@@ -244,8 +244,7 @@ class SkippableEdits(JournalLibrary):
         # Merging and deduplicating stay all or nothing: their rows depend on each other.
         # Recording an identity a file holds, and re-pointing a dead row at its renamed
         # file, are each one row's own business, as a refresh's rows are (phase 7.5); so is unnaming a face whose person was taken off its
-        # photo (face_people, #908): a face renamed meanwhile is the owner's newer decision and the others go on. So is the
-        # lens re-read (reread_fields): a row the app saved while its file was read is left for the next run.
+        # photo (face_people, #908): a face renamed meanwhile is the owner's newer decision and the others go on.
         services = os.path.join(WORKSPACE_DIR, "tagpup", "services")
         using = []
         for name in sorted(os.listdir(services)):
@@ -253,7 +252,7 @@ class SkippableEdits(JournalLibrary):
                 with open(os.path.join(services, name), encoding="utf-8") as handle:
                     if "skippable=True" in handle.read():
                         using.append(name)
-        self.assertEqual(["document_ids.py", "face_people.py", "refresh_rows.py", "relink_photos.py", "reread_fields.py"], using)
+        self.assertEqual(["face_people.py", "refresh_rows.py", "relink_photos.py"], using)
 
 
 class ServicesReportErrors(JournalLibrary):

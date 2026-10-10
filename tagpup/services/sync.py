@@ -26,20 +26,12 @@ folder scan's rule), and sorts what differs:
   and the catch-up sync queued it over and over (docs/findings.md, #407). Counted as
   `unreadable_files`, and the library is in step all the same: restoring the file is the
   owner's, and once the file changes it is new again;
-- pictures changed -- a changed file whose SIZE differs from its row's: its picture may have been
-  edited elsewhere, and its vector and face boxes are then the old picture's (docs/findings.md,
-  #336). Always COUNTED (`size_changed`, `size_changed_decided`), and shown by the CLI. Acted on only
-  with the library setting library.reread_resized_pictures, OFF unless the owner turns it on: a keyword
-  or caption write changes a file's size too, and of the 1,229 size changes photo_index's journal holds
-  every one was a metadata write; two libraries holding the same photos (kr-track's 1,139 are rows in
-  photo_index too) would take each other's faces away when one names faces. The proper detection of a
-  real picture edit is a small pixel fingerprint. ON, applied: a photo with no face a person decided
-  has its vector and faces taken away and is marked to be detected again (store.faces_pending, which
-  the Activity page and the doctor count, so an index that never runs is seen), and its folder queued;
-  a photo with a decided face (named or excluded by hand) keeps its faces and names, loses only its
-  vector (the index makes it again; its faces are not detected again, being on file) and its folder is
-  queued. Done before the rows are written: a crash between leaves the rows stale and the next sync
-  does it again (idempotent: a photo whose vector already carries the file's stamp is left as it is);
+- pictures changed -- a changed file whose SIZE differs from its row's: its picture may have been edited
+  elsewhere, and its vector and face boxes are then the old picture's (docs/findings.md, #336). COUNTED
+  (`size_changed`) and shown by the CLI, nothing more: a keyword or caption write changes a file's size too, and
+  of the 1,229 size changes photo_index's journal holds every one was a metadata write. The row is re-read like
+  any changed row (tags, captions, raw metadata, stamp); its vector and faces are left as they are, and the owner
+  fixes a real picture edit by hand (owner, 2026-10-10: the command that took them away on a setting is gone);
 - folders marked -- when a file is missing or moved, in a sync of any scope (a folder's, the watcher's, included),
   and the library has marked folders (`folder-ids mark`, tagpup.services.folder_ids), a marked folder among the
   rows' folders that is gone and found again by its marker in a folder where files were found new or moved to, or
@@ -82,9 +74,7 @@ from tagpup.core.result import Result
 from tagpup.files import images
 from tagpup.services import damaged_photos, folder_ids, maintenance, refresh_rows, relink_photos
 from tagpup.services import roots as roots_service
-from tagpup.store import damaged_files, db, faces_pending, generations, schema, sync_runs
-from tagpup.store import embeddings as store_embeddings
-from tagpup.store import faces as store_faces
+from tagpup.store import damaged_files, db, generations, schema, sync_runs
 from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
 
@@ -317,7 +307,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "The library holds no photo under that folder, and it is under none of the library's root "
                 "folders: sync keeps the library's folders in step. To add it, add a root folder or index it."))
 
-        changed, missing, never_stamped, resized = {}, [], 0, {}
+        changed, missing, never_stamped, resized = {}, [], 0, set()
         for key, (photo_id, path, mtime, size) in by_key.items():
             stamp = on_disk.get(key)
             if stamp is None:
@@ -326,7 +316,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 changed[path] = photo_id
                 never_stamped += mtime is None or size is None
                 if size is not None and size != stamp[2]:
-                    resized[photo_id] = (path, tuple(stamp[1:]))
+                    resized.add(path)
         new, damaged = _pass_over_damaged(conn, {key: stamp for key, stamp in on_disk.items() if key not in by_key})
 
         # Moved: a missing row whose file turns up among the new ones. A folder alone also
@@ -356,12 +346,11 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
         records, to_write, fields, unreadable, _shown, identities = refresh_rows.reread(
             conn, {path: ["mtime/size"] for path in changed}, exiftool_path)
         # A file ExifTool could not read is left for the next sync: its faces are not thrown away unseen.
-        resized = {photo_id: found_at for photo_id, found_at in resized.items() if found_at[0] not in unreadable}
-        resized_decided = store_faces.decided_photo_ids(conn, list(resized))
+        resized -= set(unreadable)
     finally:
         conn.close()
 
-    edits = refresh_rows.edits_for(records, to_write, {}, found, identities, changed)
+    edits = refresh_rows.edits_for(records, to_write, found, identities, changed)
     moved_edits, occupied = relink_photos.edits_for(library, moves)
     by_folder = _missing_by_folder(missing)
     stops = {paths.key(root) for root in walked + roots}
@@ -384,7 +373,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "review_folders": len(review), "review_photos": sum(review.values()),
                 "ignored_files": ignored_files, "outside_roots_files": outside,
                 "changed": len(changed), "never_stamped": never_stamped, "to_write": len(to_write),
-                "size_changed": len(resized), "size_changed_decided": len(resized_decided),
+                "size_changed": len(resized),
                 "fields": dict(fields.most_common()), "unreadable": len(unreadable),
                 "moved": len(moves), "moved_faces": sum(m["faces"] for m in moves),
                 "moved_named": sum(m["named"] for m in moves), "moved_changed": moved_changed,
@@ -404,40 +393,9 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                               "held_back_folders": sorted(held_back, key=paths.key)},
                 "missing_folders": [{"folder": f, "rows": n, "gone": gone} for f, n, gone in by_folder],
                 "roots_gone": roots_gone, "unreadable_files": sorted(damaged.values(), key=paths.key)},
-        work={"edits": edits + moved_edits, "new_folders": new_folders, "pictures": resized,
+        work={"edits": edits + moved_edits, "new_folders": new_folders,
               "row_folders": list(row_folders.values()), "marker_places": list(marker_places.values()),
               "marker_trees": sorted(review, key=paths.key)})
-
-
-NO_PICTURES = {"redetect": 0, "decided_kept": 0, "faces_removed": 0, "vectors_removed": 0, "pending": 0}
-
-
-def redo_pictures(library, resized):
-    """Make the library read again the pictures of the photos whose files changed size (`resized`, {photo id:
-    (path, (mtime, size) of the file now)}): see the module's docstring. In one write. Returns (what it did,
-    {redetect, decided_kept, faces_removed, vectors_removed, pending}; the folders to index again). A photo whose
-    vector is already stamped with the file's own stamp was read again meanwhile, and is left."""
-    done, folders = dict(NO_PICTURES), []
-    if not resized:
-        return done, folders
-
-    def work(conn):
-        decided = store_faces.decided_photo_ids(conn, list(resized))
-        for photo_id, (path, stamp) in resized.items():
-            if not store_embeddings.stale_or_missing(conn, photo_id, stamp):
-                continue
-            done["vectors_removed"] += store_embeddings.forget(conn, path)
-            folders.append(os.path.dirname(path))
-            if photo_id in decided:
-                done["decided_kept"] += 1
-            else:
-                done["faces_removed"] += store_faces.remove_for_photo(conn, path)
-                # Seen until an index has detected them again, and the index passes over no photo marked.
-                done["pending"] += faces_pending.mark(conn, path)
-                done["redetect"] += 1
-
-    db.write_with_connection(library.path, work, label="%d changed picture(s) to read again" % len(resized))
-    return done, folders
 
 
 def review(library, roots=(), ignored=()):
@@ -524,8 +482,7 @@ def in_step(counts, result=None):
 
 
 @roots_service.canonical_args("folder")
-def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, roots=(), ignored=(),
-         reread_resized=False):
+def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, roots=(), ignored=()):
     """Bring `library` in step with its folders (or with `folder`), reading changed files
     with the ExifTool at `exiftool_path`; a dry run unless `apply`. A Result on the
     maintenance scaffold: `changed` is the rows the change changed (details["changed"]:
@@ -550,7 +507,7 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
         # One map for the whole pass: a place moved meanwhile (TagTuner's Roots) changes nothing
         # until it ends, and another process changing the library's roots stops it, cleanly.
         with runs.running(runs.sync_tag(library.name, started)), roots_service.pinned(library):
-            return _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started, reread_resized)
+            return _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
     except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
         return _not_run(stop, apply)
 
@@ -565,20 +522,14 @@ def _not_run(stop, apply):
     return result
 
 
-def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started, reread_resized=False):
+def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started):
     held = {}
 
     def plan(found_library):
         held["plan"] = look(found_library, folder, exiftool_path, roots, ignored)
         return held["plan"]
 
-    def edits(planned):
-        # The pictures first (module docstring): until the rows are written they still read as changed.
-        if apply and reread_resized:
-            held["pictures"], held["picture_folders"] = redo_pictures(library, planned.work["pictures"])
-        return planned.work["edits"]
-
-    result = maintenance.run(library, OPERATION, plan, edits, apply=apply, kinds=KINDS)
+    result = maintenance.run(library, OPERATION, plan, lambda planned: planned.work["edits"], apply=apply, kinds=KINDS)
     planned = held.get("plan")
     counts = result.details["counts"]
     # The marked folders that moved (folder_ids): only when the walk met a file missing or moved, and only for a
@@ -604,8 +555,6 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started,
         return result
 
     result.details.setdefault("changed", {kind: 0 for kind in KINDS})
-    result.details["pictures"] = held.get("pictures", dict(NO_PICTURES))
-    result.details["pictures_reread"] = bool(reread_resized)
     result.details["queued"] = 0
     result.details["warnings"] = []
     if not result.ok:
@@ -622,9 +571,6 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started,
             result.details["warnings"].append(report["error"])
         followed_to = [new for _old, new in report["followed"]]
         new_folders = [each for each in new_folders if not any(paths.same(each, new) for new in followed_to)]
-    known = {paths.key(folder) for folder in new_folders}
-    new_folders += [folder for folder in dict.fromkeys(held.get("picture_folders", ()))
-                    if paths.key(folder) not in known]
     try:
         # A damaged photo replaced, changed or deleted is no longer one (damaged_photos): a
         # changed one is indexed again for real, its folder queued with the new files'.

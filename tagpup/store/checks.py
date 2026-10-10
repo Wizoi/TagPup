@@ -267,7 +267,8 @@ def suggestions_without_a_photo(conn):
 
 
 def one_file_two_rows(conn):
-    """Photos with more than one row, their paths differing only as paths.key ignores."""
+    """Photos with more than one row, their paths differing only as paths.key ignores. Reported, not repaired:
+    the owner merges the rows of one file by hand (the command that did it is gone, 2026-10-10)."""
     try:
         listed = store_roots.natives(conn, conn.execute("SELECT path FROM photos").fetchall(), 0)
     except paths.RootsError:

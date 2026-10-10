@@ -17,7 +17,7 @@ from test_a_number_compares_as_read import ReadFilesCase  # noqa: E402
 from test_file_journal import EXIFTOOL  # noqa: E402
 
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
-from tagpup.services import refresh_rows, tagging  # noqa: E402
+from tagpup.services import tagging  # noqa: E402
 
 
 class ASavedPhoto(ReadFilesCase):
@@ -30,7 +30,7 @@ class ASavedPhoto(ReadFilesCase):
         indexed = MetadataExtractor(exiftool_path=EXIFTOOL).batch_read([a])[0]["raw_metadata"]
         self.assertEqual(indexed, json.loads(raw_json))
         self.assertEqual("Quay at dusk", json.loads(raw_json)["Description"])
-        self.assertFalse(refresh_rows.never_read(raw_json))
+        self.assertTrue(any(":" not in key for key in json.loads(raw_json)), "a read records the bare names too")
 
 
 if __name__ == "__main__":

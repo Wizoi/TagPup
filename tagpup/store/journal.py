@@ -348,7 +348,7 @@ def _resolve(conn, edits):
     deletes = collections.defaultdict(dict)
     #: (table, key) -> the columns an update of this change writes: a child whose column naming its parent is
     #: written here has been given to another parent, and goes with neither (a face moved to another photo
-    #: before the photo is deleted: tagpup.services.duplicate_rows).
+    #: before the photo is deleted).
     rewritten = {}
     for edit in edits:
         if edit.table not in KEYS:

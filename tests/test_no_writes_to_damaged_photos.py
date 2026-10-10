@@ -25,17 +25,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import damaged_photos  # noqa: E402
 import own_home  # noqa: E402
-import photo_rows  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
 
 import tagpup_cli  # noqa: E402
-from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.files.identity import read_document_id  # noqa: E402
 from tagpup.files.metadata import IdentityWriter, MetadataExtractor  # noqa: E402
 from tagpup.ml.clip import output_dim  # noqa: E402
-from tagpup.services import document_ids  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -220,37 +217,6 @@ class TheIndexer(unittest.TestCase):
         self.assertEqual(0, embed.call_count)
         self.assertEqual({}, self.rows())
         self.assertIn("1 photo(s) could not be read", result.output)
-
-
-@unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
-class TheBackfill(unittest.TestCase):
-    """scripts/backfill_document_ids.py mints into indexed photos without an identity: not
-    into one whose file was damaged after it was indexed."""
-
-    def test_a_damaged_photo_is_skipped_and_said_why(self):
-        home = own_home.for_test(self, prefix="damaged_backfill_")
-        db_path = home.library("harbour.db")
-        library_actions.create(db_path)
-        folder = os.path.join(home.root, "Harbour")
-        whole = os.path.join(folder, "whole.jpg")
-        damaged_photos.whole_jpeg(whole)
-        cut = damaged_photos.truncated(os.path.join(folder, "cut short.jpg"))
-        half = damaged_photos.second_half_zeros(os.path.join(folder, "copy stopped.jpg"))
-        conn = db.connect(db_path)
-        try:
-            for path in (whole, cut, half):
-                photo_rows.add_read(conn, path, {})
-            conn.commit()
-        finally:
-            conn.close()
-        before = {path: fingerprint(path) for path in (cut, half)}
-
-        result = document_ids.backfill(Library(db_path), EXIFTOOL, apply=True)
-
-        self.assertEqual(before, {path: fingerprint(path) for path in (cut, half)}, "a damaged photo was written to")
-        self.assertTrue(identity_in_file(whole))
-        self.assertEqual(2, result.details["counts"]["damaged"])
-        self.assertEqual({cut, half}, {path for path, _why in result.skipped} & {cut, half})
 
 
 if __name__ == "__main__":

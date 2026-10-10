@@ -47,7 +47,6 @@ CHANGE = "change settings"
 #: The library's root folders and the folders it ignores (phase 8's sync).
 ROOTS = "library.roots"
 IGNORED = "library.ignored"
-REREAD_RESIZED = "library.reread_resized_pictures"
 
 #: What a stamp writes: every setting but the roots. A library has no roots until the
 #: owner sets them (`settings set library.roots`, an ordinary change, which can be
@@ -128,12 +127,6 @@ class LibrarySettings:
     def ignored(self):
         """The folders sync never offers to include, as given, in order."""
         return _folders(self.values[IGNORED])
-
-    @property
-    def reread_resized_pictures(self):
-        """Does sync take away what was made of the picture of a photo whose file changed size (library.reread_resized_pictures,
-        off unless the owner turns it on: docs/ARCHITECTURE.md, #336)?"""
-        return _trim(self.values[REREAD_RESIZED]).lower() in _TRUE
 
     @property
     def exiftool(self):

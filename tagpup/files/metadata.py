@@ -64,16 +64,6 @@ def structured(meta):
 READ_ERROR_KEYS = ("ExifTool:Error", "Error")
 
 
-def stamped(cleaned):
-    """`cleaned` (a raw_metadata from structured) marked as a read of the fields asked for now
-    (fields.READ_GENERATION_KEY) -- the one rule of every writer of a full read. Not for an empty answer or one holding an
-    ExifTool error: that is not a read of the fields, and an empty raw_metadata is how a file that could not be read is told
-    (tagpup.services.refresh_rows.reread). Returns `cleaned`."""
-    if cleaned and not any(cleaned.get(key) for key in READ_ERROR_KEYS):
-        cleaned[fields.READ_GENERATION_KEY] = fields.READ_GENERATION
-    return cleaned
-
-
 def exiftool_starts(exiftool_path):
     """(True, None) if ExifTool starts at `exiftool_path` (None: on PATH), else (False, why): what a run that read none of its
     files asks, to tell a program that is not there from files that are damaged."""
@@ -139,7 +129,7 @@ class MetadataExtractor:
 
     def _structure(self, path, meta, people):
         """Turn one ExifTool record into the shape the rest of the pipeline expects."""
-        cleaned = stamped(structured(meta))
+        cleaned = structured(meta)
 
         tags = vocabulary.extract_tags(cleaned)
 
@@ -393,4 +383,4 @@ def raw_metadata(et, photo_path, record=None):
             return cleaned   # the error is not among the fields kept, but the read it came from was no read of them
     # Both are a read of every field in METADATA_FIELDS (the save asks its read back for them all), and
     # replace the row's raw_metadata whole.
-    return stamped(cleaned)
+    return cleaned

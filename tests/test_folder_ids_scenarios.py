@@ -89,12 +89,6 @@ class TheCommand(Case):
         finally:
             conn.close()
 
-    def test_relink_folders_apply_with_no_folder_gone_is_not_an_error(self):
-        # It raised KeyError('changed'): the scaffold left the counts out when there was nothing to write.
-        self.meet("2026-01-31 Parkrun")
-        said = self.run_cli("relink-folders", "--apply")
-        self.assertIn("Wrote 0 row(s)", said)
-
     def test_without_a_subcommand_it_says_what_there_is(self):
         said = self.run_cli("folder-ids")
         self.assertIn("mark", said)
@@ -269,17 +263,6 @@ class WhenSyncMeetsAMovedFolder(Case):
         self.rename("2026-02-07 Parkrun", "Renamed")
         said = " ".join(CliRunner().invoke(cli, ["--db", self.db_path, "sync"]).output.split())
         self.assertIn("`folder-ids mark` (a dry run)", said)
-
-    def test_relink_folders_follows_the_marked_folders_first_and_exactly(self):
-        made = self.meet("2026-02-07 Parkrun")
-        folder_ids.mark(self.library, apply=True)
-        self.rename("2026-02-07 Parkrun", "Something else")
-        runner = CliRunner().invoke(cli, ["--db", self.db_path, "relink-folders", "--apply"])
-        said = " ".join(runner.output.split())
-        self.assertEqual(0, runner.exit_code, (runner.output, repr(runner.exception)))
-        self.assertIn("1 marked folder(s) gone from disk: 1 followed by their markers (exact)", said)
-        self.assertTrue(all(os.path.exists(p) for p in self.paths_by_id().values()))
-        self.assertTrue(made)
 
 
 class WithARoot(unittest.TestCase):

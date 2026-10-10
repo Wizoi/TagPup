@@ -1,28 +1,18 @@
 """Re-read the photos whose index rows no longer describe their files, and record them.
 
-Rows go stale in ways the indexer never notices, because it only re-reads a file
-whose mtime or size changed:
+A row goes stale when its file changed under it and the indexer did not notice: a bulk
+keyword write that left mtime and size as they were, a row Suggest made from a path alone
+(no mtime, no size), a people column short of someone the row's own data names. This
+finds the rows whose mtime or size differ from the file's, or whose people lack someone
+the row's own data names, reads those files the way the indexer does, and records what
+they hold: tags, people, captions, raw_metadata, mtime, size, and the DocumentID where the
+row has none. The files are only read, never written (no DocumentID is minted); embeddings
+and faces are untouched.
 
-* bulk keyword writes recorded only some of the fields they wrote, so a removed tag
-  lingered in raw_metadata's IPTC:Keywords and came back on the next re-derivation;
-* they also left mtime and size as they were, so every folder scan re-read those
-  photos with ExifTool, every time;
-* ExifTool's answers were decoded as cp1252 instead of UTF-8, so captions holding
-  "ü" were stored as "Ã¼" from files that were right all along;
-* a tag write on a row the index had never read (one Suggest made, path only) recorded
-  the keywords as its whole raw_metadata and stamped it with the file's mtime and size
-  (#247), so the scan trusted a row with no Date Taken. A read always records each field
-  under its bare name as well (`Subject` beside `XMP:Subject`), and the file's
-  SourceFile; a row holding none -- or nothing at all, one a caption write or a rotation
-  stamped (#250) -- is "never read".
-
-This finds rows where the file on disk disagrees with the row -- mtime or size
-differ, the stored text shows UTF-8-read-as-cp1252, the tags re-derived from
-raw_metadata are not the row's tags, or the people lack someone the row's own data
-names -- reads those files the way the indexer does, and records what they hold: tags,
-people, captions, raw_metadata, mtime, size, and the DocumentID where the row has none.
-The files are only read, never written (no DocumentID is minted); embeddings and faces
-are untouched. Rows that only list a caption more than once are fixed from the row.
+Rows that show other signs -- text decoded as cp1252, tags that disagree with the keywords
+in raw_metadata, a row no read ever made, a caption listed twice -- are not looked for
+here: none exists in the three libraries (counted 2026-10-10), and if one appears the owner
+fixes it by hand (the doctor does not look for these; its checks are in tagpup.store.checks).
 
 The MCP server's tool calls `refresh_rows`,
 on the maintenance scaffold (tagpup.services.maintenance). Planning reads the files, so
@@ -30,11 +20,10 @@ a dry run takes as long as the reading.
 """
 import json
 import os
-import re
 from collections import Counter
 
 from tagpup.core import paths
-from tagpup.core.vocabulary import extract_people, extract_tags, people_in_photo
+from tagpup.core.vocabulary import extract_people, people_in_photo
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import maintenance
 from tagpup.store import db, journal
@@ -43,78 +32,18 @@ from tagpup.store import photos as store_photos
 from tagpup.store import taxonomy as store_taxonomy
 
 
-#: UTF-8 bytes decoded as cp1252: "ü" -> "Ã¼", "é" -> "Ã©", "–" -> "â€“", nbsp -> "Â ".
-MOJIBAKE = re.compile("Ã[\u0080-ÿ]|Â[\u0080-ÿ ]|â€")
-
 BATCH = 200
-
-
-def is_garbled(stored_json):
-    """Does a stored JSON value hold UTF-8 that was read as cp1252?
-
-    Searched decoded: rows are written with json.dumps, which escapes non-ASCII,
-    so the characters never appear in the stored text itself.
-    """
-    if not stored_json:
-        return False
-    try:
-        text = json.dumps(json.loads(stored_json), ensure_ascii=False)
-    except Exception:
-        text = stored_json
-    return bool(MOJIBAKE.search(text))
-
-
-def never_read(raw_json):
-    """Does a row's raw_metadata hold only what writes recorded, never a read of its file?
-    ExifTool's fields are recorded by a read under both names, `XMP:Subject` and
-    `Subject`, beside the file's `SourceFile`; the writes record only the first. A row
-    holding nothing was never read either: the one Suggest makes holds `{}`, and a write
-    that recorded no field of it (a caption, a rotation) stamped it all the same (#250)."""
-    try:
-        keys = json.loads(raw_json or "{}")
-    except Exception:
-        return False
-    return all(":" in key for key in keys)
 
 
 def why_stale(row):
     """The reasons a row may not describe its file, [] if it looks right, or None if its
     file is gone."""
-    path, mtime, size, tags_json, captions_json, raw_json = row
-    reasons = []
+    path, mtime, size = row[:3]
     try:
         stat = os.stat(path)
     except OSError:
-        return None   # file gone: a job for relink or remove, not this
-    if not store_photos.describes(mtime, size, (stat.st_mtime, stat.st_size)):
-        reasons.append("mtime/size")
-    if is_garbled(captions_json) or is_garbled(raw_json):
-        reasons.append("garbled text")
-    if never_read(raw_json):
-        reasons.append("never read")
-    try:
-        stored = set(json.loads(tags_json or "[]"))
-        derived = set(extract_tags(json.loads(raw_json or "{}")))
-        if stored != derived:
-            reasons.append("keywords disagree")
-    except Exception:
-        reasons.append("keywords disagree")
-    return reasons
-
-
-def distinct_captions(captions_json):
-    """The stored captions with repeats removed, or None if there were none to remove.
-
-    The extractor listed each caption once per field it appeared in, prefixed and
-    bare; the stored list is exactly that output, so dropping repeats from it is
-    exactly what the corrected extraction gives -- no file needs reading.
-    """
-    try:
-        captions = json.loads(captions_json or "[]")
-    except Exception:
-        return None
-    distinct = list(dict.fromkeys(captions))
-    return distinct if len(distinct) != len(captions) else None
+        return None   # file gone: a job for sync or remove, not this
+    return [] if store_photos.describes(mtime, size, (stat.st_mtime, stat.st_size)) else ["mtime/size"]
 
 
 def people_checker(conn):
@@ -144,8 +73,8 @@ def people_checker(conn):
 
 
 def find_stale(conn, folder=None, seen=None, ids=None, found=None):
-    """(rows whose file must be re-read, {path: captions} fixable from the row alone),
-    each by the path as stored, of the library open on `conn`.
+    """{path as stored: the reasons its row may not describe its file} of the rows whose file must
+    be re-read, of the library open on `conn`.
 
     `seen`, if given, is filled with each stale row's (mtime, size) as found here --
     before any file is read. `found`, if given, with each named row's columns as found
@@ -153,7 +82,7 @@ def find_stale(conn, folder=None, seen=None, ids=None, found=None):
     the row still has. `ids`, if given, is filled with the id of each row either kind
     names.
     """
-    stale, captions_only = {}, {}
+    stale = {}
     missing_people = people_checker(conn)
     for row in store_photos.rows_to_check(conn, folder):
         reasons = why_stale(row[:6])
@@ -168,15 +97,7 @@ def find_stale(conn, folder=None, seen=None, ids=None, found=None):
                                  "raw_metadata": row[5]}
             if ids is not None:
                 ids[row[0]] = row[7]
-            continue
-        fixed = distinct_captions(row[4])
-        if fixed is not None:
-            captions_only[row[0]] = fixed
-            if found is not None:
-                found[row[0]] = {"captions": row[4]}
-            if ids is not None:
-                ids[row[0]] = row[7]
-    return stale, captions_only
+    return stale
 
 
 def read_files(conn, photo_paths, exiftool_path, progress=None):
@@ -256,25 +177,23 @@ def _planner(exiftool_path, folder, examples, progress):
         ids, found = {}, {}
         conn = db.connect(db.readonly_uri(library.path), uri=True)
         try:
-            stale, captions_only = find_stale(conn, folder, ids=ids, found=found)
+            stale = find_stale(conn, folder, ids=ids, found=found)
             reasons = dict(Counter(r for rs in stale.values() for r in rs).most_common())
             if progress is not None:
-                progress("found", {"stale": len(stale), "reasons": reasons,
-                                   "captions_only": len(captions_only)})
+                progress("found", {"stale": len(stale), "reasons": reasons})
             records, to_write, fields, unreadable, shown, identities = reread(
                 conn, stale, exiftool_path, examples, progress)
         finally:
             conn.close()
         return maintenance.Plan(
-            size=len(to_write) + len(captions_only),
-            counts={"stale": len(stale), "reasons": reasons, "captions_only": len(captions_only),
+            size=len(to_write),
+            counts={"stale": len(stale), "reasons": reasons,
                     "to_write": len(to_write), "fields": dict(fields.most_common()),
                     "unreadable": len(unreadable)},
             ids={"stale": [ids[p] for p in sorted(stale)], "to_write": [ids[p] for p in to_write],
-                 "captions_only": [ids[p] for p in sorted(captions_only)],
                  "unreadable": [ids[p] for p in unreadable]},
             reveal={"examples": shown},
-            work=(records, to_write, captions_only, found, identities, ids))
+            work=(records, to_write, found, identities, ids))
     return plan
 
 
@@ -282,9 +201,8 @@ def _edits(planned):
     return edits_for(*planned.work)
 
 
-def edits_for(records, to_write, captions_only, found, identities, ids):
-    """Both kinds of fix, as one change: each row in `to_write` from its file's `records`,
-    each in `captions_only` from its own captions. `found` is each row as the plan read
+def edits_for(records, to_write, found, identities, ids):
+    """The fix, as one change: each row in `to_write` from its file's `records`. `found` is each row as the plan read
     it ({"mtime", "size", "tags", "captions", "raw_metadata"}), `identities` each row's
     document_id, `ids` each row's id, all by path as stored.
 
@@ -308,9 +226,6 @@ def edits_for(records, to_write, captions_only, found, identities, ids):
             values["document_id"] = record["document_id"]
             expect["document_id"] = None
         edits.append(journal.update("photos", (ids[path],), expect, values, kind="from_files", skippable=True))
-    for path, fixed in captions_only.items():
-        edits.append(journal.update("photos", (ids[path],), {"captions": found[path]["captions"]},
-                                    {"captions": json.dumps(fixed)}, kind="captions", skippable=True))
     return edits
 
 
@@ -318,7 +233,7 @@ def refresh_rows(library, exiftool_path, apply=False, folder=None, examples=5, p
     """Plan, and with `apply` make, the refresh of every row of `library` (or of those
     under `folder`) that no longer describes its file, reading the files with ExifTool at
     `exiftool_path`. A Result, on the maintenance scaffold: `changed` is rows changed,
-    from their files (details["changed"]["from_files"]) and captions alone ("captions"). Applied
+    from their files (details["changed"]["from_files"]). Applied
     as one change of the journal, undoable, of the rows written; a row changed after this
     run read it is left as it is and listed in `skipped`.
 
@@ -328,4 +243,4 @@ def refresh_rows(library, exiftool_path, apply=False, folder=None, examples=5, p
     "total".
     """
     return maintenance.run(library, "refresh_rows", _planner(exiftool_path, folder, examples, progress),
-                           _edits, apply=apply, kinds=("from_files", "captions"))
+                           _edits, apply=apply, kinds=("from_files",))

@@ -50,16 +50,16 @@ class RefreshGuards(base.RefreshFixture):
         saved = self.photo_id(self.files["stale_keywords"])
         self.assertEqual([("photos %d" % saved, "not what the plan read: mtime, tags changed")], result.skipped)
         # The rest were written, and recorded as one change without the skipped row.
-        self.assertEqual({"from_files": 3, "captions": 1}, result.details["changed"])
-        self.assertNotEqual(before[self.files["garbled"]], rows[self.files["garbled"]])
+        self.assertEqual({"from_files": 2}, result.details["changed"])
+        self.assertNotEqual(before[self.files["path_only"]], rows[self.files["path_only"]])
         change = result.details["change"]
         keys = journal.history(self.db, change_id=change)[0]["keys"]["photos"]
-        self.assertEqual(sorted([self.photo_id(self.files[n])] for n in ("garbled", "stale_stat", "twice", "never_read")),
+        self.assertEqual(sorted([self.photo_id(self.files[n])] for n in ("stale_stat", "path_only")),
                          sorted(keys))
         # And it is undone like any change: the saved row keeps its save.
         journal.undo(self.db, change)
         after_undo = self.rows()
-        for name in ("garbled", "stale_stat", "twice", "fine"):
+        for name in ("stale_stat", "path_only", "fine"):
             self.assertEqual(before[self.files[name]], after_undo[self.files[name]], name)
         self.assertEqual(saved_tags, after_undo[self.files["stale_keywords"]][0])
 
