@@ -3,7 +3,8 @@
 // written to, and one that decodes but may be an incomplete copy (tagpup.services.
 // damaged_photos). Each with its path, why, when it was found, its size and modified time,
 // and TagPup's page on its folder (/api/activity/attention). A file replaced since is not
-// listed: it has left the list by itself.
+// listed: it has left the list by itself. And the names to review: how many names no person's
+// tag is wait for the owner to settle, with the TagTuner page that opens the list.
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';
 import { state } from './state.js';
@@ -89,19 +90,34 @@ function photoRow(photo, library) {
     ]);
 }
 
+/** The names the owner settles by hand: how many, and the page that opens them (the library's TagTuner, Review People). */
+function namesNote(library) {
+    const names = library.names_to_review || 0;
+    if (!names) return null;
+    return buildElement('p', { className: 'names-to-review' }, [
+        `${plural(names, 'name', 'names')} ${names === 1 ? 'waits' : 'wait'} for you to settle: make a person, link `
+            + 'the name to one, unname the faces or set it aside. Nothing is changed until you choose. ',
+        library.names_url ? buildElement('a', {
+            className: 'link', text: 'Open them in TagTuner',
+            attrs: { href: library.names_url, target: '_blank', rel: 'noopener' } }) : null,
+    ]);
+}
+
 function libraryCard(library) {
     const photos = library.photos || [];
     return buildElement('div', { className: 'card', data: { library: library.name } }, [
         buildElement('h3', { text: library.name }),
-        buildElement('p', { className: 'detail', text: 'Restore each from a backup; nothing was written to them. '
-            + 'A photo replaced by a good copy leaves this list by itself, and is indexed.' }),
-        buildElement('table', { className: 'attention-table' }, [
+        namesNote(library),
+        library.names_error ? buildElement('p', { className: 'error names-error', text: library.names_error }) : null,
+        photos.length ? buildElement('p', { className: 'detail', text: 'Restore each from a backup; nothing was written to them. '
+            + 'A photo replaced by a good copy leaves this list by itself, and is indexed.' }) : null,
+        photos.length ? buildElement('table', { className: 'attention-table' }, [
             buildElement('thead', {}, [buildElement('tr', {}, ['Photo', '', 'Why', 'First found', 'Size', 'Modified', '', '']
                 .map(text => buildElement('th', { text })))]),
             buildElement('tbody', {}, photos.map(photo => photoRow(photo, library.name))),
-        ]),
-        checkButton(photos.length === 1 ? 'Check again' : 'Check all again',
-                    'Restored them? Read them again now, whatever their modified time says', library.name, null),
+        ]) : null,
+        photos.length ? checkButton(photos.length === 1 ? 'Check again' : 'Check all again',
+                    'Restored them? Read them again now, whatever their modified time says', library.name, null) : null,
         library.faces_to_detect ? buildElement('p', { className: 'detail faces-to-detect', text:
             `${plural(library.faces_to_detect, 'photo waits', 'photos wait')} for ${library.faces_to_detect === 1 ? 'its'
                 : 'their'} faces to be detected again: indexed from a damaged copy, whole now. `
@@ -115,9 +131,9 @@ export function renderAttention() {
     const data = state.attention;
     if (!data) return;
     const cards = (data.libraries || [])
-        .filter(library => (library.photos || []).length || library.faces_to_detect || library.error)
+        .filter(library => (library.photos || []).length || library.faces_to_detect || library.names_to_review || library.names_error || library.error)
         .map(libraryCard);
-    const count = (data.unreadable || 0) + (data.incomplete || 0);
+    const count = (data.unreadable || 0) + (data.incomplete || 0) + (data.names_to_review || 0);
     const link = document.querySelector('a[href="#attention"]');
     if (link) link.textContent = count ? `Needs attention (${count})` : 'Needs attention';
     const checked = state.attentionChecked

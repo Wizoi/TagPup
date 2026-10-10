@@ -29,6 +29,7 @@ HANDLER_OWNER = os.path.join("tagpup", "logs.py")
 #: Files opened for appending in shipped code, and why each is bounded.
 APPENDED = {
     os.path.join("tagpup", "supervisor.py"): "the server's console output, rotated at CONSOLE_LOG_MAX as each server starts",
+    os.path.join("tagpup", "launcher.py"): "the output of a server an install started, rotated the same way as it starts",
 }
 
 FILE_HANDLERS = re.compile(r"\b(?:FileHandler|RotatingFileHandler|TimedRotatingFileHandler|WatchedFileHandler)\s*\(")
@@ -48,6 +49,12 @@ def appends(source):
 
 
 class EveryLogIsBounded(unittest.TestCase):
+    def test_the_output_of_a_server_an_install_starts_is_rotated_as_it_starts(self):
+        with open(os.path.join(ROOT, "tagpup", "launcher.py"), encoding="utf-8") as handle:
+            source = handle.read()
+        start = source[source.index("def start_server("):source.index("def wait_for(")]
+        self.assertLess(start.index("CONSOLE_LOG_MAX"), start.index('open(log_path, "ab")'))
+
     def test_only_tagpup_logs_makes_a_file_handler(self):
         found = []
         for relative in python_sources():

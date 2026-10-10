@@ -75,6 +75,24 @@ def detected(conn, photo_path, name):
                         + " AND d.detector = ? LIMIT 1", tuple(params) + (name,)).fetchone() is not None
 
 
+def forget_faceless(conn, photo_ids):
+    """Take away the row of each photo of `photo_ids` that has no face row now: its faces were deleted (a photo's
+    faces removed, a face deleted by id), so what the row says -- detection ran and these are its faces -- is no
+    longer true, and Suggest detects it again (docs/findings.md, #779). A photo that keeps a face keeps its row.
+    Returns rows taken away. The caller commits."""
+    photo_ids = sorted(photo_ids)
+    if not photo_ids or not _there(conn):
+        return 0
+    removed = 0
+    for start in range(0, len(photo_ids), 500):
+        chunk = photo_ids[start:start + 500]
+        removed += conn.execute(
+            "DELETE FROM faces_detected WHERE photo_id IN (%s)"
+            " AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = faces_detected.photo_id)"
+            % ",".join("?" * len(chunk)), chunk).rowcount
+    return removed
+
+
 def forget(conn, photo_id):
     """Take the photo's row away: its faces are to be detected again. The caller commits."""
     if _there(conn):

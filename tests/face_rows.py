@@ -32,8 +32,15 @@ def add_people(conn, photo_path, names, source="keyword"):
     photo = photo_id(conn, photo_path)
     start = conn.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM photo_people WHERE photo_id = ?",
                          (photo,)).fetchone()[0]
-    conn.executemany("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, ?)",
-                     [(photo, start + n, name, source) for n, name in enumerate(names)])
+    from tagpup.store import person_ids   # the person a name is, as people.rebuild writes it
+    rows = []
+    for n, name in enumerate(names):
+        try:
+            tag_id = person_ids.target(conn, name)[0]
+        except person_ids.PersonProblem:
+            tag_id = None
+        rows.append((photo, start + n, name, source, tag_id))
+    conn.executemany("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, ?, ?)", rows)
 
 
 def people_of(conn, photo_path):
@@ -65,12 +72,37 @@ def add_vector(conn, photo_path, vector, model=None, mtime=None, size=None):
                  (photo, model or configured_model(), mtime, size, vector))
 
 
+def give_their_person(conn, face_id):
+    """A face a test has just given a `name` by SQL is given the person the tree says it is, as every writer that names a face does
+    (tagpup.store.person_ids.target: the one node called so; none for a name no node, or two, is called). Unresolved names are no
+    longer linked by whatever rebuilds the photo next (person_ids.People.settle): a fixture that names a face states who. The
+    caller commits."""
+    from tagpup.store import person_ids   # a test helper reads the tree as the writers do
+    row = conn.execute("SELECT name, tag_id FROM faces WHERE id = ?", (face_id,)).fetchone()
+    if row is None or not row[0] or row[1] is not None:
+        return
+    try:
+        found, name = person_ids.target(conn, row[0])
+    except person_ids.PersonProblem:
+        return
+    if found is not None:
+        conn.execute("UPDATE faces SET tag_id = ?, name = ? WHERE id = ?", (found, name, face_id))
+
+
 def add_face(conn, photo_path, box=(0, 0, 10, 10), **columns):
     """Insert a face into the photo at `photo_path`; `columns` are any others of faces
     (embedding, name, prob, name_source, excluded, excluded_reason, id). A box that is
-    not a string is written as JSON. Returns the face's id. The caller commits."""
+    not a string is written as JSON. A face given a `name` is given the person the tree says it is, as every writer that names a
+    face does (tagpup.store.person_ids.target: the id of the one node called so; none for a name no node, or two, is called).
+    Returns the face's id. The caller commits."""
     values = dict(columns, photo_id=photo_id(conn, photo_path),
                   box=box if isinstance(box, str) else json.dumps(list(box)))
+    if values.get("name") and "tag_id" not in values:
+        from tagpup.store import person_ids   # a test helper reads the tree as the writers do
+        try:
+            values["tag_id"] = person_ids.target(conn, values["name"])[0]
+        except person_ids.PersonProblem:
+            values["tag_id"] = None
     names = sorted(values)
     return conn.execute("INSERT INTO faces (%s) VALUES (%s)" % (", ".join(names), ", ".join("?" * len(names))),
                         [values[name] for name in names]).lastrowid

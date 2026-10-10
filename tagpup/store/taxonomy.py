@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Set
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.vocabulary import PeopleVocabulary
-from tagpup.store import db, generations, people, schema
+from tagpup.store import db, generations, people, person_ids, schema
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +89,10 @@ def people_filing(db_path):
             return {}, [vocabulary.NEW_LIBRARY_FACE_ROOT]
         roots = {name.strip().lower(): name.strip() for (name,) in conn.execute(
             "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name}
-        found = {}
+        found, groups = {}, set(group_tags(conn))
         for tag_path in tags(conn):
+            if tag_path in groups:
+                continue   # a group of people is not filed as a person (#986)
             if "/" in tag_path and vocabulary.key(vocabulary.root_of(tag_path)) in roots:
                 found.setdefault(vocabulary.key(vocabulary.leaf_of(tag_path)), []).append(tag_path)
         return {leaf: sorted(each) for leaf, each in found.items()}, sorted(roots.values())
@@ -102,10 +104,10 @@ def _read_people_paths(conn):
     """{lowercased leaf name: tag path} of everyone the tree on `conn` files under a
     people root, leaving out anyone filed in two places."""
     roots = people_roots(conn)
-    mapping = {}
+    mapping, groups = {}, set(group_tags(conn))
     for tag_path in tags(conn):
-        if "/" not in tag_path or vocabulary.key(vocabulary.root_of(tag_path)) not in roots:
-            continue
+        if tag_path in groups or "/" not in tag_path or vocabulary.key(vocabulary.root_of(tag_path)) not in roots:
+            continue   # a group of people is not a person to file under (#986)
         leaf = vocabulary.key(vocabulary.leaf_of(tag_path))
         mapping[leaf] = None if leaf in mapping and mapping[leaf] != tag_path else tag_path
     return {k: v for k, v in mapping.items() if v}
@@ -169,6 +171,16 @@ def people_vocabulary(db_path=None, conn=None):
             own.close()
 
 
+def group_tags(conn):
+    """The tags of the face nodes that have a node under them: group tags, which are not people
+    (#986). The same reading as person_ids.People's `parents`. None without a tree."""
+    if not tree_exists(conn):
+        return []
+    return [tag for (tag,) in conn.execute(
+        "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND id IN"
+        " (SELECT DISTINCT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL)") if tag]
+
+
 def read_people_vocabulary(conn):
     """The PeopleVocabulary of the library open on `conn`: a new library's while its tree
     is empty (people_roots)."""
@@ -176,8 +188,8 @@ def read_people_vocabulary(conn):
         return PeopleVocabulary.defaults()
     roots = [name for (name,) in conn.execute(
         "SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")]
-    faces = conn.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1").fetchall()
-    return PeopleVocabulary.from_rows(roots, faces)
+    faces = conn.execute("SELECT id, tag, name FROM tag_taxonomy WHERE has_face = 1").fetchall()
+    return PeopleVocabulary.from_rows(roots, faces, group_tags(conn))
 
 
 # ---- The tree's nodes ------------------------------------------------------------------
@@ -265,8 +277,10 @@ def branch(db_path, path):
 
 def move_branch(conn, old, new):
     """Move the node `old`, and every node under it, to its place under `new`. A node
-    whose place is free moves there, keeping its id and flags; one whose place is taken
-    joins the node already there, and goes. The caller commits. Returns the nodes moved
+    whose place is free moves there, keeping its id and flags -- a person keeps their id, so their faces follow them
+    (the cache of their name follows a rename: person_ids.follow_tree); one whose place is taken
+    joins the node already there, and goes: the faces and listed people it named name that node first
+    (people.merge_person), PersonInUse if it is no person. The caller commits. Returns the nodes moved
     or joined.
 
     Renaming a node moves its branch to a free place. Merging one tag into another joins
@@ -282,17 +296,47 @@ def move_branch(conn, old, new):
         # Parents first, so each node's new parent is in place when the node gets there.
         for node_id, tag in nodes:
             place = new + tag[len(old):]
-            if conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (place,)).fetchone():
-                joined.append(node_id)
+            there = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (place,)).fetchone()
+            if there:
+                joined.append((node_id, there[0]))
                 continue
             parent = vocabulary.parent_of(place)
             parent_id = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?",
                                      (parent,)).fetchone()[0] if parent else None
             conn.execute("UPDATE tag_taxonomy SET tag = ?, name = ?, parent_id = ? WHERE id = ?",
                          (place, vocabulary.leaf_of(place), parent_id, node_id))
+        affected = set()
+        for node_id, target_id in joined:
+            # Two tags that are one person: everything that names the one names the other, before the node goes.
+            _moved, photos = people.merge_person(conn, node_id, target_id)
+            affected |= photos
         if joined:
-            conn.execute("DELETE FROM tag_taxonomy WHERE id IN (%s)" % ", ".join("?" * len(joined)), joined)
+            conn.execute("DELETE FROM tag_taxonomy WHERE id IN (%s)" % ", ".join("?" * len(joined)),
+                         [node_id for node_id, _target in joined])
+        if affected:
+            people.rebuild(conn, sorted(affected))   # a photo that named both lists the person once
         return len(nodes)
+
+
+def refuse_child_of_person(conn, tag):
+    """Rule (a), the owner's actions only *(owner, 2026-10-09)*: a person that faces or photos carry has no tags under them. The
+    tag `tag` is to be made (an `add_node`, a keyword the owner wrote, a branch moved under it): PersonHasNoChildren when a
+    node above it is a person -- a leaf under a face root that faces name or photos carry -- and the tag is not a node already
+    (a violation that is there is not converted, and what a file holds is never refused: the indexer does not call this). One
+    function, called by tags.create, the moves of tags, the keyword writer and the bulk Tags edit."""
+    if not tree_exists(conn) or conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone():
+        return
+    for above in reversed(vocabulary.lineage(tag)[:-1]):
+        node = conn.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (above,)).fetchone()
+        if not node or not node[1] or "/" not in above:
+            continue
+        if conn.execute("SELECT 1 FROM tag_taxonomy WHERE parent_id = ? LIMIT 1", (node[0],)).fetchone():
+            return   # a group already: the tag goes under a group
+        faces = (conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id = ?", (node[0],)).fetchone()[0]
+                 if person_ids.present(conn) else 0)
+        photos = conn.execute("SELECT COUNT(*) FROM photo_tags WHERE tag_id = ?", (node[0],)).fetchone()[0]
+        if faces or photos:
+            raise person_ids.PersonHasNoChildren(above, faces, photos)
 
 
 def people_nodes(db_path, name):
@@ -357,10 +401,37 @@ def node_ids(conn):
     return {tag: node_id for node_id, tag in conn.execute("SELECT id, tag FROM tag_taxonomy") if tag}
 
 
-def remove_node(conn, tag):
-    """Take one node out of the tree, and nothing under it. Returns nodes removed. The
+def _release(conn, ids, force):
+    """Before nodes `ids` go: the faces that name any of them. None, nothing to do; else PersonInUse unless `force`, which
+    unnames those faces (faces.unname_person) in this transaction."""
+    if not ids or not person_ids.present(conn):
+        return
+    used = person_ids.faces_using(conn, ids)
+    if not used:
+        return
+    if not force:
+        names = dict(conn.execute("SELECT id, tag FROM tag_taxonomy WHERE id IN (%s)" % ", ".join("?" * len(used)), list(used)))
+        raise person_ids.PersonInUse(sum(used.values()), sorted(names.get(person_id, "a person") for person_id in used))
+    from tagpup.store import faces   # faces imports this module's neighbours; not at import
+    faces.unname_person(conn, list(used))
+
+
+def faces_named_by(conn, path):
+    """({node tag: faces naming it} for the node `path` and every node under it that a face names). Reads only."""
+    where, params = sql_branch(path)
+    ids = {node_id: tag for node_id, tag in conn.execute("SELECT id, tag FROM tag_taxonomy WHERE %s" % where, params)}
+    if not ids or not person_ids.present(conn):
+        return {}
+    return {ids[person_id]: count for person_id, count in person_ids.faces_using(conn, list(ids)).items()}
+
+
+def remove_node(conn, tag, force=False):
+    """Take one node out of the tree, and nothing under it. A person that faces name is not deleted without `force`
+    (PersonInUse, with the count); with it their faces are unnamed in this transaction. Returns nodes removed. The
     caller commits."""
     with people.tree_edit(conn):
+        found = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone()
+        _release(conn, [found[0]] if found else [], force)
         return conn.execute("DELETE FROM tag_taxonomy WHERE tag = ?", (tag,)).rowcount
 
 
@@ -415,11 +486,13 @@ def forget_tag_embeddings(conn, tag):
     return conn.execute("DELETE FROM tag_embeddings WHERE tag = ?", (tag,)).rowcount
 
 
-def delete_branch(conn, path):
-    """Take the node `path` and every node under it out of the tree. The caller commits.
+def delete_branch(conn, path, force=False):
+    """Take the node `path` and every node under it out of the tree. A person that faces name is not deleted without `force`
+    (PersonInUse, with the count and which); with it their faces are unnamed in this transaction. The caller commits.
     Returns the nodes taken out."""
     with people.tree_edit(conn):
         where, params = sql_branch(path)
+        _release(conn, [node_id for (node_id,) in conn.execute("SELECT id FROM tag_taxonomy WHERE " + where, params)], force)
         return conn.execute("DELETE FROM tag_taxonomy WHERE " + where, params).rowcount
 
 

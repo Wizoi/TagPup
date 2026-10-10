@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
 from tagpup import supervisor  # noqa: E402
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import byte_lock, processes  # noqa: E402
 
 #: The stand-in server: `fake.py MODE VERSION RECORD` notes each start in RECORD, then
 #: crashes, exits as the real one does when the ports are taken, or serves /api/server
@@ -420,8 +420,8 @@ class OnePerHome(Base):
     def test_a_second_supervisor_is_refused(self):
         holder = processes.start(
             [sys.executable, "-c",
-             "import sys, time; sys.path.insert(0, %r); from tagpup import supervisor; "
-             "lock = supervisor.Lock(supervisor.data_file(supervisor.LOCK_FILE)); "
+             "import sys, time; sys.path.insert(0, %r); from tagpup import supervisor; from tagpup.core import byte_lock; "
+             "lock = byte_lock.Lock(supervisor.data_file(supervisor.LOCK_FILE)); "
              "print(lock.acquire(), flush=True); time.sleep(120)" % WORKSPACE_DIR],
             env=self.env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         self.addCleanup(holder.stdout.close)
@@ -435,11 +435,11 @@ class OnePerHome(Base):
         self.assertIn("Another TagPup supervisor", "\n".join(logged.output))
 
     def test_the_lock_is_let_go_when_it_stops(self):
-        first = supervisor.Lock(supervisor.data_file(supervisor.LOCK_FILE))
+        first = byte_lock.Lock(supervisor.data_file(supervisor.LOCK_FILE))
         self.assertTrue(first.acquire())
-        self.assertFalse(supervisor.Lock(first.path).acquire())
+        self.assertFalse(byte_lock.Lock(first.path).acquire())
         first.release()
-        again = supervisor.Lock(first.path)
+        again = byte_lock.Lock(first.path)
         self.assertTrue(again.acquire())
         again.release()
 

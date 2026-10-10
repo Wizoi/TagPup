@@ -30,6 +30,7 @@ import {
     librarySearchWithinName, librarySearchWithinRow, librarySearchWords
 } from './elements.js';
 import { closeViewAsNewPlace, openLibraryView } from './library-view.js';
+import { searchPlacesBack } from './view-left.js';
 import {
     MAX_MEMBERS, MAX_WORDS, SEARCH_LISTS, addressTooLong, searchAsksSomething, searchValue, searchWords, termSaysSomething,
     viewLabel
@@ -137,7 +138,7 @@ function paintChips() {
         const members = s.lists[list];
         const chips = [];
         members.slice(0, MAX_CHIPS_SHOWN).forEach((member, at) => {
-            const { text, title } = chipLabel(member);
+            const { text, title } = chipLabel(member, people);
             if (member.kind === 'person' && !people) readForChips('people');
             if ((member.kind === 'keyword' || member.kind === 'keyword_only') && !keywords) readForChips('keywords');
             const known = chipKnown(member, keywords, people);
@@ -301,7 +302,7 @@ export function clearSearch() {
         paintWithin();
         return;
     }
-    const back = Number(window.history.state && window.history.state.searchBack);
+    const back = searchPlacesBack();
     if (back > 0) window.history.go(-back);
     else closeViewAsNewPlace();
 }

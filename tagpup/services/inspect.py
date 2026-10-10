@@ -25,7 +25,8 @@ from tagpup.core.result import NotFound, Refused
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import roots as roots_service
 from tagpup.store import checks as rules
-from tagpup.store import db, embeddings, inspection, taxonomy
+from tagpup.store import db, embeddings, inspection, name_review, taxonomy
+from tagpup.store import photos as photo_rows
 
 #: How many ids an answer lists at most, unless asked for more; the count is always whole.
 LIMIT = 100
@@ -124,7 +125,8 @@ def photos(library, folder=None, tag=None, person=None, reveal=False, limit=LIMI
     """The photos under a folder (any depth), carrying a tag (or a tag under it), or listing
     a person among their people -- each given narrows the others. Their count and ids;
     their paths only with `reveal`. A person is a name (Rowan Thackeray) or their tag
-    (People/Rowan Thackeray), spelled as the photos spell it."""
+    (People/Rowan Thackeray): a tag path is the one person filed there (two people called alike are told apart by it), a name is
+    everyone called it; a path no node holds names no one filed."""
     if not (folder or tag or person):
         raise Refused("Name a folder, a tag or a person.")
     found = None
@@ -132,8 +134,7 @@ def photos(library, folder=None, tag=None, person=None, reveal=False, limit=LIMI
         if folder:
             found = dict(inspection.under(conn, folder))
         if person:
-            name = vocabulary.leaf_of(person)
-            of_person = dict(inspection.of_person(conn, name))
+            of_person = dict(inspection.of_person(conn, person))
             found = of_person if found is None else {i: p for i, p in found.items() if i in of_person}
         if tag:
             # Only the photos a folder or a person has narrowed to: it read every
@@ -208,7 +209,7 @@ def photo_against_file(library, photo_id, exiftool_path=None, reveal=False):
     # different fields, and only what both hold can disagree.
     differing = sorted(k for k in set(in_row) & set(in_file) if in_row[k] != in_file[k])
     answer.update(
-        mtime={"same": row["mtime"] is not None and abs(row["mtime"] - record["mtime"]) < 0.1,
+        mtime={"same": photo_rows.same_mtime(row["mtime"], record["mtime"]),
                "seconds_apart": None if row["mtime"] is None else round(record["mtime"] - row["mtime"], 3)},
         size={"same": row["size"] == record["size"], "row": row["size"], "file": record["size"]},
         tags=_compared(row["tags"], record["tags"], reveal),
@@ -296,7 +297,27 @@ def all_checks(library, reveal=False, embedder_settings=None):
         answer = {"broken": sum(1 for r in results if r["count"]), "checks": results}
         if embedder_settings is not None:
             answer["without_a_vector"] = rules.without_a_vector(conn, embeddings.model_key(**embedder_settings))
+        answer["names_to_review"] = _names_to_review(conn, reveal)
     return answer
+
+
+def _names_to_review(conn, reveal=False):
+    """The names-to-review list as counts (reported, not broken): `waiting`, `set_aside`, `stale_group_rows`, `by_reason`
+    ({none, several, one, branch: names}) and `rows`; each waiting name's reason and rows as `entries`, and its name only with
+    `reveal`."""
+    waiting, hidden, stale = name_review.waiting(conn)
+    by_reason = {}
+    for review in waiting:
+        by_reason[review.why] = by_reason.get(review.why, 0) + 1
+    entries = []
+    for number, review in enumerate(waiting, 1):
+        entry = {"entry": number, "why": review.why, "faces": review.faces, "listed": review.listed,
+                 "from_keyword": review.from_keyword}
+        if reveal:
+            entry["name"] = review.name
+        entries.append(entry)
+    return {"waiting": len(waiting), "set_aside": len(hidden), "stale_group_rows": stale, "by_reason": by_reason,
+            "rows": sum(name_review.rows_of(review) for review in waiting), "entries": entries}
 
 
 # ---- Rows whose file is gone ------------------------------------------------------------

@@ -2,26 +2,29 @@
 // forward, opening, rotating and deleting it, and editing when it was taken.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { baseName, isUnc, pathKey } from './common/paths.js';
-import { photoAlreadyHas, sortedTags } from './common/vocabulary.js';
+import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
+import { attachPersonFaces } from './common/person-faces.js';
+import { baseName, isUnc, pathKey, samePath } from './common/paths.js';
+import { personLabel, personLabelOf, personTitleOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
+import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
 import {
     btnCancelDateModal, btnCarryForward, btnCloseDateModal, btnEditDateTaken, btnSaveDateModal,
-    dateTakenModal, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
+    dateTakenModal, detailCamera, detailCameraItem, detailDateTaken, detailPath, detailPeople, detailsPanel, detailTags,
     emptyState, facesSection, facesStrip, facesSummary, folderViewContent, folderViewHeader,
-    folderViewStats, imageZoom, imageZoomImg, inputAddPerson, inputAddTag, inputDateTaken,
+    folderViewStats, inputAddPerson, inputAddTag, inputDateTaken,
     inputPhotoTitle, mainImage, panelContent, photoList, statusDot, statusText
 } from './elements.js';
 import { setStatus } from './status.js';
 import { isJustLooking, libraryName } from './looking.js';
 import { whereWritten } from './write-queue.js';
-import { saveToLocalStorageCache } from './cache.js';
+import { forgetCachedPhoto, saveToLocalStorageCache } from './cache.js';
 import {
     exifDateToIso, formatFriendlyDateSingle, getCurrentDateTimeIso,
     getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
-import { namesAPerson, updateTagsDatalist } from './tags.js';
+import { namesAPerson, normalizeTag, updateTagsDatalist } from './tags.js';
 import {
     leavePhotoThen, postPhotoMetadata, queueWriteOf, redrawIfShowing, saveDetailEdits,
     updateSaveButton
@@ -31,6 +34,7 @@ import { damageOf, showPhotoDamage } from './damaged.js';
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale } from './stale.js';
 import { cardDamage, fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
+import { backToView, notePhoto, rememberView } from './view-left.js';
 
 // ---- Detected faces ----------------------------------------------------
 // Face recognition already ran for this photo -- the suggester needs it to propose
@@ -45,6 +49,9 @@ export function renderPhotoFaces(photoPath) {
     facesStrip.innerHTML = '';
     facesSection.classList.add('hidden');
     if (facesSummary) facesSummary.textContent = '';
+    // The boxes over the photo are another photo's until this one's faces arrive. The same photo drawn
+    // again (after a face was named) keeps its boxes and its panel until the new answer replaces them.
+    if (!state.faceBoxes.path || !samePath(state.faceBoxes.path, photoPath)) clearPhotoFaces();
 
     api.fetch(`/api/photo-faces?path=${encodeURIComponent(photoPath)}`)
         .then(res => res.ok ? res.json() : { faces: [] })
@@ -53,6 +60,7 @@ export function renderPhotoFaces(photoPath) {
             // the strip for the one now on screen.
             if (token !== state.facesRequestToken) return;
             const faces = data.faces || [];
+            showPhotoFaces(photoPath, data);
             if (faces.length === 0) return;
 
             // Who this photo already names, so a face is only offered when acting
@@ -82,7 +90,7 @@ export function renderPhotoFaces(photoPath) {
                 const img = document.createElement('img');
                 img.className = 'face-card-img';
                 img.src = api.image(`/api/face-crop?id=${face.id}`);
-                img.alt = face.name || 'Unidentified face';
+                img.alt = face.name ? personLabelOf(face) : 'Unidentified face';
                 frame.appendChild(img);
 
                 // How sure the match is, in the corner of the crop. It used to be
@@ -97,60 +105,79 @@ export function renderPhotoFaces(photoPath) {
                 }
                 card.appendChild(frame);
 
+                // Who the face is, or who it looks like, as a person (their id) when the server named one: two people called
+                // alike are two cards, each under its label.
+                const suggestionPerson = face.suggestion_person && face.suggestion_person.id !== null
+                    && face.suggestion_person.id !== undefined ? face.suggestion_person : null;
+                const suggestedWho = suggestionPerson || face.suggestion;
+                const suggestedLabel = suggestionPerson ? personLabel(suggestionPerson) : face.suggestion;
+                const facePerson = face.person && face.person.id !== null && face.person.id !== undefined ? face.person : null;
                 const label = document.createElement('span');
                 label.className = 'face-card-label';
                 if (face.excluded) {
                     label.textContent = face.excluded_reason || 'excluded';
                     card.title = 'Excluded from face matching';
                 } else if (face.name) {
-                    label.textContent = face.name;
-                    card.title = face.name;
+                    label.textContent = personLabelOf(face);
+                    card.title = personTitleOf(face);
                 } else if (face.suggestion) {
                     const pct = Math.round((face.similarity || 0) * 100);
                     // The percentage lives on the crop now; repeating it here is
                     // what pushed the name into an ellipsis.
-                    label.textContent = `${face.suggestion}?`;
-                    card.title = `Closest match: ${face.suggestion} (${pct}%). Not assigned.`;
+                    label.textContent = `${suggestedLabel}?`;
+                    card.title = `Closest match: ${suggestedLabel} (${pct}%). Not assigned.`;
                     label.classList.add('face-card-suggestion');
+                    card.tabIndex = 0;
+                    attachPersonFaces(card, suggestedWho);
                 } else {
                     label.textContent = 'Unidentified';
                     card.title = 'No similar face in this database yet';
                 }
                 card.appendChild(label);
 
-                // Clicking a face adds that person to the photo, which is the
-                // small correction TagPup is meant for; deeper work is TagTuner's.
+                // Clicking a face names it that person AND puts the person on the
+                // photo, as a box's panel does (nameFaceAs: the tag first, then the
+                // face, one function for both, #860/#861). It used to add the tag
+                // only, so a face "named" from the strip stayed a red box that the
+                // owner had named, in a copy of the answer nothing refreshed.
                 //
-                // A recognised face counts as much as a proposed one. Only
-                // unnamed-with-a-suggestion used to be clickable, so a photo whose
-                // faces were already identified offered no way to act on them --
-                // the strip said who was in the picture while People Tags sat
-                // empty, and clicking did nothing.
-                const namesSomebody = face.name || face.suggestion;
+                // A recognised face counts as much as a proposed one: its click adds
+                // the person to the photo when the photo lacks them. And a proposed
+                // one whose person the photo has already is still clickable, to name
+                // the face. Only a card that would change nothing is settled.
+                const namesSomebody = face.name ? (facePerson || face.name) : suggestedWho;
+                const shownSomebody = face.name ? personLabelOf(face) : suggestedLabel;
                 const alreadyTagged = namesSomebody
-                    && photoAlreadyHas(photoRecord, namesSomebody, namesAPerson);
+                    && photoAlreadyHas(photoRecord, typeof namesSomebody === 'object' ? namesSomebody.tag : namesSomebody,
+                        namesAPerson, state.people);
 
-                if (namesSomebody && !alreadyTagged && !face.excluded) {
+                if (namesSomebody && !face.excluded && (!alreadyTagged || !face.name)) {
                     card.classList.add('face-card-actionable');
                     // Keep what the card already said -- the closest match and how
                     // sure it is -- and add what pressing it does. Replacing it
                     // threw away the reading somebody hovers to check.
+                    const does = face.name ? `add ${shownSomebody} to this photo`
+                        : alreadyTagged ? `name this face ${shownSomebody}`
+                            : `name this face ${shownSomebody} and add them to this photo`;
                     card.title = `${card.title || namesSomebody}`
                         + `
-Click to add ${namesSomebody} to this photo.`;
+Click to ${does}.`;
                     card.addEventListener('click', () => {
-                        upper.applySuggestedTagDirect(namesSomebody, true, photoPath);
+                        nameFaceAs(face, namesSomebody);
                     });
                 } else if (alreadyTagged) {
                     // Not clickable, and saying so beats a card that looks live
                     // and does nothing when pressed.
                     card.classList.add('face-card-settled');
-                    card.title = `${namesSomebody} is already tagged on this photo`;
+                    card.title = `${shownSomebody} is already tagged on this photo`;
                 }
                 facesStrip.appendChild(card);
             });
         })
-        .catch(err => console.error('Error loading faces:', err));
+        .catch(err => {
+            if (token === state.facesRequestToken) clearPhotoFaces();
+            console.error('Error loading faces:', err);
+        });
 }
 
 // Select Single Photo View
@@ -171,6 +198,7 @@ function openPhoto(path) {
     if (held) {
         state.library.activeId = held.id;
         showPhoto(path);
+        notePhoto(held.id);   // the same photo opened again after Back: its place says which, for Forward (#867)
         return;
     }
     const id = libraryIdOfPath(path);
@@ -187,6 +215,7 @@ function showLibraryRecord(lib, record) {
     const damage = record.damaged ? cardDamage(record) : null;
     state.damagedPhotos = damage ? { [pathKey(record.path)]: { ...damage, path: record.path, found: 'by an earlier check' } } : {};
     showPhoto(record.path);
+    notePhoto(record.id);
 }
 
 /**
@@ -257,6 +286,9 @@ export function showPhoto(path) {
         activeLi.classList.add('active');
     }
 
+    // A library view's grid is about to be hidden: keep where it is, and make the photo a place in the history (view-left.js).
+    rememberView();
+
     // Hide folder view, show single details view
     folderViewContent.classList.add('hidden');
     emptyState.classList.add('hidden');
@@ -286,6 +318,7 @@ export function showPhoto(path) {
     const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));
     if (shownDate) dateVal = formatFriendlyDateSingle(shownDate, getFolderDateStats());
     detailDateTaken.textContent = dateVal;
+    showCamera(photo);
     // The same photo shown again -- a refresh -- keeps a title being typed.
     const typing = state.titleShown.path === path && inputPhotoTitle.value !== state.titleShown.title;
     if (!typing) inputPhotoTitle.value = photo.title || '';
@@ -294,6 +327,17 @@ export function showPhoto(path) {
 
     renderTags(photo.tags);
     upper.renderSuggestionsPanel(photo.path);
+}
+
+/**
+ * The camera and the lens a photo was taken with, on one line ("Tidewater TX R6m2 · TX24-70mm f/2.8L"), as the server names
+ * them (photo_meta.gear); the line is not shown for a photo whose metadata names neither (a scan, a screenshot).
+ */
+export function showCamera(photo) {
+    const line = [photo.camera, photo.lens].filter(Boolean).join(' · ');
+    detailCamera.textContent = line;
+    detailCamera.title = line;
+    detailCameraItem.classList.toggle('hidden', !line);
 }
 
 /**
@@ -401,76 +445,30 @@ export function updateCarryForwardState() {
 //
 // Click the photo to see it as large as the window allows -- for reading the
 // writing on a sign or a name tag -- and click again, or Escape, to put it back.
-// The 800px preview is already loaded, so it is shown at once, scaled up, as the
-// image's background; the original is the image itself and paints over it when
-// it arrives. The preview stays if the original is a format the browser cannot
-// draw (TIFF, HEIC).
+// The zoom is web/common/image-zoom.js, the one both pages use; what is TagPup's is
+// which file it shows: the 800px preview the panel holds is the zoom's first frame,
+// and the original (no size: the file as it is on disk) paints over it.
 //
 // Opening it is not leaving the photo: nothing in the panel changes, so it neither
 // asks about unsaved edits nor makes any. While it is open the arrow keys do
 // nothing, rather than change the photo underneath it.
-export function isZoomOpen() {
-    return Boolean(imageZoom) && !imageZoom.classList.contains('hidden');
-}
-
 export function openZoom() {
-    if (!imageZoom || !state.activePhotoPath || !mainImage.getAttribute('src')) return;
+    if (!state.activePhotoPath || !mainImage.getAttribute('src')) return;
     const preview = mainImage.src;               // absolute, database prefix included
     const original = new URL(preview, window.location.href);
     original.searchParams.delete('size');      // no size: the file as it is on disk
-    imageZoomImg.style.backgroundImage = `url("${preview}")`;
-    imageZoomImg.src = original.href;
-    imageZoom.classList.remove('hidden');
-}
-
-export function closeZoom() {
-    if (!isZoomOpen()) return;
-    imageZoom.classList.add('hidden');
-    imageZoomImg.removeAttribute('src');       // stop a large download nobody wants now
-    imageZoomImg.style.backgroundImage = '';
+    openImageZoom(original.href, { preview, opener: mainImage });
 }
 
 export function wireZoom() {
-    if (imageZoom) {
-        mainImage.addEventListener('click', () => {
-            if (mainImage.dataset.dragged === 'true') {
-                delete mainImage.dataset.dragged;  // that was a swipe
-                return;
-            }
-            openZoom();
-        });
-        imageZoom.addEventListener('click', closeZoom);
-        imageZoomImg.addEventListener('load', () => {
-            // The original has arrived; drop the preview so a transparent PNG does
-            // not show it through.
-            if (imageZoomImg.getAttribute('src')) imageZoomImg.style.backgroundImage = '';
-        });
-        imageZoomImg.addEventListener('error', () => {
-            // Not drawable here: fall back to the preview, scaled up. Once only --
-            // the preview failing too must not loop.
-            const preview = mainImage.src;
-            if (isZoomOpen() && preview && imageZoomImg.src !== preview) {
-                imageZoomImg.src = preview;
-            }
-        });
-
-        // Captured, so it is decided before the arrow-key navigation hears it.
-        // Ctrl+S is left alone: its own listener is registered first and saves.
-        document.addEventListener('keydown', (e) => {
-            if (!isZoomOpen()) return;
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                e.stopPropagation();
-                closeZoom();
-                return;
-            }
-            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', ' ',
-                 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-        }, true);
-    }
+    wireImageZoom();
+    mainImage.addEventListener('click', () => {
+        if (mainImage.dataset.dragged === 'true') {
+            delete mainImage.dataset.dragged;  // that was a swipe
+            return;
+        }
+        openZoom();
+    });
 }
 
 /**
@@ -554,23 +552,44 @@ export function saveSingleAddTag() {
 }
 
 export function deletePhotoTag(tagToRemove) {
-    const path = state.activePhotoPath;
-    if (!path) return;
-    
-    const photo = state.folderPhotos.find(p => p.path === path);
-    if (!photo) return;
+    return removePhotoTags(state.activePhotoPath, [tagToRemove]);
+}
 
-    return queueWriteOf(path, async () => {
+/**
+ * The open photo's faces, read again after its tags were written (the one hook of every write of them: a save, a chip, Apply
+ * All, an Undo). A tag can name a face on the server (tagpup.store.face_tags, #788) and the page's copy of the faces, which the
+ * boxes and the strip are drawn from, would go on saying "not found" until the photo was opened again. Only when the photo has
+ * a face still to be named (nothing else a tag could change), and not while a naming of this page's is under way, which draws
+ * them again itself when it is done.
+ */
+export function facesFollowTags(path) {
+    const box = state.faceBoxes;
+    if (!path || !samePath(state.activePhotoPath, path) || !box.path || !samePath(box.path, path) || box.busy) return;
+    if (!box.faces.some(each => !each.name && !each.excluded)) return;
+    renderPhotoFaces(path);
+}
+
+/**
+ * Take tags off a photo, through the page's own save of its keywords (its queue, its stamp, its refusal of a file changed on
+ * disk). `tagsToRemove` as the photo spells them. Resolves true when they are off, or were not there.
+ */
+export function removePhotoTags(path, tagsToRemove) {
+    const photo = path && state.folderPhotos.find(p => samePath(p.path, path));
+    if (!photo) return Promise.resolve(false);
+    const gone = new Set(tagsToRemove.map(normalizeTag));
+
+    return queueWriteOf(photo.path, async () => {
         // From the tags as they are when this runs: two pills clicked in quick
         // succession each used to write "all but mine", and the later one put
         // the other back.
         const current = photo.tags || [];
-        const updatedTags = current.filter(t => t !== tagToRemove);
+        const updatedTags = current.filter(t => !gone.has(normalizeTag(t)));
         if (updatedTags.length === current.length) return true;
 
         setStatus('busy', 'Deleting tag...');
+        let data;
         try {
-            await postPhotoMetadata(photo, { tags: updatedTags });
+            data = await postPhotoMetadata(photo, { tags: updatedTags });
         } catch (err) {
             console.error(err);
             setStatus('error', 'Error');
@@ -579,6 +598,11 @@ export function deletePhotoTag(tagToRemove) {
         }
         photo.tags = updatedTags;
         redrawIfShowing(photo);
+        // A person taken off the photo is taken off its faces by the server (#908): the boxes and the strip are read again,
+        // which facesFollowTags does not do for a photo with no face left to be named.
+        if (data && Array.isArray(data.unnamed_faces) && data.unnamed_faces.length && samePath(state.activePhotoPath, photo.path)) {
+            renderPhotoFaces(photo.path);
+        }
         updateTagsDatalist();
         setStatus('ready', 'Ready');
         saveToLocalStorageCache();
@@ -647,6 +671,8 @@ export function rotatePhoto(direction) {
             photo.mtime = data.mtime || Date.now() / 1000;
             if (Number.isFinite(data.size)) photo.size = data.size;
             mainImage.src = photoFileUrl(photo, 800);
+            // The faces' boxes turned with the file; the strip and the boxes ask again.
+            renderPhotoFaces(path);
             // A library view's card has the file's old stamp in its thumbnail's address: asked for again.
             if (state.library && photo.id !== undefined) refetchCards([photo.id]);
             const thumb = document.querySelector(
@@ -679,7 +705,12 @@ export function deleteActivePhoto() {
     const index = state.folderPhotos.findIndex(p => p.path === path);
     if (index === -1) return;
 
-    const filename = state.folderPhotos[index].filename || 'this photo';
+    // The record asked about, in hand: by the time the reply comes the folder may be another (findings #532).
+    const asked = state.folderPhotos[index];
+    // And where it was asked: the view or folder open now may be another by then, and its records are not this photo's.
+    const askedInView = state.library;
+    const askedInFolder = state.scannedFolder;
+    const filename = asked.filename || 'this photo';
     // A photo of a folder the library does not hold: say that only the file moves. And on a network
     // share there is no Recycle Bin: it goes through this PC's (#694), and where it restores to is said before it goes.
     const alone = isJustLooking()
@@ -706,23 +737,38 @@ export function deleteActivePhoto() {
         body: JSON.stringify({ path })
     })
     .then(data => {
-        if (data.success && state.library) {
+        if (data.success && askedInView && state.library !== askedInView) {
+            // Another view (or a folder) was opened while the delete was out: nothing of it is this photo's.
+            statusDot.className = 'status-indicator-dot';
+            statusText.textContent = 'Ready';
+            return;
+        }
+        if (data.success && askedInView) {
             // The photo leaves the view: its card goes and the total drops. The next one in the order opens.
-            const lib = state.library;
-            const gone = state.folderPhotos[index];
+            const lib = askedInView;
+            const gone = asked;
             const at = lib.ids.indexOf(gone.id);
             state.folderPhotos = [];
             lib.activeId = null;
             removeFromSelection([path]);
             forgetPhoto(gone.id);
             const nextId = lib.ids[at] !== undefined ? lib.ids[at] : lib.ids[at - 1];
-            if (nextId === undefined) showFolderView();
+            if (nextId === undefined) backToView();
             else openLibraryPhoto(nextId);
             statusDot.className = 'status-indicator-dot';
             statusText.textContent = 'Ready';
         } else if (data.success) {
-            // Remove photo from client folderPhotos array
-            state.folderPhotos.splice(index, 1);
+            // Found again now, by its path: a folder opened meanwhile has no such card, and none of it goes.
+            const at = state.folderPhotos.findIndex(p => samePath(p.path, path));
+            if (at === -1) {
+                removeFromSelection([path]);
+                if (askedInFolder) forgetCachedPhoto(askedInFolder, path);
+                statusDot.className = 'status-indicator-dot';
+                statusText.textContent = data.message || 'Ready';
+                return;
+            }
+            const wasOpen = samePath(state.activePhotoPath, path);
+            state.folderPhotos.splice(at, 1);
 
             // Remove from selection array if selected
             removeFromSelection([path]);
@@ -743,8 +789,9 @@ export function deleteActivePhoto() {
             // in folderPhotos, so hasUnsavedEdits finds nothing to save them to.
             if (state.folderPhotos.length === 0) {
                 showFolderView();
-            } else {
-                const nextPhoto = state.folderPhotos[index] || state.folderPhotos[index - 1];
+            } else if (wasOpen) {
+                // Another photo opened meanwhile stays open.
+                const nextPhoto = state.folderPhotos[at] || state.folderPhotos[at - 1];
                 selectPhoto(nextPhoto.path);
             }
 

@@ -39,7 +39,7 @@ import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
-from sandbox import copy_library, free_port, place_roots, remove_sandbox  # noqa: E402
+from sandbox import copy_library, environment, free_port, place_roots, remove_sandbox  # noqa: E402
 
 LIBRARY = "measured"
 EVERYTHING = "abcde"
@@ -165,7 +165,7 @@ def start_server(sandbox, db_path, tuner_port, tagpup_port):
     process = processes.start(
         [sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
          "--tuner-port", str(tuner_port), "--tagpup-port", str(tagpup_port)],
-        cwd=sandbox, env=dict(os.environ, TAGPUP_HOME=sandbox, TAGPUP_NO_JOBS="1"),
+        cwd=sandbox, env=environment(sandbox, TAGPUP_NO_JOBS="1"),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(240):
         try:
@@ -351,13 +351,13 @@ def migrate(sandbox, db_path, code_root):
     started = time.time()
     processes.run([sys.executable, "-c", "import sys; sys.path.insert(0, %r); from tagpup.store import schema; "
                    "schema.ensure(%r)" % (code_root, db_path)],
-                  cwd=sandbox, env=dict(os.environ, TAGPUP_HOME=sandbox), check=True)
+                  cwd=sandbox, env=environment(sandbox), check=True)
     print("  the copy brought up to date by the served code in %.1f s" % (time.time() - started))
 
 
 def choose(sandbox, db_path):
     done = processes.run([sys.executable, "-c", CHOOSE % (sandbox, db_path)], cwd=sandbox,
-                         env=dict(os.environ, TAGPUP_HOME=sandbox), check=True, capture_output=True, text=True)
+                         env=environment(sandbox), check=True, capture_output=True, text=True)
     chosen = json.loads(done.stdout.strip().splitlines()[-1])
     print("  chosen on the copy: a word %d photos hold; three tags of %s photos, %d photos holding all three; %d people; a year of"
           " %d photos" % (chosen["word_photos"], " / ".join(str(n) for n in chosen["tag_photos"]), chosen["all_three"],

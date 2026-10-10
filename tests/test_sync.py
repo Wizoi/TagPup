@@ -99,13 +99,13 @@ class SyncTestCase(unittest.TestCase):
             conn.close()
         return ids
 
-    def run_sync(self, apply=False, folder=None, queue=None, roots=(), ignored=()):
+    def run_sync(self, apply=False, folder=None, queue=None, roots=(), ignored=(), **more):
         self.reads = Reads(self.truth)
         with mock.patch("tagpup.files.metadata.MetadataExtractor.batch_read", autospec=True,
                         side_effect=self.reads.batch_read), \
                 mock.patch("tagpup.files.exiftool_session.ExifToolSession", side_effect=self.reads.session):
             return sync.sync(self.library, folder=folder, apply=apply, exiftool_path="exiftool", queue=queue,
-                             roots=roots, ignored=ignored)
+                             roots=roots, ignored=ignored, **more)
 
     def rows(self):
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
@@ -258,9 +258,10 @@ class NewFiles(SyncTestCase):
         self.assertIsNone(found["last_in_step"])
         self.assertEqual(1, found["last_run"]["changed"]["queued_folders"])
 
-    def test_with_no_roots_a_new_subfolder_of_a_held_folder_is_queued_and_nothing_reviewed(self):
+    def test_with_no_roots_a_new_subfolder_of_a_held_folder_is_listed_to_review_never_queued(self):
         """A library whose roots are not set yet keeps its held folders in step as indexing
-        walked them: a new subfolder too."""
+        walked them: new files in a held folder are queued; a new subfolder is a folder to review, as it is
+        under a root, and is never queued unasked (#395, the owner 2026-10-08)."""
         self.indexed(self.photo(self.trip, "IMG_0002.jpg"))
         sub = os.path.join(self.trip, "day 2")
         os.makedirs(sub)
@@ -274,9 +275,31 @@ class NewFiles(SyncTestCase):
 
         result = self.run_sync(apply=True, queue=queue)
         counts = result.details["counts"]
-        self.assertEqual((2, 0), (counts["new"], counts["review_folders"]))
-        self.assertEqual(sorted([self.trip, sub]), sorted(asked))
-        self.assertEqual([], sync.review(self.library, [])["folders"])
+        self.assertEqual((1, 1, 1), (counts["new"], counts["review_folders"], counts["review_photos"]))
+        self.assertEqual([self.trip], asked, "the subfolder was queued unasked")
+        self.assertEqual([{"path": sub, "photos": 1}], result.details["reveal"]["review"])
+        self.assertEqual({"folders": [{"path": sub, "photos": 1}], "photos": 1}, sync.review(self.library, []))
+
+    def test_with_no_roots_a_subfolder_to_review_can_be_included(self):
+        self.indexed(self.photo(self.trip, "IMG_0002.jpg"))
+        sub = os.path.join(self.trip, "day 2")
+        os.makedirs(sub)
+        self.photo(sub, "IMG_0101.jpg")
+        asked = []
+
+        def queue(folders):
+            asked.extend(folders)
+            return Result(attempted=1, changed=1)
+
+        self.assertEqual(1, sync.include(self.library, sub, [], queue).changed)
+        self.assertEqual([sub], asked)
+        elsewhere = os.path.join(self.home.root, "Elsewhere")
+        os.makedirs(elsewhere)
+        self.assertTrue(sync.include(self.library, elsewhere, [], queue).refused, "a folder beside none the library holds")
+        # One the library ignores is not offered, nor taken by hand (#906: include passes the ignored list as look does).
+        self.assertTrue(sync.include(self.library, sub, [], queue, ignored=[sub]).refused)
+        asked.clear()
+        self.assertTrue(sync.include(self.library, sub, [], queue, ignored=[self.home.root + "-elsewhere"]).changed)
 
     def test_without_a_queue_new_files_are_reported(self):
         self.indexed(self.photo(self.meet, "IMG_0001.jpg"))

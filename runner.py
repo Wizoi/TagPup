@@ -425,12 +425,11 @@ class RunnerApp:
         self.ent_k.insert(0, "15")
 
         # Suggestions File Path Row
-        lbl_file = tk.Label(p_suggest, text="Suggestions File Output:", bg=self.BG_PANEL, fg=self.FG_MAIN, font=self.FONT_MAIN)
+        lbl_file = tk.Label(p_suggest, text="Suggestions File Output (blank: beside the library):", bg=self.BG_PANEL, fg=self.FG_MAIN, font=self.FONT_MAIN)
         lbl_file.pack(anchor="w", pady=(0, 2))
 
         self.ent_suggest_file = tk.Entry(p_suggest, bg=self.BG_INPUT, fg="white", insertbackground="white", relief=tk.FLAT, bd=0, highlightthickness=1, highlightbackground="#555555", font=self.FONT_MAIN)
         self.ent_suggest_file.pack(fill="x", pady=(0, 8), ipady=4)
-        self.ent_suggest_file.insert(0, "test_suggestions.json") # Init based on test_db default
 
         # Write options (nobackup & MinScore)
         write_opt_frame = tk.Frame(p_suggest, bg=self.BG_PANEL)
@@ -560,10 +559,6 @@ class RunnerApp:
     def update_suggestions_path(self):
         # Update path name depending on whether test database is selected
         self.ent_suggest_file.delete(0, tk.END)
-        if self.var_test_db.get():
-            self.ent_suggest_file.insert(0, "test_suggestions.json")
-        else:
-            self.ent_suggest_file.insert(0, "suggestions.json")
         self.sync_test_mode_db()
         self.refresh_database_list()
 
@@ -806,6 +801,18 @@ class RunnerApp:
 
         self.execute_command(cmd)
 
+    def suggestions_path(self):
+        """The suggestions file the window works with: the one typed, else the one `suggest` writes beside the
+        selected library (tagpup.core.library.suggestions_file; docs/findings.md, #293). "" with no library."""
+        typed = self.ent_suggest_file.get().strip()
+        if typed:
+            return typed
+        chosen = self.combo_db.get()
+        if not chosen:
+            return ""
+        name = libraries.for_mode(chosen + ".db", self.var_test_db.get())
+        return libraries.suggestions_file(os.path.join(tagpup_config.data_dir(), name))
+
     def run_suggest_action(self):
         directory = self.ent_target_dir.get().strip()
         output_file = self.ent_suggest_file.get().strip()
@@ -816,9 +823,6 @@ class RunnerApp:
         if not os.path.exists(directory):
             messagebox.showerror("Error", f"Target directory does not exist:\n{directory}")
             return
-        if not output_file:
-            messagebox.showerror("Error", "Please specify a suggestions file output path.")
-            return
 
         cmd = [sys.executable, "tagpup_cli.py"]
         if self.var_test_db.get():
@@ -828,7 +832,9 @@ class RunnerApp:
             db_name = libraries.for_mode(db_val + ".db", self.var_test_db.get())
             cmd.extend(["--db", db_name])
             
-        cmd.extend(["suggest", directory, "--output", output_file])
+        cmd.extend(["suggest", directory])
+        if output_file:
+            cmd.extend(["--output", output_file])
 
         # Add parameters
         min_sim = self.ent_min_sim.get().strip()
@@ -841,7 +847,7 @@ class RunnerApp:
         self.execute_command(cmd)
 
     def run_write_preview_action(self):
-        suggestions_file = self.ent_suggest_file.get().strip()
+        suggestions_file = self.suggestions_path()
         if not suggestions_file:
             messagebox.showerror("Error", "Please specify a suggestions file.")
             return
@@ -860,7 +866,7 @@ class RunnerApp:
         self.execute_command(cmd)
 
     def run_write_live_action(self):
-        suggestions_file = self.ent_suggest_file.get().strip()
+        suggestions_file = self.suggestions_path()
         if not suggestions_file:
             messagebox.showerror("Error", "Please specify a suggestions file.")
             return

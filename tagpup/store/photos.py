@@ -17,7 +17,7 @@ import os
 
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import NotHeld
-from tagpup.store import added_folders, damaged_files, db, derived, embeddings, faces, folders, people
+from tagpup.store import added_folders, damaged_files, db, derived, embeddings, face_tags, faces, folders, people
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -65,13 +65,25 @@ def _dated_paths(conn, photo_paths):
 MTIME_TOLERANCE = 0.1
 
 
+def sized_rows(conn):
+    """(id, path, size, tags JSON, captions JSON) of every photo whose size is known: no raw metadata, no
+    BLOB. What the merging of the rows of one file starts from (tagpup.services.duplicate_rows)."""
+    return conn.execute("SELECT id, path, size, tags, captions FROM photos WHERE size IS NOT NULL").fetchall()
+
+
+def same_mtime(row_mtime, file_mtime):
+    """Are a row's modified time and its file's the same (within MTIME_TOLERANCE)? The one rule: the scan, refresh
+    and the MCP's comparison of a row with its file go by it. None for either is no."""
+    return row_mtime is not None and file_mtime is not None and abs(row_mtime - file_mtime) < MTIME_TOLERANCE
+
+
 def describes(row_mtime, row_size, stamp):
     """Does a row stamped (`row_mtime`, `row_size`) describe the file whose stamp is
     `stamp`, (mtime, size)? What the folder scan trusts a row by; None for any of them
     is no."""
     if row_mtime is None or row_size is None or not stamp or None in stamp:
         return False
-    return row_size == stamp[1] and abs(row_mtime - stamp[0]) < MTIME_TOLERANCE
+    return row_size == stamp[1] and same_mtime(row_mtime, stamp[0])
 
 
 def _describes_before(row_mtime, row_size, before):
@@ -320,6 +332,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None)
     if stat is not None:
         embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
     people.rebuild(conn, [photo_id])
+    face_tags.name_photos(conn, [photo_id])
     date_photos(conn, [photo_id])
     derived.refresh_photos(conn, [photo_id], batch)
     return photo_id
@@ -381,6 +394,7 @@ def record_tags(db_path, photo_path, tags, flat=None, hierarchical=None, before=
             embeddings.restamp(conn, photo_id, before, (stat.st_mtime, stat.st_size))
         changed = cursor.rowcount > 0
         people.rebuild(conn, [photo_id])
+        face_tags.name_photos(conn, [photo_id])
         date_photos(conn, [photo_id])
         derived.refresh_photos(conn, [photo_id])
         return changed
@@ -504,6 +518,7 @@ def record_saved(db_path, photo_path, tags, captions, raw_meta, before=None):
              store_roots.raw_to_row(json.dumps(raw_meta), store_roots.roots_for(conn))) + where_params).rowcount
         if photo_id is not None:
             people.rebuild(conn, [photo_id])
+            face_tags.name_photos(conn, [photo_id])
             date_photos(conn, [photo_id])
             derived.refresh_photos(conn, [photo_id])
         return changed
@@ -636,7 +651,8 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """
     store_roots.begin_write(conn)
     roots = store_roots.roots_for(conn)
-    stored = stored_spelling(conn, photo_path) or paths.stored(photo_path)
+    held = stored_spelling(conn, photo_path)
+    stored = held or paths.stored(photo_path)
     row_path = paths.to_row(stored, roots)
     conn.execute(
         "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata, document_id)"
@@ -651,6 +667,10 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     people.rebuild_photos(conn, [stored], known)
     _dated_paths(conn, [stored])
     photo_id = _row_id(conn, stored)
+    if held:
+        # A photo read again: its faces are there, and its keywords may have changed. A new
+        # photo has none yet; the faces recorded for it name themselves (services.faces).
+        face_tags.name_photos(conn, [photo_id], vocabulary=known, batch=batch)
     derived.record(conn, photo_id, row_path, row.get("tags", []), row.get("raw_metadata", {}), batch)
     if row.get("embedding") is not None:
         if model is None:
@@ -801,15 +821,6 @@ def rows_under(conn, folder):
         " p.raw_metadata FROM photos p WHERE " + where, params).fetchall(), 0, raw=(6,))
 
 
-def set_captions(conn, photo_path, captions):
-    """Record a photo's captions, and its words for a search (derived). Returns rows changed. The caller commits."""
-    where, params = store_roots.sql_equals(conn, "path", photo_path)
-    changed = conn.execute("UPDATE photos SET captions = ? WHERE " + where,
-                           (json.dumps(captions),) + params).rowcount
-    derived.refresh_photos(conn, [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)])
-    return changed
-
-
 # ---- What refresh_rows_from_files reads and writes --------------------------------------
 
 def rows_to_check(conn, folder=None):
@@ -822,6 +833,19 @@ def rows_to_check(conn, folder=None):
         where, params = store_roots.sql_under(conn, "path", folder)
         query += " WHERE " + where
     return store_roots.natives(conn, conn.execute(query, params).fetchall(), 0, raw=(5,))
+
+
+def raw_in_chunks(conn, size=2000):
+    """Every photo as (id, path as stored, mtime, size, raw_metadata JSON), in lists of `size`, in id
+    order: what tagpup.services.reread_fields sorts by the read each row's metadata came from. The text is
+    read a chunk at a time and not kept, since a library's rows hold 671 bytes of it on average (photo_index, counted 2026-10-09); nothing else of the
+    row is, so no BLOB."""
+    cursor = conn.execute("SELECT id, path, mtime, size, raw_metadata FROM photos ORDER BY id")
+    while True:
+        rows = cursor.fetchmany(size)
+        if not rows:
+            return
+        yield store_roots.natives(conn, rows, 1)
 
 
 def stamps(conn, folder=None):
@@ -856,6 +880,22 @@ def identities(conn):
     roots = store_roots.roots_for(conn)
     return {paths.from_row(path, roots): str(doc_id).strip() for path, doc_id in conn.execute(
         "SELECT path, document_id FROM photos WHERE document_id IS NOT NULL") if path and doc_id}
+
+
+def evidence(conn):
+    """(id, path as stored, size, taken, document_id) of every photo: what a folder that was
+    renamed is told from the folders beside it by (tagpup.services.folder_moves). Nothing
+    large is read: no raw metadata, no vector."""
+    return store_roots.natives(
+        conn, conn.execute("SELECT id, path, size, taken, document_id FROM photos").fetchall(), 1)
+
+
+def evidence_under(conn, folder):
+    """evidence, of the photos under `folder` only (one range of the path index): what the folders a marker
+    follows are told by (tagpup.services.folder_ids)."""
+    where, params = store_roots.sql_under(conn, "path", folder)
+    return store_roots.natives(
+        conn, conn.execute("SELECT id, path, size, taken, document_id FROM photos WHERE " + where, params).fetchall(), 1)
 
 
 def tags_by_photo(conn):

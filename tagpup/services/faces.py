@@ -19,9 +19,11 @@ import os
 import numpy as np
 
 from tagpup.core import clustering, paths, validation, vocabulary
-from tagpup.core.result import Conflict, NotFound, Result
+from tagpup.core.result import Conflict, NotFound, Refused, Result
+from tagpup.services import people as people_service
+from tagpup.services import photos as photo_files
 from tagpup.services import thumbnails
-from tagpup.store import db, faces, faces_detected, faces_pending, photos
+from tagpup.store import db, face_tags, faces, faces_detected, faces_pending, person_ids, photos, removals
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import folders as store_folders
 
@@ -34,42 +36,174 @@ IGNORED_CLUSTER = validation.IGNORED_CLUSTER
 EXCLUSION_REASONS = validation.EXCLUSION_REASONS
 
 
-def name_face(library, face_id, person_name):
-    """Name one face. Clicking a suggestion, or typing a name, on a face card.
+def who_is(library, person, result):
+    """(the person as a store writer takes it -- the node's id, or a name no person is filed under --, the name to show) for
+    `person`: an id, a Person, a Ref or a name. None, with `result` refused, for what is refused before anything else
+    is asked: a name that is not a name, a name two people have, a group. NotFound for an id that is no person (merged or
+    removed in another window; nobody is made of it)."""
+    person = person_ids.wire(person)
+    if isinstance(person, str) or person is None:
+        # A name is a name: "People/Sam" is a tag, and names nobody (tagpup.core.validation).
+        text = (person or "").strip()
+        problem = validation.problem("name", text)
+        if problem:
+            result.refuse(problem)
+            return None
+        _library_there(library)
+        try:
+            found = people_service.resolve(library, text)
+        except Refused as why:
+            result.refuse(str(why))
+            return None
+        return (found.id, found.name) if found else (text, text)
+    _library_there(library)
+    try:
+        found = people_service.resolve(library, person)
+    except Refused as why:
+        result.refuse(str(why))
+        return None
+    return found.id, found.name
+
+
+def name_face(library, face_id, person):
+    """Name one face. Clicking a suggestion, or typing a name, on a face card. `person` is the person's id (a page that has
+    them), or a tag path or a name (the CLI, the MCP, a page not reloaded since the update): a name two people have is refused
+    naming them, a group is refused, an id that is no person is NotFound and makes nobody.
 
     A person chose this, so it is recorded as a manual decision: re-clustering re-derives
-    every name from scratch and must not discard it. Refused when somebody else's face in
-    the photo already carries the name; a Conflict for a face that has been excluded.
+    every name from scratch and must not discard it -- also when the face already carries
+    this person as an automatic one (a person confirming a guess: `changed` 1). Refused when
+    somebody else's face in the photo already carries them; a Conflict for a face that
+    has been excluded.
     """
     result = Result(attempted=1)
-    person_name = (person_name or "").strip()
-    problem = validation.problem("name", person_name)
-    if problem:
-        result.refuse(problem)
+    who = who_is(library, person, result)
+    if who is None:
         return result
-    _library_there(library)
-    with faces.accounted_write(library.path, "name a face") as write:
-        row = faces.rows(write.conn, [face_id]).get(face_id)
-        if not row:
-            raise NotFound("Face ID not found")
-        photo_path, old_name, excluded = row
-        # An excluded face has been ruled out of identity work; naming it leaves a face
-        # that is both ruled out and claimed, which no view shows and no Undo reaches.
-        if excluded:
-            raise Conflict("Cannot match: this face is excluded. Restore it first to name it.")
-        if old_name and vocabulary.key(old_name) == vocabulary.key(person_name):
-            return result
-        if faces.named_elsewhere_in_photo(write.conn, photo_path, person_name, face_id):
-            result.refuse("Cannot match: '%s' is already tagged on another face in this photo."
-                          % person_name)
-            return result
-        faces.name(write.conn, [face_id], person_name)
-        result.changed = 1
+    ref, person_name = who
+    try:
+        with faces.accounted_write(library.path, "name a face") as write:
+            row = faces.rows(write.conn, [face_id]).get(face_id)
+            if not row:
+                raise NotFound("Face ID not found")
+            photo_path, old, excluded = row
+            # An excluded face has been ruled out of identity work; naming it leaves a face
+            # that is both ruled out and claimed, which no view shows and no Undo reaches.
+            if excluded:
+                raise Conflict("Cannot match: this face is excluded. Restore it first to name it.")
+            # Already this person: nothing to change but who decided -- an automatic name (clustering's, or a
+            # photo's tag's, #788) a person now confirms becomes their decision, in the spelling it has.
+            if old and person_ids.matches(old, person_ids.target(write.conn, ref)):
+                result.changed = faces.confirm(write.conn, face_id)
+                result.details.update(face_ids=[face_id], fingerprints=(write.before, write.after))
+                return result
+            if faces.named_elsewhere_in_photo(write.conn, photo_path, ref, face_id):
+                result.refuse("Cannot match: '%s' is already tagged on another face in this photo."
+                              % person_name)
+                return result
+            faces.name(write.conn, [face_id], ref)
+            result.changed = 1
+    except person_ids.PersonProblem as problem:
+        people_service.translate(problem)
     result.details.update(face_ids=[face_id], fingerprints=(write.before, write.after))
     return result
 
 
-def name_faces(library, face_ids, person_name):
+def check_nameable(library, face_id, person, refused, guesses_yield=False):
+    """What name_face would refuse, asked before anything else is written (face_people writes the photo's tag first): the
+    photo's path and the person the face carries now (a Ref, or None) when `face_id` can be named `person` -- also when it carries
+    them already -- and None when it cannot, `refused` (a Result) saying why. With `guesses_yield` a face carrying the person as a
+    guess does not refuse it (the caller gives the guess back: face_people.name_face, for a page that wrote the tag first).
+    NotFound for a face that is not there, Conflict for one excluded. Reads only; name_face asks again under the write lock,
+    which is the check that holds."""
+    who = who_is(library, person, refused)
+    if who is None:
+        return None
+    ref, person_name = who
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        row = faces.rows(conn, [face_id]).get(face_id)
+        if not row:
+            raise NotFound("Face ID not found")
+        photo_path, old, excluded = row
+        if excluded:
+            raise Conflict("Cannot match: this face is excluded. Restore it first to name it.")
+        if (not (old and person_ids.matches(old, person_ids.target(conn, ref)))
+                and faces.named_elsewhere_in_photo(conn, photo_path, ref, face_id, decided_only=guesses_yield)):
+            refused.refuse("Cannot match: '%s' is already tagged on another face in this photo." % person_name)
+            return None
+        return photo_path, old
+    except person_ids.PersonProblem as problem:
+        people_service.translate(problem)
+    finally:
+        conn.close()
+
+
+def _nameable(conn, face_ids, ref, person_name, result):
+    """The faces among `face_ids` that naming them `ref` (the person, as _who gives it; `person_name` is what to call them) would
+    name, in order, decided on `conn` -- every check name_faces makes, so that a caller who writes the people's tags first
+    (face_people) asks them before a file is written. Sets `result.details["skipped_excluded"]` and `["photos"]` ({face id: photo
+    path} of the faces returned); refuses `result` (and returns None) when two of the faces are in one photo, or the person is
+    already on another face of one of the photos."""
+    # Read the selected faces once. Their path and current person were fetched three
+    # times over, one query per face per pass: a selection of fifty was a hundred and
+    # fifty round trips for fifty rows.
+    selected, excluded_ids = {}, set()
+    for row_id, (photo_path, current, excluded) in faces.rows(conn, face_ids).items():
+        if excluded:
+            excluded_ids.add(row_id)
+        else:
+            selected[row_id] = (photo_path, current)
+    # An excluded face is left alone. Naming one leaves a face both ruled out and
+    # claimed -- a page acting on a stale list of faces did exactly that.
+    result.details["skipped_excluded"] = [fid for fid in face_ids if fid in excluded_ids]
+    target = person_ids.target(conn, ref)
+    face_ids = [fid for fid in face_ids if fid in selected and not person_ids.matches(selected[fid][1], target)]
+    result.details["photos"] = {fid: selected[fid][0] for fid in face_ids}
+    if not face_ids:
+        return face_ids
+
+    in_photo = {}
+    for fid in face_ids:
+        in_photo.setdefault(selected[fid][0], []).append(fid)
+    for photo_path, fids in in_photo.items():
+        if len(fids) > 1:
+            result.refuse("Cannot match: Multiple selected faces in photo '%s' are being "
+                          "assigned to '%s'." % (os.path.basename(photo_path), person_name))
+            return None
+        # By equality only. A LIKE retry this used to fall back on scanned every face
+        # row per selected face -- nineteen seconds for a selection of fifty -- and
+        # read an underscore in a file name as a wildcard.
+        if faces.named_elsewhere_in_photo(conn, photo_path, ref, fids[0]):
+            result.refuse("Cannot match: '%s' is already tagged on another face in photo "
+                          "'%s'." % (person_name, os.path.basename(photo_path)))
+            return None
+    return face_ids
+
+
+def nameable(library, face_ids, person):
+    """What name_faces would do, decided and nothing written: a Result refused for what name_faces refuses, else with details
+    `matched_ids` (the faces it would name, which a selection of thousands is asked once, before the people's tags are written),
+    `skipped_excluded` and `photos`. name_faces asks again under the write lock, which is the check that holds."""
+    result = Result(attempted=len(face_ids))
+    who = who_is(library, person, result)
+    if who is None:
+        return result
+    ref, person_name = who
+    result.details.update(matched=0, matched_ids=[], skipped_excluded=[], photos={})
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        ids = _nameable(conn, face_ids, ref, person_name, result)
+    except person_ids.PersonProblem as problem:
+        people_service.translate(problem)
+    finally:
+        conn.close()
+    if ids is not None:
+        result.details["matched_ids"] = ids
+    return result
+
+
+def name_faces(library, face_ids, person):
     """Name many faces as one person. Assigning a group, or a selection, in the grids.
 
     An excluded face is left alone and reported; one already named this person, or not
@@ -80,50 +214,21 @@ def name_faces(library, face_ids, person_name):
     `skipped_excluded`; and, when anything was named, `face_ids` and `fingerprints`.
     """
     result = Result(attempted=len(face_ids))
-    person_name = (person_name or "").strip()
-    problem = validation.problem("name", person_name)
-    if problem:
-        result.refuse(problem)
+    who = who_is(library, person, result)
+    if who is None:
         return result
-    _library_there(library)
+    ref, person_name = who
     result.details.update(matched=0, matched_ids=[], skipped_excluded=[])
-    with faces.accounted_write(library.path, "name faces in bulk") as write:
-        conn = write.conn
-        # Read the selected faces once. Their path and current name were fetched three
-        # times over, one query per face per pass: a selection of fifty was a hundred and
-        # fifty round trips for fifty rows.
-        selected, excluded_ids = {}, set()
-        for row_id, (photo_path, current_name, excluded) in faces.rows(conn, face_ids).items():
-            if excluded:
-                excluded_ids.add(row_id)
-            else:
-                selected[row_id] = (photo_path, current_name)
-        # An excluded face is left alone. Naming one leaves a face both ruled out and
-        # claimed -- a page acting on a stale list of faces did exactly that.
-        result.details["skipped_excluded"] = [fid for fid in face_ids if fid in excluded_ids]
-        face_ids = [fid for fid in face_ids if fid in selected
-                    and vocabulary.key(selected[fid][1]) != vocabulary.key(person_name)]
-        if not face_ids:
-            return result
-
-        in_photo = {}
-        for fid in face_ids:
-            in_photo.setdefault(selected[fid][0], []).append(fid)
-        for photo_path, fids in in_photo.items():
-            if len(fids) > 1:
-                result.refuse("Cannot match: Multiple selected faces in photo '%s' are being "
-                              "assigned to '%s'." % (os.path.basename(photo_path), person_name))
+    try:
+        with faces.accounted_write(library.path, "name faces in bulk") as write:
+            face_ids = _nameable(write.conn, face_ids, ref, person_name, result)
+            result.details.pop("photos", None)
+            if not face_ids:
                 return result
-            # By equality only. A LIKE retry this used to fall back on scanned every face
-            # row per selected face -- nineteen seconds for a selection of fifty -- and
-            # read an underscore in a file name as a wildcard.
-            if faces.named_elsewhere_in_photo(conn, photo_path, person_name, fids[0]):
-                result.refuse("Cannot match: '%s' is already tagged on another face in photo "
-                              "'%s'." % (person_name, os.path.basename(photo_path)))
-                return result
-
-        matched = faces.name(conn, face_ids, person_name)
-        result.changed = matched
+            matched = faces.name(write.conn, face_ids, ref)
+            result.changed = matched
+    except person_ids.PersonProblem as problem:
+        people_service.translate(problem)
     result.details.update(matched=matched, matched_ids=face_ids, face_ids=face_ids,
                           fingerprints=(write.before, write.after))
     return result
@@ -139,8 +244,8 @@ def unname_face(library, face_id):
         row = faces.rows(conn, [face_id]).get(face_id)
         if not row:
             raise NotFound("Face ID not found")
-        photo_path, old_name, _excluded = row
-        if old_name is None:
+        photo_path, was, _excluded = row
+        if was is None:
             return 0
         faces.unname(conn, [face_id])
         return 1
@@ -307,74 +412,132 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     `rehearse`: decide on a read-only connection and write nothing.
 
     details: `dry_run`; `faces`, the faces named (or that would be); `photos`, the photos
-    they are in; `people`, {name: faces}; `renamed`, the faces left because their person's
-    name had gone. The same keys whether rehearsed or applied, so the page can say how the
-    two differ."""
+    they are in; `people`, {name: faces} (two people called alike are counted under the one name, as it is shown);
+    `renamed`, the faces left because their person had gone. The same keys whether rehearsed or applied, so the page can
+    say how the two differ. Applied, `named_ids` too, {face id: person} of the faces written (the person's id, or a
+    name no person is filed under)."""
     _library_there(library)
     result = Result(details={"dry_run": bool(rehearse), "faces": 0, "photos": 0, "people": {}, "renamed": 0})
+    looked_at, proposed = propose_guesses(library, named, photo_path=photo_path, folder=folder)
+    result.attempted = looked_at
+    if not proposed:
+        return result
+    if rehearse:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            chosen, gone = _decide_guesses(conn, proposed)
+            shown = _shown(conn, [person for _fid, person, _photo in chosen])
+        finally:
+            conn.close()
+        done = [(person, face_photo) for _fid, person, face_photo in chosen]
+    else:
+        done, gone, named_ids, shown = db.write_with_connection(
+            library.path, lambda conn: _write_guesses(conn, proposed), label="automatch faces")
+        result.changed = len(done)
+        result.details["named_ids"] = named_ids
+    result.details.update(faces=len(done), photos=len({face_photo for _person, face_photo in done}),
+                          people=dict(collections.Counter(shown[person] for person, _photo in done)), renamed=gone)
+    if not rehearse:
+        result.details["photos_named"] = sorted({face_photo for _person, face_photo in done})
+    return result
+
+
+def _shown(conn, persons, known=None):
+    """{person: the name to show} for the persons (wire form: an id, or a name no person is filed under) of a guess."""
+    names = (known or person_ids.read(conn)).node_names
+    return {person: (names.get(person, str(person)) if isinstance(person, int) else person) for person in persons}
+
+
+def written_report(library, face_ids, folder):
+    """What a Re-examine wrote, read back: {"people": {name: faces}, "photos": [photo path] of the faces among `face_ids` that
+    carry a name now, "remaining_counts": each photo's faces still unnamed under `folder`}."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        rows = faces.rows(conn, list(face_ids))
+        remaining = faces.unnamed_counts(conn, folder)
+    finally:
+        conn.close()
+    named = [(path, person.name) for path, person, _excluded in rows.values() if person]
+    return {"people": dict(collections.Counter(name for _path, name in named)),
+            "photos": sorted({path for path, _name in named}), "remaining_counts": remaining}
+
+
+def propose_guesses(library, named, photo_path=None, folder=None):
+    """(the number of unnamed faces looked at, {photo path: [(face id, person)]}): each unnamed face in a photo, or under a
+    folder at any depth, that may be named unasked after the named face it most resembles (clustering.names_unasked); the
+    person is their id, or a name no person is filed under. Reads only; the compare happens before any write lock is taken.
+    `named()` gives the decided faces (_automatch)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         unnamed = faces.unnamed(conn, photo_path=photo_path, folder=folder)
     finally:
         conn.close()
-    result.attempted = len(unnamed)
     if not unnamed:
-        return result
-    _ids, names, matrix = named()
+        return 0, {}
+    _ids, people, matrix = named()
     if matrix is None:
-        return result
+        return len(unnamed), {}
+    return len(unnamed), _closest_named(unnamed, people, matrix)
 
-    proposed = _closest_named(unnamed, names, matrix)
-    if not proposed:
-        return result
 
-    def decide(conn):
-        """[(face_id, name, photo)] to name, and how many were left for a name gone."""
-        given = faces.names_given(conn, {name for found in proposed.values() for _fid, name in found})
-        chosen, gone = [], 0
-        for face_photo, faces_proposed in proposed.items():
-            # Only the photos a name is proposed for, each by an index. Reading every
-            # named face under the folder scanned the whole table inside the write lock,
-            # and every other face action waited (docs/findings.md, #45).
-            taken = faces.names_in_photo(conn, face_photo)
-            proposed_names = [name for _fid, name in faces_proposed]
-            for face_id, name in faces_proposed:
-                if proposed_names.count(name) > 1 or name in taken:
-                    continue
-                if name not in given:
-                    gone += 1
-                    continue
-                chosen.append((face_id, name, face_photo))
-        return chosen, gone
+def _decide_guesses(conn, proposed, known=None):
+    """([(face_id, person, photo)] to name, how many were left for a person gone) of `proposed`, decided on `conn`. A person is
+    their id, or a name no person is filed under."""
+    given = faces.people_given(conn, {person for found in proposed.values() for _fid, person in found})
+    known = known or person_ids.read(conn)
+    chosen, gone = [], 0
+    for face_photo, faces_proposed in proposed.items():
+        # Only the photos a person is proposed for, each by an index. Reading every
+        # named face under the folder scanned the whole table inside the write lock,
+        # and every other face action waited (docs/findings.md, #45).
+        taken = {person_ids.key_of(each.id, each.name) for each in faces.people_in_photo(conn, face_photo)}
+        # A person the owner took off this photo on purpose is not guessed onto another face of it (tagpup.store.removals).
+        taken_off = {vocabulary.key(each) for each in removals.removed_names(conn, faces.nobody_in_photo(conn, face_photo)).values()}
+        proposed_people = [person for _fid, person in faces_proposed]
+        for face_id, person in faces_proposed:
+            shown = known.node_names.get(person, "") if isinstance(person, int) else person
+            if (proposed_people.count(person) > 1 or person_ids.wire_key(person) in taken
+                    or vocabulary.key(shown) in taken_off):
+                continue
+            if person not in given:
+                gone += 1
+                continue
+            chosen.append((face_id, person, face_photo))
+    return chosen, gone
 
-    def match(conn):
-        # The write lock first, then the reads it decides by: a rename committed by the
-        # other app or the CLI between the guard and the first UPDATE was written under
-        # the old spelling, the connection being in no transaction until it wrote
-        # (docs/findings.md, #645).
-        db.begin(conn, immediate=True)
-        chosen, gone = decide(conn)
-        # A bulk guess, not a per-face human decision, so it is left as an automatic
-        # assignment that re-clustering may revise. Only the faces still unnamed and in
-        # play are named, name_if_unnamed's guard, and only those are counted: in one write
-        # whose photos are rebuilt once (faces.name_unnamed; docs/findings.md, #659).
-        named = set(faces.name_unnamed(conn, {face_id: name for face_id, name, _photo in chosen}))
-        return [(name, face_photo) for face_id, name, face_photo in chosen if face_id in named], gone
 
-    if rehearse:
-        conn = db.connect(db.readonly_uri(library.path), uri=True)
-        try:
-            chosen, gone = decide(conn)
-        finally:
-            conn.close()
-        done = [(name, face_photo) for _fid, name, face_photo in chosen]
-    else:
-        done, gone = db.write_with_connection(library.path, match, label="automatch faces")
-        result.changed = len(done)
-    result.details.update(faces=len(done), photos=len({face_photo for _name, face_photo in done}),
-                          people=dict(collections.Counter(name for name, _photo in done)), renamed=gone)
-    if not rehearse:
-        result.details["photos_named"] = sorted({face_photo for _name, face_photo in done})
+def _write_guesses(conn, proposed):
+    """In a write: ([(person, photo)] named, how many left for a person gone, {face id: person} of the faces written, {person: the
+    name to show})."""
+    # The write lock first, then the reads it decides by: a rename committed by the
+    # other app or the CLI between the guard and the first UPDATE was written under
+    # the old spelling, the connection being in no transaction until it wrote
+    # (docs/findings.md, #645).
+    db.begin(conn, immediate=True)
+    known = person_ids.read(conn)
+    chosen, gone = _decide_guesses(conn, proposed, known)
+    # A bulk guess, not a per-face human decision, so it is left as an automatic
+    # assignment that re-clustering may revise. Only the faces still unnamed and in
+    # play are named, name_if_unnamed's guard, and only those are counted: in one write
+    # whose photos are rebuilt once (faces.name_unnamed; docs/findings.md, #659).
+    named = set(faces.name_unnamed(conn, {face_id: person for face_id, person, _photo in chosen}, known=known))
+    return ([(person, face_photo) for face_id, person, face_photo in chosen if face_id in named], gone,
+            {face_id: person for face_id, person, _photo in chosen if face_id in named},
+            _shown(conn, [person for _fid, person, _photo in chosen], known))
+
+
+def name_guesses(library, proposed):
+    """Write the guesses `propose_guesses` made for some photos ({photo path: [(face id, person)]}) -- a chunk of a folder's --
+    deciding them again under the write lock, as an automatch does (_automatch): a face named or excluded meanwhile is left as it
+    is, as is a face whose person no longer exists. `changed`: the faces named; details `named_ids` ({face id: person}), `faces`,
+    `photos`, `people`, `renamed`."""
+    _library_there(library)
+    result = Result(attempted=sum(len(found) for found in proposed.values()))
+    done, gone, named_ids, shown = db.write_with_connection(
+        library.path, lambda conn: _write_guesses(conn, proposed), label="automatch faces")
+    result.changed = len(done)
+    result.details.update(named_ids=named_ids, faces=len(done), photos=len({face_photo for _person, face_photo in done}),
+                          people=dict(collections.Counter(shown[person] for person, _photo in done)), renamed=gone)
     return result
 
 
@@ -383,8 +546,8 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
 COMPARE_BLOCK = 512
 
 
-def _closest_named(unnamed, names, matrix):
-    """{photo: [(face_id, name)]} for each of `unnamed` (id, embedding, photo) whose closest
+def _closest_named(unnamed, people, matrix):
+    """{photo: [(face_id, person)]} for each of `unnamed` (id, embedding, photo) whose closest
     named face it may be named after unasked. Compared a block at a time: one product per
     face made Re-examine on a folder of 2,600 photos and 9,400 unnamed faces, against
     36,000 named ones, take 32 to 47 seconds; a block at a time, 2 to 5. A face whose
@@ -405,7 +568,7 @@ def _closest_named(unnamed, names, matrix):
             closest = int(best[row])
             # As alike as naming a face with no one looking allows (tagpup.core.clustering).
             if clustering.names_unasked(float(similarities[row, closest])):
-                proposed.setdefault(face_photo, []).append((face_id, names[closest]))
+                proposed.setdefault(face_photo, []).append((face_id, person_ids.wire(people[closest])))
     return proposed
 
 
@@ -417,9 +580,11 @@ def _library_there(library):
 # ---- What TagPup's photo panel shows -------------------------------------------------------
 
 def panel(library, photo_path):
-    """The faces detected on one photo, for the strip under its details: {"faces",
-    "total", "unmatched"}, each face with its box, area, name, prob, exclusion, and for
-    an unnamed one the closest name elsewhere in the library and how alike.
+    """The faces detected on one photo, for the strip under its details and the boxes over
+    it: {"faces", "total", "unmatched", "size", "turned"}, each face with its box, area, name,
+    the `person` that name is (tagpup.services.people), prob, exclusion, and for an unnamed one the
+    closest name elsewhere in the library (and `suggestion_person`, the same of it) and how alike. `size` is [width, height] of the pixels the boxes are in, or None, and `turned`
+    says the photo declares an EXIF Orientation its boxes do not follow (photos.box_shape).
 
     TagPup ran face recognition invisibly: the suggester matched faces and surfaced
     only a name pill, so there was no way to see which face was unrecognised while
@@ -436,39 +601,45 @@ def panel(library, photo_path):
         rows = faces.in_photo_for_panel(conn, photo_path)
         if not rows:
             return {"faces": [], "total": 0, "unmatched": 0}
-        known_names, known_vectors = [], []
-        for name, emb in faces.named_embeddings_elsewhere(conn, photo_path):
+        everyone = person_ids.Directory.read(conn)
+        known_people, known_vectors = [], []
+        for person, emb in faces.named_embeddings_elsewhere(conn, photo_path):
             vec = _unit(emb)
             if vec is not None:
-                known_names.append(name)
+                known_people.append(person)
                 known_vectors.append(vec)
     finally:
         conn.close()
     known = np.array(known_vectors, dtype=np.float32) if known_vectors else None
 
     found = []
-    for face_id, box_json, name, prob, emb, excluded, reason in rows:
+    for face_id, box_json, carried, prob, emb, excluded, reason in rows:
+        name = carried.name if carried else None
         try:
             box = json.loads(box_json) if box_json else []
         except Exception:
             box = []
-        suggestion = similarity = None
+        suggestion = suggested = similarity = None
         vec = _unit(emb) if known is not None and not excluded else None
         if vec is not None:
             sims = known @ vec
             best = int(np.argmax(sims))
             if clustering.is_offered(float(sims[best])):
-                suggestion, similarity = known_names[best], round(float(sims[best]), 4)
+                suggested = known_people[best]
+                suggestion, similarity = suggested.name, round(float(sims[best]), 4)
         found.append({
             "id": face_id, "box": box,
             "area": (box[2] - box[0]) * (box[3] - box[1]) if len(box) >= 4 else 0,
-            "name": name, "prob": prob, "excluded": bool(excluded), "excluded_reason": reason,
+            "name": name, "person": everyone.of_row(carried.id, name) if carried else None, "prob": prob,
+            "excluded": bool(excluded), "excluded_reason": reason,
             "suggestion": suggestion if name is None else None,
+            "suggestion_person": everyone.of_row(suggested.id, suggestion) if name is None and suggested else None,
             "similarity": similarity if name is None else None,
         })
     found.sort(key=lambda f: (f["name"] is None, -(f["similarity"] or 0.0), -f["area"]))
     return {"faces": found, "total": len(found),
-            "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"])}
+            "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"]),
+            **photo_files.box_shape(photo_path)}
 
 
 def _unit(embedding):
@@ -573,6 +744,8 @@ def record_detected(db_path, photo_path, detected, detector=None):
                 continue
             _insert_detected(conn, photo_path, face)
             inserted += 1
+        if inserted:
+            face_tags.name_paths(conn, [photo_path])   # the photo's person tag names its face (#788)
         return inserted
 
     try:
@@ -601,6 +774,8 @@ def replace_detected(conn, photo_path, detected, detector=None):
         faces.remove_for_photo(conn, photo_path)
         for face in detected:
             _insert_detected(conn, photo_path, face, name=face.get("name"))
+        if detected:
+            face_tags.name_paths(conn, [photo_path])   # (#788)
         faces_pending.clear(conn, [photo_path])
         _record_detection(conn, photo_path, detector, detected)
         conn.commit()
@@ -626,13 +801,20 @@ def record_batch(conn, batch, overwrite=False, detector=None):
         return
     try:
         db.begin(conn)
+        recorded = []
         for photo_path, detected in batch.items():
-            _record_detection(conn, photo_path, detector, detected)
             if not overwrite and faces.count_for_photo(conn, photo_path) > 0:
+                _record_detection(conn, photo_path, detector, detected)
                 continue
+            # Recorded after the old faces go: removing a photo's faces forgets that they were detected.
             faces.remove_for_photo(conn, photo_path)
+            _record_detection(conn, photo_path, detector, detected)
             for face in detected:
                 _insert_detected(conn, photo_path, face, name=face.get("name"))
+            if detected:
+                recorded.append(photo_path)
+        # The photos' person tags name their faces (#788), once the batch's faces are all there.
+        face_tags.name_paths(conn, recorded)
         # Detection ran on each photo of the batch: none is still to detect (store.faces_pending).
         faces_pending.clear(conn, list(batch))
         conn.commit()
@@ -663,10 +845,22 @@ def clear_automatic_names(conn):
         raise e
 
 
+def named_counts(library, folder=None):
+    """{"named", "unnamed"}: the faces in play (not excluded) that have a name and those that have none, in the whole
+    library or in the photos under `folder` at any depth. A look; a library that cannot be read raises."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        named, unnamed = faces.named_and_unnamed(conn, folder)
+    finally:
+        conn.close()
+    return {"named": named, "unnamed": unnamed}
+
+
 def known_faces(db_path):
     """Every named face that is not excluded, as tagpup.core.clustering.KnownFaces: what a
-    face is compared with to say who it is. It was each person's mean face, with no
-    years (docs/findings.md, #71).
+    face is compared with to say who it is, KEYED BY PERSON (person_ids.key_of: the node's id, or the name's key for a name no
+    person is filed under -- two people called alike are two), `labels` holding each one's Ref. It was each person's mean face,
+    with no years (docs/findings.md, #71).
 
     Reads only the named faces, and of each photo only its Date Taken fields. Reading
     every face and its crop is 225,000 rows and ten seconds on a cold cache, and the
@@ -678,5 +872,5 @@ def known_faces(db_path):
     finally:
         conn.close()
     return clustering.KnownFaces.of(
-        (name, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path)
-        for name, emb_bytes, photo_path, year in rows)
+        (person_ids.key_of(person.id, person.name), np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path, person)
+        for person, emb_bytes, photo_path, year in rows)

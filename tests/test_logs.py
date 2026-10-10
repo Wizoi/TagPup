@@ -101,7 +101,7 @@ class AServerLogsToItsFile(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        cls.process.terminate()
+        processes.kill_tree(cls.process.pid)
         try:
             cls.process.wait(timeout=10)
         except subprocess.TimeoutExpired:

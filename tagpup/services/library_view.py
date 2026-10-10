@@ -42,7 +42,7 @@ from tagpup.core.result import NotFound, Refused
 from tagpup.services import damaged_photos, thumbnails
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
-from tagpup.store import db
+from tagpup.store import db, person_ids
 from tagpup.store import library_view as store
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
@@ -515,7 +515,7 @@ def cards(library, photo_ids, check_disk=False):
 
 def navigator(library, section):
     """The counts of one section of the navigator: `folders` {"folders": [{path, name, parent, direct,
-    recursive}]}, `keywords` {"keywords": [{tag, name, parent, count}]}, `people` {"people": [{name, count, group}],
+    recursive}]}, `keywords` {"keywords": [{tag, name, parent, count}]}, `people` {"people": [{name, count, group, person}],
     "groups": [{tag, name, parent, count}], "unfiled"} -- each person under the tag of the branch they are filed in (None:
     not filed), the branches above people with the photos naming anyone under them, and the photos naming someone not
     filed (store.people_groups) --, `dates` {"years": [{year, count, months: [{month, count}], other}], "undated"}. Each
@@ -532,7 +532,12 @@ def navigator(library, section):
             counted = store.people_counts(conn)
             group_of, groups, unfiled = store.people_groups(conn, counted)
             tag_of = {group["id"]: group["tag"] for group in groups}
-            return {"people": [{"name": name, "count": count, "group": group_of.get(name)} for name, count in counted],
+            everyone = person_ids.Directory.read(conn)
+            # `group` is the navigator's own (the tag of the branch the person is filed in); `person` is the person.
+            return {"people": [{"name": person.name, "count": count,
+                                "group": group_of.get(person_ids.key_of(person.id, person.name)),
+                                "person": everyone.of_row(person.id, person.name), "person_id": person.id}
+                               for person, count in counted],
                     "groups": [{"tag": group["tag"], "name": group["name"], "parent": tag_of.get(group["parent_id"]),
                                 "count": group["count"]}
                                for group in sorted(groups, key=lambda group: vocabulary.tag_sort_key(group["tag"]))],

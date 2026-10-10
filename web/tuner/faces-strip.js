@@ -1,12 +1,15 @@
 // A photo's details and the strip of its faces.
 import { api } from './common/api.js';
+import { attachPersonFaces } from './common/person-faces.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { samePath } from './common/paths.js';
-import { nameProblem, samePerson, sortedTags } from './common/vocabulary.js';
+import {
+    nameProblem, personFields, personLabel, personLabelOf, personTitle, personTitleOf, sameRecord, samePerson, sortedTags,
+} from './common/vocabulary.js';
 import { state } from './state.js';
 import { emptyState, panelContent, photoList } from './elements.js';
 import { UNKNOWN_YEAR } from './rules.js';
-import { personExists, updateURLParams } from './shared.js';
+import { personGone, resolveTyped, updateURLParams } from './shared.js';
 import { openNewPersonModal } from './new-person.js';
 
 const mainImage = document.getElementById('main-image');
@@ -120,18 +123,31 @@ function renderPhotoDetails(details) {
     
     // People pills
     const peopleList = details.people || [];
-    sortedTags(peopleList).forEach(person => {
+    const tagsList = details.tags || [];
+    // A keyword that is a person's path is that person, whoever else is called alike: shown by label (identity by id), so two
+    // people called Sam are two pills. The names the photo lists that no such keyword accounts for are shown as names.
+    const taggedPeople = tagsList.map(tag => ({ tag, person: state.people.ofTag(tag) })).filter(each => each.person);
+    const unaccounted = peopleList.slice();
+    taggedPeople.forEach(({ person }) => {
+        const at = unaccounted.findIndex(name => samePerson(name, person.name));
+        if (at !== -1) unaccounted.splice(at, 1);
+    });
+    const personPills = [
+        ...taggedPeople.map(({ person }) => ({ text: personLabel(person), title: personTitle(person) })),
+        ...unaccounted.map(name => ({ text: name, title: name })),
+    ];
+    sortedTags(personPills, each => each.text).forEach(each => {
         const pill = document.createElement('span');
         pill.className = 'tag-pill people-tag';
-        pill.textContent = `👤 ${person}`;
+        pill.textContent = `👤 ${each.text}`;
+        pill.title = each.title;
         detailTags.appendChild(pill);
     });
 
     // Category / Keyword tags
-    const tagsList = details.tags || [];
     sortedTags(tagsList).forEach(tag => {
         // A keyword that names somebody already shown as a person is not repeated.
-        if (peopleList.some(p => samePerson(p, tag))) {
+        if (taggedPeople.some(each => each.tag === tag) || peopleList.some(p => samePerson(p, tag))) {
             return;
         }
         const pill = document.createElement('span');
@@ -174,7 +190,7 @@ function renderPhotoDetails(details) {
 
         const cropImg = document.createElement('img');
         cropImg.src = api.image(`/api/face-crop?id=${face.id}`);
-        cropImg.alt = face.name ? face.name : 'Unmatched Face';
+        cropImg.alt = face.name ? personLabelOf(face) : 'Unmatched Face';
         cropContainer.appendChild(cropImg);
 
         const info = document.createElement('div');
@@ -186,7 +202,8 @@ function renderPhotoDetails(details) {
 
         const name = document.createElement('span');
         name.className = 'face-name';
-        name.textContent = face.name ? face.name : 'Unmatched';
+        name.textContent = face.name ? personLabelOf(face) : 'Unmatched';
+        if (face.name) name.title = personTitleOf(face);
 
         const status = document.createElement('span');
         if (face.name) {
@@ -335,14 +352,16 @@ function renderPhotoDetails(details) {
                         suggestionsList.appendChild(noSugg);
                     } else {
                         matches.forEach(item => {
-                            const name = typeof item === 'string' ? item : item.name;
+                            // A person is named by the id of their node (item.person): two people called alike are two pills.
+                            const who = typeof item === 'string' ? item : (item.person && item.person.id !== null ? item.person : item.name);
                             const pill = document.createElement('button');
                             pill.className = 'suggestion-pill';
-                            pill.textContent = name;
-                            pill.title = name;
+                            pill.textContent = typeof item === 'string' ? item : personLabelOf(item);
+                            pill.title = typeof item === 'string' ? item : personTitleOf(item);
+                            attachPersonFaces(pill, who);
                             pill.addEventListener('click', (e) => {
                                 e.stopPropagation();
-                                postMatch(face.id, name);
+                                postMatch(face.id, who);
                             });
                             suggestionsList.appendChild(pill);
                         });
@@ -365,14 +384,17 @@ function renderPhotoDetails(details) {
                 valError.classList.remove('hidden');
                 return;
             }
-            // Validate against known people
-            if (!personExists(nameVal)) {
-                if (!confirm(`"${nameVal}" is not currently in the database. Do you want to create a new person tag with this name?`)) {
-                    return;
+            // Who the text is: a person (after asking which when two have the name), or a name nobody has.
+            resolveTyped(nameVal).then(found => {
+                if (!found) return;
+                if (!found.person && !found.exists) {
+                    if (!confirm(`"${found.name}" is not currently in the database. Do you want to create a new person tag with this name?`)) {
+                        return;
+                    }
                 }
-            }
-            valError.classList.add('hidden');
-            postMatch(face.id, nameVal);
+                valError.classList.add('hidden');
+                postMatch(face.id, found.person || found.name);
+            });
         });
 
         // Input enter key handler
@@ -409,18 +431,35 @@ function deselectAllFaceCards() {
     });
 }
 
+/**
+ * Say why a write of a face was refused, in the server's own words: a name is also the person on the photo (#861), so a refusal
+ * can be about the photo's file ("was not added to the photo, so the face is not named: ...").
+ */
+async function whyRefused(res, fallback) {
+    try {
+        const body = await res.json();
+        return (body && (body.error || body.message)) || fallback;
+    } catch (error) {
+        return fallback;
+    }
+}
+
 // POST face match update
-function postMatch(faceId, personName) {
+// `who` is a person ({id, name, ...}: named by the id of their node) or a name no tag has.
+function postMatch(faceId, who) {
+    const personName = typeof who === 'string' ? who : who.name;
     const problem = nameProblem(personName);
     if (problem) {
         alert(problem);
         return;
     }
-    // Client-side conflict check to prevent second match in same photo
+    // Client-side conflict check to prevent second match in same photo: the same PERSON, by id (two people may be called alike).
     if (state.currentPhotoDetails && state.currentPhotoDetails.faces) {
-        const alreadyMatched = state.currentPhotoDetails.faces.some(f => f.id !== faceId && f.name === personName);
+        const alreadyMatched = state.currentPhotoDetails.faces.some(f => f.id !== faceId && f.name
+            && (typeof who !== 'string' && who.id !== null && who.id !== undefined && f.person && f.person.id !== null
+                ? sameRecord(f.person, who) : f.name === personName));
         if (alreadyMatched) {
-            alert(`Cannot match: "${personName}" is already tagged on another face in this photo.`);
+            alert(`Cannot match: "${personLabelOf(typeof who === 'string' ? { name: who } : { person: who })}" is already tagged on another face in this photo.`);
             return;
         }
     }
@@ -430,7 +469,7 @@ function postMatch(faceId, personName) {
         headers: {
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ face_id: faceId, person_name: personName })
+        body: JSON.stringify({ face_id: faceId, ...personFields(who) })
     })
     .then(async res => {
         if (!res.ok) {
@@ -439,7 +478,9 @@ function postMatch(faceId, personName) {
                 const errData = await res.json();
                 if (errData && errData.error) errMsg = errData.error;
             } catch(e) {}
-            throw new Error(errMsg);
+            const failure = new Error(errMsg);
+            failure.status = res.status;
+            throw failure;
         }
         return res.json();
     })
@@ -456,6 +497,7 @@ function postMatch(faceId, personName) {
     .catch(err => {
         console.error('Error matching face:', err);
         alert('Error matching face: ' + err.message);
+        personGone(err.status);
     });
 }
 
@@ -468,8 +510,8 @@ function postUnmatch(faceId) {
         },
         body: JSON.stringify({ face_id: faceId })
     })
-    .then(res => {
-        if (!res.ok) throw new Error('Unmatch operation failed');
+    .then(async res => {
+        if (!res.ok) throw new Error(await whyRefused(res, 'Unmatch operation failed'));
         return res.json();
     })
     .then(data => {
@@ -478,6 +520,8 @@ function postUnmatch(faceId) {
             if (state.activePhotoPath) {
                 selectPhoto(state.activePhotoPath);
             }
+            // The person comes off the photo with the name; when that could not be done the face is unnamed all the same.
+            if (data.warning) alert(data.warning);
         } else {
             alert('Failed to unmatch face');
         }
@@ -501,8 +545,8 @@ function postAutoMatchAll(photoPath) {
         },
         body: JSON.stringify({ photo_path: photoPath })
     })
-    .then(res => {
-        if (!res.ok) throw new Error('AutoMatch operation failed');
+    .then(async res => {
+        if (!res.ok) throw new Error(await whyRefused(res, 'AutoMatch operation failed'));
         return res.json();
     })
     .then(data => {
@@ -535,13 +579,14 @@ function postUnmatchAll(photoPath) {
         },
         body: JSON.stringify({ photo_path: photoPath })
     })
-    .then(res => {
-        if (!res.ok) throw new Error('Unmatch-all operation failed');
+    .then(async res => {
+        if (!res.ok) throw new Error(await whyRefused(res, 'Unmatch-all operation failed'));
         return res.json();
     })
     .then(data => {
         if (data.success) {
             selectPhoto(photoPath);
+            if (data.warning) alert(data.warning);
         } else {
             alert('Failed to unmatch all faces.');
         }

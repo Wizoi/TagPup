@@ -55,6 +55,10 @@ class FaceModel:
         """Load the models now, if they are not loaded yet."""
         self._init_models()
 
+    def loaded(self):
+        """Are the weights in memory now?"""
+        return self.mtcnn is not None or self.resnet is not None
+
     def unload(self):
         """Let the weights go, and the GPU memory they held (tagpup.runtime drops a model
         no library it serves uses any more). Used again, they load again."""

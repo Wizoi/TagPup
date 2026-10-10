@@ -16,6 +16,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import face_rows  # noqa: E402
+import fake_exiftool  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
@@ -40,6 +41,7 @@ def pool_reads(statements):
 
 class NewPerson(unittest.TestCase):
     def setUp(self):
+        fake_exiftool.standing_in(self)       # naming a face puts the person on its photo (#861)
         self.app, self.home = web_client.app_for(self, "tuner")
         self.client = self.app.test_client()
         self.db_path = self.home.library("library.db")

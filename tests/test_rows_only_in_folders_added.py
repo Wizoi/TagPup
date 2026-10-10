@@ -34,6 +34,7 @@ from tagpup.core.result import Conflict, Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.mcp import server  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import suggestions as saved_suggestions  # noqa: E402
 from tagpup.store import db  # noqa: E402
@@ -182,7 +183,7 @@ class TheSuggestRoute(Folders, unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.indexed = FakeIndex()
-        patcher = mock.patch.object(tagpup_routes.indexing, "index_folder", self.indexed)
+        patcher = mock.patch.object(indexing, "index_folder", self.indexed)
         patcher.start()
         self.addCleanup(patcher.stop)
 

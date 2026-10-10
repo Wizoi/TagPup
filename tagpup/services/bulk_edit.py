@@ -4,9 +4,11 @@ tagpup.jobs.bulk_edits).
 An EDIT is what is done to every photo of a selection:
 
 * `tags`: add some tags and take some off, `{"add": [...], "remove": [...]}`;
-* `people`: add and take off people, by name, `{"add": [...], "remove": [...]}`: a name is filed as a click on a person's chip
-  files it (`vocabulary.person_tag`, the one rule), a person a file already names by their leaf is not added again, and no
-  node of the tag tree is made;
+* `people`: add and take off people, `{"add": [...], "remove": [...], "add_ids": [...], "remove_ids": [...]}`: a person_id is the
+  one person (their node's tag; an id that is nobody's is refused, naming nothing, and writes nothing), a name is filed as a
+  click on a person's chip files it (`vocabulary.person_tag`, the one rule; a name two people have is refused), a person a
+  file already names (by the id of their node: two people called alike are two) is not added again, and no node of the tag
+  tree is made;
 * `time_shift`: move Date Taken by `{"minutes": n}` (tagpup.services.photos.date_shift_plan);
 * `delete`: send each photo's file to the Recycle Bin and forget its row, faces and thumbnail, as the folder view's Delete
   does it (tagpup.services.photos.delete, the one owner: not journaled, as that is not; a photo whose place has no Recycle Bin
@@ -30,6 +32,7 @@ from tagpup.core import dates, paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused, Result
 from tagpup.files import exiftool_session, job_files, recycle_bin
 from tagpup.services import damaged_photos, file_changes, file_only, libraries, library_view, tagging
+from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.store import file_journal, taxonomy
 from tagpup.store import library_view as store
@@ -106,6 +109,15 @@ def _list_of(params, key):
     return found
 
 
+def _ids_of(params, key):
+    found = params.get(key, [])
+    if not isinstance(found, list) or not all(type(each) is int for each in found):
+        raise Refused("%s must be a list of whole numbers." % key)
+    if len(found) > MOST_NAMED:
+        raise Refused("%s names %d; at most %d at a time." % (key, len(found), MOST_NAMED))
+    return found
+
+
 def prepare(library, op, params):
     """The Edit for `op` and `params` as a request sends them, or Refused with a sentence and nothing done: an unknown
     op, a list that is not text, a tag the rules forbid (tagpup.core.validation, as every write of a tag checks), a name with
@@ -144,7 +156,7 @@ def prepare(library, op, params):
         taken = [spelling for each in remove for spelling in (each, vocabulary.normalize(each))]
         edit = Edit(TAGS, add=list(dict.fromkeys(add)), remove=list(dict.fromkeys(taken)))
     else:
-        edit = _people(library, add, remove)
+        edit = _people(library, add, remove, _ids_of(params, "add_ids"), _ids_of(params, "remove_ids"))
     if not edit.add and not edit.remove:
         raise Refused("There is nothing to add or to take off.")
     problem = validation.first_problem("tag", edit.add)
@@ -156,11 +168,17 @@ def prepare(library, op, params):
     return edit
 
 
-def _people(library, add, remove):
-    """The Edit of `people`: names made tags by the one rule the chip and Apply All follow (`vocabulary.person_tag`), the tree
-    only read."""
+def _people(library, add, remove, add_ids=(), remove_ids=()):
+    """The Edit of `people`: people by id (their node's tag) and names made tags by the one rule the chip and Apply All follow
+    (`vocabulary.person_tag`), the tree only read. An id that is no person's (merged or deleted in another window) or a group's
+    is refused before a photo is touched (people_service.resolve: NotFound, Refused)."""
     filed, roots = taxonomy.people_filing(library.path)
     tags, persons = [], []
+    for person_id in add_ids:
+        found = people_service.resolve(library, person_id)
+        tags.append(found.tag)
+        persons.append(found.tag)
+    taken_by_id = [people_service.resolve(library, person_id).tag for person_id in remove_ids]
     for name in add:
         name = name.strip()
         if not name:
@@ -171,7 +189,7 @@ def _people(library, add, remove):
                           "it is not known where to file them: name the path." % name)
         tags.append(tag)
         persons.append(tag)
-    taken = []
+    taken = list(taken_by_id)
     for name in remove:
         name = name.strip()
         if not name:

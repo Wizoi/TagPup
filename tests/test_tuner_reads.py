@@ -133,7 +133,9 @@ class PeopleWithCounts(TunerReads):
             db.connect = connect
         self.assertEqual(4, len(answer))
         tree_reads = [s for s in statements if "FROM tag_taxonomy" in s]
-        self.assertLessEqual(len(tree_reads), 2, tree_reads)
+        # Two for the hidden nodes and where everyone is filed, two for who the people are (person_ids.Directory:
+        # their ids and groups): a number of reads, never one for each person.
+        self.assertLessEqual(len(tree_reads), 4, tree_reads)
 
     def test_leaves_out_people_whose_every_node_is_hidden(self):
         self.node("People/Wren Halloway", hidden=1)
@@ -142,7 +144,9 @@ class PeopleWithCounts(TunerReads):
         self.face(self.photo("b.jpg"), name="Ansel Ditmore")
         self.face(self.photo("c.jpg"), name="Ansel Ditmore")
         answer = self.requests.get("/api/people-with-counts")
-        self.assertEqual([{"name": "Ansel Ditmore", "count": 2}], answer)
+        self.assertEqual([("Ansel Ditmore", 2)], [(each["name"], each["count"]) for each in answer])
+        self.assertEqual(["Ansel Ditmore", "People/Ansel Ditmore", "", False],
+                         [answer[0]["person"][key] for key in ("name", "tag", "group", "shared")])
 
 
 if __name__ == "__main__":

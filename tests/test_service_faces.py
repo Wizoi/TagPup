@@ -16,6 +16,7 @@ from service_fixture import TempLibrary  # noqa: E402
 from face_rows import add_face, people_of  # noqa: E402
 
 from tagpup.core.result import Conflict, NotFound  # noqa: E402
+from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.services import faces  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -111,9 +112,17 @@ class NamingAFace(FacesCase):
             faces.name_face(self.lib.library, face, "Wren Halloway")
 
     def test_the_name_it_has_whatever_its_case_changes_nothing(self):
-        face = self.face(self.photo("a.jpg"), name="Wren Halloway")
+        face = self.face(self.photo("a.jpg"), name="Wren Halloway", source="manual")
         result = faces.name_face(self.lib.library, face, "wren halloway")
         self.assertEqual((result.changed, self.face_row(face)[0]), (0, "Wren Halloway"))
+
+    def test_an_automatic_name_a_person_confirms_becomes_their_decision_in_its_own_spelling(self):
+        """#791: choosing the person a tag or clustering named, from a face's box, is a decision."""
+        face = self.face(self.photo("a.jpg"), name="Wren Halloway")
+        result = faces.name_face(self.lib.library, face, "wren halloway")
+        self.assertEqual((result.changed, self.face_row(face)[0]), (1, "Wren Halloway"))
+        self.assertEqual(self.lib.rows("SELECT name_source FROM faces WHERE id = ?", (face,))[0][0], "manual")
+        self.assertEqual(faces.name_face(self.lib.library, face, "Wren Halloway").changed, 0)
 
     def test_a_face_that_is_not_there_is_not_found(self):
         with self.assertRaises(NotFound):
@@ -271,7 +280,7 @@ class TheWriteLockIsNotHeldThroughAScan(FacesCase):
                 asked.append((sql, params))
                 return []
 
-        store_faces.names_in_photo(Recording(), self.photo("a.jpg"))
+        store_faces.people_in_photo(Recording(), self.photo("a.jpg"))
         self.assertEqual(1, len(asked))
         sql, params = asked[0]
         conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
@@ -289,15 +298,15 @@ class TheWriteLockIsNotHeldThroughAScan(FacesCase):
         for other in range(3):
             self.face(self.photo("other%d.jpg" % other), name="Kit Morrow")
         asked = []
-        real = store_faces.names_in_photo
+        real = store_faces.people_in_photo
 
-        def names_in_photo(conn, path):
+        def people_in_photo(conn, path):
             asked.append(path)
             return real(conn, path)
 
-        with mock.patch.object(store_faces, "names_in_photo", side_effect=names_in_photo):
+        with mock.patch.object(store_faces, "people_in_photo", side_effect=people_in_photo):
             faces.automatch_folder(self.lib.library, self.folder,
-                                   lambda: ([1], ["Kit Morrow"], np.stack([vector(1)])))
+                                   lambda: ([1], [Ref(None, "Kit Morrow")], np.stack([vector(1)])))
         self.assertEqual(asked, [photo])
         self.assertEqual(self.face_row(self.lib.rows("SELECT id FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)",
                                                      (photo,))[0][0])[0], "Kit Morrow")

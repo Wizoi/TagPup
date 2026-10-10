@@ -143,7 +143,7 @@ describe("the four sections", () => {
     assert.match(labels.at(-1), /^Other years \(\d+\)$/);
     const usual = labels.slice(0, -1).map(Number);
     assert.deepEqual(usual, [...usual].sort((a, b) => b - a));
-    assert.ok(usual.every((year) => year >= 1970 && year <= YEAR + 1));
+    assert.ok(usual.every((year) => year >= 1900 && year <= YEAR + 1));
     assert.equal(ctx.state.nav.sections.dates.index.size, 61);
     const other = ctx.rows("dates").at(-1);
     assert.equal(other.getAttribute("aria-expanded"), "false");
@@ -532,13 +532,25 @@ describe("counts after an edit", () => {
     assert.equal(trips.querySelector(".nav-count").textContent, "10");
     const asked = ctx.navigatorAsked.filter((name) => name === "keywords").length;
     count = 11;
-    // A tag is added to a photo in the view: the write queue finishes an entry.
+    // A tag is added to a photo in the view: the write queue finishes an entry. "After a moment" is the delay the page asks
+    // for, recorded: timed instead, a busy machine's 40 ms ran past it (#721).
+    const delays = [];
+    const realTimeout = ctx.window.setTimeout;
+    ctx.window.setTimeout = (fn, ms, ...rest) => {
+      delays.push(ms);
+      return realTimeout.call(ctx.window, fn, ms, ...rest);
+    };
+    const keywordsAsked = () => ctx.navigatorAsked.filter((name) => name === "keywords").length;
     const queue = ctx.module("write-queue.js");
     queue.markEntry(queue.queueEntry("Add tag"), "done");
-    await ctx.settle(40);
-    assert.equal(ctx.navigatorAsked.filter((name) => name === "keywords").length, asked, "not at once: edits come in runs");
-    await ctx.settle(1400);
-    assert.equal(ctx.navigatorAsked.filter((name) => name === "keywords").length, asked + 1, "one ask for the run");
+    queue.markEntry(queue.queueEntry("Add tag"), "done");
+    ctx.window.setTimeout = realTimeout;
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    assert.equal(keywordsAsked(), asked, "not at once: edits come in runs");
+    assert.ok(delays.includes(ctx.module("navigator.js").NAV_COUNTS_MS), `read after NAV_COUNTS_MS: ${delays.join(", ")}`);
+    await ctx.until(() => keywordsAsked() > asked, 10000);
+    await ctx.settle(100);
+    assert.equal(keywordsAsked(), asked + 1, "one ask for the run");
     assert.equal(ctx.rowByLabel("keywords", "Trips"), trips, "the same element: no rebuild, no flicker");
     assert.equal(trips.querySelector(".nav-count").textContent, "11");
     assert.equal(ctx.rowByLabel("keywords", "Activity"), activity);
@@ -644,14 +656,21 @@ describe("the keys", () => {
 });
 
 describe("the model, alone", () => {
-  test("the junk years are the ones outside 1970 and next year", async (t) => {
+  test("the years the route calls implausible are the ones grouped, whatever they are (#510)", async (t) => {
     const ctx = await loadViewPage(t);
     const { indexDates } = ctx.module("navigator-model.js");
     const dates = indexDates(syntheticDates(2026), 2026);
     assert.equal(dates.size, 61);
-    assert.ok(dates.usual.every((each) => each.year >= 1970 && each.year <= 2027));
-    assert.ok(dates.odd.every((each) => each.year < 1970 || each.year > 2027));
+    assert.ok(dates.usual.every((each) => each.year >= 1900 && each.year <= 2027));
+    assert.ok(dates.odd.every((each) => each.year < 1900 || each.year > 2027));
     assert.equal(dates.usual.length + dates.odd.length, 61);
+    // The page owns no bounds: 1950 is a year the route did not flag, 1888 and 2090 are ones it did.
+    const make = (year, implausible) => ({ year, count: 1, months: [], other: 1, implausible });
+    const told = indexDates({ years: [make(1950, false), make(1888, true), make(2090, true), make(2026, false)], undated: 0 });
+    assert.equal(JSON.stringify(told.usual.map((each) => each.year)), "[2026,1950]");
+    assert.equal(JSON.stringify(told.odd.map((each) => each.year)), "[2090,1888]");
+    const unflagged = indexDates({ years: [{ year: 1500, count: 1, months: [], other: 1 }], undated: 0 });
+    assert.equal(unflagged.odd.length, 0, "an answer that does not say is not guessed at");
   });
 
   test("names that differ only in case are found as one, a cyclic tree ends, a folder whose parent is missing is a top", async (t) => {

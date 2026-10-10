@@ -1,5 +1,7 @@
 // The page's mutable state, in one object: a module that imports a binding cannot
 // reassign it.
+import { PeopleDirectory } from './common/vocabulary.js';
+
 export const state = {
     allPhotos: [],
     activePhotoPath: null,
@@ -14,7 +16,23 @@ export const state = {
     allPeopleWithCounts: [],
     // The same people in the order the sidebar shows them (people.js sets it when it draws them).
     shownPeople: [],
+    // "name" or "face": how the people list is drawn (people.js remembers it per browser).
+    peopleView: 'name',
+    // {name: face id}: the face most like each person, as /api/people-faces answers; only
+    // read while the list is shown by face.
+    personFaces: {},
     activePersonName: null,
+    //: The id of the person chosen, when the list gave one: two people called alike are two (identity by id). Null for a
+    //: bucket, a name no tag has, or a person chosen by name alone (an address that names only a name).
+    activePersonId: null,
+    //: Everyone with a person tag, as /api/people?records=1 answers (a PeopleDirectory): who a typed text is, and each
+    //: person's label. Filled by shared.js; empty until it answers.
+    people: new PeopleDirectory([]),
+    //: Names to review (names-review.js): how many wait (null until read), whether the server has the route, whether the
+    //: count could not be read, and the dialog's parts, built the first time it opens.
+    names: { count: null, available: true, unreadable: false, modal: null, list: null, results: null, status: null,
+             toggle: null, toggleLabel: null, opener: null, entries: [], groups: [], dismissed: 0, showDismissed: false,
+             busy: false, token: 0 },
     lastLoadedPersonName: null,
     //: The person whose grid is being fetched right now. Redrawing the sidebar asks
     //: for the active person's grid unless it is already loaded; one still on its way
@@ -48,8 +66,15 @@ export const state = {
     //: that face, and must not quietly follow a later, different selection.
     nameFilledForFaceIds: null,
     activePersonFaces: [],
+    //: The face the Face Crop Details pane shows (selection.js): the zoom draws its box.
+    detailFace: null,
+    /** [width, height] of the file the details face's box is in, once the details say; else null. */
+    detailPhotoSize: null,
     activeTab: 'matches', // 'matches' or 'outliers'
     modalSelectedFaceIds: [],
+    //: The places a new person can be made (New Person's Group box): the tree's face roots and the groups under them,
+    //: [{id, tag}], read when the dialog opens.
+    newPersonGroups: [],
 
     // Abort controllers for ongoing fetch requests
     sidebarAbortController: null,
@@ -93,6 +118,12 @@ export const state = {
     reexamining: null,
 
     assignUndoTimer: null,
+    // The server's job behind the last assign / ignore the Undo bar offers ({ job, kind }): its Undo is one undo of the faces AND
+    // the photo files it wrote (/api/faces/job/undo).
+    lastAssignJob: null,
+    // The server's job behind the last assign / ignore the Undo bar offers ({ job, kind }): its Undo is one undo of the faces AND
+    // the photo files it wrote (/api/faces/job/undo).
+    lastAssignJob: null,
 
     allTags: [],
     tagBuckets: {},

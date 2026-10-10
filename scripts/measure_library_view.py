@@ -47,7 +47,7 @@ import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import paths, processes  # noqa: E402
 from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
-from sandbox import copy_library, free_port, place_roots, remove_sandbox  # noqa: E402
+from sandbox import copy_library, enter, environment, free_port, place_roots, remove_sandbox  # noqa: E402
 
 LIBRARY = "measured"
 
@@ -177,7 +177,7 @@ def start_server(sandbox, db_path, tuner_port, tagpup_port):
         [sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
          "--tuner-port", str(tuner_port), "--tagpup-port", str(tagpup_port)],
         cwd=sandbox,
-        env=dict(os.environ, TAGPUP_HOME=sandbox, TAGPUP_NO_JOBS="1"),
+        env=environment(sandbox, TAGPUP_NO_JOBS="1"),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(120):
         try:
@@ -459,7 +459,7 @@ def main():
         drive("http://127.0.0.1:%d" % tagpup, folder, args, results)
         try:
             print("\nthe query plans of the id lists, on the copy (the server brought it up to date as it opened it):")
-            os.environ["TAGPUP_HOME"] = sandbox     # the sandbox's own machine map places its roots
+            enter(sandbox)     # the sandbox's own machine map places its roots
             plans(db_path)
         except (sqlite3.Error, ImportError, AttributeError) as why:
             print("  (no plans: %s)" % why)

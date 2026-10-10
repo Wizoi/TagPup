@@ -15,7 +15,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, PUBLISHED_RULES } from "./harness.mjs";
 
 const NAME = "Unknown Faces";
 
@@ -552,6 +552,22 @@ describe("saying why a face is excluded", () => {
   test("the four reasons are offered as buttons", async (t) => {
     const ctx = await startExcluding(t);
     assert.deepEqual(choices(ctx), ["not a person", "stranger", "bad crop", "duplicate"]);
+  });
+
+  test("the reasons are the ones the server publishes, less the one an ignored cluster is given (#295)", async (t) => {
+    // The page keeps no list: a reason the server adds is offered without a change to the page.
+    const kinds = JSON.parse(JSON.stringify(PUBLISHED_RULES.kinds));
+    const rule = kinds["exclusion reason"].rules[0];
+    rule.choices = ["not a person", "blurry", "ignored cluster"];
+    const ctx = await open(t, [{ name: NAME, count: 2, unit: "face" }], strangers,
+      (s) => s.first("api/rules", { ...PUBLISHED_RULES, kinds }));
+    ctx.server.on("/api/faces/exclude", { success: true, excluded: 2 });
+    const cards = [...ctx.document.querySelectorAll("#matching-faces-grid .face-match-item")];
+    cards.forEach((c) => click(ctx.window, c, { ctrlKey: true }));
+    await new Promise((r) => ctx.window.setTimeout(r, 40));
+    ctx.document.getElementById("btn-exclude-selected").click();
+    await new Promise((r) => ctx.window.setTimeout(r, 30));
+    assert.deepEqual(choices(ctx), ["not a person", "blurry"]);
   });
 
   test("nothing is sent until one is picked", async (t) => {

@@ -21,6 +21,7 @@ import numpy as np
 from tagpup.core import clustering, dates, paths, suggesting, vocabulary
 from tagpup.services import faces as face_records
 from tagpup.services import search
+from tagpup.store import db, person_ids
 from tagpup.store import faces as store_faces
 from tagpup.store import faces_detected as store_faces_detected
 from tagpup.store.taxonomy import TagTaxonomy
@@ -146,7 +147,9 @@ class TagSuggester:
         self._people_lock = threading.Lock()
 
     def _known_people(self):
-        """(lower-cased names of everyone known, their named faces as KnownFaces).
+        """(lower-cased names of everyone known, their named faces as KnownFaces -- keyed by person, with their `labels`; and
+        {the id of each person the tree files: their tag}, which says exactly who a face resembles even when two people share a
+        name).
 
         Loaded once per suggester -- one folder run -- rather than per photo. Both
         halves used to come from reading the whole faces table, twice a photo.
@@ -160,13 +163,23 @@ class TagSuggester:
                     if len(parts) >= 2 and parts[0].lower() in face_roots:
                         names.add(parts[-1].lower())
                 known = clustering.KnownFaces()
+                tags_by_id = {}
                 try:
                     known = face_records.known_faces(self.index.db_path)
+                    tags_by_id = self._tags_by_id()
                 except Exception as db_err:
                     logger.warning(f"Failed to load known faces from database: {db_err}")
-                names.update(name.lower() for name in known.names())
-                self._people = (names, known)
+                names.update(vocabulary.key(person.name) for person in known.labels.values())
+                self._people = (names, known, tags_by_id)
             return self._people
+
+    def _tags_by_id(self):
+        """{id: tag} of everyone the tree files as a person, read-only."""
+        conn = db.connect(db.readonly_uri(self.index.db_path), uri=True)
+        try:
+            return {record["id"]: record["tag"] for record in person_ids.Directory.read(conn).records()}
+        finally:
+            conn.close()
 
     def knows_named_faces(self):
         """Does the library hold a named face to compare a photo's faces with?"""
@@ -276,7 +289,7 @@ class TagSuggester:
         target_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Query index for nearest neighbors, expand hierarchical tags, aggregate and score tags."""
-        known_people, known_faces = self._known_people()
+        known_people, known_faces, tags_by_id = self._known_people()
 
         # 1. Search index for neighbors
         neighbors = self.index.search(embedding, k=k)
@@ -456,8 +469,10 @@ class TagSuggester:
                             # value every screen offers a name from, scored by that likeness
                             # (tagpup.core.clustering). It was a mean face with no years, a
                             # distance cut of 0.90, and a score made up between 0.5 and 1.
-                            best_name, likeness = known_faces.most_like(face["embedding"], target_year, photo_path)
-                            if best_name and clustering.is_offered(likeness):
+                            best_key, likeness = known_faces.most_like(face["embedding"], target_year, photo_path)
+                            if best_key and clustering.is_offered(likeness):
+                                label = known_faces.labels.get(best_key)
+                                best_name = label.name if label else str(best_key)
                                 score = round(likeness, 2)
 
                                 # Resolve leaf name to full taxonomy path if possible.
@@ -468,10 +483,15 @@ class TagSuggester:
                                 # A name filed twice is not resolved to either
                                 # path, and not offered at all: a guess names the
                                 # wrong person (docs/findings.md, #27).
-                                filed = self.taxonomy.person_paths(best_name)
-                                if len(filed) > 1:
-                                    continue
-                                resolved_path = filed[0] if filed else best_name
+                                # A person the tree files is the tag of their node: another person called alike is another
+                                # tag. A name no node is called is resolved by the old rule.
+                                if best_key in tags_by_id:
+                                    resolved_path = tags_by_id[best_key]
+                                else:
+                                    filed = self.taxonomy.person_paths(best_name)
+                                    if len(filed) > 1:
+                                        continue
+                                    resolved_path = filed[0] if filed else best_name
 
                                 # Boost or insert tag
                                 found = False

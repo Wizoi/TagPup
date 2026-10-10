@@ -9,7 +9,13 @@
     <link rel="stylesheet" href="common/tag-editor.css">
     <link rel="stylesheet" href="common/settings-dialog.css">
     <link rel="stylesheet" href="common/history-dialog.css">
+    <link rel="stylesheet" href="common/name-faces.css">
     <link rel="stylesheet" href="common/roots-banner.css">
+    <link rel="stylesheet" href="common/image-zoom.css">
+    <link rel="stylesheet" href="common/person-faces.css">
+    <link rel="stylesheet" href="common/person-choice.css">
+    <link rel="stylesheet" href="common/dark-select.css">
+    <link rel="stylesheet" href="common/library-picker.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -55,6 +61,10 @@
                         <span class="switch-label">Show Matched Photos</span>
                     </label>
                 </div>
+                <!-- Name faces from tags (web/tuner/name-faces.js, web/common/name-faces.js): shown with Folder Matches. -->
+                <div class="control-group" id="name-faces-container">
+                    <button id="btn-name-faces" type="button" class="btn btn-secondary btn-sm" title="Name the faces the photos' person tags name: in the folder of the selected photo (the default, when one is selected), or the whole library, as you choose. You are shown the plan and asked before anything is written.">Name faces from tags</button>
+                </div>
                 <!-- How many folders under the library's roots wait to be included or ignored (review.js). -->
                 <div class="control-group">
                     <button id="review-notice" type="button" class="btn btn-secondary btn-sm review-notice hidden" title="Folders under the library's roots that hold photos not in it: include or ignore each"></button>
@@ -66,6 +76,7 @@
                         <button type="button" role="menuitem" data-action="tag-editor">Tag editor</button>
                         <button type="button" role="menuitem" data-action="library-settings" title="This library's settings: the CLIP model, face detection and ExifTool (Suggest's words and the rename format are in TagPup's gear)">Library settings</button>
                         <button type="button" role="menuitem" data-action="library-history" title="This library's last changes, and Undo beside each that can be undone">History...</button>
+                        <button type="button" role="menuitem" data-action="name-faces" title="Name the faces the photos' person tags name, in the whole library. You are shown the plan and asked before anything is written.">Name faces from tags...</button>
                         <button type="button" role="menuitem" data-action="folders-review" title="Folders under the library's roots that hold photos not in it: include or ignore each">Folders to review...</button>
                         <button type="button" role="menuitem" data-action="library-roots" title="Where this computer keeps each root of the library: check a place, move a root, move it back">Roots...</button>
                         <a role="menuitem" href="/activity/" target="_blank" rel="noopener" title="What runs and what ran in every library: indexing, jobs, syncs, snapshots, logs">Activity...</a>
@@ -93,11 +104,15 @@
                     <input type="text" id="photo-search" placeholder="Search photos..." class="search-input">
                     <span class="search-icon">🔍</span>
                 </div>
+                <div class="people-view hidden" id="people-view" role="group" aria-label="Show the people">
+                    <button type="button" id="people-view-name" class="active" aria-pressed="true">By name</button>
+                    <button type="button" id="people-view-face" aria-pressed="false">By face</button>
+                </div>
                 <div class="sidebar-header-row">
                     <div class="list-stats" id="list-stats">Loading...</div>
                     <select id="people-sort" class="people-sort" title="How to order the list">
+                        <option value="name" selected>Name (A-Z)</option>
                         <option value="count">Most photos first</option>
-                        <option value="name">Name (A-Z)</option>
                     </select>
                     <button id="btn-refresh-list" class="btn btn-secondary btn-sm" title="Refresh photo list">🔄 Refresh List</button>
                 </div>
@@ -122,7 +137,7 @@
                             <h3>Original Image</h3>
                         </div>
                         <div class="image-viewer">
-                            <img id="main-image" src="" alt="Selected Photo">
+                            <img id="main-image" class="zoomable" tabindex="0" role="button" title="Click to see the photo full size" src="" alt="Selected Photo">
                         </div>
                     </div>
 
@@ -267,7 +282,7 @@
                                 <h3 style="margin: 0; font-size: 16px;">Face Crop Details</h3>
                             </div>
                             <div class="sidebar-face-preview-container" style="position: relative; width: 100%; border-radius: 6px; overflow: hidden; background: var(--bg-secondary); border: 1px solid var(--border-color); margin-bottom: 15px; max-height: 220px; display: flex; align-items: center; justify-content: center;">
-                                <img id="matching-detail-img" src="" alt="Original Photo Preview" style="max-width: 100%; max-height: 220px; object-fit: contain; display: block;">
+                                <img id="matching-detail-img" class="zoomable" tabindex="0" role="button" title="Click to see the photo full size, with the face boxed" src="" alt="Original Photo Preview" style="max-width: 100%; max-height: 220px; object-fit: contain; display: block;">
                                 <div id="matching-detail-bounding-box-overlay" class="bounding-box-overlay" style="position: absolute; border: 2px solid #ef4444; box-shadow: 0 0 0 9999px rgba(0,0,0,0.4); pointer-events: none; transition: all 0.2s ease;"></div>
                             </div>
                             <div class="face-crop-row">
@@ -431,6 +446,13 @@
                     <label for="new-person-name">Person Name:</label>
                     <input type="text" id="new-person-name" placeholder="Enter unique name..." class="modal-input" autocomplete="off">
                     <div id="modal-name-error" class="validation-error hidden">Name must be unique and not empty.</div>
+                </div>
+                <div class="form-group">
+                    <label for="new-person-group">Group (optional):</label>
+                    <select id="new-person-group" class="modal-input">
+                        <option value="">The usual place</option>
+                    </select>
+                    <div id="new-person-note" class="form-note hidden"></div>
                 </div>
                 
                 <div class="matches-section">

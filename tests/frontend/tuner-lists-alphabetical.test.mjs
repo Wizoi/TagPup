@@ -50,9 +50,20 @@ describe("the people sidebar", () => {
   });
 
   test("by count the biggest come first and the alphabet breaks a tie", async (t) => {
-    const ctx = await open(t, { mode: "face-matching", server: server() });
+    const ctx = await open(t, { mode: "face-matching", order: "count", server: server() });
     assert.deepEqual(titles(ctx),
       ["Bao Le", "Émile Roy", "anh Tran", "Zoe Abbott", "Ines Tran 3", "Ines Tran 10"]);
+  });
+
+  test("the first visit is by name, and a later one starts on the last choice (#793)", async (t) => {
+    const first = await open(t, { mode: "face-matching", server: server() });
+    assert.equal(first.document.getElementById("people-sort").value, "name");
+    assert.deepEqual(titles(first),
+      ["anh Tran", "Bao Le", "Émile Roy", "Ines Tran 3", "Ines Tran 10", "Zoe Abbott"]);
+    const sort = first.document.getElementById("people-sort");
+    sort.value = "count";
+    sort.dispatchEvent(new first.window.Event("change", { bubbles: true }));
+    assert.equal(first.window.localStorage.getItem("tagtuner.peopleSort"), "count");
   });
 });
 
@@ -70,7 +81,7 @@ describe("the tag list", () => {
   });
 
   test("by count the alphabet breaks a tie", async (t) => {
-    const ctx = await open(t, { mode: "tags", server: server() });
+    const ctx = await open(t, { mode: "tags", order: "count", server: server() });
     const names = titles(ctx).filter((s) => !/hierarchy/.test(s));
     assert.deepEqual(names, ["Éclair", "apple", "Zoo", "Trip 3", "Trip 10"]);
   });

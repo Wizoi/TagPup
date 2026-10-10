@@ -615,13 +615,16 @@ class TheNavigator(Library):
         found = self.section("people")["people"]
         self.assertEqual([("Wren Halloway", 2), ("Rowan Thackeray", 1)], [(each["name"], each["count"]) for each in found])
 
-    def test_people_who_differ_only_in_case_are_one_entry_and_a_photo_counts_once(self):
+    def test_names_no_person_has_that_differ_only_in_case_are_one_entry_and_a_photo_counts_once(self):
+        """A person the tree files is their node, whatever the rows spell; a name no node has is one entry for its spellings."""
         photo = self.vl.photo("2024 A", "extra.jpg", taken="2024:08:01 00:00:00")
-        face_rows.add_people(self.vl.conn, self.vl.path_of(photo), ["wren halloway", "WREN HALLOWAY"], source="face")
+        face_rows.add_people(self.vl.conn, self.vl.path_of(photo), ["skye marlowe", "SKYE MARLOWE"], source="face")
+        other = self.vl.photo("2024 A", "extra2.jpg", taken="2024:08:02 00:00:00")
+        face_rows.add_people(self.vl.conn, self.vl.path_of(other), ["Skye Marlowe"], source="face")
         self.vl.conn.commit()
-        found = {each["name"]: each["count"] for each in self.section("people")["people"]}
-        self.assertEqual(3, found["Wren Halloway"])
-        self.assertEqual(2, len(found))
+        found = {each["name"].lower(): each["count"] for each in self.section("people")["people"]}
+        self.assertEqual(2, found["skye marlowe"])
+        self.assertEqual(3, len(found))
 
     def test_the_dates_are_years_with_their_months_and_what_has_no_month_of_it(self):
         found = self.section("dates")
@@ -632,6 +635,18 @@ class TheNavigator(Library):
         self.assertEqual((1, [{"month": "2023-01", "count": 1}]), (years[2023]["count"], years[2023]["months"]))
         self.assertEqual((1, [], 1), (years[2019]["count"], years[2019]["months"], years[2019]["other"]), "a year from a name")
         self.assertEqual(1, found["undated"])
+
+    def test_a_year_nobody_could_have_taken_it_in_is_marked_for_the_page_to_group(self):
+        # #510: photo_index holds 61 years, 1827 to 2079: a number in a file name, a scan's clock. The server says
+        # which are implausible (before 1900, after next year) and the page only shows what it is told.
+        import datetime
+        this_year = datetime.date.today().year
+        for taken in ("1888:05:01 10:00:00", "1900:01:02 10:00:00", "1919:03:04 10:00:00",
+                      "%04d:06:07 10:00:00" % (this_year + 1), "%04d:06:07 10:00:00" % (this_year + 2)):
+            self.vl.photo("odd years", "%s.jpg" % taken[:4], taken=taken)
+        found = {each["year"]: each["implausible"] for each in self.section("dates")["years"]}
+        self.assertEqual({1888: True, 1900: False, 1919: False, 2019: False, 2023: False, 2024: False,
+                          this_year + 1: False, this_year + 2: True}, found)
 
     def test_each_month_and_year_agrees_with_the_source_it_opens(self):
         for each in self.section("dates")["years"]:

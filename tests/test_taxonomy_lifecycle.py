@@ -24,7 +24,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
-from face_rows import add_face, add_people, people_of  # noqa: E402
+from face_rows import add_face, add_people, give_their_person, people_of  # noqa: E402
 from handler_harness import Library  # noqa: E402
 
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
@@ -475,6 +475,10 @@ class TestTaxonomyRename(TaxonomyTestBase):
         add_people(conn, photo, ["Jane Doe"])
         conn.commit()
         conn.close()
+        conn = tagpup_db.connect(self.TEST_DB)
+        give_their_person(conn, conn.execute("SELECT id FROM faces").fetchone()[0])   # as every writer leaves it
+        conn.commit()
+        conn.close()
 
         status, body = self.post(
             "/api/taxonomy/rename", {"tag_id": person_id, "new_name": "Jane Smith"}
@@ -496,6 +500,10 @@ class TestTaxonomyRename(TaxonomyTestBase):
         person_id, _ = self.create_tag("Jane Doe", parent_id=people_id)
         conn = tagpup_db.connect(self.TEST_DB)
         add_face(conn, "D:/case.jpg", box="[]", embedding=b"", name="jane doe")
+        conn.commit()
+        conn.close()
+        conn = tagpup_db.connect(self.TEST_DB)
+        give_their_person(conn, conn.execute("SELECT id FROM faces").fetchone()[0])   # as every writer leaves it
         conn.commit()
         conn.close()
 

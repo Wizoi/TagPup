@@ -29,7 +29,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
-from sandbox import remove_sandbox  # noqa: E402
+from sandbox import enter, remove_sandbox  # noqa: E402
 
 
 def percentile(values, fraction):
@@ -80,7 +80,7 @@ def run(photos, exiftool):
 
     home = tempfile.mkdtemp(prefix="tagpup_measure_bulk_")
     os.makedirs(os.path.join(home, "data"))
-    os.environ["TAGPUP_HOME"] = home
+    enter(home)
     try:
         path = os.path.join(home, "data", "measured.db")
         libraries.create(path)

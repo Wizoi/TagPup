@@ -12,7 +12,15 @@ from the photos' rows, never journaled, made by migration 24 and kept by the sto
   (the drive, "Users", the profile, "Pictures"), whose words every photo of the library would match. A trigram finds
   any three characters inside a name: "0412" in "20190412_1430.jpg".
 
-Both are CONTENTLESS (`content=''`, `contentless_delete=1`): the text is not stored twice, a row is replaced by INSERT OR
+* `search_gear(camera, lens)`, tokenize `unicode61 remove_diacritics 2`, prefixes of 2 and 3 indexed, made by migration 27: the
+  camera (`photo_meta.camera_name`: "Canon EOS R6m2", "Google Pixel 8 Pro") and the lens a photo was taken with, from its
+  metadata (`photo_meta.gear`). Each is indexed as it is spelled AND again with a blank between letters and a digit that
+  follows them (`gear_text`), since a lens is "EF24-70mm f/2.8L II USM" and what is typed is "24-70": "EF 24-70mm" holds
+  the tokens 24 and 70mm. "r6" finds "R6m2" and "canon" finds "Canon EOS R6m2" as any prefix does; "24-70mm" and "ef24" find
+  the lens. Not columns of `photo_meta` -- nothing filters on them (the views have no camera or lens facet) --, so the
+  words are the whole of what is kept; they are made from the metadata itself, by `derived`.
+
+Both of the first two are CONTENTLESS (`content=''`, `contentless_delete=1`): the text is not stored twice, a row is replaced by INSERT OR
 REPLACE and taken by its rowid, which is the photo's id. A photo deleted takes its rows by a trigger whichever connection
 deletes it (`search_goes_with_its_photo`), as the derived tables do.
 
@@ -33,16 +41,20 @@ The caller commits. Every function does nothing, and says 0, on a library withou
 """
 import json
 import os
+import re
 
-from tagpup.core import paths
+from tagpup.core import paths, photo_meta
 from tagpup.core.result import Refused
 
-WORDS, NAMES = "search_words", "search_names"
+WORDS, NAMES, GEAR = "search_words", "search_names", "search_gear"
 #: The migration that makes the tables (tagpup.store.schema).
 MIGRATION = 24
+#: The migration that makes the camera and lens words, GEAR.
+GEAR_MIGRATION = 27
 TABLES = (WORDS, NAMES)
 #: The tables FTS5 makes for each (contentless: no _content).
 SHADOWS = tuple("%s_%s" % (table, shadow) for table in TABLES for shadow in ("data", "idx", "docsize", "config"))
+GEAR_SHADOWS = tuple("%s_%s" % (GEAR, shadow) for shadow in ("data", "idx", "docsize", "config"))
 
 #: The statements migration 24 runs.
 CREATE = (
@@ -52,6 +64,14 @@ CREATE = (
     " contentless_delete = 1)" % NAMES,
     "CREATE TRIGGER search_goes_with_its_photo AFTER DELETE ON photos BEGIN"
     " DELETE FROM %s WHERE rowid = OLD.id; DELETE FROM %s WHERE rowid = OLD.id; END" % (WORDS, NAMES),
+)
+
+#: The statements migration 27 runs.
+CREATE_GEAR = (
+    "CREATE VIRTUAL TABLE %s USING fts5(camera, lens, tokenize = 'unicode61 remove_diacritics 2', prefix = '2 3',"
+    " content = '', contentless_delete = 1)" % GEAR,
+    "CREATE TRIGGER search_gear_goes_with_its_photo AFTER DELETE ON photos BEGIN"
+    " DELETE FROM %s WHERE rowid = OLD.id; END" % GEAR,
 )
 
 #: Photos read at a time.
@@ -76,6 +96,19 @@ def present(conn):
         return False
     try:
         conn.search_ready = True
+    except AttributeError:
+        pass   # a connection that is not db.connect's cannot remember
+    return True
+
+
+def gear_present(conn):
+    """Has the library on `conn` the camera and lens words (migration 27)? Remembered once true."""
+    if getattr(conn, "gear_ready", False):
+        return True
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (GEAR,)).fetchone():
+        return False
+    try:
+        conn.gear_ready = True
     except AttributeError:
         pass   # a connection that is not db.connect's cannot remember
     return True
@@ -114,6 +147,31 @@ def photo_text(path, tags_json, captions_json, people):
             (paths.row_name(path), folder_text(path)))
 
 
+#: Between a letter and the digit after it: "EF24-70mm" is also indexed as "EF 24-70mm".
+_LETTER_DIGIT = re.compile(r"(?<=[^\W\d_])(?=\d)")
+
+
+#: A decimal point that says nothing: "24.0-70.0 mm", which some bodies write as the lens's name, is the tokens 24, 0, 70, 0, so
+#: "24-70" would not find it. Not "f/2.8": only a point followed by zeros alone.
+_DOT_ZERO = re.compile(r"(?<=\d)\.0+(?!\d)")
+
+
+def _spelled_twice(text):
+    """`text` as spelled, and again for each way a person types it that the tokenizer would not match: a blank between a
+    letter and the digit after it ("EF 24-70mm"), and without a pointless ".0" ("24-70 mm" for "24.0-70.0 mm")."""
+    if not text:
+        return ""
+    dotless = _DOT_ZERO.sub("", text)
+    spellings = [text, _LETTER_DIGIT.sub(" ", text), dotless, _LETTER_DIGIT.sub(" ", dotless)]
+    return "\n".join(dict.fromkeys(spellings))
+
+
+def gear_text(gear):
+    """(camera, lens): what the two columns of GEAR hold of a photo with `gear` (photo_meta.Gear): "" for what it does not
+    say, each as spelled and, when a letter is followed by a digit, spelled again with a blank between them."""
+    return _spelled_twice(gear.camera), _spelled_twice(gear.lens)
+
+
 def _marks(items):
     return ",".join("?" * len(items))
 
@@ -134,6 +192,48 @@ def _write(conn, found):
                      [(photo_id,) + words for photo_id, (words, _names) in found.items()])
     conn.executemany("INSERT OR REPLACE INTO %s (rowid, name, folders) VALUES (?, ?, ?)" % NAMES,
                      [(photo_id,) + names for photo_id, (_words, names) in found.items()])
+
+
+def write_gear(conn, gears, gone=()):
+    """Make the GEAR rows of the photos in `gears` ({photo id: photo_meta.Gear}) what their metadata says: a row for
+    each, empty for a photo that names no camera; and take the rows of the ids in `gone` (photos with none). In the
+    caller's transaction; the caller read the metadata. Returns how many photos were written; 0 for a library without
+    the table."""
+    if not gear_present(conn):
+        return 0
+    conn.executemany("DELETE FROM %s WHERE rowid = ?" % GEAR, [(photo_id,) for photo_id in gone])
+    conn.executemany("INSERT OR REPLACE INTO %s (rowid, camera, lens) VALUES (?, ?, ?)" % GEAR,
+                     [(photo_id,) + gear_text(gear) for photo_id, gear in gears.items()])
+    return len(gears)
+
+
+def clear_gear(conn):
+    """Take every GEAR row, before `derived.rebuild_all` writes them whole."""
+    if gear_present(conn):
+        conn.execute("INSERT INTO %s (%s) VALUES ('delete-all')" % (GEAR, GEAR))
+
+
+def optimize_gear(conn):
+    if gear_present(conn):
+        conn.execute("INSERT INTO %s (%s) VALUES ('optimize')" % (GEAR, GEAR))
+
+
+def rebuild_gear_from_meta(conn):
+    """Make GEAR what `photo_meta`'s make and model say, whole, with no lens: migration 27's, which reads no photo's
+    metadata -- the lens (and a make or model `photo_meta` is out of step on) comes with `derived.rebuild_all`, the
+    doctor's --rebuild-derived. Returns how many photos."""
+    clear_gear(conn)
+    last, count = -1, 0
+    while True:
+        rows = conn.execute("SELECT p.id, m.make, m.model FROM photos p LEFT JOIN photo_meta m ON m.photo_id = p.id"
+                            " WHERE p.id > ? ORDER BY p.id LIMIT ?", (last, 2000)).fetchall()
+        if not rows:
+            break
+        last = rows[-1][0]
+        count += write_gear(conn, {photo_id: photo_meta.Gear(photo_meta.camera_name(make, model), None)
+                                   for photo_id, make, model in rows})
+    optimize_gear(conn)
+    return count
 
 
 def refresh(conn, photo_ids):
@@ -183,11 +283,51 @@ def _phrase(text):
     return '"%s"' % text.replace('"', '""')
 
 
-def stale(conn, sample=SAMPLE):
-    """The ids of the photos whose rows are not what their sources give: every photo with no row in either table, every
+def _stale_gear(conn, ids, lens):
+    """The ids among `ids` whose GEAR row does not hold the camera (and, with `lens`, the lens) their metadata names: the
+    one place the check reads raw_metadata, for the photos of the sample alone."""
+    wrong = set()
+    for photo_id, raw in conn.execute("SELECT id, raw_metadata FROM photos WHERE id IN (%s)" % _marks(ids), ids):
+        camera, lens_text = gear_text(photo_meta.gear(photo_meta.load(raw)))
+        for column, text in (("camera", camera), ("lens", lens_text if lens else "")):
+            if any(each.isalnum() for each in text) and not conn.execute(
+                    "SELECT 1 FROM %s WHERE %s MATCH ? AND rowid = ?" % (GEAR, GEAR),
+                    ("%s : %s" % (column, _phrase(text)), photo_id)).fetchone():
+                wrong.add(photo_id)
+    return wrong
+
+
+def _spread(conn, sample):
+    """The ids of `sample` photos spread over the ids (None: every photo)."""
+    ids = [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos ORDER BY id")]
+    if sample is not None and len(ids) > sample:
+        step = len(ids) / sample
+        ids = [ids[int(n * step)] for n in range(sample)]
+    return ids
+
+
+def stale_gear(conn, sample=SAMPLE, lens=True):
+    """The ids of the photos whose camera words are not what their metadata gives: every photo with no row, every row that
+    is no photo's, and of `sample` photos those whose camera (and, with `lens`, lens) is not found in their row. [] for a
+    library without the words. Reads only: migration 27's check, which asks nothing of the other two tables."""
+    if not gear_present(conn):
+        return []
+    found = {photo_id for (photo_id,) in conn.execute(
+        "SELECT id FROM photos WHERE id NOT IN (SELECT id FROM %s_docsize)" % GEAR)}
+    found.update(row_id for (row_id,) in conn.execute(
+        "SELECT id FROM %s_docsize WHERE id NOT IN (SELECT id FROM photos)" % GEAR))
+    ids = _spread(conn, sample)
+    for start in range(0, len(ids), CHUNK):
+        found |= _stale_gear(conn, ids[start:start + CHUNK], lens)
+    return sorted(found)
+
+
+def stale(conn, sample=SAMPLE, lens=True):
+    """The ids of the photos whose rows are not what their sources give: every photo with no row in any table, every
     row that is no photo's, and of `sample` photos spread over the ids (None: every photo), those a column of whose text
     -- matched as one phrase, its words in order -- is not found in its row. A contentless table cannot be read back, so a
-    word left behind that the text no longer holds is not seen by the sample. Reads only."""
+    word left behind that the text no longer holds is not seen by the sample. The camera and lens of the sample are read
+    from the photos' metadata; without `lens`, the camera alone (migration 27 makes no lens). Reads only."""
     if not present(conn):
         return []
     found = set()
@@ -196,10 +336,7 @@ def stale(conn, sample=SAMPLE):
             "SELECT id FROM photos WHERE id NOT IN (SELECT id FROM %s_docsize)" % table))
         found.update(row_id for (row_id,) in conn.execute(
             "SELECT id FROM %s_docsize WHERE id NOT IN (SELECT id FROM photos)" % table))
-    ids = [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos ORDER BY id")]
-    if sample is not None and len(ids) > sample:
-        step = len(ids) / sample
-        ids = [ids[int(n * step)] for n in range(sample)]
+    ids = _spread(conn, sample)
     columns = ((WORDS, ("tags", "captions", "people")), (NAMES, ("name", "folders")))
     for start in range(0, len(ids), CHUNK):
         for photo_id, texts in _rows(conn, ids[start:start + CHUNK]).items():
@@ -213,7 +350,7 @@ def stale(conn, sample=SAMPLE):
                     if not conn.execute("SELECT 1 FROM %s WHERE %s MATCH ? AND rowid = ?" % (table, table),
                                         ("%s : %s" % (column, _phrase(text)), photo_id)).fetchone():
                         found.add(photo_id)
-    return sorted(found)
+    return sorted(found | set(stale_gear(conn, sample, lens)))
 
 
 #: What the check of the word index cannot see, and the remedy (#752): said wherever its count is reported.
@@ -244,16 +381,19 @@ def terms(words):
     return found
 
 
-def clause(words):
+def clause(words, gear=False):
     """(SQL over `photos p`, params) of the photos that hold every term of `words` (terms): for each term, its words
-    table as a prefix phrase or, three characters or more, its names table as a substring; None when no term says
-    anything. Each term is quoted, its quotes doubled: nothing typed is read as FTS5's syntax."""
+    table as a prefix phrase or, three characters or more, its names table as a substring -- or, with `gear` (the library
+    has the camera and lens words), the camera or lens as a prefix phrase; None when no term says anything. Each term is quoted, its quotes doubled: nothing typed is read as FTS5's syntax."""
     parts = []
     for term in terms(words):
         either, params = [], []
         if any(each.isalnum() for each in term):
             either.append("p.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)" % (WORDS, WORDS))
             params.append(_phrase(term) + "*")
+            if gear:
+                either.append("p.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)" % (GEAR, GEAR))
+                params.append(_phrase(term) + "*")
         if len(term) >= SUBSTRING:
             either.append("p.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)" % (NAMES, NAMES))
             params.append(_phrase(term))

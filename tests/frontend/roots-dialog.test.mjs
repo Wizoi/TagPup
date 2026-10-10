@@ -9,6 +9,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { loadApp, FakeServer, flush, click, closeAllApps } from "./harness.mjs";
 import { OPEN_DIALOG } from "../../web/common/dialog.js";
 
@@ -30,7 +31,9 @@ function entry(overrides = {}) {
   return {
     name: "pictures", address: SHARE, added: "2026-10-02 09:00:00", places: [OLD], active: OLD, previous: null,
     writes_to: `Tags and renames are written to files at ${OLD}.`, mapped: true, rows: 68466,
-    last_verify: null, verifying: null, ...overrides,
+    last_verify: null, verifying: null,
+    // The server's own field: where files are written, the first place of the map, which is the active one.
+    writes_to_place: overrides.active === undefined ? OLD : overrides.active, ...overrides,
   };
 }
 
@@ -92,6 +95,56 @@ describe("the Roots dialog", () => {
     assert.equal(text(note), "Other programs may be scanning these files: see Activity > File access");
     assert.equal(note.querySelector("a").getAttribute("href"), "/activity/#file-access");
     assert.equal(ctx.server.calls.filter((c) => c.url.includes("file-access")).length, 0);
+  });
+
+  test("after a Change location the root names its place once, the earlier place stays in the open, the rest is folded (#915)", async (t) => {
+    // The shape the server makes after a move: the new place first, the old kept, writes to the first.
+    const ctx = await tuner(t, { roots: [entry({ places: [NEW, OLD], active: NEW, previous: OLD,
+      writes_to: `Tags and renames are written to files at ${NEW}.` })] });
+    const row = (await openFromGear(ctx)).querySelector(".roots-root");
+    const more = row.querySelector("details.roots-more");
+    assert.ok(more, "where files are written is folded away");
+    assert.equal(more.hasAttribute("open"), false, "closed while the writes go where the root is kept");
+    assert.ok(more.querySelector(".roots-writes"));
+    const previous = row.querySelector(".roots-previous");
+    assert.ok(previous && !previous.closest("details"), "the separate-copy sentence is not folded away");
+    assert.match(text(previous), /separate copy.*Moving again forgets it/);
+    const open = [...row.children].filter((child) => child !== more).map(text).join(" ");
+    assert.equal(open.split(NEW).length - 1, 1, "the place is named once outside the fold");
+    assert.equal(open.includes("Tags and renames"), false);
+  });
+
+  test("the fold compares the server's two places as paths, not as text", async (t) => {
+    const ctx = await tuner(t, { roots: [entry({ writes_to_place: "d:\\training\\pictures\\" })] });
+    const more = (await openFromGear(ctx)).querySelector(".roots-root details.roots-more");
+    assert.equal(more.hasAttribute("open"), false, "the same folder in another spelling is the same place");
+  });
+
+  test("the fold opens when the server says files are written elsewhere than the root is kept", async (t) => {
+    const ctx = await tuner(t, { roots: [entry({ writes_to_place: NEW,
+      writes_to: `Tags and renames are written to files at ${NEW}.` })] });
+    const more = (await openFromGear(ctx)).querySelector(".roots-root details.roots-more");
+    assert.equal(more.hasAttribute("open"), true);
+    assert.match(text(more.querySelector("summary")), /elsewhere/);
+  });
+
+  test("the status and the result sentence are blocks of their own, and the stylesheet spaces them", async (t) => {
+    const ctx = await tuner(t);
+    const row = (await openFromGear(ctx)).querySelector(".roots-root");
+    const last = row.querySelector(".roots-last");
+    const result = row.querySelector(".roots-result");
+    assert.equal(last.tagName, "P");
+    assert.equal(result.tagName, "DIV");
+    assert.notEqual(last.nextElementSibling, result, "the buttons stand between the status and the result");
+    const css = readFileSync(new URL("../../web/tuner/style.css", import.meta.url), "utf8");
+    assert.match(css, /\.roots-last \{[^}]*margin:/);
+    assert.match(css, /\.roots-result:not\(:empty\) \{[^}]*margin:/);
+  });
+
+  test("the File access link is in a colour readable on the dark page, and the dialog gives way on a narrow window", async () => {
+    const css = readFileSync(new URL("../../web/tuner/style.css", import.meta.url), "utf8");
+    assert.match(css, /\.file-access-note a \{[^}]*color: #a5b4fc/);
+    assert.match(css, /@media \(max-width: 600px\) \{[^@]*\.roots-title \{ flex-wrap: wrap/);
   });
 
   test("a root with an earlier place says it is a separate copy, and Change back is there", async (t) => {
@@ -168,6 +221,31 @@ describe("Verify", () => {
     assert.match(text(dialog.querySelector(".roots-result")), /a sample of 2000 of 68466 rows.*1998 match/);
   });
 
+  test("the folder markers are one line beside the summary, only for a library that has marked folders (#984)", async (t) => {
+    const ctx = await tuner(t);
+    const markers = { rows: 40, checked: 40, match: 38, differs: 0, unmarked: 2, malformed: 0, unreadable: 0,
+      not_there: 0, partial: false, line: "38 of 40 marked folders match; 0 differ; 2 not marked" };
+    let asked = 0;
+    ctx.server.first("/api/roots/verify", () => ({ success: true, started: false,
+      verify: { ...VERIFY, markers: ++asked === 1 ? markers : null } }));
+    const dialog = await openFromGear(ctx);
+    click(ctx.window, dialog.querySelector(".roots-verify"));
+    await flush(ctx.window, 6);
+    const shown = [...dialog.querySelectorAll(".roots-result p")].map((p) => text(p));
+    assert.equal(shown.length, 2, shown.join(" | "));
+    assert.equal(shown[1], "38 of 40 marked folders match; 0 differ; 2 not marked.");
+    click(ctx.window, dialog.querySelector(".roots-verify"));
+    await flush(ctx.window, 6);
+    assert.equal(dialog.querySelectorAll(".roots-result p").length, 1, "nothing extra for a library with no marked folders");
+  });
+
+  test("the last check says how many marked folders matched (#984)", async (t) => {
+    const ctx = await tuner(t, { roots: [entry({ last_verify: { when: "2026-10-02 10:00:00", mode: "sample",
+      checked: 2000, matches: 1998, differs: 2, missing: 0, marked: 40, marks_match: 38, marks_differ: 1, outcome: "done" } })] });
+    const row = (await openFromGear(ctx)).querySelector(".roots-root");
+    assert.match(text(row.querySelector(".roots-last")), /0 missing\. 38 of 40 marked folders match; 1 differ\.$/);
+  });
+
   test("a place that cannot be reached is said as that, not as missing rows", async (t) => {
     const ctx = await tuner(t);
     const away = { ...VERIFY, reachable: false, state: "away", checked: 0, matches: 0, poor: true,
@@ -190,6 +268,32 @@ describe("Verify", () => {
     click(ctx.window, dialog.querySelector(".roots-verify"));
     await flush(ctx.window, 6);
     assert.match(text(dialog.querySelector(".roots-result")), /under way already/);
+  });
+
+  test("while the folder markers are read the progress says so, not '0 of 68,466' (#984)", async (t) => {
+    const ctx = await tuner(t);
+    ctx.server.routes.length = 0;
+    ctx.server
+      .on("/api/roots/verify", { success: true, started: true,
+        status: { root: "pictures", state: "running", checked: 0, rows: 68466, folders: 0, markers_read: 0, markers_of: 2672 } })
+      .on("/api/roots", () => listing([entry({ verifying: { root: "pictures", state: "running", checked: 0, rows: 68466,
+        folders: 0, markers_read: 1200, markers_of: 2672, cancelling: false } })]));
+    const dialog = await openFromGear(ctx);
+    click(ctx.window, dialog.querySelector(".roots-verify-all"));
+    await flush(ctx.window, 4);
+    await wait(ctx.window, 60);
+    assert.equal(text(dialog.querySelector(".roots-progress-text")), "Reading folder markers: 1,200 of 2,672...");
+  });
+
+  test("markers that were not read (a cancel, a share away) show no '0 of 0' line (#984)", async (t) => {
+    const ctx = await tuner(t);
+    ctx.server.first("/api/roots/verify", { success: true, started: false, verify: { ...VERIFY, markers: {
+      rows: 40, checked: 0, match: 0, differs: 0, unmarked: 0, partial: true, line: "" } } });
+    const dialog = await openFromGear(ctx);
+    click(ctx.window, dialog.querySelector(".roots-verify"));
+    await flush(ctx.window, 6);
+    assert.equal(dialog.querySelectorAll(".roots-result p").length, 1);
+    assert.doesNotMatch(text(dialog.querySelector(".roots-result")), /marked folders/);
   });
 
   test("all rows is a job: progress is followed, and the result is shown when it ends", async (t) => {
@@ -426,6 +530,21 @@ describe("Change location", () => {
     click(ctx.window, confirm);
     await flush(ctx.window, 8);
     assert.equal(ctx.posted("/api/roots/change-location").pop().override, true);
+  });
+
+  test("a place whose markers differ is refused with its counts, in a sentence that names no folder (#984)", async (t) => {
+    const { ctx, dialog, type } = await panelOn(t);
+    const why = "3 of the 40 marked folders looked at carry the marker of a different folder: this looks like another folder at that place.";
+    ctx.server.routes.unshift({ match: "/api/roots/change-location", status: 400, headers: {}, body: () => ({
+      success: false, error: `Not changed: ${why} Say override to change it anyway.`, would_refuse: why,
+      verify: { ...VERIFY, poor: true, poor_why: [why], markers: { line: "37 of 40 marked folders match; 3 differ; 0 not marked" } } }) });
+    type("D:/Other");
+    click(ctx.window, dialog.querySelector(".roots-look"));
+    await flush(ctx.window, 6);
+    const shown = text(dialog.querySelector(".roots-check"));
+    assert.match(shown, /marker of a different folder/);
+    assert.match(shown, /37 of 40 marked folders match; 3 differ; 0 not marked\./);
+    assert.ok(!dialog.querySelector(".roots-override").classList.contains("hidden"));
   });
 
   test("a refusal at confirm -- a run under way, the map moved by another tab -- is its sentence, and it can be tried again", async (t) => {

@@ -9,7 +9,7 @@
  * back, so a request that is still out when the view moves on is a thing a test can look at. The library
  * is 68,000 photos of invented ids; no name is a real one.
  */
-import { test, describe, afterEach } from "node:test";
+import { test, describe, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports,
@@ -273,10 +273,29 @@ describe("the order and the cards, scrolled", () => {
   test("a fast scroll through the middle asks for nothing it has left behind", async (t) => {
     const ctx = await load(t);
     ctx.cardsAsked.length = 0;
-    for (let i = 1; i <= 30; i++) await ctx.scrollToIndex(2000 * i);   // thirty windows, no pause long enough
-    await ctx.settle();
+    // Thirty windows, a frame (17 ms) apiece, on the test's clock (node:test's mock timers: the page's setTimeout and
+    // jsdom's frames). On the real one a frame took as long as the machine was busy, and under load the scroll paused
+    // long enough to be answered (#721).
+    mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    try {
+      const turn = () => new Promise((resolve) => setImmediate(resolve));
+      for (let i = 1; i <= 30; i++) {
+        ctx.here.scrollTop = GRID_TOP + Math.floor((2000 * i) / COLUMNS) * STRIDE;
+        ctx.scroller.dispatchEvent(new ctx.window.Event("scroll"));
+        mock.timers.tick(17);
+        await turn();
+      }
+      for (let n = 0; n < 40; n++) {   // then it stands still
+        mock.timers.tick(20);
+        await turn();
+      }
+    } finally {
+      mock.timers.reset();
+    }
+    await flush(ctx.window, 6);
     const asked = ctx.cardsAsked.flat();
     assert.ok(ctx.cardsAsked.length <= 3, `${ctx.cardsAsked.length} requests for thirty windows`);
+    assert.ok(asked.every((id) => IDS.indexOf(id) >= 59000), "none for a window it flew past");
     const last = IDS.indexOf(Math.max(...asked));
     assert.ok(last >= 59000 && last <= 61000, "and for the one it stopped at");
     assert.ok(ctx.cardById(IDS[60000]), "which is drawn");

@@ -261,7 +261,9 @@ class TheOrders(Library):
             statements, _ms = store.id_plans(conn, source, 1000, store.NAME)
         finally:
             conn.close()
-        text = "\n".join("\n".join(lines) for _sql, lines in statements)
+        # The tree is read whole once (person_ids.read: a few hundred nodes, a DISTINCT of its parents); the search is the rest.
+        search_plans = [lines for sql, lines in statements if "FROM tag_taxonomy" not in sql and "sqlite_master" not in sql]
+        text = "\n".join("\n".join(lines) for lines in search_plans)
         self.assertIn(store.NAME_INDEX, text)
         self.assertNotIn("TEMP B-TREE", text)
 

@@ -226,7 +226,7 @@ class TheRepair(ALibraryAtRest):
         lines = []
         before = self.digest()
         self.assertEqual(0, doctor.rebuild_derived(self.path, apply=True, out=lines.append))
-        self.assertEqual(["the derived tables are what the photos say, and every person id what its name is"], lines)
+        self.assertEqual(["the derived tables are what the photos say, and every person's name what their node is called"], lines)
         self.assertEqual(before, self.digest(), "nothing written")
 
     def test_a_library_behind_the_migration_is_told_to_open_it_and_not_migrated(self):

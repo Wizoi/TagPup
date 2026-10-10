@@ -20,7 +20,6 @@ import threading
 
 from flask import Blueprint, Response, jsonify, request
 
-from tagpup import config as tagpup_config
 from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, vocabulary
 from tagpup.core.library import picker_name
@@ -31,7 +30,6 @@ from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import bulk_edit, damaged_photos
 from tagpup.services import faces as face_actions
 from tagpup.services import file_changes, file_only
-from tagpup.services import indexing
 from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
 from tagpup.services import people as people_service
@@ -166,16 +164,20 @@ def _folder_photos(library, folder):
 
 def _folder_indexer(library):
     """How this server adds a folder to a library: through the CLI
-    (tagpup.services.indexing.index_folder). Then the folder's cached scan is dropped,
-    since rows were written even when clustering failed afterwards. Runs on the queue's
-    thread, with the library it was handed."""
-    def index(folder, cluster, report):
-        try:
-            return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT,
-                                         cluster=cluster, report=report)
-        finally:
-            folders.of(library).pop(folder)
-    return index
+    (tagpup.services.indexing.index_folder), as every folder of this process's index queue is (tagpup.runtime.
+    index_folder), which tells `_scan_is_stale` when the folder is done. Runs on the queue's thread, with the
+    library it was handed."""
+    return runtimes.index_folder(library)
+
+
+def _scan_is_stale(library, folder):
+    """The folder was indexed: its cached scan, kept since before its photos were read (or read again), describes it
+    as it was -- even when clustering failed afterwards, since rows were written. Dropped, whoever queued the folder:
+    this route, a sync, the damaged-photo check (docs/findings.md, #341)."""
+    folders.of(library).pop(folder)
+
+
+runtimes.folder_indexed.append(_scan_is_stale)
 
 
 def _wanted_path():
@@ -339,7 +341,8 @@ def folder_suggest_status():
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
     # Under the spellings this server's scan gave the page (tagpup.jobs.suggestions).
-    return jsonify(suggestion_jobs.runs_for(library).status(folder, folders.of(library).get(folder)))
+    status = suggestion_jobs.runs_for(library).status(folder, folders.of(library).get(folder))
+    return jsonify(people_service.annotate_suggestions(library, status))
 
 
 @routes.post("/api/folder/suggest-start")
@@ -417,8 +420,8 @@ def folder_auto_apply():
         with file_changes.exclusively():
             result = tagging_actions.apply_suggestions(library, suggestions, state.exiftool(library), threshold)
             if result.refused:
-                return responses.refused(result)
-            _records_written(library, result)
+                return _refused_after_writing(library, result)
+            records_written(library, result)
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
         return responses.error(500, str(e))
@@ -1116,6 +1119,9 @@ def photo_save_metadata():
                                             state.exiftool(library), state.rename_format(library), stamp, base)
         if result.refused:
             return responses.refused(result)
+        if not result.ok:
+            logger.error("Error saving metadata for %s: %s", photo_path, result.message())
+            return responses.error(500, result.message())
         new_path, renamed, tags = result.details["new_path"], result.details["renamed"], result.details["tags"]
         # Every folder map holding the photo, found under the name it had (a rename
         # stays in the same directory).
@@ -1139,7 +1145,7 @@ def photo_save_metadata():
         logger.error("Error saving metadata for %s: %s", photo_path, e)
         return responses.error(500, str(e))
     reply = {"success": True, "new_path": new_path, **_where(result), **_stamp_reply(new_path),
-             "base": result.details.get("base")}
+             "base": result.details.get("base"), **_faces_unnamed(result)}
     if result.details["index_warning"]:
         reply["index_warning"] = result.details["index_warning"]
     return jsonify(reply)
@@ -1163,14 +1169,8 @@ def photos_bulk_tags():
             result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
                                                  state.exiftool(library))
             if result.refused:
-                # A write stopped half-way (its roots changed) has written some files: the page is told which,
-                # and its records say so, as for a failure.
-                if result.details.get("written"):
-                    _records_written(library, result)
-                    return responses.refused(result, written=_written_tags(result),
-                                             change=result.details.get("change"))
-                return responses.refused(result)
-            _records_written(library, result)
+                return _refused_after_writing(library, result)
+            records_written(library, result)
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
         return responses.error(500, str(e))
@@ -1180,7 +1180,22 @@ def photos_bulk_tags():
         logger.error("Error in bulk tags write: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
     return jsonify({"success": True, "written": _written_tags(result), **_skipped_photos(result),
-                    "stamps": {path: _stamp_reply(path) for path in result.details["written"]}, **_where(result)})
+                    "stamps": {path: _stamp_reply(path) for path in result.details["written"]}, **_where(result),
+                    **_faces_unnamed(result)})
+
+
+def _faces_unnamed(result):
+    """What a write that took a person off a photo says of the faces it unnamed (#908): `unnamed_faces`, [{"id", "name"}], for
+    the page's Undo to name again; `faces_problem`, a sentence, when they could not be. Only what happened, nothing when no face
+    was touched."""
+    said = {}
+    if result.details.get("unnamed_faces"):
+        said["unnamed_faces"] = result.details["unnamed_faces"]
+    if result.details.get("renamed_faces"):
+        said["renamed_faces"] = result.details["renamed_faces"]
+    if result.details.get("faces_problem"):
+        said["faces_problem"] = result.details["faces_problem"]
+    return said
 
 
 def _where(result):
@@ -1221,7 +1236,17 @@ def _written_tags(result):
     return {path: list(tags) for path, (tags, _flat, _hierarchical) in result.details["written"].items()}
 
 
-def _records_written(library, result):
+def _refused_after_writing(library, result):
+    """The reply to a bulk write that was refused. One that stopped half-way (its roots changed) has written
+    some files: the page is told which, and the cached records say so, as for a failure -- the one owner of that
+    answer for the bulk tag write and Apply All (findings #878)."""
+    if result.details.get("written"):
+        records_written(library, result)
+        return responses.refused(result, written=_written_tags(result), change=result.details.get("change"))
+    return responses.refused(result)
+
+
+def records_written(library, result):
     """The page's records of the photos a bulk write wrote (`written` in its details).
     The photos written before any failure are written; the page's copy of them has to
     say so either way."""
@@ -1247,8 +1272,12 @@ def tags():
 
 @routes.get("/api/people")
 def people():
-    """The people offered while a name is typed (tagpup.services.people.names)."""
+    """The people offered while a name is typed (tagpup.services.people.names). ?records=1 answers the people with a
+    person tag instead, each `{id, name, tag, group, shared}` (tagpup.services.people.records)."""
     try:
-        return jsonify(people_service.names(state.require()))
+        library = state.require()
+        if request.args.get("records") == "1":
+            return jsonify(people_service.records(library, include_hidden=request.args.get("include_hidden") == "1"))
+        return jsonify(people_service.names(library))
     except Exception as e:
         return responses.error(500, str(e))

@@ -89,7 +89,7 @@ class WhatTheLibraryHolds(TwoLibraries):
                              ["<BASE>\\Pictures\\2024 Regatta\\IMG_1001.jpg", "<BASE>\\Pictures\\2024 Regatta\\IMG_1002.jpg"])
 
     def test_the_folder_settings_are_held_as_rows_and_read_native(self):
-        held = dict(self.rooted.rows("SELECT key, value FROM settings WHERE key LIKE 'library.%'"))
+        held = dict(self.rooted.rows("SELECT key, value FROM settings WHERE key IN ('library.roots', 'library.ignored')"))
         self.assertEqual({"library.roots": "@pictures", "library.ignored": "@pictures/Not these"}, held)
         read = store_settings.read(self.rooted.db_path)
         self.assertEqual(self.rooted.pictures, read["library.roots"])

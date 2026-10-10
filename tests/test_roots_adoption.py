@@ -45,7 +45,8 @@ WINDOWS = os.name == "nt"
 #: the rows say is search_index.stale's question: a row for every photo after an adoption (WhatItDoes), and words found
 #: below the root and not by its name (tests/test_search_words.py).
 WORD_INDEX = ("search_words", "search_names", "search_words_data", "search_words_idx", "search_words_docsize",
-              "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config")
+              "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config",
+              "search_gear", "search_gear_data", "search_gear_idx", "search_gear_docsize", "search_gear_config")
 NOT_COMPARED = ("generations", "changes", "change_rows", "roots", "schema_version", "photo_people",
                 "folders", "photo_folder") + WORD_INDEX
 
@@ -262,7 +263,8 @@ class WhatItDoes(AdoptionCase):
         after = self.side.dump()
         self.assertEqual(counts["roots"] + 1, len(after["roots"]))
         # The word index's blocks are laid out anew by its rebuild; its rows, one a photo, are counted by docsize.
-        uncounted = ("roots", "changes", "search_words_data", "search_words_idx", "search_names_data", "search_names_idx")
+        uncounted = ("roots", "changes", "search_words_data", "search_words_idx", "search_names_data", "search_names_idx",
+                     "search_gear_data", "search_gear_idx")
         self.assertEqual({table: n for table, n in counts.items() if table not in uncounted},
                          {table: len(rows) for table, rows in after.items() if table not in uncounted})
         self.assertEqual([], self.side.rows("SELECT 1 FROM photos WHERE id NOT IN (SELECT id FROM search_names_docsize)"))
@@ -271,7 +273,8 @@ class WhatItDoes(AdoptionCase):
         listed = [entry for entry in self.history() if entry["operation"].startswith("roots adopt")]
         self.assertEqual(1, len(listed))
         self.assertEqual(("roots adopt: pictures", "applied"), (listed[0]["operation"], listed[0]["status"]))
-        self.assertEqual({"photos": 42, "suggestions": 0, "damaged_files": 2, "added_folders": 1, "change_files": 0},
+        self.assertEqual({"photos": 42, "suggestions": 0, "damaged_files": 2, "added_folders": 1, "change_files": 0,
+                          "folder_ids": 0},
                          listed[0]["summary"]["converted"])
 
     def test_a_new_backup_is_taken_first_every_time(self):
@@ -489,7 +492,7 @@ class Undoing(AdoptionCase):
         self.assertIsNone(rehearsal.refused, rehearsal.refused)
         self.assertEqual(self.history()[0]["summary"]["converted"], {"photos": 42, "suggestions": 0,
                                                                      "damaged_files": 2, "added_folders": 1,
-                                                                     "change_files": 0})
+                                                                     "change_files": 0, "folder_ids": 0})
         self.assertEqual(45, rehearsal.attempted)
         self.assertEqual(before, self.fingerprint())
 

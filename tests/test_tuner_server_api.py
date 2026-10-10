@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import face_rows  # noqa: E402
+import fake_exiftool  # noqa: E402
 import tuner_client  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -207,6 +208,21 @@ class TestPhotoDetails(TunerAPITestBase):
         self.assertIn("Trips/Texas", data.get("tags", []))
         self.assertEqual(len(data.get("faces", [])), 1)
         self.assertEqual(data["faces"][0]["id"], face_id)
+
+    def test_says_the_size_the_boxes_are_in(self):
+        """#787: a face's box is in the stored pixels of the full file; the pane shows a 512 px
+        copy, so it needs the file's own size to place the box."""
+        photo = self.make_photo_file("big.jpg", size=(1600, 1200))
+        self.add_photo(photo)
+        self.add_face(photo, unit_vector(7), name=None)
+
+        data = self.get(f"/api/photo-details?path={urllib.parse.quote(photo)}")
+        self.assertEqual([1600, 1200], data["size"])
+
+    def test_a_photo_that_is_not_there_has_no_size(self):
+        ghost = os.path.join(self.tmpdir, "gone.jpg")
+        data = self.get(f"/api/photo-details?path={urllib.parse.quote(ghost)}")
+        self.assertIsNone(data["size"])
 
     def test_reports_unmatched_faces_with_null_name(self):
         photo = self.make_photo_file("a.jpg")
@@ -427,7 +443,10 @@ class TestMatchBulkListsThePerson(TunerAPITestBase):
     def test_naming_unnamed_faces_lists_the_person_on_their_photo(self):
         """docs/findings.md, #42: the photo's people were written only when the
         assignment also displaced another name."""
+        # Naming writes the person to the photo's file (#907), so the file holds what the row says: Bob.
+        files = fake_exiftool.standing_in(self)
         photo = self.add_photo(self.make_photo_file("a.jpg"), tags=["People/Bob"])
+        files.keep_tags(photo, ["People/Bob"])
         face = self.add_face(photo, unit_vector(80))
         self.rebuild(photo)
         self.assertEqual(["Bob"], self.photo_people(photo))

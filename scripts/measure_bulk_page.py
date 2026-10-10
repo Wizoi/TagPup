@@ -45,7 +45,7 @@ import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
-from sandbox import copy_library, free_port, place_roots, remove_sandbox  # noqa: E402
+from sandbox import copy_library, enter, environment, free_port, place_roots, remove_sandbox  # noqa: E402
 
 LIBRARY = "measured"
 SMALL = "smalljobs"
@@ -105,7 +105,7 @@ def start_server(sandbox, db_path, tuner_port, tagpup_port):
         [sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
          "--tuner-port", str(tuner_port), "--tagpup-port", str(tagpup_port)],
         cwd=sandbox,
-        env=dict(os.environ, TAGPUP_HOME=sandbox, TAGPUP_NO_JOBS="1"),
+        env=environment(sandbox, TAGPUP_NO_JOBS="1"),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(120):
         try:
@@ -139,7 +139,7 @@ def show(title, rows):
 def make_small_library(sandbox, count):
     """A library of its own in the sandbox with `count` small real JPEGs (a Date Taken, one keyword), recorded as the indexer
     records a read: what a bulk job has to write with the real ExifTool."""
-    os.environ["TAGPUP_HOME"] = sandbox
+    enter(sandbox)
     from PIL import Image
     from tagpup.files.exiftool_session import ExifToolSession
     from tagpup.files.metadata import MetadataExtractor

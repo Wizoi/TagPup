@@ -25,7 +25,11 @@ config.ini. The tests' libraries were in data/ under fixed names, so the files t
 it ran one after another in a lane of their own (docs/findings.md, #14). None does now,
 and tests/test_tests_have_homes_of_their_own.py keeps it so; a file that named the
 checkout's data/ or config.ini would still get the lane. Each file's time is kept in
-tests/.durations.json (not in git), and the longest start first next time.
+tests/.durations.json (not in git), and the longest start first next time. The same file
+keeps how many tests each file ran when it passed: a file that passes having run fewer than
+that fails, naming both counts (a run that counted 1,427 where the last counted 1,469 was the
+shape of the original flake, #101; #290). Tests removed on purpose: `--accept-fewer` records
+the new count.
 
 Prints each file that failed, with its output, and one line of totals, and keeps the
 same in data/logs/run_tests-<time>.log (not in git; the last ten failed runs), naming
@@ -122,6 +126,28 @@ def load_durations():
         return {}
 
 
+#: The key of tests/.durations.json that holds how many tests each file ran: {module: count}.
+COUNTS = "_tests"
+
+
+def check_counts(results, counts, accept_fewer=False):
+    """(results, counts): a passing file that ran fewer tests than `counts` says it did last time becomes a
+    failure, and keeps the count it fell from; every other passing file's count is recorded."""
+    counts = dict(counts)
+    checked = []
+    for result in results:
+        module, passed, ran, seconds, output = result
+        before = counts.get(module, 0)
+        if passed and ran < before and not accept_fewer:
+            result = (module, False, ran, seconds, output + (
+                "\n[run_tests] ran %d tests where the last passing run ran %d: a file that stopped early, or tests "
+                "removed (--accept-fewer records the new count) (#290)" % (ran, before)))
+        elif passed:
+            counts[module] = ran
+        checked.append(result)
+    return checked, counts
+
+
 def save_durations(durations):
     try:
         with open(DURATIONS, "w", encoding="utf-8") as handle:
@@ -191,7 +217,7 @@ def keep_failed_run(text):
 ALONE = ("test_supervisor",)
 
 
-def run(modules, jobs):
+def run(modules, jobs, accept_fewer=False):
     """Run `modules`; returns [(module, passed, tests run, seconds, output)]."""
     durations = load_durations()
     order = sorted(modules, key=lambda m: -durations.get(m, 1.0))
@@ -229,13 +255,21 @@ def run(modules, jobs):
             record(future.result())
         lane_thread.join()
         solo_thread.join()
+    failed_already = {r[0] for r in results if not r[1]}
+    results, durations[COUNTS] = check_counts(results, durations.get(COUNTS, {}), accept_fewer)
+    for module, passed, _ran, _seconds, _output in results:
+        if not passed and module not in failed_already:
+            print("FAILED  %s (fewer tests than last time)" % module, flush=True)
     save_durations(durations)
     return results
 
 
-def rerun_alone(results):
+def rerun_alone(results, accept_fewer=False):
     """Run each failed file once more, one at a time, now that the pool has ended.
-    Returns (results with a pass in place of the failure, [(module, first output)])."""
+    Returns (results with a pass in place of the failure, [(module, first output)]).
+    A rerun that passes having run fewer tests than the last passing run did is still
+    a failure (#290): a file that stops early is the flake this must not hide."""
+    counts = load_durations().get(COUNTS, {})
     flaky = []
     again = []
     for result in results:
@@ -244,7 +278,7 @@ def rerun_alone(results):
             again.append(result)
             continue
         print("RERUN   %s alone" % module, flush=True)
-        second = run_one(module)
+        second = check_counts([run_one(module)], counts, accept_fewer)[0][0]
         if second[1]:
             flaky.append((module, first))
             again.append((module, True, second[2], seconds + second[3], second[4]))
@@ -277,6 +311,8 @@ def main(argv=None):
     parser.add_argument("--no-slow", action="store_true", help="the fast and scenario tiers")
     parser.add_argument("--no-retry", action="store_true",
                         help="do not run a failed file again alone")
+    parser.add_argument("--accept-fewer", action="store_true",
+                        help="record the count of a file that ran fewer tests than last time (tests removed on purpose)")
     args = parser.parse_args(argv)
     if sum([args.all, args.fast, args.no_slow]) > 1:
         parser.error("--all, --fast and --no-slow are one choice")
@@ -286,10 +322,10 @@ def main(argv=None):
         left_out = ("scenario", "slow") if args.fast else ("slow",)
         modules = [m for m in modules if tiers.tier_of(m) not in left_out]
     started = time.time()
-    results = run(modules, args.jobs)
+    results = run(modules, args.jobs, args.accept_fewer)
     flaky = []
     if not args.no_retry and any(not r[1] for r in results):
-        results, flaky = rerun_alone(results)
+        results, flaky = rerun_alone(results, args.accept_fewer)
     failed = [r for r in results if not r[1]]
     report = []
     for module, first in flaky:

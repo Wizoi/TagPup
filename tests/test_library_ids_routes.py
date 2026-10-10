@@ -187,7 +187,7 @@ class ThePhoto(Routes):
         self.assertEqual("", record["title"])
         self.assertIn("raw_metadata", record)
         self.assertTrue(record["missing"], "a row whose file is not there: the row, flagged (the file-and-row-at-odds cases are tests/test_stale_record_precondition.py)")
-        self.assertEqual({"path", "filename", "tags", "people", "title", "mtime", "size", "year", "taken", "raw_metadata", "id", "missing", "damaged", "damage"},
+        self.assertEqual({"path", "filename", "tags", "people", "title", "mtime", "size", "year", "taken", "raw_metadata", "camera", "lens", "id", "missing", "damaged", "damage"},
                          set(record))
 
     def test_an_undated_photo_has_no_taken(self):

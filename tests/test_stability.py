@@ -15,6 +15,7 @@ from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_people, add_vector, configured_model, people_of  # noqa: E402
+import fake_exiftool  # noqa: E402
 import own_home  # noqa: E402
 import tuner_client  # noqa: E402
 from handler_harness import Library  # noqa: E402
@@ -33,7 +34,7 @@ def native(path):
 
 def face_names(photo_index):
     """The name of each face resolution reads, in its order."""
-    return [row[4] for row in store_faces.for_clustering(photo_index.conn)]
+    return [row[4].name if row[4] else None for row in store_faces.for_clustering(photo_index.conn)]
 
 
 class TestStability(unittest.TestCase):
@@ -47,6 +48,7 @@ class TestStability(unittest.TestCase):
         cls.app = tuner_client.app_on(cls.TEST_DB_PATH)
 
     def setUp(self):
+        fake_exiftool.standing_in(self)       # naming a face puts the person on its photo (#861)
         # Setup dummy data in test DB for each test to run in isolation
         if os.path.exists(self.TEST_DB_PATH):
             try:

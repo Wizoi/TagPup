@@ -29,6 +29,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -38,6 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _root  # noqa: E402,F401
+from sandbox import enter, environment, remove_sandbox  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import clustering  # noqa: E402
@@ -48,6 +50,10 @@ from tagpup.store import faces as store_faces  # noqa: E402
 #: Chosen when the run starts. They were fixed (9401, 9402), so two runs at once --
 #: or a run beside a test suite -- could reach each other's servers.
 TUNER_PORT = TAGPUP_PORT = None
+
+#: The home the run works in, a temporary one of its own (main): its libraries, records, logs,
+#: Downloads and recurring jobs are never the owner's checkout's (docs/findings.md, #817).
+SANDBOX_HOME = None
 
 
 def free_port():
@@ -110,7 +116,8 @@ def start_servers(work_db):
     the working copy. It builds the runtime, Suggest's models, which the apps served bare lacked."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return processes.start([sys.executable, os.path.join(root, "tagpup_web.py"), "--db", os.path.abspath(work_db),
-                            "--tuner-port", str(TUNER_PORT), "--tagpup-port", str(TAGPUP_PORT)])
+                            "--tuner-port", str(TUNER_PORT), "--tagpup-port", str(TAGPUP_PORT)],
+                           env=environment(SANDBOX_HOME, TAGPUP_NO_JOBS="1"))
 
 
 def kill_tree(pid):
@@ -155,6 +162,13 @@ def main():
         print("these timings meaningless. Wait for it to finish, or pass --no-index.")
         return 2
 
+    # A home of its own, this process's too: the copy of the library, the server and everything it
+    # writes -- records, logs, Downloads -- are in it, and none in the checkout's.
+    global SANDBOX_HOME
+    SANDBOX_HOME = tempfile.mkdtemp(prefix="verify_workflow_home_")
+    os.makedirs(os.path.join(SANDBOX_HOME, tagpup_config.DATA))
+    enter(SANDBOX_HOME)
+
     # test_ prefix keeps the copy out of the database selector in both interfaces.
     work_db = tagpup_config.library_path("test_verify_workflow.db")
     if os.path.exists(work_db):
@@ -167,7 +181,6 @@ def main():
     src.close()
     print(f"working on a copy: {work_db} ({os.path.getsize(work_db)/1e6:.1f} MB)\n")
 
-    import tempfile
     photos_dir = tempfile.mkdtemp(prefix="verify_workflow_photos_")
     if args.folder:
         print(f"copying {args.folder} to work on ...")
@@ -199,6 +212,10 @@ def main():
                 print(f"  ({work_db} is still open; the next run will clear it)")
         else:
             print(f"\ncopy kept at {work_db}")
+        if args.keep:
+            print(f"the sandbox home is kept at {SANDBOX_HOME}")
+        else:
+            remove_sandbox(SANDBOX_HOME)
         # The photo copies go whatever --keep says: they are only ever a copy.
         for attempt in range(20):
             shutil.rmtree(photos_dir, ignore_errors=True)

@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
+import migration_names  # noqa: E402
 import photo_rows  # noqa: E402
 from test_service_tags import TreeCase  # noqa: E402
 
@@ -510,9 +511,7 @@ class TheJournalsWrites(WithALibrary):
             applied = journal.apply(old, "retag", [journal.update(
                 "photos", (1,), {"tags": '["People/Wren Halloway"]'}, {"tags": '["Trips/Coast"]'})])
         schema._current.clear()
-        self.assertEqual(["the tables the library views stand on", "photos by when they were taken", "people by their node's id", "photos by file name",
-                          "photos by caption", "photos by their words",
-                          "the photos whose faces were detected"],
+        self.assertEqual(migration_names.after(18),
                          schema.ensure(old))
         journal.undo(old, applied.change_id)
         conn = db.connect(db.readonly_uri(old), uri=True)
