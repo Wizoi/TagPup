@@ -1666,6 +1666,17 @@ def _drop_legacy_counters(db_path, conn):
     logger.info("%s: took away the counters an older version made again", db_path)
 
 
+#: The libraries this process is migrating just now, by the database's key, and how many threads are. A request for
+#: one must not wait on its write lock holding a server thread (tagpup.web.libraries answers it 503 at once).
+_migrating = {}
+
+
+def migrating(db_path):
+    """Is a thread of this process migrating (or making) the library at `db_path` just now? A cheap read, no connection."""
+    with _current_guard:
+        return _migrating.get(db._key(db_path), 0) > 0
+
+
 def _ensure(db_path):
     conn = db.connect(db_path, timeout=30.0)
     try:
@@ -1675,22 +1686,33 @@ def _ensure(db_path):
         if found == LATEST:
             _drop_legacy_counters(db_path, conn)
             return []
-        with db.lock_for(db_path):
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                # A library with no tables yet is being made, not migrated: nothing to back
-                # up, watch or record.
-                made = not [t for t in _tables_now(conn) if t != "schema_version"]
-                conn.execute("CREATE TABLE IF NOT EXISTS schema_version ("
-                             " version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
-                conn.commit()
-            except BaseException:
-                conn.rollback()
-                raise
-            run = _Run(db_path, conn, made)
-            return [migration.name for migration in MIGRATIONS if run.migrate(migration)]
+        key = db._key(db_path)
+        with _current_guard:
+            _migrating[key] = _migrating.get(key, 0) + 1
+        try:
+            return _migrate(db_path, conn)
+        finally:
+            with _current_guard:
+                _migrating[key] -= 1
     finally:
         conn.close()
+
+
+def _migrate(db_path, conn):
+    with db.lock_for(db_path):
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # A library with no tables yet is being made, not migrated: nothing to back
+            # up, watch or record.
+            made = not [t for t in _tables_now(conn) if t != "schema_version"]
+            conn.execute("CREATE TABLE IF NOT EXISTS schema_version ("
+                         " version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        run = _Run(db_path, conn, made)
+        return [migration.name for migration in MIGRATIONS if run.migrate(migration)]
 
 
 class _Run:

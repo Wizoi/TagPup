@@ -55,6 +55,23 @@ def newer_problem(db_path):
 _bringing = 0
 _bringing_guard = threading.Lock()
 
+#: The libraries (by key) the startup thread has not yet looked at: a request for one is answered "updating" at once
+#: rather than run the migration on, or wait on the lock of, a server thread (tagpup.web.libraries).
+_waiting = {}
+
+
+def _key(db_path):
+    return os.path.normcase(os.path.abspath(db_path))
+
+
+def updating(db_path):
+    """Is the library at `db_path` being brought up to date by this process just now -- migrating, or still to be looked
+    at by the startup thread? A cheap read; a request for it waits (503) instead of holding a thread on the write lock."""
+    with _bringing_guard:
+        if _waiting.get(_key(db_path), 0) > 0:
+            return True
+    return schema.migrating(db_path)
+
 
 def bringing_up_to_date():
     """How many libraries this process's startup thread has still to bring up to date."""
@@ -68,9 +85,8 @@ def bring_up_to_date_in_background(libraries_served):
     then, not in the first request that names the library. The server answers meanwhile: /api/server,
     which the supervisor's hand-over asks, names no library, and says the thread is busy; a drain waits
     for it (bringing_up_to_date, #664), so a new version does not end the server part-way through a
-    migration. A page opened meanwhile gets a blank tab until the migration ends -- every URL under the
-    library's name resolves it and waits on its write lock -- and a page already open shows its own
-    spinner for its requests (#666). A library that cannot be brought up to date now -- held by another
+    migration. A request for the library meanwhile is answered 503 "updating" at once (`updating`; the pages
+    wait that out, #666), not parked on the write lock: sixteen parked threads left /api/server no thread. A library that cannot be brought up to date now -- held by another
     program past the busy timeout -- is logged and left for its first request. A library whose file is
     not there is left alone: bringing it up to date would make it, and the picker offers the default
     library in an empty data folder (#100). Returns the thread."""
@@ -78,6 +94,8 @@ def bring_up_to_date_in_background(libraries_served):
     there = [library for library in libraries_served if os.path.exists(library.path)]
     with _bringing_guard:
         _bringing += len(there)
+        for library in there:
+            _waiting[_key(library.path)] = _waiting.get(_key(library.path), 0) + 1
 
     def run():
         global _bringing
@@ -93,6 +111,7 @@ def bring_up_to_date_in_background(libraries_served):
             finally:
                 with _bringing_guard:
                     _bringing -= 1
+                    _waiting[_key(library.path)] -= 1
 
     thread = threading.Thread(target=run, name="BringUpToDateThread", daemon=True)
     thread.start()
