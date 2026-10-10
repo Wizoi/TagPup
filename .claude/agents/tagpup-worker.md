@@ -65,9 +65,14 @@ reviewed and thrown away (automatic roots; a row for every photo of an added fol
 
 ## Findings
 Anything you find -- a bug in the code you are moving, a spec that disagrees with the
-code, a decision you made rather than copied -- goes as a row in the scratch file the
-brief names, in docs/findings.md's format with `| ? |` for the number. Do not edit
-docs/findings.md. A bug you fix gets a test that fails on the old code first
+code, a decision you made rather than copied -- goes as a row in a scratch file, in
+docs/findings.md's format with `| ? |` for the number and a severity word first in the
+Finding (`data:`, `wrong:` or `low:`; CLAUDE.md, "Keeping the project small"). Put the
+rows into `docs/findings_pending/<your branch>.md` with
+`tools/add_findings.py <scratch file> --branch-file docs/findings_pending/<your branch>.md`
+(they get provisional `B-1`, `B-2`; never write a `B-n` into code, a comment or a commit
+message). Do not number rows into docs/findings.md: the main session does it at merge.
+A bug you fix gets a test that fails on the old code first
 (`git archive HEAD | tar -x -C <folder outside the worktree>`); say in the row that it did.
 
 ## Before you report
