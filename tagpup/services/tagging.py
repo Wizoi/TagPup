@@ -555,37 +555,14 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
                                      KEYWORD_READ, plan_one, summary={"photos": len(rows)})
 
 
-def suggestion_writes(library, suggestions, min_score=suggesting.OFFER_A_TAG):
-    """What the CLI's `write` writes from the entries of a suggestions file: (path, tags,
-    caption) for each photo with a tag scoring at least `min_score`
-    (tagpup.core.suggesting.written_tags), or a caption made from them; and the paths
-    left out because there is no file there.
-
-    The library's face roots, which the caption files people under, are read once for
-    the run; scripts/writer.py read them again for every photo.
-    """
-    face_roots = taxonomy.people_vocabulary(library.path).roots
-    writes, missing = [], []
-    for entry in suggestions:
-        path = entry.get("path")
-        if not path or not os.path.exists(path):
-            missing.append(path)
-            continue
-        tags = suggesting.written_tags(entry.get("suggested_tags", []), min_score)
-        caption = suggesting.caption_from_tags(tags, face_roots)
-        if tags or caption:
-            writes.append((path, tags, caption))
-    return writes, missing
-
-
-#: What the CLI's `write` reads of each file: the keyword fields, and every field a
+#: What `write_suggestions` reads of each file: the keyword fields, and every field a
 #: caption is written to (tagpup.core.fields.caption_fields).
 SUGGESTION_READ = tuple(dict.fromkeys(KEYWORD_READ + tuple(fields.caption_fields(""))))
 
 
 @roots_service.canonical_args("writes")
 def write_suggestions(library, writes, exiftool_path, nobackup=False):
-    """Write each (path, tags, caption) of `writes` (suggestion_writes') as one change of
+    """Write each (path, tags, caption) of `writes` as one change of
     photo files (tagpup.services.file_changes), which can be undone, each file's row told
     what it holds as it is marked done.
 

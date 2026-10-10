@@ -7,7 +7,7 @@ photo_index's photos. The server refused each, 409, "<folder> is not in <library
 <library> first." -- one check, tagpup.services.libraries.refuse_writes.
 
 Since 2026-10-02 only what needs the library's database is refused that way: Suggest, Apply
-All and the CLI's `write` of suggestions. A caption, a tag, a Smart Rename, a turn, a date
+All and the write of suggestions. A caption, a tag, a Smart Rename, a turn, a date
 and a delete write the photo's FILE (tagpup.services.file_only; tests/test_just_look_edits.py)
 and make no row: here, that the folder is still not the library's after each.
 """
@@ -21,16 +21,15 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
-from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from tagpup.core import fields  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import tagging  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
-from tagpup_cli import cli  # noqa: E402
 
 
 def make_photo(path):
@@ -155,20 +154,16 @@ class ALibraryThatCannotBeRead(WriteCase):
         self.assertIn("nothing was started", reply.get_json()["error"])
 
 
-class TheCliWrite(unittest.TestCase):
+class TheWriteOfSuggestions(unittest.TestCase):
     def test_refuses_suggestions_for_a_folder_the_library_does_not_hold(self):
         home = own_home.for_test(self)
         db_path = home.library("harbour.db")
         library_actions.create(db_path)
         photo = make_photo(os.path.join(home.root, "Share", "Lighthouse", "IMG_0001.jpg"))
         before = stamp(photo)
-        suggestions = os.path.join(home.root, "suggestions.json")
-        with open(suggestions, "w", encoding="utf-8") as handle:
-            handle.write('[{"path": %s, "suggested_tags": [{"tag": "Trips/Lighthouse", "score": 0.9}]}]'
-                         % __import__("json").dumps(photo))
-        result = CliRunner().invoke(cli, ["--db", db_path, "write", suggestions, "-Live", "--nobackup"], input="YES\n")
-        self.assertEqual(1, result.exit_code, result.output)
-        self.assertIn("is not in harbour", " ".join(result.output.split()))
+        result = tagging.write_suggestions(Library(db_path), [(photo, ["Trips/Lighthouse"], "")], "exiftool")
+        self.assertIn("is not in harbour", " ".join(result.refused.split()))
+        self.assertEqual(0, result.changed)
         self.assertEqual(before, stamp(photo))
 
 
