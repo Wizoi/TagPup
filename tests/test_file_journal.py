@@ -8,8 +8,6 @@ stores them (tests/photo_rows.add_read, #309), never through the recorder under 
 BaseException raised at a step of the write (file_changes.STEPS), as tests/test_journal.py
 does for the journal of rows; `settle` then finishes what it left.
 """
-import contextlib
-import io
 import json
 import os
 import socket
@@ -421,45 +419,6 @@ class TimeShift(FilesCase):
         self.assertIn("10:00", self.rows("SELECT taken FROM photos WHERE path = ?", (a,))[0][0])
         raw = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
         self.assertEqual(raw["EXIF:DateTimeOriginal"], TAKEN)
-
-
-class TheScripts(FilesCase):
-    """The two scripts that copied the whole library before they wrote: each now records
-    changes of the journal instead, and each can be undone."""
-
-    def run_script(self, module, *arguments):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            module.main(["--db", self.library.path, "--exiftool", EXIFTOOL] + list(arguments))
-        return out.getvalue()
-
-    def test_backfill_document_ids(self):
-        import backfill_document_ids as script
-
-        holds = self.make("holds.jpg")
-        write_outside(holds, {"XMP-xmpMM:DocumentID": "xmp.did:held-already"})
-        lacks = self.make("lacks.jpg")
-        dry = self.run_script(script)
-        self.assertIn("Nothing was changed", dry)
-        self.assertIsNone(field_of(lacks, "XMP-xmpMM:DocumentID"))
-        self.assertEqual(self.rows("SELECT COUNT(*) FROM changes")[0][0], 0)
-
-        applied = self.run_script(script, "--apply")
-        self.assertNotIn("backed up", applied)
-        self.assertFalse(os.path.isdir(os.path.join(self.home.data, "backups")), "a copy of the library was taken")
-        minted = field_of(lacks, "XMP-xmpMM:DocumentID")
-        self.assertTrue(minted and minted.startswith("xmp.did:"))
-        identities = dict(self.rows("SELECT path, document_id FROM photos"))
-        self.assertEqual((identities[holds], identities[lacks]), ("xmp.did:held-already", minted))
-        changes = self.rows("SELECT id, operation, status FROM changes ORDER BY id")
-        self.assertEqual([(op, status) for _id, op, status in changes],
-                         [("backfill_document_ids", "applied"), ("backfill_document_ids: mint", "applied")])
-
-        for change_id, _op, _status in reversed(changes):
-            self.assertFalse(self.undo(change_id).errors)
-        self.assertIsNone(field_of(lacks, "XMP-xmpMM:DocumentID"))
-        self.assertEqual(field_of(holds, "XMP-xmpMM:DocumentID"), "xmp.did:held-already")
-        self.assertEqual(self.rows("SELECT COUNT(*) FROM photos WHERE document_id IS NOT NULL")[0][0], 0)
 
 
 if __name__ == "__main__":

@@ -888,13 +888,3 @@ def tags_by_photo(conn):
         except (TypeError, ValueError):
             continue
     return found
-
-
-# ---- What backfill_document_ids reads and writes ----------------------------------------
-
-def without_identity(conn):
-    """The paths, as stored, of photos with no document_id recorded. Raises on a library
-    from before the column."""
-    roots = store_roots.roots_for(conn)
-    return [paths.from_row(path, roots) for (path,) in conn.execute(
-        "SELECT path FROM photos WHERE document_id IS NULL OR document_id = ''") if path]

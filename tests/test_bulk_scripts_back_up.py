@@ -48,7 +48,7 @@ FULL_COPIES = {
     os.path.join("tagpup", "store", "adoption.py"): "a library whose every path is rewritten",
     # `index --reset` deletes the library; `compact` rewrites the whole file.
     "tagpup_cli.py": "a library deleted or rewritten whole",
-    # backfill_document_ids copied it too, until phase 7.5's
+    # The bulk scripts copied it too, until phase 7.5's
     # photo-file stage (docs/findings.md, #193): each records changes of the journal now,
     # the photo files it writes among them (tagpup.services.file_changes).
 }
@@ -81,9 +81,6 @@ def bulk_scripts():
 
 
 class EveryBulkScriptRecordsAChange(unittest.TestCase):
-    def test_there_are_bulk_scripts_to_check(self):
-        self.assertGreaterEqual(len(list(bulk_scripts())), 1)   # backfill_document_ids
-
     def test_each_one_records_a_change_or_may_copy_the_library(self):
         missing = [name for name, source in bulk_scripts()
                    if not maintenance_services(source)

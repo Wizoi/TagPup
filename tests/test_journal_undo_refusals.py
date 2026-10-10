@@ -252,7 +252,7 @@ class SkippableEdits(JournalLibrary):
                 with open(os.path.join(services, name), encoding="utf-8") as handle:
                     if "skippable=True" in handle.read():
                         using.append(name)
-        self.assertEqual(["document_ids.py", "face_people.py", "refresh_rows.py", "relink_photos.py"], using)
+        self.assertEqual(["face_people.py", "refresh_rows.py", "relink_photos.py"], using)
 
 
 class ServicesReportErrors(JournalLibrary):

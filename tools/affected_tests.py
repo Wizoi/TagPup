@@ -50,7 +50,7 @@ def python_files():
 
 def module_names(relative):
     """The names a file is imported by: tagpup.store.db for tagpup/store/db.py;
-    backfill_document_ids for scripts/backfill_document_ids.py, a root launcher or a test helper, as the
+    measure_suggest_folder for scripts/measure_suggest_folder.py, a root launcher or a test helper, as the
     tests import them."""
     stem = relative[:-3]
     if stem.startswith("tagpup/"):
