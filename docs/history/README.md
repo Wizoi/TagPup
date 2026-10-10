@@ -20,3 +20,18 @@ or "Roots and machines" still resolves.
 | [ARCHITECTURE_library_views_and_search.md](ARCHITECTURE_library_views_and_search.md) | Phase 9: derived tables, thumbnails, the windowed grid, the navigator, bulk edits by id, the owner's reviews, search, camera and lens words, the searchable-fields backlog |
 | [ARCHITECTURE_identity.md](ARCHITECTURE_identity.md) | Identity by id (stage 1) and People by id, stage 2: a person is a tag-tree node's id |
 | [ARCHITECTURE_faces_and_naming.md](ARCHITECTURE_faces_and_naming.md) | Faces on the photo, Name faces from tags, the face-region backlog, the owner's decisions for the AI pipeline |
+
+## Closed findings
+
+[../findings.md](../findings.md) holds the open findings. A row whose status closed (fixed, built, decided,
+accepted, ...) is moved here byte for byte, with its number, into the file of its range of 250 numbers
+(`tools/add_findings.py --archive`; it numbers new rows from the highest number across both). On 2026-10-09,
+987 rows were archived and 97 stayed.
+
+| File | Numbers | Rows |
+|---|---|---|
+| [findings_closed_0001-0250.md](findings_closed_0001-0250.md) | 1 to 250 | 245 |
+| [findings_closed_0251-0500.md](findings_closed_0251-0500.md) | 251 to 500 | 226 |
+| [findings_closed_0501-0750.md](findings_closed_0501-0750.md) | 501 to 750 | 240 |
+| [findings_closed_0751-1000.md](findings_closed_0751-1000.md) | 751 to 1000 | 214 |
+| [findings_closed_1001-1250.md](findings_closed_1001-1250.md) | 1001 to 1250 | 62 |
