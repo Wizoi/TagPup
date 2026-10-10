@@ -85,7 +85,7 @@ def run(library, operation, plan, edits, apply=False, remaining=None, kinds=()):
     if not planned.size:
         if apply and kinds:
             # Nothing to write is still an apply that changed nothing of each kind: the callers read it
-            # (`relink-folders --apply` with no folder gone raised KeyError).
+            # (an apply with nothing to write raised KeyError).
             result.details["changed"] = {kind: 0 for kind in kinds}
         return result
     wanted = edits(planned)

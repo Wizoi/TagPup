@@ -51,7 +51,7 @@ from tagpup.files import images
 from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring, watching
-from tagpup.services import damaged_photos, file_changes, folder_ids, folder_moves, indexing, search
+from tagpup.services import damaged_photos, file_changes, folder_ids, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
 from tagpup.services import sync as sync_service
@@ -318,20 +318,6 @@ def sync(library, folder=None, apply=False, index_new=True):
     return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
                              roots=settings.roots, ignored=settings.ignored,
                              reread_resized=settings.reread_resized_pictures)
-
-
-def relink_folders(library, apply=False, only=None):
-    """Follow the folders renamed outside the apps (tagpup.services.folder_moves): a dry run
-    unless `apply`, with the ExifTool the library names, read without stamping the library
-    for a dry run. The folders that carry a marker of the library's own are followed first,
-    exactly (follow_folder_markers); the Result of that is details["markers"]."""
-    settings = library_settings(library) if apply else peek_settings(library)
-    markers = None
-    if not only:
-        markers = folder_ids.follow(library, apply=apply, exiftool_path=exiftool(library, settings))
-    result = folder_moves.relink(library, exiftool(library, settings), apply, only)
-    result.details["markers"] = markers
-    return result
 
 
 def mark_folders(library, apply=False):

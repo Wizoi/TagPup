@@ -37,7 +37,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Derived tables (`photo_tags`, `folders`, `photo_folder`, `photo_meta`, the search words) | `tagpup/store/derived.py`, `tagpup/store/search_index.py` | `tests/test_derived_writers.py` |
 | Who is who (clustering, a face's name looking wrong) | `tagpup/core/clustering.py`, `tagpup/services/identities.py` | `tests/test_face_values_have_one_owner.py` |
 | Keeping a library in step with its folders | `tagpup/services/sync.py`, `tagpup/jobs/watching.py` | `tests/test_sync.py` |
-| A folder renamed outside the apps | `tagpup/services/folder_moves.py`, `tagpup/services/folder_ids.py`, `tagpup/files/folder_marker.py` | `tests/test_relink_folders.py`, `tests/test_folder_ids*.py` |
+| A folder renamed outside the apps | `tagpup/services/folder_follow.py`, `tagpup/services/folder_ids.py`, `tagpup/files/folder_marker.py` | `tests/test_folder_ids*.py` |
 | Roots (where a library's folders are, per machine) | `tagpup/services/roots*.py`, `tagpup/store/adoption.py`, `tagpup/config.py` | `tests/test_roots*.py` |
 | The library views (grid, navigator, search) | `tagpup/services/library_view.py`, `tagpup/store/library_view.py`, `web/tagpup/` | `tests/test_library_view.py`, `tests/frontend/` |
 | A page's request, its DOM output | `web/common/api.js`, `web/common/dom.js` | `tests/frontend/` |
@@ -177,7 +177,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        thumbs, names, folder_marker, shares, lock_owners, recycle_bin, job_files
   ml/                  models: clip, faces, vector_index, grouping, and gpu (the card's turn)
   services/            one function per user action; the only code that writes: tagging, tags, people, faces,
-                       identities, identify, indexing, sync, refresh_rows, relink_photos, folder_moves,
+                       identities, identify, indexing, sync, refresh_rows, relink_photos, folder_follow,
                        folder_ids, roots*, settings, journal, file_changes, bulk_edit, selection,
                        library_view, search, suggester, suggestions, snapshots, thumbnails, name_review,
                        faces_from_tags, tags_from_faces, face_people, inspect, activity, file_access, maintenance
