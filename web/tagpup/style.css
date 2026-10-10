@@ -738,22 +738,6 @@ body {
     letter-spacing: 0.5px;
 }
 
-.suggested-value {
-    font-size: 13px;
-    color: var(--text-primary);
-    font-style: italic;
-}
-
-.suggested-title-wrapper {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 8px 12px;
-}
-
 .suggestions-chips-container {
     display: flex;
     flex-wrap: wrap;
@@ -777,11 +761,6 @@ body {
 .suggestion-chip:hover {
     background: rgba(99, 102, 241, 0.2);
     border-color: rgba(99, 102, 241, 0.4);
-}
-
-.suggestion-chip-add {
-    font-weight: bold;
-    color: var(--badge-matched);
 }
 
 /* Folder View Content */
@@ -1472,12 +1451,6 @@ body {
     width: 16px;
     height: 16px;
     accent-color: var(--accent);
-}
-
-.thumbnail-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
 }
 
 .thumbnail-filename {
