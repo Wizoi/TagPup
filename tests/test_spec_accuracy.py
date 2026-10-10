@@ -29,7 +29,7 @@ SERVER_SPEC_PAIRS = (
 #: How a Flask route reads its request: the JSON body as `body`, the query as
 #: `request.args`.
 FLASK_BODY = re.compile(r'body\.get\(\s*"([^"]+)"')
-FLASK_QUERY = re.compile(r'(?:request\.args\.get|_int_arg)\(\s*"([^"]+)"')
+FLASK_QUERY = re.compile(r'(?:request\.args\.get|_?int_arg)\(\s*"([^"]+)"')
 
 
 def flask_routes(kind):

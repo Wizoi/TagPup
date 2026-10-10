@@ -23,6 +23,8 @@ A table is rebuilt only through `rebuild_table`, SQLite's twelve steps.
 one. After the first time in a process it costs a stat.
 """
 import collections
+import contextlib
+import contextvars
 import logging
 import os
 import re
@@ -75,6 +77,103 @@ REQUIRED_COLUMNS = {
 
 class TooOld(Exception):
     """A library older than the tables of 2026-09, which TagPup no longer converts."""
+
+
+class NewerLibrary(Exception):
+    """A library whose schema is newer than this version of TagPup knows (`LATEST`): an older app
+    that opened it would misread what the newer one wrote and write it back wrong (identity stage 2:
+    names without ids, which the newer doctor then overwrites). Refused wherever a library is opened;
+    `str(e)` is the sentence to show the owner, never a traceback. `found` is the library's version,
+    `known` this app's."""
+
+    def __init__(self, name, found, known):
+        self.name, self.found, self.known = name, found, known
+        super().__init__(newer_sentence(name, found, known))
+
+
+#: Where a library's backups are, for the owner who has to go back to an older checkout.
+BACKUPS_NOTE = ("Your backups are in data/backups (the library's snapshots in data/backups/<library>/daily, weekly "
+                "and monthly, the copies taken before a bulk change beside them as <library>.before-...db). To go "
+                "back to an older TagPup, prefer to list and restore a snapshot with this version "
+                "(`tagpup_cli.py --db <library> snapshots list`, `snapshots restore <name> --apply`). If you copy a "
+                "backup over the library file by hand instead: stop every TagPup and delete <library>.db-wal and "
+                "<library>.db-shm beside the library first, or the newer version's write-ahead log is replayed over the "
+                "older copy and the library is a mixture of both.")
+
+
+def newer_sentence(what, found, known, recover=True):
+    """The one sentence for something made by a newer TagPup than this one: a library (`what` is its file
+    name) or a snapshot of one (snapshots.restore uses it). It says which app to start, and, for a library
+    (`recover`), where the backups are and how to go back."""
+    said = ("%s was made by a newer version of TagPup (its schema is %d; this version knows up to %d), so this "
+            "version will not open it: it would misread it and write it wrong. Start the newest TagPup you have "
+            "installed (its launchers, TagPup.cmd and TagTuner.cmd, install and start the current version)."
+            % (what, found, known))
+    return said + " " + BACKUPS_NOTE if recover else said
+
+
+# ---- What may open a library newer than this version -----------------------------------------
+#
+# ONE owner of which operations may: `reading_newer()`. Inside it `ensure` lets a newer library through
+# without migrating, settling or writing anything, so the recovery tools of an older checkout still work:
+# listing and restoring snapshots, reading the journal, the doctor's report, the MCP's read tools. An entry point
+# enters it only for an operation of RECOVERY (the CLI's commands by name; the MCP's read tools; the doctor's
+# report); everything that writes through the app is outside it, and `ensure` refuses.
+
+#: The CLI commands that may open a newer library: the journal's read and the snapshots (list and restore).
+RECOVERY_COMMANDS = ("history", "snapshots")
+
+_reading_newer = contextvars.ContextVar("tagpup_reading_newer", default=False)
+
+
+@contextlib.contextmanager
+def reading_newer():
+    """Within it, `ensure` lets a library newer than this version through, changing nothing."""
+    token = _reading_newer.set(True)
+    try:
+        yield
+    finally:
+        _reading_newer.reset(token)
+
+
+def newer_note(db_path):
+    """One line saying the library at `db_path` is newer than this version and is being read as it is, or None."""
+    sentence = newer_problem(db_path)
+    if sentence is None:
+        return None
+    found = version_of(db_path)
+    return ("Note: %s is from a newer TagPup (schema %d; this version knows %d): it is only read, nothing is written."
+            % (os.path.basename(db_path), found, LATEST))
+
+
+def version_of(db_path):
+    """The schema version of the library file at `db_path`, read only; 0 for none."""
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return version(conn)
+    finally:
+        conn.close()
+
+
+def newer_problem(db_path):
+    """The sentence (NewerLibrary's) when the library at `db_path` is newer than this version knows, else
+    None, also for a file that is not there or not a library yet. Reads only: for an entry point that
+    looks at a library without opening it through `ensure` (the MCP's tools, the CLI's group, the doctor).
+    A file that cannot be read just now (locked, not a database) is not decided here: it says None, and the
+    open that follows says why; `ensure` refuses a newer library whatever this answered."""
+    if not os.path.exists(db_path):
+        return None
+    try:
+        conn = db.connect(db.readonly_uri(db_path), uri=True)
+        try:
+            found = version(conn)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    if found > LATEST:
+        return newer_sentence(os.path.basename(db_path), found, LATEST)
+    return None
 
 
 def _tables(conn):
@@ -669,6 +768,27 @@ def _faces_detected(conn):
                  " at TEXT NOT NULL)")
 
 
+def _folder_ids(conn):
+    """The ids folders carry (tagpup.store.folder_ids; docs/ARCHITECTURE.md, "Folder ids"): `library_identity`,
+    at most one row, the library's own identifier, which opening a library never fills -- only the first explicit
+    `folder-ids mark --apply` stamps it, in the transaction that records the first ids, since an identifier handed
+    out in marker files cannot be taken back -- and `folder_ids`, one row for each folder the library has marked:
+    the id the folder's `.tagpup` marker holds for this library (a random UUID, the key), the folder as last seen
+    (the path as `photos.path` holds one, unique as paths are compared) and when it was marked. Folder_ids is
+    journaled (tagpup.store.journal.KEYS), keyed by a name that means the same row whenever it is used. Only adds
+    two tables, empty, so it needs no backup; folder_ids is not among the migration's `touches` because no change
+    of the journal can have recorded a row of a table that did not exist (the schema-gap rule reads `touches`).
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS library_identity ("
+                 " slot INTEGER PRIMARY KEY CHECK (slot = 1),"
+                 " id TEXT NOT NULL,"
+                 " stamped TEXT NOT NULL)")
+    conn.execute("CREATE TABLE IF NOT EXISTS folder_ids ("
+                 " id TEXT PRIMARY KEY NOT NULL,"
+                 " path TEXT NOT NULL UNIQUE COLLATE %s,"
+                 " marked TEXT NOT NULL)" % paths.COLLATE)
+
+
 def _roots(conn):
     """The library's roots: `roots`, one row for each, its name (`pictures`), the share's own
     address and when it was added (tagpup.store.roots; docs/ARCHITECTURE.md, "Roots and
@@ -760,6 +880,21 @@ def _caption_index(conn):
                  % (library_view.CAPTION_INDEX, library_view.caption_sql("captions")))
 
 
+def _person_indexes(conn):
+    """The indexes a person is read by id with, and the table of names set aside (docs/ARCHITECTURE.md, "People by id,
+    stage 2"; docs/findings.md, #1013): `idx_faces_tag` on faces(tag_id) and `idx_photo_people_tag` on
+    photo_people(tag_id, photo_id) -- `WHERE tag_id = ?` scanned idx_faces_person (name, tag_id) whole and had no
+    index at all on photo_people -- and `name_review_dismissals`, empty: a name the owner set aside from the list of
+    names to review, until it holds more rows than `rows_seen`. No row of any table changes, so nothing is recorded
+    in the journal and no backup is needed; the table is new, so no change can have recorded a row of it."""
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_tag ON faces(tag_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_photo_people_tag ON photo_people(tag_id, photo_id)")
+    conn.execute("CREATE TABLE IF NOT EXISTS name_review_dismissals ("
+                 " name_key TEXT PRIMARY KEY,"
+                 " rows_seen INTEGER NOT NULL,"
+                 " decided TEXT NOT NULL)")
+
+
 def _person_ids(conn):
     """Each face and each photo's listed person name the node of the tag tree that is that person:
     `faces.tag_id` and `photo_people.tag_id`, beside `name` (docs/ARCHITECTURE.md, "Identity by id",
@@ -774,7 +909,25 @@ def _person_ids(conn):
     conn.execute("ALTER TABLE photo_people ADD COLUMN tag_id INTEGER")
     conn.execute("CREATE INDEX idx_faces_person ON faces(name, tag_id)")
     from tagpup.store import person_ids   # the store imports this module
-    person_ids.sync(conn)
+    person_ids.fill(conn)
+
+
+def _person_tag_guard(conn):
+    """The backstop for a person that faces name (docs/ARCHITECTURE.md, "People by id, stage 2", "Tree operations, by id"): a
+    trigger, `person_tag_not_deleted_while_named`, aborts the DELETE of a node of the tag tree that a face names
+    (`faces.tag_id`, by idx_faces_tag), whichever connection deletes it -- an old checkout, a script, an undo of the journal. The
+    tree edits that delete a person the right way unname or repoint their faces first (taxonomy.delete_branch with force,
+    taxonomy.move_branch's join), so the trigger sees nothing. And the faces' generation moves when a face's `tag_id` is
+    written (a face given to another person who is called alike), as it moves when its name is. Triggers only: no row of any
+    table changes, nothing is recorded in the journal, and no backup is needed."""
+    conn.execute("DROP TRIGGER IF EXISTS person_tag_not_deleted_while_named")
+    conn.execute("CREATE TRIGGER person_tag_not_deleted_while_named BEFORE DELETE ON tag_taxonomy"
+                 " WHEN EXISTS (SELECT 1 FROM faces WHERE tag_id = OLD.id)"
+                 " BEGIN SELECT RAISE(ABORT, 'person_tag_not_deleted_while_named'); END")
+    conn.execute("DROP TRIGGER IF EXISTS generation_faces_update")
+    conn.execute("CREATE TRIGGER generation_faces_update AFTER %s ON faces"
+                 " BEGIN UPDATE generations SET value = value + 1 WHERE name = 'faces'; END"
+                 % (FACES_GENERATION_UPDATE + ", tag_id"))
 
 
 def _search_index(conn):
@@ -790,6 +943,19 @@ def _search_index(conn):
     search_index.rebuild(conn)
 
 
+def _camera_words(conn):
+    """The camera and lens words a search matches (tagpup.store.search_index; docs/ARCHITECTURE.md, "Backlog: which photo
+    fields are searchable"): one contentless FTS5 table, `search_gear`, with its shadow tables and the trigger that takes a
+    deleted photo's row. Filled from `photo_meta`'s make and model alone -- 68,324 rows read from a table, not a photo's
+    metadata read from its JSON, which a migration on open must not do --; the lens, and anything photo_meta is out of step
+    on, come with `tools/doctor.py --rebuild-derived --apply`, which the doctor says is due. Nothing that was there
+    changes: derived, never journaled, no backup. A crash leaves the library at 26 and the next open runs it again."""
+    from tagpup.store import search_index   # the store imports this module
+    for statement in search_index.CREATE_GEAR:
+        conn.execute(statement)
+    search_index.rebuild_gear_from_meta(conn)
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -801,7 +967,8 @@ RUNNER_TABLES = ("schema_version", "changes", "change_rows")
 #: for them (tagpup.store.search_index), which SQLite writes and on a virtual one of which no trigger can be made.
 UNWATCHED = ("generations", "photo_people", "photo_tags", "folders", "photo_folder", "photo_meta",
              "search_words", "search_names", "search_words_data", "search_words_idx", "search_words_docsize",
-             "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config")
+             "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config",
+             "search_gear", "search_gear_data", "search_gear_idx", "search_gear_docsize", "search_gear_config")
 
 
 class CheckFailed(RuntimeError):
@@ -999,7 +1166,7 @@ class PersonIdsAgree(Check):
     def after(self, conn, migration, state):
         from tagpup.store import person_ids   # the store imports this module
         return ["%d row(s) of %s" % (found.rows, table) for table in person_ids.TABLES
-                for found in [person_ids.out_of_step(conn, table)] if found.rows]
+                for found in [person_ids.out_of_step(conn, table, spelling=False)] if found.rows]
 
 
 class SearchIndexAgrees(Check):
@@ -1010,6 +1177,17 @@ class SearchIndexAgrees(Check):
     def after(self, conn, migration, state):
         from tagpup.store import search_index   # the store imports this module
         return search_index.problems(conn)
+
+
+class GearAgrees(Check):
+    """The camera words (tagpup.store.search_index) have a row for every photo and none other, and a sample of photos' cameras
+    -- read from their metadata -- are found in their rows. The lens is not checked: this migration makes no lens words."""
+    name = "camera words agree with the photos"
+
+    def after(self, conn, migration, state):
+        from tagpup.store import search_index   # the store imports this module
+        return ["%d photo(s) have camera words that are not what their rows give" % len(wrong)
+                for wrong in [search_index.stale_gear(conn, lens=False)] if wrong]
 
 
 STANDARD = (ForeignKeys(), Integrity())
@@ -1353,13 +1531,38 @@ MIGRATIONS = (
               "the next Suggest that looks at it",
               ("faces_detected",),
               (RowsKept(),) + STANDARD),
+    Migration(26, "the ids folders carry", _folder_ids, ADDITIVE,
+              "adds library_identity and folder_ids, both empty: opening a library stamps nothing, and no folder is "
+              "marked until the owner runs folder-ids mark --apply",
+              ("library_identity",),
+              (RowsKept(),) + STANDARD),
+    Migration(27, "photos by their camera and lens", _camera_words, ADDITIVE,
+              "adds the camera and lens words a search matches (search_gear and its FTS5 shadow tables) and the trigger "
+              "that takes a deleted photo's row, made from photo_meta's make and model; nothing that was there changes, "
+              "and the lens comes with the doctor's --rebuild-derived",
+              ("search_gear",),
+              (RowsKept(), GearAgrees()) + STANDARD),
+    Migration(28, "people read by id, and the names set aside", _person_indexes, ADDITIVE,
+              "adds idx_faces_tag and idx_photo_people_tag, the indexes a person is read by id with, and "
+              "name_review_dismissals, empty; no row of any table changes, and a change journaled before it can "
+              "still be undone",
+              ("name_review_dismissals",),
+              (RowsKept(),) + STANDARD),
+    Migration(29, "a person that faces name is not deleted", _person_tag_guard, ADDITIVE,
+              "adds the trigger person_tag_not_deleted_while_named, which aborts the delete of a tag-tree node a face names, "
+              "and makes the faces' generation move when a face's person id is written; triggers only, no row of any table "
+              "changes, and a change journaled before it can still be undone",
+              (),
+              (RowsKept(),) + STANDARD),
 )
 
 #: The columns a migration adds to a table the journal keys that the journal derives
-#: (journal.DERIVED_COLUMNS) -- {version: {table: columns}}. Such a migration changes nothing an
+#: (derived when it added them) -- {version: {table: columns}}. Such a migration changes nothing an
 #: older change's rows mean: an undo writes the columns it recorded and the derived ones are made
 #: again from them (journal._derive), so it blocks no undo of a change made before it
-#: (journal.schema_gap_blocker). tests/test_person_ids.py holds each to the columns it really adds.
+#: (journal.schema_gap_blocker). Version 21's `faces.tag_id` was derived from the name then; it is the
+#: person since 29 (journal.cache_columns), and a change recorded before that is replayed by the name
+#: (journal._named_by_name). tests/test_person_ids.py holds each to the columns it really adds.
 ADDS_DERIVED_COLUMNS = {21: {"faces": ("tag_id",)}}
 
 LATEST = MIGRATIONS[-1].version
@@ -1419,7 +1622,12 @@ def ensure(db_path):
     with _current_guard:
         if identity is not None and _current.get(key) == identity:
             return []
-    applied = _ensure(db_path)
+    try:
+        applied = _ensure(db_path)
+    except NewerLibrary:
+        if _reading_newer.get():
+            return []   # reading_newer(): as it is, nothing migrated, settled or remembered
+        raise
     from tagpup.store import journal   # the journal imports this module
     journal.settle_once(db_path)
     with _current_guard:
@@ -1461,7 +1669,10 @@ def _drop_legacy_counters(db_path, conn):
 def _ensure(db_path):
     conn = db.connect(db_path, timeout=30.0)
     try:
-        if version(conn) >= LATEST:
+        found = version(conn)
+        if found > LATEST:
+            raise NewerLibrary(os.path.basename(db_path), found, LATEST)
+        if found == LATEST:
             _drop_legacy_counters(db_path, conn)
             return []
         with db.lock_for(db_path):

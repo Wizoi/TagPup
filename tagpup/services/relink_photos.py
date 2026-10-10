@@ -79,6 +79,11 @@ def _read_files(found, fields, exiftool_path):
     return rows
 
 
+def read_files(found, fields, exiftool_path=None):
+    """(SourceFile, row) of each photo in `found`, read for `fields` (_read_files, public)."""
+    return _read_files(list(found), list(fields), exiftool_path)
+
+
 def identities(folder, exiftool_path=None):
     """Every photo in a folder, keyed by its DocumentID.
 
@@ -188,8 +193,10 @@ def plan_for(library, exiftool_path=None):
         folders = sorted({os.path.dirname(p) for p in dead if os.path.isdir(os.path.dirname(p))})
         lookup, by_identity = {}, {}
         for folder in folders:
-            merge_unambiguous(lookup, preserved_names(folder, exiftool_path))
-            merge_unambiguous(by_identity, identities(folder, exiftool_path))
+            # One read of each folder for both claims.
+            preserved, claimed = claims_of(_photos_under(folder), exiftool_path)
+            merge_unambiguous(lookup, preserved)
+            merge_unambiguous(by_identity, claimed)
 
         # A dead row's own identity, where indexing recorded one.
         row_identity = store_photos.identities(conn)

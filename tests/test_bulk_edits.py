@@ -586,6 +586,35 @@ class People(Bulk):
         for params in ({"add": [""]}, {"add": ["   "]}, {"remove": ["\t"]}):
             self.start("people", params=params, expect=400)
 
+    def node(self, tag):
+        return self.vl.rows("SELECT id FROM tag_taxonomy WHERE tag = ?", tag)[0][0]
+
+    def test_two_people_called_alike_are_two_people_a_bulk_edit_adds_by_id(self):
+        """A name two people have is refused (which one?); their ids are two persons, and a file that names the first by its
+        leaf still gets the second: before part B the second was "already there" and nothing was written."""
+        self.vl.tree("People/Family/Sam", "People/Friends/Sam", face_root="People")
+        reply = self.start("people", params={"add": ["Sam"]}, expect=400)
+        self.assertIn("more than one place", reply["error"])
+        family, friends = self.node("People/Family/Sam"), self.node("People/Friends/Sam")
+        self.files.keep_tags(self.path(self.ids[0]), ["People/Family/Sam"])
+        done = self.finish(self.start("people", selection={"ids": self.ids[:2]}, params={"add_ids": [friends]})["job"])
+        self.assertEqual(2, done["changed"])
+        self.assertEqual(["People/Family/Sam", "People/Friends/Sam"], sorted(self.tags(self.ids[0])))
+        self.assertEqual(["People/Friends/Sam"], self.tags(self.ids[1]))
+        again = self.finish(self.start("people", selection={"ids": self.ids[:2]}, params={"add_ids": [friends]})["job"])
+        self.assertEqual((0, 2), (again["changed"], again["unchanged"]), "a person the file names by their node is not added again")
+        self.finish(self.start("people", selection={"ids": self.ids[:1]}, params={"remove_ids": [family]})["job"])
+        self.assertEqual(["People/Friends/Sam"], self.tags(self.ids[0]), "only the one picked is taken off")
+
+    def test_an_id_that_is_nobodys_or_a_groups_is_refused_before_a_photo_is_touched(self):
+        self.vl.tree("People/Family/Sam", face_root="People")
+        group = self.node("People/Family")
+        self.start("people", params={"add_ids": [99999]}, expect=404)
+        self.start("people", params={"add_ids": [group]}, expect=400)
+        for bad in ("7", 1.5, True, None):
+            self.start("people", params={"add_ids": [bad]}, expect=400)
+        self.assertEqual(["Old/Stuff"], self.tags(self.ids[0]), "the file is as it was")
+
     def test_taking_a_person_off_takes_every_way_the_tree_files_them(self):
         both = self.path(self.ids[1])
         self.files.keep_tags(both, ["People/Wren Halloway", "People/Friends/Wren Halloway", "Trips/Coast"])

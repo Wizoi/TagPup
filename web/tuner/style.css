@@ -243,6 +243,102 @@ body {
     background-color: var(--badge-matched-bg);
 }
 
+/* The people list: a name and its count on one line... */
+.person-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+}
+.person-row .photo-title {
+    flex: 1;
+    min-width: 0;
+    margin-bottom: 0;
+}
+.person-row .photo-badge {
+    flex: none;
+    margin-top: 0;
+    text-transform: none;
+}
+
+/* ...or, by face, a grid of crops with the name under each. */
+.photo-list.by-face {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 8px;
+    align-content: start;
+    padding: 8px;
+}
+.person-card {
+    padding: 4px;
+    border-bottom: none;
+    border-left: none;
+    border-radius: 6px;
+    min-width: 0;
+}
+.person-card.active {
+    outline: 2px solid var(--accent);
+}
+.person-card .photo-title {
+    margin: 4px 0 0;
+    font-size: 12px;
+    text-align: center;
+}
+.person-face-crop {
+    position: relative;
+    aspect-ratio: 1;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--bg-tertiary);
+}
+.person-face-crop img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.person-face-blank {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    font-size: 28px;
+    color: var(--text-secondary);
+}
+.person-face-crop .photo-badge {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    margin: 0;
+    padding: 1px 5px;
+    text-transform: none;
+    color: #fff !important;
+    background-color: rgba(0, 0, 0, 0.7) !important;
+    border: none !important;
+}
+
+.people-view.hidden { display: none; }
+.people-view {
+    display: flex;
+    gap: 4px;
+    padding: 6px 12px 0;
+}
+.people-view button {
+    flex: 1;
+    padding: 3px 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+}
+.people-view button.active {
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+
 /* Details Panel */
 .details-panel {
     flex: 1;
@@ -1336,30 +1432,7 @@ body {
     gap: 12px;
 }
 
-/* The page is dark; without this Windows draws a select's drop-down list light,
-   and the list shows a white strip below the options styled dark. */
-select {
-    color-scheme: dark;
-}
-
-#db-select {
-    background-color: var(--bg-tertiary) !important;
-    color: var(--text-primary) !important;
-    border: 1px solid var(--border-color) !important;
-    font-family: var(--font-body) !important;
-    font-size: 13px !important;
-    height: 32px !important;
-    border-radius: 6px !important;
-    outline: none !important;
-    cursor: pointer !important;
-}
-
-#db-select option {
-    background-color: var(--bg-secondary) !important;
-    color: var(--text-primary) !important;
-    font-family: var(--font-body) !important;
-}
-
+/* The drop-down lists are dark, in web/common/dark-select.css (#782). */
 
 /* ---- Folder indexing progress ------------------------------------------ */
 .index-progress-container {
@@ -2056,6 +2129,46 @@ select {
 .review-about { margin: 0 1.5rem; opacity: 0.8; }
 .review-footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 
+/* Names to review (names-review.js): the first row of Review People, and the dialog it opens. */
+.names-to-review-row {
+    list-style: none;
+    padding: 0.55rem 0.8rem;
+    margin-bottom: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px dashed var(--accent-color, var(--border-color));
+    border-radius: 6px;
+}
+.names-to-review-row:hover, .names-to-review-row:focus { outline: none; border-style: solid; }
+.names-modal .names-body { max-height: 52vh; overflow-y: auto; }
+.names-results { margin: 0 1.5rem; max-height: 14vh; overflow-y: auto; }
+.names-result { margin: 0.2rem 0; font-size: 0.9rem; }
+.names-result-error { color: #f87171; }
+.names-list { list-style: none; margin: 0; padding: 0; }
+.names-entry { padding: 0.7rem 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.names-entry.is-busy { opacity: 0.6; }
+.names-why { opacity: 0.8; }
+.names-counts { margin: 0.2rem 0; opacity: 0.8; font-size: 0.9rem; }
+.names-crops { display: flex; gap: 6px; margin: 0.3rem 0; }
+.names-crop { width: 56px; height: 56px; object-fit: cover; border-radius: 4px; background: var(--bg-tertiary); }
+.names-choices { display: flex; flex-direction: column; gap: 6px; margin-top: 0.4rem; }
+.names-choice { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.names-person, .names-group {
+    min-width: 14rem;
+    max-width: 100%;
+    padding: 4px 6px;
+    font-family: inherit;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+.names-confirm { margin-top: 0.4rem; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 6px; }
+.names-sentence { margin: 0 0 0.4rem 0; }
+.names-toggle { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85rem; }
+
 /* Roots (roots.js): a row per root, with its place, what writes go to, and the buttons. */
 .roots-about { margin: 0 1.5rem; opacity: 0.8; }
 .roots-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }
@@ -2064,12 +2177,24 @@ select {
 .roots-address { opacity: 0.6; overflow-wrap: anywhere; flex: 1; }
 .roots-rows { opacity: 0.7; white-space: nowrap; }
 .roots-root p { margin: 0.25rem 0; overflow-wrap: anywhere; }
+.roots-more { margin: 0.25rem 0; opacity: 0.85; }
+.roots-more summary { cursor: pointer; color: var(--text-secondary); }
+.roots-last { margin: 0.5rem 0 0.25rem; opacity: 0.8; }
+.roots-result:not(:empty) { margin: 0.6rem 0 0.2rem; padding-top: 0.5rem; border-top: 1px dashed var(--border-color); }
+.roots-about a, .file-access-note a { color: #a5b4fc; text-decoration: underline; }
+.roots-about a:hover, .file-access-note a:hover { color: #c7d2fe; }
 .roots-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.4rem 0; }
 .roots-location { flex: 1; min-width: 14rem; }
 .roots-command { display: block; padding: 0.5rem; overflow-wrap: anywhere; background: rgba(255, 255, 255, 0.06); }
 .roots-wait { opacity: 0.7; }
 .roots-override { display: block; margin: 0.4rem 0; }
 .roots-footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+@media (max-width: 600px) {
+    .roots-title { flex-wrap: wrap; }
+    .roots-address { flex-basis: 100%; order: 3; }
+    .roots-list { max-height: none; }
+    .roots-location { min-width: 0; flex-basis: 100%; }
+}
 
 /* Show matched: a photo whose faces are all named stays listed, quieter. */
 .photo-item.all-matched { opacity: 0.6; }

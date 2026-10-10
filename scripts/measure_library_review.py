@@ -43,7 +43,7 @@ import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
-from sandbox import copy_library, free_port, place_roots, remove_sandbox  # noqa: E402
+from sandbox import copy_library, environment, free_port, place_roots, remove_sandbox  # noqa: E402
 
 LIBRARY = "measured"
 EVERYTHING = "abcd"
@@ -119,7 +119,7 @@ def start_server(sandbox, db_path, tuner_port, tagpup_port):
     process = processes.start(
         [sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
          "--tuner-port", str(tuner_port), "--tagpup-port", str(tagpup_port)],
-        cwd=sandbox, env=dict(os.environ, TAGPUP_HOME=sandbox, TAGPUP_NO_JOBS="1"),
+        cwd=sandbox, env=environment(sandbox, TAGPUP_NO_JOBS="1"),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(240):
         try:
@@ -350,7 +350,7 @@ def migrate(sandbox, db_path, code_root):
     started = time.time()
     processes.run([sys.executable, "-c", "import sys; sys.path.insert(0, %r); from tagpup.store import schema; "
                    "print(schema.ensure(%r))" % (code_root, db_path)],
-                  cwd=sandbox, env=dict(os.environ, TAGPUP_HOME=sandbox), check=True)
+                  cwd=sandbox, env=environment(sandbox), check=True)
     print("  the copy brought up to date by the served code in %.1f s" % (time.time() - started))
 
 
@@ -391,7 +391,7 @@ for label, source in (("the whole library", store.Source(store.ALL)), ("the larg
 def caption_plans(sandbox, db_path):
     """The plans and times of the id list in caption order on the copy, read by the served code: what SQLite does with it."""
     done = processes.run([sys.executable, "-c", CAPTION_PLANS % (sandbox, db_path)], cwd=sandbox,
-                         env=dict(os.environ, TAGPUP_HOME=sandbox), check=True, capture_output=True, text=True)
+                         env=environment(sandbox), check=True, capture_output=True, text=True)
     print(done.stdout.rstrip())
 
 

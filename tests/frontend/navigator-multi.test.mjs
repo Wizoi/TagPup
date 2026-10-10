@@ -307,6 +307,41 @@ describe("the People under their branches", () => {
   });
 });
 
+describe("two people called alike", () => {
+  // The route's rows as the server answers them (tests/test_navigator_people_groups.py): each person keyed by their id,
+  // a name two people have marked `shared` with the tag that tells them apart.
+  const groups = [
+    { tag: "Family", name: "Family", parent: null, count: 5 },
+    { tag: "Family/Ingersoll", name: "Ingersoll", parent: "Family", count: 2 },
+    { tag: "Family/Thackeray", name: "Thackeray", parent: "Family", count: 3 },
+  ];
+  const sam = (id, group, count) => ({
+    name: "Sam", count, group: `Family/${group}`, person_id: id,
+    person: { id, name: "Sam", tag: `Family/${group}/Sam`, group, shared: true },
+  });
+  const navigator = { people: { people: [sam(12, "Ingersoll", 2), sam(10, "Thackeray", 3)], groups, unfiled: 0 } };
+
+  test("each is a row of their own, and a click opens exactly that person's photos, by their tag", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=all", navigator });
+    await ctx.openTab("people");
+    const rows = ctx.rows("people").filter((row) => row.querySelector(".nav-label").textContent === "Sam");
+    assert.equal(rows.length, 2, "not one row for the two");
+    assert.equal(new Set(rows.map((row) => row.dataset.row)).size, 2, "two ids");
+    click(ctx.window, rows[1]);
+    await ctx.settle();
+    assert.deepEqual([asked(ctx).kind, asked(ctx).value], ["person", "Family/Thackeray/Sam"]);
+    assert.equal(ctx.selectedRows("people").filter((row) => row.querySelector(".nav-label").textContent === "Sam").length, 1,
+      "only that Sam is shown selected");
+  });
+
+  test("an address that names one of them by tag opens the navigator on that person", async (t) => {
+    const ctx = await loadViewPage(t, { search: "?view=person&value=Family%2FIngersoll%2FSam", navigator });
+    assert.equal(ctx.state.nav.tab, "people");
+    const selected = ctx.selectedRows("people").map((row) => row.querySelector(".nav-count").textContent);
+    assert.ok(selected.includes("2") && !selected.includes("3"), "the Ingersoll Sam, not the Thackeray one: " + selected);
+  });
+});
+
 describe("the sort", () => {
   test("the order a view was read in is the one the next row is opened in, from any tab; Back restores the one before", async (t) => {
     const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}&order=name` });

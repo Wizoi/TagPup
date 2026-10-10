@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import tuner_client  # noqa: E402
 from face_rows import add_face, people_of  # noqa: E402
+import fake_exiftool  # noqa: E402
 
 from tagpup.store import people as store_people  # noqa: E402
 
@@ -49,6 +50,8 @@ class ExclusionTestBase(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="tagpup_excl_")
         self.addCleanup(shutil.rmtree, self.tmpdir, True)
+        # Ruling out a face named a person takes the person's tag off the photo (#861): ExifTool is a table of files.
+        self.files = fake_exiftool.standing_in(self)
         # A cached grid or matrix from an earlier test describes rows this one deletes.
         tuner_client.forget(self.TEST_DB)
         self.requests = tuner_client.Requests(self.app)
@@ -139,12 +142,16 @@ class TestExcludeEndpoint(ExclusionTestBase):
         self.post("/api/faces/exclude", {"face_ids": [face]})
         self.assertNotIn("Jane Doe", self.photo_people(photo))
 
-    def test_the_person_stays_when_a_keyword_still_names_them(self):
+    def test_the_keyword_goes_with_the_last_face_that_carried_the_person(self):
+        # #861 reverses "the person stays when a keyword still names them": a face ruled out is not them, and the photo
+        # is not tagged with someone no face of it carries.
         photo = self.add_photo("a.jpg", people=["Jane Doe"])
+        self.files.keep_tags(photo, ["People/Jane Doe"])
         face = self.add_face(photo, identity_vector(1), name="Jane Doe")
 
         self.post("/api/faces/exclude", {"face_ids": [face]})
-        self.assertEqual(["Jane Doe"], self.photo_people(photo))
+        self.assertEqual([], self.photo_people(photo))
+        self.assertEqual([], self.files.tags_of(photo))
 
     def test_the_person_stays_when_another_face_of_theirs_remains(self):
         photo = self.add_photo("a.jpg")

@@ -143,16 +143,17 @@ class TheCardStatsHaveABudget(unittest.TestCase):
         vl = ViewLibrary(self)
         ids = [vl.photo("Coast", "p%d.jpg" % n, taken="2024:06:01 10:00:00") for n in range(6)]
         asked = []
+        # The budget's clock is the test's: each stat takes 0.6 s of it and nothing else does. Slept for real, the work
+        # around the stats on a busy machine pushed the third past the budget (#721).
+        clock = [1000.0]
 
         def slow(path):
             asked.append(path)
-            time.sleep(0.6)
+            clock[0] += 0.6
             return None   # gone
-        started = time.monotonic()
-        with mock.patch.object(damaged_photos, "stamp_of", slow):
+        with mock.patch.object(damaged_photos, "stamp_of", slow), \
+                mock.patch.object(library_view, "time", mock.Mock(monotonic=lambda: clock[0])):
             cards = library_view.cards(vl.library, ids, check_disk=True)
-        took = time.monotonic() - started
-        self.assertLess(took, library_view.STAT_BUDGET_SECONDS + 0.6 + 0.5, "ended within the budget and the one stat in flight")
         self.assertEqual(3, len(asked), "stats at 0, 0.6 and 1.2 s; the one due at 1.8 s is past the budget")
         self.assertEqual(6, len(cards), "every card is answered")
         self.assertEqual(["missing"] * 3, [card.get("stale") for card in cards[:3]])

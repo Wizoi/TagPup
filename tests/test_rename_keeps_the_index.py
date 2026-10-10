@@ -224,8 +224,10 @@ class TestTheRoutesActuallyDoIt(unittest.TestCase):
         from tagpup.web import tagpup_routes
 
         self.assertIn("save_photo(", inspect.getsource(tagpup_routes.photo_save_metadata))
-        self.assertIn("photos.move_rows(", inspect.getsource(tagging.save_photo),
-                      "a caption rename no longer moves the photo's index rows")
+        # As a change of the journal of photo files (#298), which moves the rows with the file.
+        self.assertIn("file_changes.rename(", inspect.getsource(tagging._rename_after_caption),
+                      "a caption rename no longer goes through the journal of photo files")
+        self.assertIn("_rename_after_caption(", inspect.getsource(tagging.save_photo))
 
 
 if __name__ == "__main__":

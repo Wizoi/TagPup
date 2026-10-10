@@ -53,24 +53,22 @@ class Counting(Tally):
         found = self.tally({"ids": [self.a, self.b, self.c, self.d, self.e]})
         self.assertEqual(5, found["total"])
         tags, people = self.counts(found)
-        self.assertEqual({"Trips/Coast": 2, "Trips/Lakes": 1, "Activity/Sailing": 1, "People/Wren Halloway": 2,
-                          "People/Rowan Thackeray": 2}, tags)
+        # A person's tag is a person, listed under people and not among the tags (#865).
+        self.assertEqual({"Trips/Coast": 2, "Trips/Lakes": 1, "Activity/Sailing": 1}, tags)
         self.assertEqual({"Wren Halloway": 2, "Rowan Thackeray": 2}, people)
 
     def test_only_the_selected_photos_are_counted(self):
         found = self.tally({"ids": [self.a, self.c]})
         self.assertEqual(2, found["total"])
-        self.assertEqual(({"Trips/Coast": 1, "Trips/Lakes": 1, "People/Wren Halloway": 1}, {"Wren Halloway": 1}),
-                         self.counts(found))
+        self.assertEqual(({"Trips/Coast": 1, "Trips/Lakes": 1}, {"Wren Halloway": 1}), self.counts(found))
 
     def test_a_source_counts_what_it_holds_and_the_excluded_are_not_in_it(self):
         found = self.tally({"source": {"kind": "year", "value": "2024"}})
         self.assertEqual(2, found["total"])
-        self.assertEqual({"Trips/Coast": 2, "Activity/Sailing": 1, "People/Wren Halloway": 2, "People/Rowan Thackeray": 1},
-                         self.counts(found)[0])
+        self.assertEqual({"Trips/Coast": 2, "Activity/Sailing": 1}, self.counts(found)[0])
         found = self.tally({"source": {"kind": "year", "value": "2024"}, "excluded": [self.b, self.e, 9999]})
         self.assertEqual(1, found["total"])
-        self.assertEqual(({"Trips/Coast": 1, "People/Wren Halloway": 1}, {"Wren Halloway": 1}), self.counts(found))
+        self.assertEqual(({"Trips/Coast": 1}, {"Wren Halloway": 1}), self.counts(found))
 
     def test_the_whole_library_minus_all_of_it_is_nothing(self):
         found = self.tally({"source": {"kind": "all"}, "excluded": [self.a, self.b, self.c, self.d, self.e]})
@@ -88,20 +86,22 @@ class Counting(Tally):
     def test_duplicates_and_ids_nobody_has_count_once_and_not_at_all(self):
         found = self.tally({"ids": [self.a, self.a, 9999, self.a]})
         self.assertEqual(1, found["total"])
-        self.assertEqual(({"Trips/Coast": 1, "People/Wren Halloway": 1}, {"Wren Halloway": 1}), self.counts(found))
+        self.assertEqual(({"Trips/Coast": 1}, {"Wren Halloway": 1}), self.counts(found))
 
     def test_a_tag_no_node_holds_is_not_tallied(self):
         found = self.tally({"ids": [self.d]})
-        self.assertEqual(({"People/Rowan Thackeray": 1}, {"Rowan Thackeray": 1}), self.counts(found))
+        self.assertEqual(({}, {"Rowan Thackeray": 1}), self.counts(found))
 
-    def test_a_person_spelled_two_ways_is_one_entry_counting_each_photo_once(self):
-        self.vl.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, 5, ?, 'keyword')",
-                             (self.a, "wren halloway"))
-        self.vl.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, 5, ?, 'keyword')",
-                             (self.e, "WREN HALLOWAY"))
+    def test_a_name_no_person_has_spelled_two_ways_is_one_entry_counting_each_photo_once(self):
+        """A person the tree files is their node whatever the rows spell; a name no node has is one entry for its spellings."""
+        for position, (photo, spelled) in enumerate(((self.a, "skye marlowe"), (self.a, "Skye Marlowe"), (self.e, "SKYE MARLOWE")), 5):
+            self.vl.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, 'keyword')",
+                                 (photo, position, spelled))
         self.vl.conn.commit()
         found = self.tally({"ids": [self.a, self.b, self.e]})
-        self.assertEqual({"Wren Halloway": 3, "Rowan Thackeray": 1}, self.counts(found)[1])
+        counts = {name.lower(): count for name, count in self.counts(found)[1].items()}
+        self.assertEqual(2, counts["skye marlowe"])
+        self.assertEqual(1, counts["rowan thackeray"])
 
     def test_the_lists_are_in_the_shared_alphabetical_order(self):
         found = self.tally({"ids": [self.a, self.b, self.c, self.d, self.e]})
@@ -117,9 +117,31 @@ class Counting(Tally):
         with mock.patch.object(selection, "MAX_TALLIED", 2):
             found = self.tally({"ids": [self.a, self.b, self.c, self.d, self.e]})
         self.assertEqual(2, len(found["tags"]))
-        self.assertEqual(3, found["more_tags"])
+        self.assertEqual(1, found["more_tags"])
         self.assertEqual(0, found["more_people"])
-        self.assertTrue(all(each["count"] == 2 for each in found["tags"]))
+        self.assertEqual("Trips/Coast", found["tags"][0]["tag"] if found["tags"][0]["count"] == 2 else found["tags"][1]["tag"])
+
+    def test_people_tags_do_not_eat_the_slots_the_cut_keeps_for_keywords(self):
+        # Two person tags as used as the keywords: the cut keeps the 2 most used, and it would have kept the people (#865).
+        with mock.patch.object(selection, "MAX_TALLIED", 2):
+            found = self.tally({"ids": [self.a, self.b, self.d]})
+        self.assertEqual({"Trips/Coast", "Activity/Sailing"}, {each["tag"] for each in found["tags"]})
+        self.assertEqual(0, found["more_tags"], "what the page really cuts")
+        self.assertEqual({"Wren Halloway", "Rowan Thackeray"}, {each["name"] for each in found["people"]})
+
+    def test_a_branch_of_the_tree_is_a_keyword_and_never_a_person_to_open(self):
+        self.vl.tree("People/Family/Parent", face_root="People")
+        branch = self.vl.photo("Misc", "g.jpg", tags=["People/Family", "People/Family/Parent"])
+        for position, name in ((5, "Family"), (6, "Nobody Known")):
+            self.vl.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, 'keyword')", (branch, position, name))
+        self.vl.conn.commit()
+        found = self.tally({"ids": [self.a, branch]})
+        self.assertEqual({"Wren Halloway": True, "Family": False, "Nobody Known": False, "Parent": True},
+                         {each["name"]: each["has_node"] for each in found["people"]})
+        tags = {each["tag"] for each in found["tags"]}
+        self.assertIn("People/Family", tags, "a branch is a keyword")
+        self.assertNotIn("People/Family/Parent", tags, "a leaf person node is a person")
+        self.assertNotIn("People/Wren Halloway", tags)
 
     def test_a_selection_above_what_a_job_takes_may_still_be_tallied(self):
         with mock.patch.object(selection, "MAX_SELECTED", 2):

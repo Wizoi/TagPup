@@ -18,15 +18,17 @@ import os
 import threading
 from contextlib import contextmanager
 
-from flask import Blueprint, abort, current_app, jsonify, make_response, request
+from flask import Blueprint, abort, current_app, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup.core import paths
 from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import identify as identify_jobs
 from tagpup.jobs import indexing as indexing_jobs
+from tagpup.jobs import naming_faces
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.jobs import verifying as verify_jobs
+from tagpup.services import face_assignment, face_people
 from tagpup.services import faces as faces_service
 from tagpup.services import identify as identify_service
 from tagpup.services import indexing
@@ -36,16 +38,16 @@ from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.services import roots_location, roots_verify
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, responses, roots_gate, roots_ingress, security, state, tagpup_routes
+from tagpup.web import desktop, face_routes, responses, roots_gate, roots_ingress, security, state, tagpup_routes
 from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
 
 routes = Blueprint("tuner", __name__)
 
-#: Each library's cached Identify Faces answers: the queue, the grids and the matrix of
-#: named faces (tagpup.jobs.identify.GridCache).
-identify_cache = state.PerLibrary(lambda library: identify_jobs.GridCache())
+#: Each library's cached Identify Faces answers (tagpup.jobs.identify.GridCache): the process's,
+#: kept in tagpup.web.face_routes, which the reads of faces both apps serve use.
+identify_cache = face_routes.identify_cache
 
 #: How far along each grid being built for a library has got (tagpup.jobs.identify
 #: .BuildProgress): written by the request doing the work, read by a status request on
@@ -115,44 +117,30 @@ def folder_indexer(library):
     return index
 
 
-def _refuse(status, message):
-    """Answer with the JSON error (tagpup.web.responses.error) from wherever the
-    refusal is found, helpers included."""
-    abort(make_response(responses.error(status, message)))
+_refuse = face_routes.refuse
 
 
-def _library_there(library):
-    """Is the library's file there? The reads answer nothing for one that is not, as
-    they always did, rather than failing the page."""
-    return os.path.exists(library.path)
+_library_there = face_routes.library_there
+_named = face_routes.named
+_decided = face_routes.decided
+_int_arg = face_routes.int_arg
+_read_face_ids = face_routes._read_face_ids
 
 
-def _named(library):
-    """Every named face as unit vectors, kept per state of the faces table."""
-    return lambda: identify_jobs.named_faces(library, identify_cache.of(library))
+#: What a write of faces, tags or rows is answered with while "Name faces from tags" gives names or groups faces (#871, #872).
+NAMING_REFUSAL = "Names are being given from tags; face changes wait until it finishes."
 
 
-def _decided(library):
-    """The faces a person decided as unit vectors: what automatch compares with."""
-    return lambda: identify_jobs.decided_faces(library, identify_cache.of(library))
-
-
-def _int_arg(name, what):
-    """A query parameter that must be an integer, or the 400 the old handlers sent."""
-    value = request.args.get(name)
-    if not value:
-        abort(400, description="Missing '%s' parameter" % what)
-    try:
-        return int(value)
-    except ValueError:
-        abort(400, description="Invalid '%s' parameter" % what)
-
-
-def clustering_refusal(library):
+def clustering_refusal(library, only_naming=False):
     """The 409 a write that sets faces' names is answered with while `library`'s faces
-    are being clustered, or None. TagTuner's writes are refused here before each POST;
-    the tree's routes, which both apps serve, ask it for a rename and a delete."""
-    if library is not None and clustering.of(library).is_set():
+    are being clustered, or names are being given from the tags (tagpup.jobs.naming_faces), or None.
+    TagTuner's writes are refused here before each POST; the tree's routes, which both apps
+    serve, ask it for a rename and a delete, and tagpup.web.name_faces_routes for the writes
+    of TagPup that name faces from tags must not be written over. `only_naming`: not for
+    the flag clustering from an index run holds."""
+    if library is not None and naming_faces.writing(library):
+        return jsonify({"success": False, "error": NAMING_REFUSAL}), 409
+    if not only_naming and library is not None and clustering.of(library).is_set():
         return jsonify({"success": False,
                         "error": "Server is currently clustering faces. Please try again later."}), 409
     return None
@@ -221,9 +209,12 @@ def face_crop():
 def people():
     """Everyone the library knows, the people keywords name included
     (tagpup.services.people.names). ?include_hidden=1 adds those hidden from
-    autocomplete: it answers "does this person exist?", which a hidden person does."""
+    autocomplete: it answers "does this person exist?", which a hidden person does. ?records=1 answers
+    the people with a person tag instead, each `{id, name, tag, group, shared}` (tagpup.services.people.records)."""
     library = state.require()
     include_hidden = request.args.get("include_hidden", "0") == "1"
+    if request.args.get("records") == "1":
+        return jsonify(people_service.records(library, include_hidden=include_hidden))
     return jsonify(people_service.names(library, keywords_too=True, include_hidden=include_hidden))
 
 
@@ -287,14 +278,17 @@ def tags_merge():
 
 @routes.post("/api/person/rename")
 def person_rename():
-    """Rename a person everywhere (tagpup.services.tags.rename_person)."""
+    """Rename a person everywhere (tagpup.services.tags.rename_person): the one person picked -- `person_id`, or `old_name` for a
+    page not reloaded since the update, refused naming the candidates when two people are called it."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     try:
-        result = tags_service.rename_person(library, body.get("old_name"), body.get("new_name"),
-                                            state.exiftool(library))
+        result = tags_service.rename_person(library, face_routes.person_arg(body.get("person_id"), body.get("old_name")),
+                                            body.get("new_name"), state.exiftool(library))
     except NotFound as missing:
         abort(404, description=str(missing))
+    except Refused as why:
+        _refuse(400, str(why))
     except Exception as e:
         logger.error("Error renaming a person: %s", e)
         abort(500, description="Internal error: %s" % e)
@@ -309,18 +303,6 @@ def person_rename():
 
 
 # ---- Faces: who they resemble --------------------------------------------------------------
-
-@routes.get("/api/face-matches")
-def face_matches():
-    library = state.require()
-    face_id = _int_arg("id", "id")
-    if not _library_there(library):
-        return jsonify([])
-    try:
-        return jsonify(identify_service.face_matches(library, face_id, _named(library)))
-    except NotFound:
-        abort(404, description="Face not found")
-
 
 @routes.get("/api/face-matches-unmatched")
 def face_matches_unmatched():
@@ -339,8 +321,8 @@ def face_matches_unmatched():
 @routes.get("/api/person-faces")
 def person_faces():
     library = state.require()
-    name = request.args.get("name")
-    if not name:
+    person = face_routes.person_arg(request.args.get("person_id"), request.args.get("name"))
+    if person is None:
         abort(400, description="Missing 'name' parameter")
     limit, page = 100, 1
     try:
@@ -355,7 +337,13 @@ def person_faces():
         pass
     if not _library_there(library):
         return jsonify({"faces": [], "total_count": 0, "has_more": False})
-    return jsonify(identify_service.person_faces(library, name, limit, page))
+    try:
+        # A read: a name two people have is all of them (the union), as the name always showed; a write refuses it.
+        return jsonify(identify_service.person_faces(library, people_service.for_reading(library, person), limit, page))
+    except NotFound as missing:
+        abort(404, description=str(missing))
+    except Refused as why:
+        _refuse(400, str(why))
 
 
 @routes.get("/api/faces/excluded")
@@ -374,19 +362,30 @@ def unmatched_faces_people():
     library = state.require()
     if not _library_there(library):
         return jsonify([])
-    return jsonify(identify_jobs.queue(library, identify_cache.of(library)))
+    # The queue is cached against the faces and photos; who is shared is the tree's, read now, on a copy.
+    waiting = [dict(each) for each in identify_jobs.queue(library, identify_cache.of(library))]
+    return jsonify(people_service.annotate(library, waiting))
 
 
 @routes.get("/api/unmatched-faces/person-matches")
 def unmatched_faces_person_matches():
     library = state.require()
-    name = request.args.get("name")
-    if not name:
+    person = face_routes.person_arg(request.args.get("person_id"), request.args.get("name"))
+    if person is None:
         abort(400, description="Missing 'name' parameter")
     if not _library_there(library):
         return jsonify({"faces": [], "total_count": 0, "has_more": False})
+    asked = request.args.get("person_id") or request.args.get("name")
+    try:
+        # A read: the person by their id, a name one person has as that person, a name two people have as all of them (the
+        # union, as the name always showed; nothing is created or linked), a name no node is as the name.
+        person = people_service.for_reading(library, person)
+    except NotFound as missing:
+        abort(404, description=str(missing))
+    except Refused as why:
+        _refuse(400, str(why))
     return jsonify(identify_jobs.grid(library, identify_cache.of(library),
-                                      identify_progress.of(library), name))
+                                      identify_progress.of(library), person, progress_key=asked))
 
 
 @routes.get("/api/unmatched-faces/build-status")
@@ -395,7 +394,7 @@ def unmatched_faces_build_status():
     deliberately not cached: it is polled while another thread does the slow work, and
     it touches no database at all."""
     library = state.require()
-    name = request.args.get("name")
+    name = request.args.get("person_id") or request.args.get("name")
     if not name:
         abort(400, description="Missing 'name' parameter")
     return jsonify(identify_progress.of(library).of(name))
@@ -403,76 +402,12 @@ def unmatched_faces_build_status():
 
 # ---- Faces: the writes -------------------------------------------------------------------------
 
-def _faces_write(library, action):
-    """Run a face action (tagpup.services.faces) on the request's library, and answer
-    what went wrong: 404 for a face or a library that is not there, 409 for a face
-    that cannot be named as things stand, 400 for a request refused, 500 for anything
-    else. Returns its Result.
-
-    The faces an action took out of the identify pool come off the cached grids,
-    rather than making the next click rebuild them: the action says which, and the
-    fingerprints either side of its write (tagpup.store.faces.accounted_write).
-    """
-    try:
-        result = action(library)
-    except NotFound as missing:
-        abort(404, description=str(missing))
-    except Conflict as conflict:
-        _refuse(409, str(conflict))
-    except Exception as e:
-        logger.error("Error in a face action: %s", e)
-        abort(500, description="Internal error: %s" % e)
-    if result.refused:
-        _refuse(400, result.refused)
-    fingerprints = result.details.get("fingerprints")
-    if fingerprints and result.changed:
-        identify_cache.of(library).forget_faces(result.details["face_ids"], *fingerprints)
-    return result
-
-
-def _read_face_ids(body):
-    """Accept either face_ids (list) or a single face_id, as ints; None when neither."""
-    face_ids = body.get("face_ids")
-    if face_ids is None and body.get("face_id") is not None:
-        face_ids = [body.get("face_id")]
-    if not face_ids or not isinstance(face_ids, list):
-        return None
-    try:
-        return [int(x) for x in face_ids]
-    except (ValueError, TypeError):
-        return None
-
-
-@routes.post("/api/face/match")
-def face_match():
-    """Name one face (tagpup.services.faces.name_face)."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    face_id, person_name = body.get("face_id"), body.get("person_name")
-    if face_id is None or not person_name:
-        abort(400, description="Missing face_id or person_name")
-    try:
-        face_id, person_name = int(face_id), str(person_name).strip()
-    except (ValueError, TypeError):
-        abort(400, description="Invalid parameters")
-    _faces_write(library, lambda lib: faces_service.name_face(lib, face_id, person_name))
-    return jsonify({"success": True})
-
-
-@routes.post("/api/face/unmatch")
-def face_unmatch():
-    """Take a face's name off (tagpup.services.faces.unname_face)."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    face_id = body.get("face_id")
-    if face_id is None:
-        abort(400, description="Missing face_id")
-    try:
-        face_id = int(face_id)
-    except (ValueError, TypeError):
-        abort(400, description="Invalid face_id")
-    _faces_write(library, lambda lib: faces_service.unname_face(lib, face_id))
-    return jsonify({"success": True})
+# The writes of one face, which TagPup's Organize makes as well (tagpup.web.photo_face_routes): one view each
+# (tagpup.web.face_routes), registered in each app's blueprint, which refuses them while clustering.
+routes.add_url_rule("/api/face/match", view_func=face_routes.face_match, methods=["POST"])
+routes.add_url_rule("/api/face/unmatch", view_func=face_routes.face_unmatch, methods=["POST"])
+routes.add_url_rule("/api/faces/exclude", view_func=face_routes.faces_exclude, methods=["POST"])
+_faces_write = face_routes.faces_write
 
 
 @routes.post("/api/faces/match-bulk")
@@ -480,17 +415,29 @@ def faces_match_bulk():
     """Name many faces as one person (tagpup.services.faces.name_faces)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    face_ids, person_name = body.get("face_ids"), body.get("person_name")
-    if not face_ids or not isinstance(face_ids, list) or not person_name:
+    face_ids, person = body.get("face_ids"), face_routes.person_arg(body.get("person_id"), body.get("person_name"))
+    if not face_ids or not isinstance(face_ids, list) or person is None:
         abort(400, description="Missing or invalid face_ids or person_name")
     try:
-        face_ids, person_name = [int(fid) for fid in face_ids], str(person_name).strip()
+        face_ids = [int(fid) for fid in face_ids]
     except (ValueError, TypeError):
         abort(400, description="Invalid parameters format")
-    result = _faces_write(library, lambda lib: faces_service.name_faces(lib, face_ids, person_name))
-    return jsonify({"success": True, "matched": result.details["matched"],
-                    "matched_ids": result.details["matched_ids"],
-                    "skipped_excluded": result.details["skipped_excluded"]})
+    try:
+        plan = face_assignment.plan_name(library, face_ids, person)
+    except Refused as why:
+        _refuse(400, str(why))
+    except NotFound as missing:
+        abort(404, description=str(missing))
+    outcome = face_routes.assigned(library, plan).outcome()
+    named = set(outcome["matched_ids"])
+    reply = {"success": True,
+             "person": people_service.annotate(library, [{"name": plan["person_name"], "person_id": plan["person_id"]}])[0]["person"],
+             "matched": len(named), "matched_ids": outcome["matched_ids"],
+             "skipped_excluded": plan["skipped_excluded"], "tags_written": outcome["tags_written"],
+             "not_named": [face_id for face_id in outcome["planned_ids"] if face_id not in named], "job": outcome["job"]}
+    if face_routes.trouble(outcome):
+        reply["warning"] = face_routes.trouble(outcome)
+    return jsonify(reply)
 
 
 @routes.post("/api/faces/unmatch-bulk")
@@ -505,34 +452,41 @@ def faces_unmatch_bulk():
         face_ids = [int(fid) for fid in face_ids]
     except (ValueError, TypeError):
         abort(400, description="Invalid face_ids format")
-    undo = bool(body.get("undo"))
-    _faces_write(library, lambda lib: faces_service.unname_faces(lib, face_ids, undo=undo))
-    return jsonify({"success": True})
+    plan = face_assignment.plan_unname(library, face_ids, undo=bool(body.get("undo")))
+    outcome = face_routes.assigned(library, plan).outcome()
+    reply = {"success": True, "changed": outcome["changed"], "tags_removed": outcome["tags_removed"], "job": outcome["job"]}
+    if face_routes.trouble(outcome):
+        reply["warning"] = face_routes.trouble(outcome)
+    return jsonify(reply)
 
 
 @routes.post("/api/photo/unmatch-all")
 def photo_unmatch_all():
-    """Take the names off every face in a photo (tagpup.services.faces.unname_photo)."""
+    """Take the names off every face in a photo, and the tags of the people they named
+    (tagpup.services.face_people.unname_photo)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     photo_path = body.get("photo_path")
     if not photo_path:
         abort(400, description="Missing photo_path")
-    _faces_write(library, lambda lib: faces_service.unname_photo(lib, photo_path))
-    return jsonify({"success": True})
+    writer = face_routes.writer_for(library, bool(body.get("page_writes_tags")))
+    result = _faces_write(library, lambda lib: face_people.unname_photo(lib, photo_path, writer))
+    return jsonify({"success": True, **face_routes.tags_reply(result)})
 
 
 @routes.post("/api/photo/automatch")
 def photo_automatch():
-    """Automatch a photo's faces (tagpup.services.faces.automatch_photo)."""
+    """Automatch a photo's faces, and put the people it named on the photo
+    (tagpup.services.face_people.automatch_photo)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
     photo_path = body.get("photo_path")
     if not photo_path:
         abort(400, description="Missing photo_path")
+    writer = face_routes.writer_for(library)
     result = _faces_write(
-        library, lambda lib: faces_service.automatch_photo(lib, photo_path, _decided(lib)))
-    return jsonify({"success": True, "matched_count": result.changed})
+        library, lambda lib: face_people.automatch_photo(lib, photo_path, _decided(lib), writer))
+    return jsonify({"success": True, "matched_count": result.changed, **face_routes.tags_reply(result)})
 
 
 @routes.post("/api/folder/automatch")
@@ -546,31 +500,26 @@ def folder_automatch():
         abort(400, description="Missing folder_path")
     # Anything but no flag, or a false one, rehearses: "false" as text is the safe mistake.
     rehearse = bool(body.get("dry_run"))
-    result = _faces_write(
-        library, lambda lib: faces_service.automatch_folder(lib, folder_path, _decided(lib), rehearse=rehearse))
-    details = result.details
-    answer = {"success": True, "dry_run": rehearse, "matched_count": result.changed,
-              "faces": details.get("faces", 0), "photos": details.get("photos", 0),
-              "people": details.get("people", {}), "renamed": details.get("renamed", 0)}
-    if not rehearse:
-        answer.update(remaining_counts=details.get("remaining_counts", {}),
-                      photos_named=details.get("photos_named", []))
+    if rehearse:
+        result = _faces_write(
+            library, lambda lib: faces_service.automatch_folder(lib, folder_path, _decided(lib), rehearse=True))
+        details = result.details
+        return jsonify({"success": True, "dry_run": True, "matched_count": result.changed,
+                        "faces": details.get("faces", 0), "photos": details.get("photos", 0),
+                        "people": details.get("people", {}), "renamed": details.get("renamed", 0)})
+    # Applied: the guesses AND the people's tags, as a job (#907). The faces and photos are what was written, not proposed.
+    plan = face_assignment.plan_guesses(library, folder_path, _decided(library))
+    job = face_routes.assigned(library, plan)
+    outcome = job.outcome()
+    named = outcome["matched_ids"]
+    written = faces_service.written_report(library, named, folder_path)
+    people, photos_named, remaining = written["people"], written["photos"], written["remaining_counts"]
+    answer = {"success": True, "dry_run": False, "matched_count": len(named), "faces": len(named),
+              "photos": len(photos_named), "people": people, "renamed": 0, "remaining_counts": remaining,
+              "photos_named": photos_named, "tags_written": outcome["tags_written"], "job": outcome["job"]}
+    if face_routes.trouble(outcome):
+        answer["warning"] = face_routes.trouble(outcome)
     return jsonify(answer)
-
-
-@routes.post("/api/faces/exclude")
-def faces_exclude():
-    """Take faces out of identity work (tagpup.services.faces.exclude)."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    face_ids = _read_face_ids(body)
-    if face_ids is None:
-        abort(400, description="Missing or invalid face_ids")
-    reason = body.get("reason")   # none: the service's default
-    result = _faces_write(library, lambda lib: faces_service.exclude(lib, face_ids, reason))
-    # The rows changed, not the ids sent: an id that is not in the table was never
-    # excluded, and saying it was is how a write reports success on nothing.
-    return jsonify({"success": True, "excluded": result.changed})
 
 
 @routes.post("/api/faces/restore")

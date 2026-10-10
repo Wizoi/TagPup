@@ -2,6 +2,7 @@
 // its state in state.js; every request goes through api.js, which puts the library
 // in front of it (web/common/api.js).
 import { showDamagedCount } from './common/damaged-count.js';
+import { wireFaceJobBanner } from './common/face-job-banner.js';
 import { wireRootsBanner } from './common/roots-banner.js';
 import { initDatabaseSelector } from './common/library.js';
 import { loadRules } from './common/validate.js';
@@ -21,7 +22,10 @@ import {
 } from './sidebar.js';
 import { restoreIndexingState, wireIndexing } from './indexing.js';
 import { wireReview } from './review.js';
+import { wireNamesReview } from './names-review.js';
 import { wireTunerGear } from './gear.js';
+import { wireNameFaces } from './name-faces.js';
+import { wireZoom } from './zoom.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     // What may be set, as the server says (web/common/validate.js): once.
@@ -50,6 +54,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const urlPerson = urlParams.get('person');
     if (urlPerson) {
         state.activePersonName = urlPerson;
+        // The person's id too, when the address has it: two people called alike are two addresses.
+        const urlPersonId = urlParams.get('person_id');
+        if (urlPersonId && /^[0-9]+$/.test(urlPersonId)) state.activePersonId = Number(urlPersonId);
     }
 
     const urlShowMatched = urlParams.get('show_matched');
@@ -58,16 +65,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     updateMatchedToggleVisibility();
 
-    fetchPhotos();
-    fetchKnownPeople();
-    restoreIndexingState();
-
     // Each feature's listeners, in the order the page first added them.
     wireSidebar();
     wireFacesStrip();
     wireAssign();
     wireNewPerson();
     wireSelection();
+    wireZoom();
     wireGrid();
     wireIndexing();
     wirePeople();
@@ -77,8 +81,22 @@ document.addEventListener('DOMContentLoaded', () => {
     wireTunerGear();
     // How many folders under the library's roots wait to be included or ignored.
     wireReview();
+    // The names no person's tag is, for the owner to settle: a first row of Review People, and the dialog it opens.
+    wireNamesReview();
+    // The Folder Matches header's "Name faces from tags" (the gear's item is wired with the gear).
+    wireNameFaces();
     // A library whose root this computer does not place says so, at the top of the page.
     wireRootsBanner();
+    // A bulk assignment of faces that stopped part-way (or runs in another window) is offered here (#907).
+    wireFaceJobBanner({ changed: () => { fetchPhotos(); } });
     // How many of the library's photos were found damaged, in the header.
     showDamagedCount(document.getElementById('damaged-badge'));
+
+    // ---- Start ------------------------------------------------------------
+    // Last, deliberately: these read the library and pick up an index already running, which calls into
+    // most of the page, through the listeners wired above and the calls up the page (hooks.js).
+    // tests/frontend/tuner-starts-last.test.mjs keeps it so.
+    fetchPhotos();
+    fetchKnownPeople();
+    restoreIndexingState();
 });

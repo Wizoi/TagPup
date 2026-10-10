@@ -1,8 +1,10 @@
-"""Writing a photo's keyword fields, and reading its tags back.
+"""Reading a photo's tags back from its file.
 
-Which fields a write sets is tagpup.core.fields' (keyword_fields, caption_fields), and
-both the write here and the record of it in the index go by that one list, so the file
-and its index row cannot drift apart one field at a time.
+Which fields a write sets is tagpup.core.fields' (keyword_fields, caption_fields), and both the
+journaled write (tagpup.services.file_changes, tagpup.files.field_values) and the record of it in the
+index go by that one list, so the file and its index row cannot drift apart one field at a time. The
+write that was here had no caller outside tests once the single save went through the file journal
+(docs/findings.md, #300).
 
 Which person a bare name means is the library's business, not the file's: callers
 resolve people to their tags first (tagpup.core.vocabulary.resolve_people, over
@@ -13,37 +15,6 @@ from tagpup.core.fields import (  # noqa: F401  (imported from here by older cod
     TAG_SOURCE_FIELDS, caption_fields, expand_tag_fields, keyword_fields,
     record_keyword_fields)
 from tagpup.files.metadata import clean_metadata_value
-
-
-def write_keywords(et, path, tags, extra_params=None):
-    """Write `tags` into a photo's keyword fields, clearing fields that end up empty.
-
-    ExifTool treats an empty list as "no change", so assigning [] silently leaves the
-    old keywords in place. Removing a photo's last tag therefore has to be expressed as
-    an explicit '-TAG=' deletion instead. `extra_params` go in the same write.
-
-    Returns the (flat, hierarchical) keywords written.
-    """
-    flat, hierarchical = expand_tag_fields(tags)
-
-    params = dict(extra_params or {})
-    clear_args = []
-
-    # The fields come from keyword_fields(), which record_keyword_fields() also reads,
-    # so whatever is written here is what the index records. An empty string clears a
-    # field as written; an empty list does not, and needs the explicit deletion.
-    for field, value in keyword_fields(flat, hierarchical).items():
-        if value or isinstance(value, str):
-            params[field] = value
-        else:
-            clear_args.append("-%s=" % field)
-
-    if params:
-        et.set_tags([path], tags=params, params=["-overwrite_original"])
-    if clear_args:
-        et.execute(*clear_args, "-overwrite_original", path)
-
-    return flat, hierarchical
 
 
 def tags_in_file(et, photo_path):

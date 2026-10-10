@@ -1,6 +1,6 @@
 // Review People: the people list, and choosing a person.
 import { api } from './common/api.js';
-import { compareTagNames } from './common/vocabulary.js';
+import { compareTagNames, personLabelOf, personTitleOf } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     btnRenamePerson, emptyState, faceMatchingContent, inputReassignName, listStats,
@@ -9,12 +9,43 @@ import {
 } from './elements.js';
 import { BUCKET, isBucket } from './rules.js';
 import { updateURLParams } from './shared.js';
+import { loadNamesCount, showNamesRow } from './names-review.js';
+import { personLabelNodeOf } from './common/person-label.js';
 import { renderTagList } from './tags.js';
 import { clearFaceDetails, updateMatchingSelectionUI } from './selection.js';
 import { updateTabLabels } from './grid-parts.js';
 import { renderPersonFaces } from './grid.js';
 
 const matchingPersonName = document.getElementById('matching-person-name');
+const peopleView = document.getElementById('people-view');
+const peopleViewName = document.getElementById('people-view-name');
+const peopleViewFace = document.getElementById('people-view-face');
+
+/**
+ * What identifies a person in the list: the id of their node when the server sent one (two people called alike are two rows), else
+ * the name (a bucket such as Unknown Faces, or a name no tag has). Never the label, which is only what is shown.
+ */
+export function personKeyOf(name, personId) {
+    return personId !== null && personId !== undefined ? `id:${personId}` : String(name);
+}
+
+/** The key of the person chosen now. */
+function activeKey() {
+    return state.activePersonName === null ? null : personKeyOf(state.activePersonName, state.activePersonId);
+}
+
+/** Is this row of the list the person chosen? By id when the choice has one, else by name. */
+function isActivePerson(person) {
+    if (state.activePersonName === null) return false;
+    if (state.activePersonId !== null) return person.person_id === state.activePersonId;
+    return person.name === state.activePersonName;
+}
+
+/** The id a name stands for when it is one row's alone, else null: a choice made by name (an address) finds its person. */
+function onlyIdOf(name) {
+    const rows = (state.allPeopleWithCounts || []).filter(each => each.name === name);
+    return rows.length === 1 && rows[0].person_id !== undefined ? rows[0].person_id : null;
+}
 
 // Fetch people with face counts from backend
 export function fetchPeopleWithCounts(isSilent = false, keepTab = false) {
@@ -28,15 +59,28 @@ export function fetchPeopleWithCounts(isSilent = false, keepTab = false) {
         ? '/api/unmatched-faces/people'
         : '/api/people-with-counts';
 
-    api.fetch(apiPath, { signal: state.sidebarAbortController.signal })
+    const signal = state.sidebarAbortController.signal;
+    // The faces are asked for only when the list is drawn by them, and a failed ask draws
+    // placeholders: the names and counts are what the list is for.
+    const faces = showingFaces()
+        ? api.fetch('/api/people-faces', { signal })
+            .then(res => (res.ok ? res.json() : {}))
+            // An abort takes the people request with it (one signal), which is handled there.
+            .catch(() => ({}))
+        : Promise.resolve(null);
+
+    api.fetch(apiPath, { signal })
         .then(res => {
             if (!res.ok) throw new Error('Network response was not ok');
             return res.json();
         })
-        .then(data => {
+        .then(data => faces.then(personFaces => {
             state.allPeopleWithCounts = data;
+            if (personFaces) state.personFaces = personFaces;
             renderPeopleList(keepTab);
-        })
+            // Review People opens with how many names wait (a first row, only when some do); read after the list is drawn.
+            if (modeSelect.value === 'face-matching') loadNamesCount();
+        }))
         .catch(err => {
             if (err.name === 'AbortError') return;
             console.error('Error fetching people with counts:', err);
@@ -47,6 +91,58 @@ export function fetchPeopleWithCounts(isSilent = false, keepTab = false) {
 //: Remembered, because it is a standing preference about how you read the list
 //: rather than a per-visit decision.
 const PEOPLE_SORT_KEY = 'tagtuner.peopleSort';
+const PEOPLE_VIEW_KEY = 'tagtuner.peopleView';
+
+// By face is Review People's: Identify Faces' names are candidates, and its buckets have no face.
+function showingFaces() {
+    return state.peopleView === 'face' && modeSelect.value === 'face-matching';
+}
+
+// The By name / By face choice is offered in Review People alone.
+export function showPeopleViewChoice() {
+    if (!peopleView) return;
+    peopleView.classList.toggle('hidden', modeSelect.value !== 'face-matching');
+    const byFace = state.peopleView === 'face';
+    peopleViewName.classList.toggle('active', !byFace);
+    peopleViewFace.classList.toggle('active', byFace);
+    peopleViewName.setAttribute('aria-pressed', String(!byFace));
+    peopleViewFace.setAttribute('aria-pressed', String(byFace));
+}
+
+function choosePeopleView(view) {
+    if (state.peopleView === view) return;
+    state.peopleView = view;
+    try {
+        localStorage.setItem(PEOPLE_VIEW_KEY, view);
+    } catch (e) { /* the preference just will not stick */ }
+    showPeopleViewChoice();
+    // The faces come with the list; keep the tab, as re-ordering does.
+    fetchPeopleWithCounts(true, true);
+}
+
+// One person's row: a name and its count on one line, or a face with the name under it.
+function personFaceCard(person, li) {
+    const crop = document.createElement('div');
+    crop.className = 'person-face-crop';
+    // A person with a node is asked for by their id (two people called alike are two); a name only when the server keyed it.
+    const faceId = (person.person_id != null && state.personFaces[`id:${person.person_id}`]) || state.personFaces[person.name];
+    if (faceId) {
+        const img = document.createElement('img');
+        img.alt = '';
+        // The list can hold hundreds of people: the browser fetches a crop as it scrolls near.
+        img.setAttribute('loading', 'lazy');
+        img.setAttribute('decoding', 'async');
+        img.src = api.image(`/api/face-crop?id=${faceId}`);
+        crop.appendChild(img);
+    } else {
+        const blank = document.createElement('span');
+        blank.className = 'person-face-blank';
+        blank.textContent = (person.name || '?').trim().charAt(0).toUpperCase();
+        crop.appendChild(blank);
+    }
+    li.appendChild(crop);
+    return crop;
+}
 
 function currentPeopleSort() {
     if (peopleSort && peopleSort.value) return peopleSort.value;
@@ -86,10 +182,13 @@ function sortedPeople() {
 function renderPeopleList(keepTab = false) {
     const savedScrollTop = photoList.scrollTop;
     photoList.innerHTML = '';
+    const byFace = showingFaces();
+    photoList.classList.toggle('by-face', byFace);
     
     if (state.allPeopleWithCounts.length === 0) {
         state.shownPeople = [];
         listStats.textContent = 'No people found';
+        showNamesRow();
         return;
     }
 
@@ -103,19 +202,25 @@ function renderPeopleList(keepTab = false) {
     state.shownPeople = sortedPeople();
     state.shownPeople.forEach(person => {
         const li = document.createElement('li');
-        li.className = 'photo-item';
+        li.className = byFace ? 'photo-item person-card' : 'photo-item person-row';
         li.personName = person.name;
+        li.personId = person.person_id !== undefined ? person.person_id : null;
+        const label = personLabelOf(person);
+        li.personText = label;
+        li.title = personTitleOf(person);
         
-        if (person.name === state.activePersonName) {
+        if (isActivePerson(person)) {
             li.classList.add('active');
         }
 
-        const match = person.name.toLowerCase().includes(query);
-        li.style.display = match ? 'block' : 'none';
+        const match = label.toLowerCase().includes(query) || person.name.toLowerCase().includes(query);
+        li.style.display = match ? '' : 'none';
+
+        const crop = byFace ? personFaceCard(person, li) : null;
 
         const title = document.createElement('div');
         title.className = 'photo-title';
-        title.textContent = person.name;
+        title.appendChild(personLabelNodeOf(person));
 
         const badge = document.createElement('span');
         badge.className = 'photo-badge';
@@ -137,40 +242,53 @@ function renderPeopleList(keepTab = false) {
             badge.textContent = `${person.count} face${person.count !== 1 ? 's' : ''}`;
         }
 
-        li.appendChild(title);
-        li.appendChild(badge);
+        if (byFace) {
+            // The count on the crop's corner, the name under it; "n faces" is too long for it.
+            badge.textContent = person.count.toLocaleString();
+            badge.title = `${person.count.toLocaleString()} face${person.count !== 1 ? 's' : ''}`;
+            crop.appendChild(badge);
+            li.appendChild(title);
+        } else {
+            li.appendChild(title);
+            li.appendChild(badge);
+        }
 
-        li.addEventListener('click', () => selectPerson(person.name, li));
+        li.addEventListener('click', () => selectPerson(person.name, li, false, false, li.personId));
         photoList.appendChild(li);
     });
+    showNamesRow();
 
     // Restore scroll position
     photoList.scrollTop = savedScrollTop;
 
     if (state.activePersonName) {
-        const exists = state.allPeopleWithCounts.some(p => p.name === state.activePersonName);
+        // A choice made by name alone (an address) finds its row's id when the name is one person's.
+        if (state.activePersonId === null) state.activePersonId = onlyIdOf(state.activePersonName);
+        const exists = state.allPeopleWithCounts.some(p => isActivePerson(p));
         if (exists) {
-            if (state.activePersonName === state.lastLoadedPersonName
-                    || state.activePersonName === state.loadingPersonName) {
-                selectPerson(state.activePersonName, null, true);
+            if (activeKey() === state.lastLoadedPersonName || activeKey() === state.loadingPersonName) {
+                selectPerson(state.activePersonName, null, true, false, state.activePersonId);
             } else {
-                selectPerson(state.activePersonName, null, false, keepTab);
+                selectPerson(state.activePersonName, null, false, keepTab, state.activePersonId);
             }
         } else {
             state.activePersonName = null;
+            state.activePersonId = null;
             updateURLParams();
         }
     }
 }
 
-// Select a person to display their face matches
-export function selectPerson(name, element, skipFetch = false, keepTab = false) {
+// Select a person to display their face matches. `personId` is the id of their node when the list gave one; without it a name
+// that is one row's alone finds it, and a name two people have is asked for by name (the union, a read).
+export function selectPerson(name, element, skipFetch = false, keepTab = false, personId = undefined) {
     const items = photoList.getElementsByClassName('photo-item');
     Array.from(items).forEach(item => item.classList.remove('active'));
-    
+
+    const id = personId !== undefined ? personId : (element && element.personId !== undefined ? element.personId : onlyIdOf(name));
     let activeEl = element;
     if (!activeEl) {
-        activeEl = Array.from(items).find(item => item.personName === name);
+        activeEl = Array.from(items).find(item => item.personName === name && (id === null || item.personId === id));
     }
     if (activeEl) {
         activeEl.classList.add('active');
@@ -178,7 +296,9 @@ export function selectPerson(name, element, skipFetch = false, keepTab = false) 
     }
 
     state.activePersonName = name;
+    state.activePersonId = id === undefined ? null : id;
     updateURLParams();
+    const key = personKeyOf(name, state.activePersonId);
 
     if (skipFetch) return;
 
@@ -273,7 +393,9 @@ export function selectPerson(name, element, skipFetch = false, keepTab = false) 
     panelContent.classList.add('hidden');
     faceMatchingContent.classList.remove('hidden');
 
-    matchingPersonName.textContent = name;
+    const row = (state.allPeopleWithCounts || []).find(each => isActivePerson(each));
+    matchingPersonName.textContent = row ? personLabelOf(row) : name;
+    matchingPersonName.title = row ? personTitleOf(row) : name;
     matchingPersonCount.textContent = 'Loading faces...';
     
     // Cancel any pending face-crop image requests in the grid
@@ -300,18 +422,21 @@ export function selectPerson(name, element, skipFetch = false, keepTab = false) 
     state.detailsAbortController = new AbortController();
 
     // The Excluded bucket is not a person and has its own listing.
+    // The person is asked for by the id of their node when the list had one: two people called alike are two grids.
+    const who = state.activePersonId !== null
+        ? `person_id=${encodeURIComponent(state.activePersonId)}` : `name=${encodeURIComponent(name)}`;
     const apiPath = (name === BUCKET.EXCLUDED)
         ? '/api/faces/excluded'
         : (mode === 'unmatched-faces')
-            ? `/api/unmatched-faces/person-matches?name=${encodeURIComponent(name)}`
-            : `/api/person-faces?name=${encodeURIComponent(name)}&limit=-1`;
+            ? `/api/unmatched-faces/person-matches?${who}`
+            : `/api/person-faces?${who}&limit=-1`;
 
     // Only the Identify Faces grid does work worth reporting on.
     if (mode === 'unmatched-faces' && name !== BUCKET.EXCLUDED) {
-        startGridBuildProgress(name);
+        startGridBuildProgress(who);
     }
 
-    state.loadingPersonName = name;
+    state.loadingPersonName = key;
     api.fetch(apiPath, { signal: state.detailsAbortController.signal })
         .then(res => {
             if (!res.ok) throw new Error('Failed to load faces');
@@ -319,9 +444,9 @@ export function selectPerson(name, element, skipFetch = false, keepTab = false) 
         })
         .then(data => {
             stopGridBuildProgress();
-            if (state.loadingPersonName === name) state.loadingPersonName = null;
+            if (state.loadingPersonName === key) state.loadingPersonName = null;
             state.activePersonFaces = data.faces;
-            state.lastLoadedPersonName = name;
+            state.lastLoadedPersonName = key;
             // A capped list presented as a total makes the remainder look lost.
             state.activeFacesTotal = (data.unclustered_total !== undefined
                     && data.unclustered_total > (data.unclustered_shown || 0))
@@ -336,7 +461,7 @@ export function selectPerson(name, element, skipFetch = false, keepTab = false) 
         .catch(err => {
             stopGridBuildProgress();
             // Only if it is still this load: an aborted one was replaced by the next.
-            if (state.loadingPersonName === name && err.name !== 'AbortError') state.loadingPersonName = null;
+            if (state.loadingPersonName === key && err.name !== 'AbortError') state.loadingPersonName = null;
             if (err.name === 'AbortError') return;
             console.error('Error loading person faces:', err);
             matchingPersonCount.textContent = 'Error loading faces';
@@ -360,13 +485,13 @@ const gridBuildText = document.getElementById('grid-build-text');
  * A cached grid comes back at once and never reports progress, which is why the bar
  * only appears after a moment rather than flashing on every person you click.
  */
-function startGridBuildProgress(name) {
+function startGridBuildProgress(who) {
     stopGridBuildProgress();
     if (!gridBuildProgress) return;
 
     let shown = false;
     const poll = () => {
-        api.fetch(`/api/unmatched-faces/build-status?name=${encodeURIComponent(name)}`)
+        api.fetch(`/api/unmatched-faces/build-status?${who}`)
             .then(res => (res.ok ? res.json() : null))
             .then(status => {
                 if (!status || !status.active || state.gridBuildTimer === null) return;
@@ -398,10 +523,19 @@ function stopGridBuildProgress() {
 
 // Its listeners, which main.js adds once the page has loaded.
 export function wirePeople() {
+    if (peopleView) {
+        try {
+            if (localStorage.getItem(PEOPLE_VIEW_KEY) === 'face') state.peopleView = 'face';
+        } catch (e) { /* by name, then */ }
+        peopleViewName.addEventListener('click', () => choosePeopleView('name'));
+        peopleViewFace.addEventListener('click', () => choosePeopleView('face'));
+        showPeopleViewChoice();
+    }
     if (peopleSort) {
         try {
             const saved = localStorage.getItem(PEOPLE_SORT_KEY);
-            if (saved) peopleSort.value = saved;
+            // Only a choice the list offers; the first visit has none and starts on Name (A-Z) (#793).
+            if (saved && [...peopleSort.options].some(o => o.value === saved)) peopleSort.value = saved;
         } catch (e) { /* the preference just will not stick */ }
 
         peopleSort.addEventListener('change', () => {

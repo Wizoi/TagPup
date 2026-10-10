@@ -36,7 +36,9 @@ import time
 from flask import Blueprint, current_app, jsonify, request
 
 from tagpup.jobs import bulk_edits as bulk_edit_jobs
+from tagpup.jobs import face_assignments as face_assignment_jobs
 from tagpup.jobs import indexing as indexing_jobs
+from tagpup.jobs import naming_faces as naming_faces_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup import launcher
 from tagpup.services import libraries as library_actions
@@ -107,6 +109,12 @@ def long_work():
     edits = bulk_edit_jobs.running()
     if edits:
         found.append("%d bulk edit(s)" % edits)
+    naming = naming_faces_jobs.running()
+    if naming:
+        found.append("%d naming of faces from tags" % naming)
+    assigning = face_assignment_jobs.running()
+    if assigning:
+        found.append("%d assignment(s) of faces" % assigning)
     bringing = library_actions.bringing_up_to_date()
     if bringing:
         found.append("bringing %d library(ies) up to date" % bringing)   # the startup migrations (#664)

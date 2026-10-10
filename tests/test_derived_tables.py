@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
+import migration_names  # noqa: E402
 import photo_rows  # noqa: E402
 from test_migrations import at_version  # noqa: E402
 
@@ -417,8 +418,7 @@ class TheMigration(unittest.TestCase):
         lists = [json.loads(tags or "[]") for (tags,) in self.look(path, "SELECT tags FROM photos")]
         self.assertGreater(total, 6, "the six seeded, and the two the older library holds")
         schema._current.clear()
-        self.assertEqual(["the tables the library views stand on", "photos by when they were taken", "people by their node's id", "photos by file name", "photos by caption", "photos by their words",
-                          "the photos whose faces were detected"], schema.ensure(path))
+        self.assertEqual(migration_names.after(18), schema.ensure(path))
         self.assertEqual(before, {table: self.look(path, "SELECT %s FROM %s ORDER BY 1" % (columns[table], table))
                                   for table in before})
         conn = db.connect(db.readonly_uri(path), uri=True)
@@ -455,8 +455,7 @@ class TheMigration(unittest.TestCase):
         self.assertFalse(names & {"photo_tags", "folders", "photo_folder", "photo_meta", "derived_go_with_their_photo",
                                   "photo_tags_go_with_their_node", "idx_photo_tags_tag"}, "all or nothing")
         schema._current.clear()
-        self.assertEqual(["the tables the library views stand on", "photos by when they were taken", "people by their node's id", "photos by file name", "photos by caption", "photos by their words",
-                          "the photos whose faces were detected"], schema.ensure(path))
+        self.assertEqual(migration_names.after(18), schema.ensure(path))
         self.assertEqual([(schema.LATEST,)], self.look(path, "SELECT MAX(version) FROM schema_version"))
 
     def test_a_failed_check_rolls_it_back(self):
@@ -484,8 +483,7 @@ class TheMigration(unittest.TestCase):
         schema.ensure(path)
         shutil.copyfile(snapshot, path)   # restored over the migrated library
         schema._current.clear()
-        self.assertEqual(["the tables the library views stand on", "photos by when they were taken", "people by their node's id", "photos by file name", "photos by caption", "photos by their words",
-                          "the photos whose faces were detected"], schema.ensure(path))
+        self.assertEqual(migration_names.after(18), schema.ensure(path))
         self.assertEqual(self.look(path, "SELECT COUNT(*) FROM photos")[0][0],
                          self.look(path, "SELECT COUNT(*) FROM photo_meta")[0][0])
 
@@ -496,8 +494,7 @@ class TheMigration(unittest.TestCase):
         first = schema.ensure(path)
         schema._current.clear()
         second = schema.ensure(path)
-        self.assertEqual((["the tables the library views stand on", "photos by when they were taken", "people by their node's id", "photos by file name", "photos by caption", "photos by their words",
-                          "the photos whose faces were detected"], []), (first, second))
+        self.assertEqual((migration_names.after(18), []), (first, second))
 
     def test_a_library_made_new_has_the_tables_empty(self):
         home = own_home.for_test(self)

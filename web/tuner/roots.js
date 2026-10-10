@@ -9,6 +9,7 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { fileAccessNote } from './common/file-access-note.js';
+import { samePath } from './common/paths.js';
 import { state } from './state.js';
 
 const TIMES = String.fromCharCode(0xd7);
@@ -49,12 +50,21 @@ export function lastVerifyText(last) {
         `${count(last.missing)} missing`];
     if (last.unread) found.push(`${count(last.unread)} never read by the index`);
     if (last.unreadable) found.push(`${count(last.unreadable)} could not be read`);
-    return `Last checked ${last.when}, ${what}: ${found.join(', ')}.`;
+    const marks = last.marked ? ` ${count(last.marks_match)} of ${count(last.marked)} marked folders match; `
+        + `${count(last.marks_differ)} differ.` : '';
+    return `Last checked ${last.when}, ${what}: ${found.join(', ')}.${marks}`;
+}
+
+/** The folder markers of a Verify, one line in the server's own words ("N of M marked folders match; K differ; L
+ *  not marked."), or '' for a library that has marked no folder of the root. */
+export function markerLine(verify) {
+    return verify && verify.markers && verify.markers.line ? `${verify.markers.line}.` : '';
 }
 
 /** What a Verify answered, as lines for a person: its summary, and what is wrong with the place. */
 export function verifyLines(verify) {
     const lines = [verify.summary];
+    if (markerLine(verify)) lines.push(markerLine(verify));
     for (const why of verify.poor_why || []) {
         if (why !== verify.message) lines.push(why);
     }
@@ -81,8 +91,12 @@ function rootElement(name) {
 function showProgress(element, status) {
     const box = element.querySelector('.roots-progress');
     box.classList.remove('hidden');
-    box.querySelector('.roots-progress-text').textContent =
-        `Looking at every row: ${count(status.checked)} of ${count(status.rows)} (${count(status.folders)} folders)` +
+    // The folder markers are read before the rows, and the rows do not move meanwhile: say what is being done.
+    const markers = status.markers_of > 0 && status.markers_read < status.markers_of && !status.checked && !status.folders;
+    box.querySelector('.roots-progress-text').textContent = markers
+        ? `Reading folder markers: ${count(status.markers_read)} of ${count(status.markers_of)}`
+            + (status.cancelling ? ', stopping...' : '...')
+        : `Looking at every row: ${count(status.checked)} of ${count(status.rows)} (${count(status.folders)} folders)` +
         (status.cancelling ? ', stopping...' : '...');
 }
 
@@ -281,7 +295,7 @@ function openPanel(entry, element, mode) {
             }
             const found = answer.verify ? verifyLines(answer.verify) : [];
             if (!answer.success) {
-                lines(check, [answer.error, ...found.slice(0, 1)], 'validation-error');
+                lines(check, [answer.error, found[0], markerLine(answer.verify)], 'validation-error');
                 // A poor result may be accepted, by someone who says so; nothing else may.
                 if (answer.would_refuse) overrideLabel.classList.remove('hidden');
                 checked = answer.would_refuse ? { poor: true } : null;
@@ -348,6 +362,35 @@ function confirmMove(entry, ask, button, check, panel) {
 
 // ---- The dialog -------------------------------------------------------------------------------
 
+/** Are files written to the place the root is kept at? The server says where; the page compares paths. */
+function writesToKeptPlace(entry) {
+    return !entry.writes_to_place || samePath(entry.writes_to_place, entry.active);
+}
+
+/**
+ * What is said of a root besides where it is kept. The earlier place is always in the open: it is
+ * a separate copy that nothing written now reaches. Where files are written is folded away while it
+ * is the place above (redundant), and open, with its sentence, when it is somewhere else.
+ */
+function moreAbout(entry) {
+    const nodes = [];
+    if (entry.writes_to) {
+        const redundant = writesToKeptPlace(entry);
+        const writes = buildElement('p', { className: 'roots-writes', text: entry.writes_to });
+        nodes.push(redundant
+            ? buildElement('details', { className: 'roots-more' },
+                [buildElement('summary', { text: 'Where files are written' }), writes])
+            : buildElement('details', { className: 'roots-more', attrs: { open: '' } },
+                [buildElement('summary', { text: 'Files are written elsewhere' }), writes]));
+    }
+    if (entry.previous) {
+        nodes.push(buildElement('p', { className: 'roots-previous',
+            text: `Before that: ${entry.previous}. It is a separate copy: nothing written now goes there. `
+                + 'Moving again forgets it.' }));
+    }
+    return nodes;
+}
+
 function rootRow(entry) {
     const verify = buildElement('button', { className: 'btn btn-secondary btn-sm roots-verify', text: 'Verify',
         title: 'Look at a sample of the photos: are they there, and as they were when indexed?',
@@ -367,12 +410,7 @@ function rootRow(entry) {
     const facts = [];
     if (entry.mapped) {
         facts.push(buildElement('p', { className: 'roots-place', text: `Kept at ${entry.active}` }));
-        facts.push(buildElement('p', { className: 'roots-writes', text: entry.writes_to }));
-        if (entry.previous) {
-            facts.push(buildElement('p', { className: 'roots-previous',
-                text: `Before that: ${entry.previous}. It is a separate copy: nothing written now goes there. `
-                    + 'Moving again forgets it.' }));
-        }
+        facts.push(...moreAbout(entry));
         if (entry.shared_with && entry.shared_with.length) {
             facts.push(buildElement('p', { className: 'roots-shared',
                 text: `${entry.shared_with.join(', ')} also uses this root: moving it moves it for them too.` }));

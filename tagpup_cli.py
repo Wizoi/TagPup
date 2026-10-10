@@ -67,6 +67,11 @@ from tagpup.runtime import Runtime
 from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
+from tagpup.services import duplicate_rows as duplicate_rows_service
+from tagpup.services import faces_from_tags as faces_from_tags_service
+from tagpup.services import people as people_service
+from tagpup.services import tags_from_faces as tags_from_faces_service
+from tagpup.services import reread_fields as reread_fields_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import damaged_photos
@@ -75,7 +80,7 @@ from tagpup.core import runs as run_tags
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
-from tagpup.core.result import NotFound
+from tagpup.core.result import NotFound, Refused
 from tagpup.services import tagging
 from tagpup.services import maintenance
 from tagpup.jobs import indexing as indexing_jobs
@@ -110,19 +115,21 @@ def library_index(runtime, db_path, read_only=False):
     command that only looks: the library is not migrated (docs/findings.md, #243)."""
     return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)), read_only=read_only)
 
-def default_suggestions_file(db_path):
-    """Where `suggest` writes when not told: beside the library, named for it, as the
-    app's own files are. It was suggestions.json in whatever folder the command was run
-    from, which left one at the checkout's root (docs/findings.md, #102)."""
-    folder = os.path.dirname(os.path.abspath(db_path))
-    return os.path.join(folder, os.path.splitext(os.path.basename(db_path))[0] + "_suggestions.json")
-
 def say_if_behind(photo_index):
     """Tell the person a library a look did not migrate is behind this version of TagPup."""
     if photo_index.behind:
         console.print(f"[yellow]This library has not had {len(photo_index.behind)} of this version's"
                       " migrations; a look does not apply them. Indexing it, or opening it in TagPup,"
                       " brings it up to date.[/yellow]")
+
+def say_not_loaded(photo_index, hint=""):
+    """A look could not load the library: it is too far behind this version to be read (say so; the note of
+    say_if_behind came just before), or it holds no index (docs/findings.md, #297)."""
+    if photo_index.behind:
+        console.print("[bold red]Error:[/bold red] This library cannot be read until it is brought up to date.")
+    else:
+        console.print("[bold red]Error:[/bold red] No photo index found." + hint)
+
 
 def get_exiftool_path(db_path, read_only=False) -> str:
     """The ExifTool the library names, else the machine's (tagpup.runtime.exiftool).
@@ -181,6 +188,17 @@ def cli(ctx, db, test):
     ctx.ensure_object(dict)
     ctx.obj["test"] = test
     ctx.obj["db"] = db
+    if db or os.environ.get("TAGPUP_DB_PATH"):
+        # A library made by a newer TagPup is not opened by this one, whatever the command: it would misread
+        # it (tagpup.store.schema.NewerLibrary). A sentence and exit 1, not a traceback.
+        newer_path = get_db_path(test, db)
+        problem = library_actions.newer_problem(newer_path)
+        if problem and ctx.invoked_subcommand not in library_actions.RECOVERY_COMMANDS:
+            raise click.ClickException(problem)
+        if problem:
+            # The recovery commands (the journal's read, the snapshots) still work, as it is, with a note.
+            click.echo(library_actions.newer_note(newer_path), err=True)
+            ctx.with_resource(library_actions.reading_newer())
 
 def _resolve_directories(library, kwargs):
     """A folder typed in an old place's spelling is the first place's folder: spelled so before the command
@@ -652,7 +670,7 @@ def suggest(ctx, directory: str, k: int, min_sim: float, output: str, add_folder
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
     db_path = get_db_path(test_mode, cli_db)
-    output = output or default_suggestions_file(db_path)
+    output = output or libraries.suggestions_file(db_path)
     library = Library(db_path)
     # Suggest records faces and vectors for every photo it looks at, each on its row: only
     # in the folders the library holds (tagpup.services.libraries.not_in).
@@ -930,7 +948,7 @@ def search(ctx, query: str, k: int):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
+        say_not_loaded(photo_index, " Please run 'index' first.")
         return
         
     try:
@@ -979,7 +997,7 @@ def stats(ctx):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
+        say_not_loaded(photo_index, " Please run 'index' first.")
         return
         
     try:
@@ -1125,6 +1143,11 @@ def history(ctx, change_id, limit, reveal):
             ", undone %s" % entry["undone"] if entry["undone"] else "", entry["schema_version"],
             _rows_line(entry["rows"]) if entry["rows"] or not entry.get("files") else "",
             _files_line(entry.get("files"))), markup=False, soft_wrap=True)
+    for entry in found["changes"]:
+        scope = entry["summary"].get("scope")
+        if scope and change_id is not None:
+            console.print("  scope: %s%s" % (scope, ": " + entry["summary"]["folder"] if entry["summary"].get("folder") else ""),
+                          markup=False, soft_wrap=True)
     if change_id is not None:
         entry = found["changes"][0]
         for table, keys in sorted(entry.get("keys", {}).items()):
@@ -1174,6 +1197,9 @@ def undo(ctx, change_id, apply_):
         return
     console.print("Undid change %d: %d %s written back." % (
         change_id, result.changed, "file(s)" if result.details.get("files") else "row(s)"))
+    if "added_followed_back" in result.details:
+        back = result.details["added_followed_back"]
+        console.print("Added folder(s) pointed back: %s." % ("none (left as they are)" if back is None else back))
     for what, error in result.errors:
         console.print("[yellow]%s: %s[/yellow]" % (what, error))
 
@@ -1194,6 +1220,177 @@ def prune_journal(ctx, days, apply_):
         console.print("Pruned %d change(s), %d value(s)." % (result.changed, result.details["values"]))
     if result.details["note"]:
         console.print(result.details["note"])
+
+
+@cli.command("relink-folders")
+@click.option("--from", "old", default=None, type=click.Path(file_okay=False),
+              help="With --to: the folder, gone from disk, whose rows follow (as the dry run with --reveal names it).")
+@click.option("--to", "new", default=None, type=click.Path(file_okay=False),
+              help="With --from: the folder it was renamed to. Your word that it is the one: matching photos "
+                   "(same DocumentID, or same size and Date Taken) follow, however few.")
+@click.option("--reveal", is_flag=True, help="Name the folders. They can name people, so counts are the default.")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the rows, as one change History lists and undo reverses. Without it, only says what it would do.")
+@click.pass_context
+def relink_folders(ctx, old, new, reveal, apply_):
+    """Follow folders renamed outside the apps. A folder whose rows' folder is gone is
+    looked for beside itself, among folders beginning with the same date; its photos are
+    matched by DocumentID, else size and Date Taken; one candidate holding nearly all of
+    them is relinked, rows with their faces and names, and several or a thin match is
+    only proposed. A dry run unless --apply. Missing rows are never removed."""
+    if bool(old) != bool(new):
+        console.print("Give --from and --to together.")
+        raise SystemExit(2)
+    library = _existing_library(ctx)
+    result = runtimes.relink_folders(library, apply=apply_, only=(old, new) if old else None)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d row(s) in %d folder(s) gone from disk; %d more under a drive or share that is not there"
+                  " (left as they are)." % (counts["rows_in_gone_folders"], counts["gone_folders"],
+                                            counts["rows_unreachable"]))
+    console.print("  %d folder(s) to relink, %d proposed (you confirm: --from/--to), %d with no candidate or match."
+                  % (counts["relink"], counts["propose"], counts["none"]))
+    console.print("  %d photo(s) matched (%d by DocumentID, %d by size and Date Taken); %d row(s) and %d file(s) "
+                  "ambiguous, left; %d already had a row at the new name, left; %d file(s) "
+                  "in the candidates already have a row."
+                  % (counts["rows_matched"], counts["by_document_id"], counts["by_content"],
+                     counts["ambiguous_rows"], counts["ambiguous_files"], counts["occupied"],
+                     counts["files_with_rows"]))
+    console.print("  %d added folder(s) are gone from disk with no photo under them (their rows moved already): "
+                  "reported only, nothing is changed for them; %d more are on a drive or share that is not there. "
+                  "%d added folder record(s) follow the folder their rows moved to; %d are left (the new name is added "
+                  "already, or two folders go into one)." % (counts["added_ghosts"], counts["added_unreachable"],
+                                                              counts["added_renamed"], counts["added_left"]))
+    if reveal:
+        for ghost in result.details["reveal"]["added_ghosts"]:
+            console.print("    added folder gone: %s" % ghost, markup=False, soft_wrap=True)
+        for left in result.details["reveal"]["added_left"]:
+            console.print("    added folder left (%s): %s" % (left["why"], left["from"]), markup=False, soft_wrap=True)
+
+    for number, folder in enumerate(result.details["reveal"]["folders"], 1):
+        line = "  folder %d: %s -- %d photo(s), %d matched. %s" % (number, folder["verdict"], folder["rows"],
+                                                                 folder["matched"], folder["why"])
+        console.print(line, markup=False, soft_wrap=True)
+        if reveal:
+            console.print("    %s" % folder["from"], markup=False, soft_wrap=True)
+            for candidate in folder["candidates"]:
+                console.print("      -> %s (%d matched)" % (candidate["folder"], candidate["matched"]),
+                              markup=False, soft_wrap=True)
+    _say_markers(result.details.get("markers"), apply_, reveal, library)
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply relinks the %d folder(s) marked relink." % counts["relink"])
+        return
+    changed = result.details["changed"]
+    console.print("Wrote %d row(s): %d relinked, %d setting(s) followed; %d added folder(s) followed. %s" % (
+        result.changed, changed["relinked"], changed["settings"], result.details["added_followed"],
+        maintenance.recorded(result, library.path)), markup=False, soft_wrap=True)
+    for line in maintenance.skipped(result) + maintenance.failed(result):
+        console.print(line, markup=False, soft_wrap=True)
+    if result.errors:
+        raise SystemExit(1)
+
+
+def _say_markers(markers, apply_, reveal, library):
+    """What following the folders that carry the library's marker came to (`folder-ids`)."""
+    if markers is None or not markers.details.get("counts") or not markers.details["counts"]["gone"]:
+        return
+    counts = markers.details["counts"]
+    console.print("%d marked folder(s) gone from disk: %d %s by their markers (exact), %d not found under the folders "
+                  "looked at, %d ambiguous (a copy stands beside another), %d in conflict, %d left (none of its rows could go: "
+                  "the files there already have rows); %d photo row(s) %s "
+                  "(%d by name, %d by DocumentID or size and Date Taken, %d whose file already has a row, left)."
+                  % (counts["gone"], counts["followed"], "followed" if apply_ else "to follow", counts["not_found"],
+                     counts["ambiguous"], counts["conflicts"], counts["left"], counts["photos_moved"],
+                     "moved" if apply_ else "to move", counts["by_name"], counts["by_evidence"], counts["occupied"]),
+                  markup=False, soft_wrap=True)
+    if reveal:
+        for each in markers.details["reveal"].get("followed", []):
+            console.print("    %s -> %s" % (each["from"], each["to"]), markup=False, soft_wrap=True)
+    if apply_ and markers.details.get("change") is not None:
+        console.print(maintenance.recorded(markers, library.path), markup=False, soft_wrap=True)
+    for line in maintenance.failed(markers):
+        console.print(line, markup=False, soft_wrap=True)
+
+
+@cli.group("folder-ids", invoke_without_command=True)
+@click.pass_context
+def folder_ids_command(ctx):
+    """Hidden `.tagpup` markers in the folders of the library, so a renamed or moved folder is
+    followed exactly (tagpup.services.folder_ids). Opt-in: nothing writes a marker unless
+    `folder-ids mark --apply` is run."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@folder_ids_command.command("mark")
+@click.option("--reveal", is_flag=True, help="Name the folders left alone. They can name people, so counts are the default.")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the markers and record the ids, as one change History lists and undo reverses. Without it, "
+                   "only says what it would do.")
+@click.pass_context
+def folder_ids_mark(ctx, reveal, apply_):
+    """Give each leaf folder of the library (one holding photos directly) a hidden `.tagpup` file
+    holding this library's id for it, beside any other library's line, which is kept byte for byte.
+    Never written: a marker that does not parse (hand-edited), one that is read-only, a place that
+    refuses the write, a copy of a marked folder. The library's own identifier is stamped by the
+    first `--apply`, in the same transaction as the first ids. A dry run unless --apply; counts
+    only unless --reveal. Exit status 1 when refused (a copy of this library file sits in the data
+    folder) or something failed."""
+    library = _existing_library(ctx)
+    result = runtimes.mark_folders(library, apply=apply_)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d folder(s) hold photos directly: %d already marked, %d to mark, %d to write again (the library "
+                  "records an id and the marker lacks it), %d markers to adopt (they hold this library's id and the "
+                  "library has no row), %d gone from disk, %d ignored."
+                  % (counts["leaf_folders"], counts["already"], counts["new"], counts["restore"], counts["adopt"],
+                     counts["gone"], counts["ignored"]), markup=False, soft_wrap=True)
+    console.print("  left alone: %d copy(ies) of a marked folder, %d whose id is recorded for a folder that is gone "
+                  "(the next sync follows it), %d whose marker and library name different ids, %d markers that do not "
+                  "parse (never rewritten), %d that could not be read, %d where nothing can be written."
+                  % (counts["copy"], counts["moved"], counts["disagree"], counts["malformed"], counts["unreadable"],
+                     counts["unwritable"]), markup=False, soft_wrap=True)
+    if counts["shared_with_other_libraries"]:
+        console.print("  %d folder(s) hold a line of an identifier that is not this library's -- another library's, "
+                      "or this one's from before a snapshot restore (see docs/ARCHITECTURE.md, Folder ids); every such "
+                      "line is kept as it is, and this library's own line is added beside it."
+                      % counts["shared_with_other_libraries"], markup=False, soft_wrap=True)
+    if reveal:
+        for what, folders in sorted(result.details["reveal"].items()):
+            for folder in folders:
+                console.print("    %s: %s" % (what, folder), markup=False, soft_wrap=True)
+    if not apply_:
+        if counts.get("would_stamp"):
+            console.print("The first --apply also stamps the library with an identifier of its own, which the "
+                          "markers carry; it cannot be taken back.", markup=False, soft_wrap=True)
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply writes %d marker file(s) and records %d id(s)."
+                      % (counts["new"] + counts["restore"], counts["new"] + counts["adopt"]),
+                      markup=False, soft_wrap=True)
+        return
+    changed = result.details["changed"]
+    console.print("Wrote %d marker file(s); recorded %d id(s). %s" % (
+        changed["markers"], changed["ids"], maintenance.recorded(result, library.path)), markup=False, soft_wrap=True)
+    left = result.details["not_written"]
+    if any(left.values()):
+        console.print("Not written: %d place(s) refused (nothing recorded for those staged and refused; an id recorded "
+                      "for a file that could not be put in place is written by the next run), %d changed by "
+                      "another program meanwhile, %d replaced by another program after the write (the next run puts "
+                      "them back)." % (left["refused"], left["changed_meanwhile"], left["lost"]),
+                      markup=False, soft_wrap=True)
+    for line in maintenance.skipped(result) + maintenance.failed(result):
+        console.print(line, markup=False, soft_wrap=True)
+    if reveal:
+        for what in ("refused", "changed_meanwhile", "lost"):
+            for folder in result.details["reveal"].get(what, []):
+                console.print("    %s: %s" % (what, folder), markup=False, soft_wrap=True)
+    if result.errors:
+        raise SystemExit(1)
 
 
 #: What `sync` says of each thing it counts.
@@ -1228,8 +1425,30 @@ def sync(ctx, folder, apply_):
     if counts["missing"]:
         console.print("  %d folder(s) wholly gone, %d of them a whole root (an unplugged drive looks the same);"
                       " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))
+        if counts["folders_gone"]:
+            console.print("  A folder renamed in Explorer looks the same: `relink-folders` looks for it beside"
+                          " itself (a dry run).")
+            if not result.details.get("folders_marked"):
+                console.print("  `folder-ids mark` (a dry run) gives each folder a hidden marker, so the next one "
+                              "renamed or moved is followed exactly.")
+    markers = result.details.get("folder_markers")
+    if markers:
+        counts_here = markers["counts"]
+        console.print("  %d marked folder(s) gone from disk: %d %s by their markers%s." % (
+            counts_here.get("gone", 0), counts_here.get("followed", 0), "followed" if apply_ else "to follow",
+            "".join([", %d left (the files there already have rows of their own: nothing was moved)" % counts_here["left"]
+                     if counts_here.get("left") else "",
+                     ", %d not found" % counts_here["not_found"] if counts_here.get("not_found") else ""])))
+        if markers["error"]:
+            console.print("  %s" % markers["error"], markup=False, soft_wrap=True)
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
+    if counts.get("size_changed"):
+        again = runtimes.peek_settings(library).reread_resized_pictures
+        console.print("  %d of the changed file(s) changed SIZE (%d with a face decided by hand): their pictures %s"
+                      % (counts["size_changed"], counts["size_changed_decided"],
+                         "are read again (library.reread_resized_pictures is on)." if again else
+                         "are not read again: library.reread_resized_pictures is off, as a keyword write changes the size too."))
     if counts.get("unreadable_files"):
         console.print("  %d photo(s) found damaged before, unchanged since, passed over: restore them from a"
                       " backup (the Activity page lists them)." % counts["unreadable_files"])
@@ -1252,6 +1471,309 @@ def sync(ctx, folder, apply_):
     console.print("In step." if result.details["in_step"] else "Not yet in step: sync again once indexing is done.")
     if result.errors:
         raise SystemExit(1)
+@cli.group("people")
+def people_command():
+    """The library's people (tagpup.services.people)."""
+
+
+@people_command.command("link-name")
+@click.argument("name")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Link them, as one change of the journal (`undo` returns them to unresolved names). Without it, only counts.")
+@click.pass_context
+def people_link_name(ctx, name, apply_):
+    """Link the faces and listed people called NAME that are linked to nobody to the one person NAME is.
+
+    A name that became one person's because a same-named person left (a rename, a merge, a delete) is not linked by anything:
+    it is on no person's page until you say it is that person (the doctor lists these names: "one person is called so but the
+    rows are not linked"). A face you decided by hand is linked too: this is you saying who it is. Refused, naming the
+    candidates, for a name two people have, and for a name nobody is called. A dry run unless --apply; counts only."""
+    library = _existing_library(ctx)
+    try:
+        result = people_service.link_name(library, name, apply=apply_)
+    except Refused as problem:   # a name two people have, a group: the sentence names them
+        console.print("Refused: %s" % problem, markup=False, soft_wrap=True)
+        raise SystemExit(1) from None
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details
+    console.print("%d face(s) decided by hand, %d other face(s) and %d listed person(s) are called %s and linked to nobody."
+                  % (counts["faces_by_hand"], counts["faces_by_guess"], counts["listed"], "that name"))
+    if counts["applied"]:
+        console.print("Linked %d row(s), as change %s (`history`, `undo`)." % (result.changed, counts["change"]))
+    else:
+        console.print("A dry run: nothing changed. --apply links them.")
+
+
+@cli.command("faces-from-tags")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Name the faces, as one change of the journal. Without it, only says how many it would.")
+@click.option("--again", is_flag=True,
+              help="Apply once more to a library it was applied to before: the names it gave then are references now.")
+@click.option("--folder", default=None, type=click.Path(file_okay=False),
+              help="Only the photos under this folder, at any depth (a second location of a root works). Without it, the whole "
+                   "library. A folder the library holds no photo under is refused.")
+@click.pass_context
+def faces_from_tags(ctx, apply_, again, folder):
+    """Name the faces a photo's person tag names: a photo with one face still to be named and
+    one tagged person no face of it carries gives the face that person; several faces or
+    people only when one person's named faces alike leave no doubt. Names are automatic, so
+    clustering may revise them; faces unmatched by hand or excluded are left alone. A dry run
+    unless --apply; counts only, never names.
+
+    --folder limits the plan and the write to the photos under one folder and its subfolders: the
+    same rule, the same references (the people's named faces anywhere in the library), only the
+    photos read are fewer. A second --apply needs --again, whichever folder the first was for."""
+    library = _existing_library(ctx)
+    result = faces_from_tags_service.faces_from_tags(library, apply=apply_, again=again, folder=folder)
+    if result.refused and result.details.get("earlier_apply"):
+        console.print("Would name %d face(s). Nothing changed." % result.details["counts"]["faces"])
+    if result.refused or result.errors:
+        for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
+            console.print(line, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    if folder:
+        console.print("Only the photos under the folder given, and its subfolders.")
+    console.print("%d photo(s) have a face to be named and a tagged person no face carries."
+                  % counts["photos_with_a_face_and_a_person_to_place"])
+    console.print("  %d photo(s): one face, one person; named by the tag alone: %d"
+                  % (counts["one_face_one_person"], counts["named_by_the_tag_alone"]))
+    console.print("      the person has no named face to compare with: %d (named)" % counts["person_has_no_decided_face"])
+    console.print("      the face is like them, at 0.80 or more: %d, from 0.70 to 0.80: %d (named)"
+                  % (counts["like_them_from_0.80"], counts["like_them_from_0.70_to_0.80"]))
+    console.print("      the face is not like them (under 0.70): %d (left for Identify Faces)" % counts["not_like_them"])
+    if counts["not_decidable_yet"]:
+        console.print("      the person has no named face and several photos wait: %d (left for Identify Faces)"
+                      % counts["not_decidable_yet"])
+    if counts["face_unreadable"]:
+        console.print("      the face cannot be compared: %d (left)" % counts["face_unreadable"])
+    if counts["background_sized_faces_passed_over"]:
+        console.print("  %d face(s) under 2,000 square pixels passed over" % counts["background_sized_faces_passed_over"])
+    console.print("  %d photo(s): named by comparison with the person's named faces"
+                  % counts["photos_named_by_comparison"])
+    console.print("  %d photo(s) left for Identify Faces" % counts["photos_left_for_identify_faces"])
+    console.print("%d face(s) %s." % (counts["faces"], "named" if apply_ else "would be named"))
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        if result.details.get("earlier_apply"):
+            console.print("Applied before: " + faces_from_tags_service.AGAIN + " " + faces_from_tags_service.earlier_sentence(
+                faces_from_tags_service.earlier_applies(library)), markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply names them%s."
+                      % (" (with --again)" if result.details.get("earlier_apply") else ""))
+        return
+    console.print("Wrote %d face(s). %s" % (result.changed, maintenance.recorded(result, library.path)),
+                  markup=False, soft_wrap=True)
+    # Counted again after the write: the faces just named change which photos have one face left.
+    console.print("Still to be named by the rule now: %d face(s)." % result.details.get("remaining", {"faces": 0})["faces"])
+    for line in maintenance.skipped(result):
+        console.print(line, markup=False, soft_wrap=True)
+
+
+@cli.command("tags-from-faces")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the keywords into the photo files. Without it, only says how many photos it would write.")
+@click.option("--guesses", is_flag=True,
+              help="Also write people only a guess backs (clustering's or automatch's): the keyword makes the guess a decided reference.")
+@click.option("--folder", default=None, type=click.Path(file_okay=False),
+              help="Only the photos under this folder, at any depth (a second location of a root works). Without it, the whole "
+                   "library. A folder the library holds no photo under is refused.")
+@click.pass_context
+def tags_from_faces(ctx, apply_, guesses, folder):
+    """Put on a photo the people its faces name and its keywords do not: a face named, the photo
+    saying "No people tags" (#861). A dry run unless --apply; counts only, never names.
+
+    --apply CHANGES PHOTO FILES: it writes each person's keyword into the photo's file with
+    ExifTool, 25 photos to a change of the journal (`history` lists them, `undo` takes one back).
+    Run it on a small library first; TagPup and TagTuner may stay open (a file changed meanwhile
+    is a conflict, reported and not overwritten: run it again). Left, and counted: a person the
+    tree files in two places; a photo whose keywords already name the person under a root the
+    tree does not file people under; and, unless --guesses, a person only a guess backs.
+
+    --folder limits the count and the write to the photos under one folder and its subfolders."""
+    library = _existing_library(ctx)
+    planned = tags_from_faces_service.plan(library, guesses=guesses, folder=folder)
+    if planned.refused:
+        console.print("Refused: %s" % planned.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = planned.details["counts"]
+    if folder:
+        console.print("Only the photos under the folder given, and its subfolders.")
+    console.print("%d photo(s) list a person from a face alone (%d people): their keywords do not name them."
+                  % (counts["photos_with_a_person_on_a_face_alone"], counts["people"]))
+    if counts["people_the_tree_files_in_two_places"]:
+        console.print("  %d of the people are filed in more than one place in the tag tree (or the tree has several people "
+                      "roots): left, for you to choose where." % counts["people_the_tree_files_in_two_places"])
+    if counts["people_the_file_names_under_another_root"]:
+        console.print("  %d of the people: the photo's keywords already name them under a root the tag tree does not file people "
+                      "under: skipped. They are people tags under a non-people root, a tree question: make that root a people "
+                      "root in the tag tree (TagTuner's tag editor), or retag them; the count then falls on its own."
+                      % counts["people_the_file_names_under_another_root"], markup=False, soft_wrap=True)
+    if counts["people_from_a_guess_only"]:
+        console.print("  %d of the people: from a guess only (clustering's or automatch's, no face of that name named by hand): "
+                      "skipped. --guesses writes them." % counts["people_from_a_guess_only"], markup=False, soft_wrap=True)
+    if guesses:
+        console.print("  WARNING: --guesses writes people only a guess backs; the keyword makes each guess a decided reference "
+                      "for the faces compared with it afterwards (#640).", markup=False, soft_wrap=True)
+    console.print("  %d photo file(s) would be written, for %d people."
+                  % (counts["photos_to_write"], counts["people_to_write"]))
+    if not apply_:
+        console.print("Nothing changed. --apply writes the keywords into those %d PHOTO FILE(S), 25 photos to a change "
+                      "of the journal that `undo` takes back." % counts["photos_to_write"], markup=False, soft_wrap=True)
+        return
+    if not counts["photos_to_write"]:
+        console.print("Nothing to write.")
+        return
+    exiftool = get_exiftool_path(library.path)
+    console.print("Writing %d photo file(s)..." % counts["photos_to_write"])
+    result = tags_from_faces_service.apply(
+        library, planned, exiftool,
+        on_chunk=lambda done, total: console.print("  %d of %d photo(s) done" % (done, total), markup=False))
+    console.print("Wrote %d photo file(s) in %d change(s) of the journal (`history` lists them)."
+                  % (result.changed, len(result.details.get("changes", []))), markup=False)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+    if result.errors:
+        reasons = {}
+        for _photo, why in result.errors:
+            reasons[why] = reasons.get(why, 0) + 1
+        console.print("%d photo(s) could not be written; run it again once they can:" % len(result.errors), markup=False)
+        for why, count in sorted(reasons.items(), key=lambda pair: -pair[1])[:5]:
+            console.print("  %d x %s" % (count, why), markup=False, soft_wrap=True)
+    if result.refused or result.errors:
+        raise SystemExit(1)
+
+
+def _duration(seconds):
+    """A number of seconds as a person reads it: "45 s", "12 min", "1 h 20 min"."""
+    if seconds < 90:
+        return "%d s" % seconds
+    if seconds < 5400:
+        return "%d min" % round(seconds / 60.0)
+    return "%d h %d min" % divmod(round(seconds / 60.0), 60)
+
+
+@cli.command("reread-fields")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Read the files and record what they hold, a chunk of photos to a change of the journal. Without it, "
+                   "only counts, and times a sample of 100 files.")
+@click.option("--folder", default=None, type=click.Path(file_okay=False),
+              help="Only the photos under this folder, at any depth (a second location of a root works). Naming a folder "
+                   "on a network share is what allows its files to be read. A folder the library holds no photo under is "
+                   "refused.")
+@click.option("--shares", "shares_named", is_flag=True,
+              help="Also read photos on a network share, whichever folder. Without --folder or this, they are counted and "
+                   "left alone.")
+@click.pass_context
+def reread_fields(ctx, apply_, folder, shares_named):
+    """Read again, for the metadata fields asked for now (the camera's LENS), the photos read before they were. The
+    lens is in no row yet: ExifTool was asked for the make and model only.
+
+    Reads metadata with ExifTool and nothing else: no picture is decoded, no model or graphics card is used, no photo
+    file is written, and faces, names and embeddings are not touched. The rows read are recorded as one change of the
+    journal each 2,000 photos (`history`, `undo` take them back), and the camera and lens words of search are rebuilt for
+    exactly those photos as they are written -- no `tools/doctor.py --rebuild-derived` needed.
+
+    A dry run unless --apply: counts, and the time a sample of 100 files took with an estimate for the rest. Safe to stop
+    and run again: a photo read is not read twice. Files that are missing, unreadable, changed on disk since they were
+    indexed (`sync` reads those), or on a network share nobody named are counted and left. Close the apps first or not:
+    a photo saved in the app while it is read is skipped and read by the next run."""
+    library = _existing_library(ctx)
+    exiftool = get_exiftool_path(library.path, read_only=not apply_)
+
+    def progress(stage, counts):
+        if stage == "chunk":
+            differing = ", ".join("%s %d" % pair for pair in sorted(counts["fields"].items()))
+            console.print("  %d of %d photo(s) read, %d written; rows differing from their file in: %s"
+                          % (counts["done"], counts["total"], counts["written"], differing or "nothing"),
+                          markup=False, soft_wrap=True)
+
+    result = reread_fields_service.reread_fields(library, exiftool, apply=apply_, folder=folder,
+                                                 shares_named=shares_named, progress=progress)
+    if result.refused or result.errors:
+        for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
+            console.print(line, markup=False, soft_wrap=True)
+        if result.refused or not result.details["counts"]:
+            raise SystemExit(1)
+    counts = result.details["counts"]
+    if folder:
+        console.print("Only the photos under the folder given, and its subfolders.")
+    console.print("%d photo(s) in scope; %d already read with the fields; %d never read (indexing reads those)."
+                  % (counts["rows"], counts["current"], counts["never_read"]))
+    console.print("%d photo(s) to read again." % counts["to_read"])
+    for what, text in (("missing", "file(s) not found (a folder on an unplugged drive looks the same): left"),
+                       ("changed", "file(s) changed on disk since indexed: left for `sync`, which reads them with these fields"),
+                       ("damaged", "photo(s) found unreadable when they were read: left (the Activity page lists them)"),
+                       ("on_shares", "photo(s) on a network share nobody named: left (--folder or --shares names it)"),
+                       ("share_away", "photo(s) on a network share that did not answer: left")):
+        if counts.get(what):
+            console.print("  %d %s" % (counts[what], text), markup=False, soft_wrap=True)
+    if not apply_:
+        sample = result.details["sample"]
+        if sample and sample["per_second"]:
+            console.print("Timed %d file(s): %.1f a second, %d unreadable; %d of them hold a lens; %d would be left because "
+                          "their tags, captions or people differ from the file."
+                          % (sample["read"], sample["per_second"], sample["unreadable"], sample["with_lens"],
+                             sample["disagrees"]))
+            console.print("About %s to read the %d photo(s)." % (_duration(result.details["estimate_seconds"]),
+                                                                counts["to_read"]))
+        console.print("Nothing changed. --apply reads them and writes the rows; stop and run it again any time.")
+        if result.errors:
+            raise SystemExit(1)
+        return
+    console.print("Wrote %d row(s) in %d change(s) of the journal (`history` lists them; `undo <id> --apply` takes one back)."
+                  % (result.changed, len(result.details["changes"])), markup=False, soft_wrap=True)
+    for what in ("disagrees", "unreadable", "changed_while_read", "gone_while_read", "share_away"):
+        if counts.get(what):
+            console.print("  %d file(s) %s: left%s" % (counts[what], what.replace("_", " "),
+                          " (tags, captions or people differ from the file: `sync` or refresh_rows settle those)"
+                          if what == "disagrees" else ""), markup=False, soft_wrap=True)
+    if result.skipped:
+        console.print("  %d row(s) saved in the app, or by another run, while their files were read: left for the next run"
+                      % len(result.skipped))
+    console.print("Still to read: %d photo(s)." % result.details["remaining"])
+    if result.errors:
+        raise SystemExit(1)
+
+
+@cli.command("dedupe-spelled-rows")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Merge the rows of each file held more than once, as one change of the journal. Without it, only counts.")
+@click.pass_context
+def dedupe_spelled_rows(ctx, apply_):
+    """Find the files the library holds under more than one row -- one file reached by two spellings (a share and
+    its drive, a link) -- and merge them: what the extra rows hold (a face, a name given by hand, a vector) is moved
+    onto the row kept (the one under a root) where it lacks it, then they are deleted. Only rows PROVABLY one file
+    (the file system's own identity) are touched: a copy of a file in another folder has a row of its own and is
+    left alone. A dry run unless --apply; counts only, never a name or a path."""
+    library = _existing_library(ctx)
+    result = duplicate_rows_service.dedupe_spelled_rows(library, apply=apply_)
+    if result.refused or result.errors:
+        for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
+            console.print(line, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    counts = result.details["counts"]
+    console.print("%d file(s) are held by more than one row: %d row(s) to remove."
+                  % (counts["files_held_twice"], counts["rows_to_remove"]))
+    console.print("  kept: %d under a root, %d not under one" % (counts["kept_under_a_root"], counts["kept_not_under_a_root"]))
+    console.print("  moved onto the kept row first: %d face(s), %d decision(s) a counterpart lacked, %d vector(s)"
+                  % (counts["faces_moved"], counts["decisions_carried"], counts["vectors_carried"]))
+    console.print("  left alone: %d row(s) in %d group(s) that are copies (other files with the same name and size, each "
+                  "with its own row), %d row(s) whose file is missing, %d set(s) whose rows differ, %d set(s) disputed"
+                  % (counts["copies_left_alone"], counts["copy_groups_left_alone"], counts["missing_files_left_alone"],
+                     counts["sets_whose_rows_differ"], counts["sets_disputed"]))
+    if not apply_:
+        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
+        console.print("Nothing changed. --apply merges them.")
+        return
+    console.print("Wrote %d row(s) (rows removed, faces moved, decisions and vectors carried). %s"
+                  % (result.changed, maintenance.recorded(result, library.path)), markup=False, soft_wrap=True)
+    console.print("Still held twice now: %d file(s)." % result.details.get("remaining", {"files_held_twice": 0})["files_held_twice"])
+    for line in maintenance.skipped(result):
+        console.print(line, markup=False, soft_wrap=True)
+
+
 def _job_libraries(ctx):
     """The library --db names, or every library in the data folder."""
     if ctx.obj.get("db"):
@@ -1412,6 +1934,34 @@ def roots_adopt(ctx, name, address, location, apply_):
         console.print("Wrote %s." % result.details["map"]["file"], markup=False, soft_wrap=True)
     console.print("Adopted: %d row(s) converted, change %d. `undo %d` reverses it." % (
         result.changed, result.details["change"], result.details["change"]), markup=False)
+
+
+@roots_command.command("repair-address")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Write the repair as one journaled change. Without it, only says what would change.")
+@click.pass_context
+def roots_repair_address(ctx, apply_):
+    """Give a root whose address lost a leading backslash (\\\\server\\share stored as \\server\\share,
+    which Git Bash does to an argument) its two. A dry run unless --apply; one journaled change
+    that `undo` reverses."""
+    library = _existing_library(ctx)
+    if apply_:
+        console.print("Run this with TagPup and TagTuner stopped: a run that holds the library's roots (an index, a "
+                      "sync) stops when the address changes.", markup=False, soft_wrap=True)
+    result = library_roots.repair_addresses(library, apply=apply_)
+    if result.refused:
+        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
+        raise SystemExit(1)
+    repairs = result.details["repairs"]
+    if not repairs:
+        console.print("No root's address is missing a leading backslash.", markup=False)
+        return
+    for entry in repairs:
+        console.print("%s  %s  ->  %s" % (entry["name"], entry["was"], entry["now"]), markup=False, soft_wrap=True)
+    if not apply_:
+        console.print("Nothing changed. --apply writes it.", markup=False)
+        return
+    console.print("Repaired %d root(s)." % result.changed, markup=False)
 
 
 @roots_command.command("check")
@@ -1672,7 +2222,7 @@ def list_index(ctx, folder):
     loaded = photo_index.load()
     say_if_behind(photo_index)
     if not loaded:
-        console.print("[bold red]Error:[/bold red] No photo index found.")
+        say_not_loaded(photo_index)
         return
         
     try:
@@ -1866,5 +2416,9 @@ def cluster_faces(ctx, reset: bool, max_iterations: int):
         photo_index.close()
 
 if __name__ == "__main__":
-    cli()
+    try:
+        cli()
+    except library_actions.NewerLibrary as e:   # one a command opened without the group having seen it
+        console.print(str(e), markup=False, soft_wrap=True)
+        raise SystemExit(1) from None
 

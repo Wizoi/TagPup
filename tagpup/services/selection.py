@@ -22,6 +22,7 @@ from tagpup.core.result import Refused
 from tagpup.files import recycle_bin
 from tagpup.services import library_view
 from tagpup.store import library_view as store
+from tagpup.store import person_ids
 from tagpup.store import selection_folders as store_folders
 
 #: The most ids a selection lists (`ids`, or `excluded`).
@@ -80,14 +81,15 @@ MAX_FOLDERS_LISTED = 10
 
 def tally(library, selection):
     """What the photos of `selection` hold: {"total" (the photos that exist), "tags": [{"tag", "count"}], "people":
-    [{"name", "count"}], "more_tags", "more_people", "folders": {"count", "listed": [{"path", "name", "photos"}]}} -- the
+    [{"name", "count", "has_node", "person"}], "more_tags", "more_people", "folders": {"count", "listed": [{"path", "name", "photos"}]}} -- the
     folders the selection is in, counted, and named (native path, the folder's own name, its photos selected) only when
     there are MAX_FOLDERS_LISTED or fewer, by name (#675: what the panel offers to open in Organize; 68,000 photos are
     one grouped read of photo_folder, never 68,000 paths); and the tags and people the selection carries, each with the number of
     its photos, tags alphabetically by the shared order (vocabulary.tag_sort_key) and people by it too, at most MAX_TALLIED
     of each (the rest are counted in `more_*`, the most used kept). From photo_tags and photo_people, one grouped read over
     the selection: a source is joined in SQL and its excluded ids taken out there, so 68,000 photos are no list in
-    Python and no request of that size. A tag no node of the tree holds is not in photo_tags and so not in it (the
+    Python and no request of that size. A tag that is a person's node is a person and is left out of "tags" before they are cut
+    (#865); a person's `has_node` says whether the tree has one node of that name (no: a branch, two nodes, none; #866). A tag no node of the tree holds is not in photo_tags and so not in it (the
     navigator's counts leave it out too). Refused as `resolve` refuses a selection, but NOT for being larger than a job
     takes: the panel may tally a whole library."""
     conn = library_view.opened(library)
@@ -95,13 +97,18 @@ def tally(library, selection):
         found = store.tally(conn, selection.ids, selection.source, selection.excluded)
         # In the tally's read transaction: the folders are of the photos just counted.
         folders = _folders(conn, selection)
+        everyone = person_ids.Directory.read(conn)
     finally:
         conn.close()
-    tags = _kept([(tag, count) for tag, count in found["tags"]])
-    people = _kept(found["people"])
+    tags = _kept([(tag, count) for tag, count in found["tags"]], lambda each: each[0])
+    people = _kept(found["people"], lambda each: each[0].name)
+    nameless = set(found["nameless"])
     return {"total": found["total"],
             "tags": [{"tag": tag, "count": count} for tag, count in tags[0]], "more_tags": tags[1],
-            "people": [{"name": name, "count": count} for name, count in people[0]], "more_people": people[1],
+            "people": [{"name": person.name, "count": count, "has_node": person not in nameless,
+                        "person": everyone.of_row(person.id, person.name), "person_id": person.id}
+                       for person, count in people[0]],
+            "more_people": people[1],
             "folders": folders}
 
 
@@ -117,16 +124,16 @@ def _folders(conn, selection):
     return {"count": len(counted), "listed": listed}
 
 
-def _kept(counted):
-    """([(name, count)] at most MAX_TALLIED of them -- the most used, then in the shared alphabetical order --, how many
-    were left out)."""
+def _kept(counted, name_of):
+    """([(thing, count)] at most MAX_TALLIED of them -- the most used, then in the shared alphabetical order of `name_of(each)`
+    --, how many were left out)."""
     if len(counted) > MAX_TALLIED:
-        counted = sorted(counted, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0])))
+        counted = sorted(counted, key=lambda each: (-each[1], vocabulary.tag_sort_key(name_of(each))))
         left = len(counted) - MAX_TALLIED
         counted = counted[:MAX_TALLIED]
     else:
         left = 0
-    return sorted(counted, key=lambda each: vocabulary.tag_sort_key(each[0])), left
+    return sorted(counted, key=lambda each: vocabulary.tag_sort_key(name_of(each))), left
 
 
 def token_of(photo_ids):

@@ -24,6 +24,7 @@
 import { api, libraryIn } from './common/api.js';
 import { samePath } from './common/paths.js';
 import { upper } from './hooks.js';
+import { redrawFaceBoxes } from './face-boxes.js';
 import { state } from './state.js';
 import { isJustLooking, libraryName } from './looking.js';
 import {
@@ -172,6 +173,7 @@ export function applyJustLooking() {
         btnAddFolderFromNote.textContent = `Add to ${name}`;
     }
     updateSuggestButtonState();
+    redrawFaceBoxes();      // faces are not boxed in a folder the library does not hold
 }
 
 /** Add the open folder to the library, as the person asked: POST /api/folder/add. */

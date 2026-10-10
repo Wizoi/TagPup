@@ -446,16 +446,24 @@ describe("what the server says", () => {
     speedUp(ctx);
     let refused = 0;
     const sentence = "The word index is being made now; try again in a few seconds.";
-    ctx.server.first("/api/library/ids", () => {
+    // The second refusal is held until the strip has been looked at: the waits are sped up a hundredfold (50 ms), and on a
+    // busy machine both retries ran before the test looked, and the strip had already moved on (#721).
+    let look;
+    const looked = new Promise((resolve) => { look = resolve; });
+    ctx.server.first("/api/library/ids", async () => {
       refused += 1;
-      if (refused === 2) ctx.server.routes.shift();   // the third ask finds the index made
+      if (refused === 2) {
+        ctx.server.routes.shift();   // the third ask finds the index made
+        await looked;
+      }
       return { success: false, error: sentence };
     }, { status: 503, headers: { "Retry-After": "5" } });
     words(ctx).value = "beach";
     ctx.key(words(ctx), "Enter");
-    await flush(ctx.window, 6);
+    await ctx.until(() => refused >= 2);
     assert.match(ctx.stripText(), /being made now/);
     assert.ok(ctx.document.getElementById("library-strip-status").classList.contains("library-strip-problem"));
+    look();
     await ctx.until(() => ctx.state.library.status === "ready");
     assert.equal(refused, 2);
     assert.deepEqual(ctx.delays.filter((ms) => ms === 5000), [5000, 5000], "each wait is the Retry-After");

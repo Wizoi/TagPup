@@ -18,6 +18,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import migration_names  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 from test_migrations import at_version  # noqa: E402
@@ -311,7 +312,7 @@ class MigrationTwentyThree(unittest.TestCase):
         tables = [table for table in tables if table not in ("schema_version", "changes", "change_rows")]
         before = {table: look(self.path, "SELECT * FROM %s" % table) for table in tables}
         with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:23]), mock.patch.object(schema, "LATEST", 23):
-            self.assertEqual(["photos by caption"], schema.ensure(self.path))
+            self.assertEqual(migration_names.named(23), schema.ensure(self.path))
         added = [row for row in self.schema_rows() if row not in before_schema]
         self.assertEqual([("index", store.CAPTION_INDEX, "photos")], [row[:3] for row in added], "one index, no column or trigger")
         self.assertEqual(before, {table: look(self.path, "SELECT * FROM %s" % table) for table in tables})

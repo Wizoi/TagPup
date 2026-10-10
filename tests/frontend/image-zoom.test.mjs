@@ -6,6 +6,8 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { loadApp, FakeServer, closeAllApps, openFolder, click } from "./harness.mjs";
 
 const PHOTOS = [
@@ -140,11 +142,16 @@ describe("zooming the photo", () => {
   });
 
   test("the photo shows it can be zoomed", async () => {
-    const fs = await import("node:fs");
-    const path = await import("node:path");
     const { REPO_ROOT } = await import("./harness.mjs");
     const css = fs.readFileSync(path.join(REPO_ROOT, "web", "tagpup", "style.css"), "utf8");
     assert.match(css, /#main-image\s*\{[^}]*cursor:\s*zoom-in/);
-    assert.match(css, /\.image-zoom-overlay\s*\{[^}]*cursor:\s*zoom-out/);
+    // The overlay's rules are written once, for both pages, and both pages load them.
+    const shared = fs.readFileSync(path.join(REPO_ROOT, "web", "common", "image-zoom.css"), "utf8");
+    assert.match(shared, /\.image-zoom-overlay\s*\{[^}]*cursor:\s*zoom-out/);
+    for (const app of ["tagpup", "tuner"]) {
+      const html = fs.readFileSync(path.join(REPO_ROOT, "web", app, "index.html"), "utf8");
+      assert.match(html, /common\/image-zoom\.css/, `${app} does not load the shared zoom styles`);
+    }
+    assert.doesNotMatch(css, /\.image-zoom-overlay/, "TagPup's stylesheet holds a second copy");
   });
 });

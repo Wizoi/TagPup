@@ -1,0 +1,138 @@
+/* "Name faces from tags" (web/common/name-faces.js). Its frame is its own, as the history dialog's: TagPup's page
+   styles no .modal, and TagTuner's .modal rules are the same as these. */
+
+.name-faces-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(9, 13, 22, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.name-faces-modal.hidden {
+    display: none !important;
+}
+
+.name-faces-content {
+    display: flex;
+    flex-direction: column;
+    width: 620px;
+    max-width: 90vw;
+    max-height: 85vh;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    color: var(--text-primary);
+}
+
+.name-faces-content .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.name-faces-content .close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.name-faces-scope {
+    margin: 0;
+    padding: 10px 20px 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.name-faces-body {
+    padding: 12px 20px;
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.name-faces-body p {
+    margin: 0;
+}
+
+.name-faces-question {
+    font-size: 15px;
+    line-height: 1.4;
+}
+
+.name-faces-again,
+.name-faces-no-group,
+.name-faces-note {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.name-faces-choice,
+.name-faces-group {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 13px;
+    line-height: 1.35;
+    cursor: pointer;
+}
+
+.name-faces-choice input,
+.name-faces-group input {
+    margin-top: 3px;
+}
+
+.name-faces-bar {
+    height: 10px;
+    border-radius: 5px;
+    background-color: var(--border-color);
+    overflow: hidden;
+}
+
+.name-faces-bar-fill {
+    height: 100%;
+    width: 0;
+    background-color: var(--accent-color, #4f8cff);
+    transition: width 0.4s ease;
+}
+
+.name-faces-indeterminate .name-faces-bar-fill {
+    width: 35%;
+    animation: name-faces-slide 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes name-faces-slide {
+    from { margin-left: 0; }
+    to { margin-left: 65%; }
+}
+
+.name-faces-failed {
+    color: var(--danger-color, #e5534b);
+}
+
+.name-faces-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-color);
+}
+
+.name-faces-status-line {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-secondary);
+}

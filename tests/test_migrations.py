@@ -21,6 +21,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import migration_names  # noqa: E402
 from journal_library import JournalLibrary  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -55,11 +56,30 @@ KINDS = {
     23: schema.ADDITIVE,     # idx_photos_caption: the index a library view orders by caption with
     24: schema.ADDITIVE,     # search_words, search_names: the word index a search matches words in (derived)
     25: schema.ADDITIVE,     # the faces_detected table, empty
+    26: schema.ADDITIVE,     # library_identity and folder_ids, empty
+    27: schema.ADDITIVE,     # search_gear: the camera and lens words a search matches (derived)
+    28: schema.ADDITIVE,     # idx_faces_tag, idx_photo_people_tag and name_review_dismissals (empty)
+    29: schema.ADDITIVE,     # the trigger that keeps a person faces name from being deleted; the faces' generation moves with tag_id
 }
 
 
-#: The migrations that only make indexes.
-INDEX_ONLY = (20, 22, 23)
+#: The migrations that only make indexes (and, for 29, a trigger): they change no row of any table.
+INDEX_ONLY = (20, 22, 23, 29)
+
+
+class TheNamesTestsExpect(unittest.TestCase):
+    """tests/migration_names.py: the one place a test gets the names of the migrations a library at an older schema
+    runs, so a new migration is declared in KINDS and nowhere else (#689)."""
+
+    def test_the_names_follow_the_migrations_and_a_new_one_joins_them(self):
+        self.assertEqual([], migration_names.after(schema.LATEST))
+        last = schema.MIGRATIONS[-1]
+        self.assertEqual([last.name], migration_names.after(last.version - 1))
+        self.assertEqual(["migration %d: %s" % (last.version, last.name)], migration_names.operations_after(last.version - 1))
+        self.assertEqual([last.name], migration_names.named(last.version))
+        added = step(schema.ADDITIVE, lambda conn: None)
+        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS + (added,)):
+            self.assertEqual([last.name, "a step"], migration_names.after(last.version - 1))
 
 
 def backups(db_path):
@@ -554,13 +574,7 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
             return real(conn, table)
 
         with mock.patch.object(schema, "_count", side_effect=count):
-            self.assertEqual(["photo files in the journal", "the stamp of each file before its write",
-                              "the runs of recurring jobs", "when the library was last in step",
-                              "the folders asked to be added", "the photo files found damaged",
-                              "the photos whose faces are to be detected", "the library's roots",
-                              "the tables the library views stand on", "photos by when they were taken",
-                              "people by their node's id", "photos by file name",
-                          "photos by caption", "photos by their words", "the photos whose faces were detected"],
+            self.assertEqual(migration_names.after(10),
                              schema.ensure(path))
         # What it touches: change_files, which it makes, and changes, the runner's own;
         # migration 12 touches change_files alone, 13 job_runs, 14 sync_runs, 15
@@ -568,7 +582,7 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
         # columns it adds (a count of faces reads its smallest index, not its rows).
         self.assertLessEqual(set(counted), {"change_files", "changes", "job_runs", "sync_runs", "added_folders",
                                             "damaged_files", "faces_pending", "faces", "photo_people",
-                                            "faces_detected"})
+                                            "faces_detected", "library_identity"})
 
 
 class ANewLibrary(unittest.TestCase):

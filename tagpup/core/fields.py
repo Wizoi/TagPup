@@ -8,6 +8,8 @@ a removed tag came back from it.
 import json
 import re
 
+from tagpup.core import photo_meta
+
 # Define target fields mapped to keys we want to return
 # ExifTool output keys can be namespaced or bare (without prefix).
 # We check both to be safe.
@@ -41,6 +43,15 @@ METADATA_FIELDS = [
     # Camera
     "EXIF:Make", "Make",
     "EXIF:Model", "Model",
+    # Lens. A bare name is answered under every group that holds it (checked on 400 files of a
+    # library, 2026-10-09): LensModel brings EXIF:, XMP: and MakerNotes:LensModel, LensMake brings
+    # EXIF:LensMake, LensID brings Composite:LensID and XMP:LensID. Run without print conversion a
+    # LensID is a number for Canon and Tamron (photo_meta.gear ignores a number) and text only for
+    # Google; LensModel is the lens's own name wherever the camera writes one.
+    "EXIF:LensModel", "LensModel",
+    "XMP:LensModel",
+    "EXIF:LensMake", "LensMake",
+    "Composite:LensID", "LensID",
     # Rating
     "XMP:Rating", "Rating",
     # Identity. A path is a bad name for a photo -- rename the file and the index is
@@ -48,6 +59,27 @@ METADATA_FIELDS = [
     # standard's per-document identifier, and most photos already carry one.
     "XMP-xmpMM:DocumentID", "XMP:DocumentID", "DocumentID"
 ]
+
+
+#: The key a full read of a photo records in its raw_metadata, and the value it holds: which fields that
+#: read asked ExifTool for. 1 (no key) is the reads before the lens fields; 2 is METADATA_FIELDS as it
+#: stands with them. A photo that has no lens has no lens key either, so only this tells "read, holds
+#: none" from "read before" -- what tagpup.services.reread_fields takes rows by (docs/findings.md,
+#: #1019). Raise it when a field is added that rows already read should gain.
+READ_GENERATION_KEY = "TagPup:ReadGeneration"
+READ_GENERATION = 2
+
+
+def read_generation(raw_metadata):
+    """The generation of the read that made a photo's raw_metadata (a dict): 0 for a row never read
+    (nothing, or only what writes recorded), 1 for a read before the lens fields, else the number
+    its read recorded."""
+    if not isinstance(raw_metadata, dict):
+        return 0
+    found = raw_metadata.get(READ_GENERATION_KEY)
+    if isinstance(found, int) and not isinstance(found, bool) and found > 1:
+        return found
+    return 1 if any(":" not in key for key in raw_metadata) else 0
 
 
 def scan_reads(field):
@@ -64,12 +96,6 @@ def scan_reads(field):
     return key in METADATA_FIELDS or bare in METADATA_FIELDS
 
 
-#: The fields a photo's camera is named from, the first it has: what Shift Date Taken
-#: chooses photos by. The TagPup page names cameras the same way, to offer them and to
-#: show which photos a shift is about, from a copy of these that
-#: tests/test_rules_have_one_owner.py holds to them (docs/findings.md, #74).
-CAMERA_FIELDS = ("EXIF:Model", "Model", "EXIF:Make", "Make")
-
 #: The camera of a photo that names none.
 UNKNOWN_CAMERA = "Unknown Camera"
 
@@ -78,10 +104,10 @@ ALL_CAMERAS = "All Cameras"
 
 
 def camera_of(raw_metadata):
-    """The camera a photo came from, by its metadata: the first of CAMERA_FIELDS it has,
-    else UNKNOWN_CAMERA."""
-    raw = raw_metadata or {}
-    return next((raw[field] for field in CAMERA_FIELDS if raw.get(field)), UNKNOWN_CAMERA)
+    """The camera a photo came from, by its metadata: its one name (tagpup.core.photo_meta.camera_name, which Image
+    Details and the search use), else UNKNOWN_CAMERA. What Shift Date Taken chooses photos by; the TagPup page gets the
+    same name in the photo's record (`camera`) and keeps no copy of the rule (docs/findings.md, #74, #1003)."""
+    return photo_meta.gear(raw_metadata).camera or UNKNOWN_CAMERA
 
 
 def on_camera(raw_metadata, camera):
@@ -119,7 +145,7 @@ def expand_tag_fields(tags):
 def keyword_fields(flat, hierarchical):
     """Every field a keyword write sets, and what it sets it to.
 
-    The one list of them. write_keywords writes exactly these, and
+    The one list of them. The journaled write (tagpup.services.tagging) writes exactly these, and
     record_keyword_fields records exactly these, so the file and its index row cannot
     drift apart one field at a time. They did: the index recorded the two XMP fields
     and not IPTC:Keywords, which vocabulary.extract_tags also reads, so a tag removed

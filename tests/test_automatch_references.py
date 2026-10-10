@@ -64,7 +64,8 @@ class Case(unittest.TestCase):
         return faces.automatch_photo(self.lib.library, photo, self.matrix())
 
     def references(self):
-        return identify_jobs.decided_faces(self.lib.library, self.cache)[1]
+        """The names of the people of the decided faces (the matrix holds each as a Ref, the node's id and the name)."""
+        return [person.name for person in identify_jobs.decided_faces(self.lib.library, self.cache)[1]]
 
 
 class WhatIsAReference(Case):
@@ -107,8 +108,8 @@ class WhatIsAReference(Case):
 
     def test_the_matrix_the_other_screens_use_still_holds_every_named_face(self):
         self.face(self.photo("a.jpg"), at(0), name="Wren Halloway")
-        _stamp, (_ids, names, _matrix) = identify.named_faces(self.lib.library)
-        self.assertEqual(names, ["Wren Halloway"])
+        _stamp, (_ids, people, _matrix) = identify.named_faces(self.lib.library)
+        self.assertEqual([each.name for each in people], ["Wren Halloway"])
 
 
 class TheMatrixFollowsTheKeywords(Case):

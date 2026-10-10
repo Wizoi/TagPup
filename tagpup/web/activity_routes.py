@@ -14,9 +14,12 @@ raw, downloaded) show background work. What it asks:
 - GET /api/activity/jobs: each recurring job, why it is scheduled, and for each library
   its last runs, what each changed as counts and why a failed one failed, and when it is
   due; POST /api/activity/jobs/run runs one now, on the recurring jobs' runner.
+- POST /api/activity/models/unload: Unload models now (the server's section); /server says
+  what is loaded.
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
   watched folders, its snapshots, the always-on process, and one timeline of what was done.
-- GET /api/activity/attention: what needs the owner -- each library's photos found damaged
+- GET /api/activity/attention: what needs the owner -- each library's photos found damaged, and its names to review (the count,
+  with TagTuner's page that opens the list; tagpup.services.name_review)
   (tagpup.services.damaged_photos), with their paths and TagPup's page on each folder;
   POST /api/activity/attention/check reads them again now (Check again).
 - GET /api/activity/logs and /api/activity/logs/<name>[/raw|/download]: the logs in
@@ -51,6 +54,7 @@ from tagpup.services import activity
 from tagpup.services import damaged_photos
 from tagpup.services import file_access
 from tagpup.services import indexing
+from tagpup.services import name_review
 from tagpup.services import job_runs
 from tagpup.services import roots as roots_service
 from tagpup.web import responses, security
@@ -372,8 +376,17 @@ def attention():
         except Exception as e:
             logger.warning("Could not count the photos of %s whose faces are to be detected: %s", library.name, e)
             to_detect = 0
-        listed.append({"name": library.name, "photos": photos, "faces_to_detect": to_detect})
-    return jsonify({"libraries": listed, **totals})
+        names, names_error = 0, None
+        try:
+            names = name_review.count(library)
+        except Exception as e:
+            # Said, never "none": a library that could not be read is not a library with nothing to settle.
+            logger.warning("Could not count the names to review of %s: %s", library.name, e)
+            names_error = "The names to review could not be counted: %s" % e
+        listed.append({"name": library.name, "photos": photos, "faces_to_detect": to_detect, "names_to_review": names,
+                       "names_error": names_error,
+                       "names_url": _app_url("tuner", library.name, "?names-to-review=1") if names else None})
+    return jsonify({"libraries": listed, **totals, "names_to_review": sum(each.get("names_to_review", 0) for each in listed)})
 
 
 @routes.post("/api/activity/attention/check")
@@ -451,12 +464,56 @@ def snapshot_list():
 
 # ---- The always-on process ------------------------------------------------------------------
 
+def _models():
+    """What the server has loaded, for the page: names, whether a run uses them, and since when."""
+    runtime = current_app.config.get("RUNTIME")
+    if runtime is None or not hasattr(runtime, "models_state"):
+        return None
+    state = runtime.models_state()
+    after = state["release_after"]
+    if state["loaded"]:
+        used = state["last_used"]
+        text = "Loaded: %s." % " and ".join(state["loaded"])
+        if state["in_use"]:
+            text += " In use by Suggest."
+        elif used is not None:
+            text += " Last used %s ago." % _span(used)
+            if after:
+                text += " Let go after %d minutes unused." % round(after / 60)
+    else:
+        text = "Not loaded; loads when Suggest or indexing needs it."
+    return {"loaded": state["loaded"], "in_use": state["in_use"], "last_used_seconds": state["last_used"],
+            "release_after_minutes": round(after / 60, 2) if after else None, "text": text}
+
+
+def _span(seconds):
+    if seconds < 90:
+        return "%d seconds" % round(seconds)
+    return "%d minutes" % round(seconds / 60)
+
+
+@routes.post("/api/activity/models/unload")
+def unload_models():
+    """Unload models now: every model let go and the graphics card given up at once, unless
+    a Suggest run is using them, which is answered in a sentence and nothing touched."""
+    runtime = current_app.config.get("RUNTIME")
+    if runtime is None or not hasattr(runtime, "unload_models_now"):
+        return responses.error(409, "This server keeps no models.")
+    done = runtime.unload_models_now()
+    if done["busy"]:
+        return responses.error(409, "Suggest is using them: they are let go when it ends.", unloaded=[])
+    names = done["unloaded"]
+    return jsonify({"success": True, "unloaded": names, "models": _models(),
+                    "message": ("Unloaded %s; the graphics card is free." % " and ".join(names)) if names
+                    else "Nothing was loaded."})
+
+
 @routes.get("/api/activity/server")
 def server():
     lifecycle = _lifecycle()
     status = lifecycle.status()
     background = lifecycle.background
-    return jsonify({"version": status["version"], "supervised": status["supervised"],
+    return jsonify({"models": _models(), "version": status["version"], "supervised": status["supervised"],
                     "taking_work": status["taking_work"], "busy": status["busy"],
                     "running_since": _stamp(lifecycle.started), "pid": os.getpid(),
                     "background": background.names() if background is not None else [],

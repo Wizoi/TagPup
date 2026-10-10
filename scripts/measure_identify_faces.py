@@ -31,8 +31,10 @@ support it is to perform the click. Server timings are a diagnosis, never a resu
 
     .venv/Scripts/python.exe scripts/measure_identify_faces.py
     .venv/Scripts/python.exe scripts/measure_identify_faces.py --action new-person
+    .venv/Scripts/python.exe scripts/measure_identify_faces.py --action people-by-face
 
-Two clicks are measured, one per run: Ignore Cluster (the default), and New Person
+Three clicks are measured, one per run: By face in Review People's list (`--action people-by-face`:
+until the crops in view are painted), Ignore Cluster (the default), and New Person
 (`--action new-person`: select one face in the grid, click New Person, until the faces
 it offers are on screen and the page runs again; docs/findings.md, #5). The first New
 Person of a run also reads the pool of nameless faces, so it is reported apart.
@@ -62,7 +64,7 @@ import _root  # noqa: E402,F401
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 # The sandbox's helpers, shared with the other measurement scripts; the tests reach them here too.
-from sandbox import copy_library, free_port, place_roots, remove_sandbox  # noqa: E402,F401
+from sandbox import copy_library, environment, free_port, place_roots, remove_sandbox  # noqa: E402,F401
 # The code a sandbox runs: scripts/code_snapshot.py, shared with the installer.
 from code_snapshot import copy_code  # noqa: E402
 
@@ -92,10 +94,10 @@ def start_sandbox_server(sandbox, db_path, port):
     them, as the apps people start get. A launcher written here once served the apps bare."""
     process = processes.start(
         [sys.executable, os.path.join(sandbox, "tagpup_web.py"), "--db", db_path,
-         "--tuner-port", str(port), "--tagpup-port", str(free_port())],
+         "--tuner-port", str(port), "--tagpup-port", str(free_port()), "--warm-up"],
         cwd=sandbox,
         # Its home is the sandbox, whatever TAGPUP_HOME this was run with.
-        env=dict(os.environ, TAGPUP_HOME=sandbox),
+        env=environment(sandbox, TAGPUP_NO_JOBS="1"),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -245,11 +247,66 @@ def drive_new_person(url, args):
     return timings
 
 
+def drive_people_by_face(url, args):
+    """Review People's list: the click on By face until the crops in view are painted.
+
+    Each round goes back to By name first, so it is the same click every time. The first
+    round also computes the server's answer (/api/people-faces); later ones read its cache,
+    and it is reported apart, with how long the answer takes on its own from the page."""
+    from playwright.sync_api import sync_playwright
+
+    timings = []
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=not args.headed)
+        page = browser.new_page(viewport={"width": 1600, "height": 1000})
+        started = time.time()
+        page.goto(url, wait_until="domcontentloaded")
+        page.wait_for_selector("#photo-list .person-row", timeout=args.timeout * 1000)
+        people = page.eval_on_selector_all("#photo-list .person-row", "els => els.length")
+        print("\nopening the list")
+        print("  people on screen             : %7.2fs  (%d people)" % (time.time() - started, people))
+
+        for round_number in range(1, args.rounds + 1):
+            page.click("#people-view-name")
+            page.wait_for_selector("#photo-list .person-row", timeout=args.timeout * 1000)
+            page.wait_for_timeout(300)
+            started = time.time()
+            page.click("#people-view-face")
+            page.wait_for_selector("#photo-list.by-face .person-card", timeout=args.timeout * 1000)
+            # Painted: every crop the list's own viewport shows has loaded and decoded.
+            page.wait_for_function("""() => {
+                const box = document.getElementById('photo-list').getBoundingClientRect();
+                const shown = [...document.querySelectorAll('#photo-list .person-face-crop img')].filter(img => {
+                    const r = img.getBoundingClientRect();
+                    return r.bottom > box.top && r.top < box.bottom;
+                });
+                return shown.length > 0 && shown.every(img => img.complete && img.naturalWidth > 0);
+            }""", timeout=args.timeout * 1000)
+            page.evaluate("() => new Promise(r => requestAnimationFrame(() => r(1)))")
+            elapsed = time.time() - started
+            timings.append(elapsed)
+            cards, crops, loaded = page.evaluate("""() => {
+                const imgs = [...document.querySelectorAll('#photo-list .person-face-crop img')];
+                return [document.querySelectorAll('#photo-list .person-card').length, imgs.length,
+                        imgs.filter(i => i.complete && i.naturalWidth > 0).length];
+            }""")
+            answer = page.evaluate("""async () => {
+                const t = performance.now();
+                const reply = await fetch(location.pathname.replace(/\\/?$/, '/') + 'api/people-faces');
+                const body = await reply.json();
+                return [performance.now() - t, Object.keys(body).length];
+            }""")
+            print("  round %-2d %4d cards, %3d of %3d crops loaded -> %6.2fs   (/api/people-faces again: %.0f ms, %d faces)"
+                  % (round_number, cards, loaded, crops, elapsed, answer[0], answer[1]))
+        browser.close()
+    return timings
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default=tagpup_config.library_path("photo_index.db"),
                         help="the library to copy; opened read-only and never written")
-    parser.add_argument("--action", choices=("ignore-cluster", "new-person"), default="ignore-cluster",
+    parser.add_argument("--action", choices=("ignore-cluster", "new-person", "people-by-face"), default="ignore-cluster",
                         help="the click to time")
     parser.add_argument("--person", default="Unknown Faces")
     parser.add_argument("--rounds", type=int, default=5)
@@ -276,7 +333,15 @@ def main():
                % (port, args.person.replace(" ", "+")))
         print("  serving on port %d, isolated from anything else you have running" % port)
 
-        if args.action == "new-person":
+        if args.action == "people-by-face":
+            url = "http://127.0.0.1:%d/measured/?mode=face-matching" % port
+            timings = drive_people_by_face(url, args)
+            if len(timings) > 1:
+                print("\nclick to painted: first %.2fs (computes the faces); then median %.2fs, worst %.2fs,"
+                      " over %d rounds" % (timings[0], statistics.median(timings[1:]), max(timings[1:]),
+                                           len(timings) - 1))
+            timings = []
+        elif args.action == "new-person":
             timings = drive_new_person(url, args)
             if len(timings) > 1:
                 print("\nclick to usable: first %.2fs (reads the pool); then median %.2fs, worst %.2fs,"

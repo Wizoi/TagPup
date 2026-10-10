@@ -182,6 +182,8 @@ class Side:
             return value
         if isinstance(value, dict):
             return {self.norm(k, base): self.norm(v, base) for k, v in value.items()}
+        if hasattr(value, "_fields"):   # a namedtuple, such as a Ref
+            return type(value)(*(self.norm(each, base) for each in value))
         if isinstance(value, (list, tuple)):
             return type(value)(self.norm(each, base) for each in value)
         if isinstance(value, (set, frozenset)):

@@ -49,7 +49,7 @@ class TestServerStartup(unittest.TestCase):
             # No library was opened, let alone made, for a request that named none (#100).
             self.assertFalse(os.path.exists(os.path.join(home.root, "data", "photo_index.db")))
         finally:
-            proc.terminate()
+            processes.kill_tree(proc.pid)
             try:
                 proc.wait(timeout=5.0)
             except subprocess.TimeoutExpired:

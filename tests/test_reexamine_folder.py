@@ -31,10 +31,10 @@ from tests.test_face_exclusion import ExclusionTestBase  # noqa: E402
 from tests.test_face_clustering_rules import identity_vector, near  # noqa: E402
 from tests.test_service_faces import FacesCase, vector  # noqa: E402
 
+from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.services import faces  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
-from tagpup.store import people as store_people  # noqa: E402
 
 ROWAN = "Rowan Thackeray"
 WREN = "Wren Halloway"
@@ -133,6 +133,7 @@ class ReexamineThroughTheRoute(ExclusionTestBase):
 class ReexamineInTheService(FacesCase):
     def setUp(self):
         super().setUp()
+        db.write_with_connection(self.lib.library.path, lambda conn: taxonomy.add_node(conn, "People/" + ROWAN, 1))
         self.rowan = vector(1)
         known = self.photo("known.jpg")
         self.known = self.face(known, name=ROWAN, embedding=self.rowan)
@@ -140,36 +141,52 @@ class ReexamineInTheService(FacesCase):
         self.lookalike = self.face(self.unnamed_photo, embedding=self.rowan)
 
     def matrix(self):
-        return [self.known], [ROWAN], np.stack([self.rowan])
+        node = self.lib.rows("SELECT id FROM tag_taxonomy WHERE tag = ?", ("People/" + ROWAN,))[0][0]
+        return [self.known], [Ref(node, ROWAN)], np.stack([self.rowan])
 
-    def test_a_person_renamed_after_the_named_faces_were_read_is_not_written_by_the_old_name(self):
+    def test_a_person_renamed_after_the_named_faces_were_read_is_written_by_the_new_name(self):
+        """A guess names the person by their node, not by the name it read: a rename between the compare and the write
+        (docs/findings.md, #645) changes how the person is called and not who they are. It used to leave the face unnamed
+        ("somebody who no longer exists"); the face is named, with the person's name as it is now."""
         def renamed_meanwhile():
             read = self.matrix()
             # The owner renames the person while the faces are being compared.
-            db.write_with_connection(self.lib.library.path,
-                                     lambda conn: store_people.rename(conn, ROWAN, "Rowan Thackeray-Vale"))
+            db.write_with_connection(self.lib.library.path, lambda conn: taxonomy.move_branch(
+                conn, "People/" + ROWAN, "People/Rowan Thackeray-Vale"))
             return read
 
         result = faces.automatch_folder(self.lib.library, self.folder, renamed_meanwhile)
-        self.assertEqual(result.changed, 0)
-        self.assertEqual(result.details["renamed"], 1)
-        self.assertIsNone(self.face_row(self.lookalike)[0],
-                          "a face was named after somebody who no longer exists")
+        self.assertEqual(result.changed, 1)
+        self.assertEqual(result.details["renamed"], 0, "nobody is gone: the person is the same")
+        self.assertEqual("Rowan Thackeray-Vale", self.face_row(self.lookalike)[0],
+                         "the face is named for the person, not for the name read before the rename")
         self.assertNotIn(ROWAN, self.people(self.unnamed_photo))
+        self.assertIn("Rowan Thackeray-Vale", self.people(self.unnamed_photo))
+
+    def test_a_person_unnamed_everywhere_meanwhile_is_not_written(self):
+        """The reference faces were read; by the write nobody carries the person any more: the face stays unnamed."""
+        def unnamed_meanwhile():
+            read = self.matrix()
+            db.write_with_connection(self.lib.library.path, lambda conn: store_faces.unname(conn, [self.known]))
+            return read
+
+        result = faces.automatch_folder(self.lib.library, self.folder, unnamed_meanwhile)
+        self.assertEqual((result.changed, result.details["renamed"]), (0, 1))
+        self.assertIsNone(self.face_row(self.lookalike)[0])
 
     def test_a_rename_committed_elsewhere_while_it_decides_cannot_land_before_its_write(self):
         """docs/findings.md, #645: the guard and the writes are one transaction. A rename
         from another process, tried while automatch decides, either waits for it or --
         had it landed -- would leave the old name unwritten."""
-        real = store_faces.names_in_photo
+        real = store_faces.people_in_photo
         attempts = []
 
-        def names_in_photo(conn, path):
+        def people_in_photo(conn, path):
             found = real(conn, path)
             other = db.connect(self.lib.library.path, timeout=0.1)
             other.execute("PRAGMA busy_timeout=100")   # connect sets the app's 30 s
             try:
-                store_people.rename(other, ROWAN, "Rowan Thackeray-Vale")
+                taxonomy.move_branch(other, "People/" + ROWAN, "People/Rowan Thackeray-Vale")
                 other.commit()
                 attempts.append("committed")
             except sqlite3.OperationalError:
@@ -178,7 +195,7 @@ class ReexamineInTheService(FacesCase):
                 other.close()
             return found
 
-        with mock.patch.object(store_faces, "names_in_photo", side_effect=names_in_photo):
+        with mock.patch.object(store_faces, "people_in_photo", side_effect=people_in_photo):
             faces.automatch_folder(self.lib.library, self.folder, self.matrix)
         self.assertEqual(attempts, ["held back"], "the rename landed between the guard and the write")
         self.assertEqual(self.face_row(self.lookalike)[0], ROWAN)

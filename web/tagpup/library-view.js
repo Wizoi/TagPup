@@ -16,7 +16,7 @@ import { baseName } from './common/paths.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
-    btnApplyRename, btnDeleteSelection, btnFolderAutoApply, btnLibraryRefresh, btnRefreshList,
+    btnApplyRename, btnDeleteSelection, btnFolderAutoApply, btnLibraryRefresh, btnPhotoBack, btnRefreshList,
     btnToggleRename, btnToggleTimeshift,
     folderPathInput, folderViewHeader, folderViewMain, folderViewStats, folderViewTitle, folderViewTop, indexProgressContainer,
     libraryStrip, libraryStripSource, libraryStripStatus, libraryStripTotal,
@@ -28,6 +28,8 @@ import {
     openFolderView, scanFolder, updateCurrentFolderLabel, updateListStats, updatePhotoPosition
 } from './folder.js';
 import { clearSelection } from './selected.js';
+import { positionOf, pushEntry } from './history-entries.js';
+import { backArrived, backToView, bestEffortScroll, forgetViewLeft, leavePhotoPlace, onPhotoPlace, photoPlaceMoved, saveScroll } from './view-left.js';
 import { attachBulk, lockBulkControls } from './bulk-job.js';
 import { forgetBanner } from './library-banner.js';
 import { clearSyncInfo, loadSyncInfo } from './sync-state.js';
@@ -86,6 +88,7 @@ function showChrome() {
     btnToggleRename.classList.add('hidden');
     btnToggleTimeshift.classList.add('hidden');
     btnDeleteSelection.classList.remove('hidden');     // Delete of the selection, a view's (#674)
+    btnPhotoBack.classList.remove('hidden');           // a photo opened over the view has a way back to it (view-left.js, #780)
     btnRefreshList.title = 'Ask the library for this view again';
     libraryStrip.classList.remove('hidden');
     folderViewTop.classList.add('in-library-view');
@@ -98,6 +101,7 @@ function hideChrome() {
     btnToggleRename.classList.remove('hidden');
     btnToggleTimeshift.classList.remove('hidden');
     btnDeleteSelection.classList.add('hidden');
+    btnPhotoBack.classList.add('hidden');
     // A folder's own scan enables it again; with no folder open there is nothing to shift.
     btnToggleTimeshift.disabled = true;
     btnToggleTimeshift.classList.remove('active');
@@ -154,14 +158,6 @@ export function libraryChanged() {
 
 // ---- The address ---------------------------------------------------------------------------
 
-function saveScroll() {
-    try {
-        window.history.replaceState({ ...(window.history.state || {}), scrollTop: folderViewMain.scrollTop }, '');
-    } catch (err) {
-        console.error('Could not remember where the view was scrolled to:', err);
-    }
-}
-
 /**
  * How many places back the view before a search is, for the search's own place: 1 from another view, a folder or nothing; one
  * more than the search it replaces in a new place (a sort of it); 0 when that is not known (a search opened by its address).
@@ -170,22 +166,6 @@ function searchBackOf(previous) {
     if (!previous || previous.invalid || previous.kind !== 'search') return 1;
     const here = Number(window.history.state && window.history.state.searchBack);
     return here > 0 ? here + 1 : 0;
-}
-
-/**
- * A new place in the history, tagged with its position when the place the page is at has one (#770): positions are consecutive,
- * since a new place drops the places after the one it is made from.
- */
-function pushEntry(entry, url) {
-    const at = state.entries.at;
-    const pos = at === null ? null : at + 1;
-    window.history.pushState(pos === null ? entry : { ...entry, entryLoad: state.entries.load, entryPos: pos }, '', url);
-    state.entries.at = pos;
-}
-
-/** The position of a place in the history this load made, or null. */
-function positionOf(entry) {
-    return entry && entry.entryLoad === state.entries.load && Number.isInteger(entry.entryPos) ? entry.entryPos : null;
 }
 
 function writeAddress(spec, mode, back = 0) {
@@ -243,7 +223,7 @@ function stayAfterMove(from, to) {
     const lib = state.library;
     if (lib && !lib.invalid) {
         const kept = { ...(lib.entryState || {}) };
-        for (const name of ['searchBack', 'entryLoad', 'entryPos', 'scrollTop']) delete kept[name];
+        for (const name of ['searchBack', 'entryLoad', 'entryPos', 'scrollTop', 'photo']) delete kept[name];
         const here = window.history.state || {};
         if (positionOf(here) !== null) Object.assign(kept, { entryLoad: here.entryLoad, entryPos: here.entryPos });
         const url = new URL(window.location.href);
@@ -262,7 +242,10 @@ function addressNamesWhatIsShown() {
 
 function beginView(spec, history, scrollTop) {
     const previous = state.library;
-    const back = !spec.error && spec.kind === 'search' ? searchBackOf(previous) : 0;
+    // A search pushed from a photo's place is one place further from the view before it (#862); one that replaces the photo's place is
+    // not (it takes the place's index), and the place is the search's now.
+    const back = !spec.error && spec.kind === 'search' ? searchBackOf(previous) + (history === 'push' && onPhotoPlace() ? 1 : 0) : 0;
+    if (history === 'replace') leavePhotoPlace(back);   // opened in the place of a photo's: the place is the view's now
     if (previous) destroyLibrary(previous);
     else quietTheFolder();
     const lib = newLibrary(spec.error ? { kind: 'all' } : spec);
@@ -277,7 +260,9 @@ function beginView(spec, history, scrollTop) {
     state.lastSelectedPath = null;
     state.folderPhotos = [];
     forgetBanner();            // what the disk held of the view before is not this view's
+    // The address is written while the view left is still known: the photo's place keeps where that view was scrolled to (#863).
     writeAddress(spec, history, back);
+    forgetViewLeft();          // what was left of the view before is not this view's
     lib.entryState = { ...(window.history.state || {}) };   // the state of its place in the history (#770)
     showChrome();
     upper.navigatorFollows();  // the sidebar shows the source, in the tab it belongs to
@@ -314,6 +299,7 @@ function beginView(spec, history, scrollTop) {
 export function closeLibraryView({ folder = '' } = {}) {
     const lib = state.library;
     if (!lib) return;
+    forgetViewLeft();
     destroyLibrary(lib);
     state.library = null;
     state.shownSource = null;
@@ -415,7 +401,7 @@ export function photosDeleted() {
         if (state.activePhotoPath && lib.activeId !== null && !lib.ids.includes(lib.activeId)) {
             lib.activeId = null;
             state.folderPhotos = [];
-            openFolderView();
+            backToView();   // the grid, as it was left, less the photos that are gone (view-left.js)
         }
         return refreshed;
     });
@@ -483,11 +469,17 @@ export function wireLibraryView() {
     window.history.replaceState({ ...(window.history.state || {}), entryLoad: state.entries.load, entryPos: 0 }, '');
     state.entries.at = 0;
     window.addEventListener('popstate', (event) => {
+        backArrived();
         // Back or Forward between a folder and a view, or between two views.
         const from = state.entries.at;
         const to = positionOf(event.state);
         state.entries.at = to;
-        if (addressNamesWhatIsShown()) return;   // a cancelled move put back (stayAfterMove): nothing to show, nothing to ask
+        if (addressNamesWhatIsShown()) {
+            // A cancelled move put back (stayAfterMove): nothing to show, nothing to ask. Back from a photo's place to the view's, or
+            // Forward onto it: the grid as it was left, or the photo again (view-left.js).
+            if (!photoPlaceMoved(event, { namesWhatIsShown: true, stay: () => stayAfterMove(from, to) })) bestEffortScroll(event.state);
+            return;
+        }
         if (hasUnsavedEdits() || openPhotoWrite()) {
             leavePhotoThen(() => showAddress((event.state && event.state.scrollTop) || 0), { onStay: () => stayAfterMove(from, to) });
             return;

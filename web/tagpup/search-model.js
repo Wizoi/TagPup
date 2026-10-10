@@ -16,6 +16,7 @@
 // as a tag: they are offered by name.
 import { compareTagNames, joinTag } from './common/vocabulary.js';
 import { memberLabel, viewLabel } from './library-source.js';
+import { personSource } from './navigator-model.js';
 
 /** The most names the picker shows at once; more are counted ("12 more: keep typing"). */
 export const PICKER_MAX = 30;
@@ -35,7 +36,7 @@ export function pickerNames(keywords, people) {
             if (!person.groupTag && branches.has(key)) continue;   // a branch is never a person (#660)
             if (person.groupTag) personNodes.add(joinTag(person.groupTag, person.name).toLowerCase());
             names.push({
-                member: { kind: 'person', value: person.name, recursive: false }, label: person.name, hint: person.groupTag || '',
+                member: { kind: 'person', value: personSource(person), recursive: false }, label: person.label || person.name, hint: person.groupTag || '',
                 count: person.count, what: 'person', words: [key],
             });
         }
@@ -93,9 +94,17 @@ export function memberKey(member) {
     return `${member.kind}:${value}:${member.recursive ? 1 : 0}`;
 }
 
-/** What a chip of a search's list says, and its tooltip: { text, title }. A source the picker does not offer is "within" it. */
-export function chipLabel(member) {
-    if (member.kind === 'person') return { text: String(member.value), title: `${member.value}: photos naming them` };
+/**
+ * What a chip of a search's list says, and its tooltip: { text, title }. A source the picker does not offer is "within" it. A
+ * person who shares a name is told by their tag (the source), and shown by their label (`Sam · Thackeray`) when the people are
+ * read (`people`, the navigator's index): the tag stays in the tooltip.
+ */
+export function chipLabel(member, people = null) {
+    if (member.kind === 'person') {
+        const known = people && people.byPersonTag ? people.byPersonTag.get(String(member.value).toLowerCase()) : null;
+        if (known && known.label) return { text: known.label, title: `${member.value}: photos naming them` };
+        return { text: String(member.value), title: `${member.value}: photos naming them` };
+    }
     if (member.kind === 'keyword') return { text: String(member.value), title: `${member.value}, and every tag under it` };
     if (member.kind === 'keyword_only') return { text: `${member.value} alone`, title: `${member.value}, without the tags under it` };
     return { text: `Within ${memberLabel(member)}`, title: `Within: ${viewLabel(member)}` };
@@ -107,7 +116,10 @@ export function chipLabel(member) {
  * or deleted since: the chip says so, and the search answers what the library holds.
  */
 export function chipKnown(member, keywords, people) {
-    if (member.kind === 'person') return people ? people.byLower.has(String(member.value).toLowerCase()) : null;
+    if (member.kind === 'person') {
+        const wanted = String(member.value).toLowerCase();
+        return people ? people.byLower.has(wanted) || (!!people.byPersonTag && people.byPersonTag.has(wanted)) : null;
+    }
     if (member.kind === 'keyword' || member.kind === 'keyword_only') {
         return keywords ? keywords.byTag.has(member.value) || keywords.byLower.has(String(member.value).toLowerCase()) : null;
     }

@@ -14,6 +14,7 @@ an empty library that then sat in the list. Create makes libraries.
 to, and a bare page request is redirected to. It goes with #100: a library is then
 reached by its URL alone, and the picker is what a page without one shows.
 """
+import json
 import logging
 import os
 import re
@@ -86,9 +87,23 @@ class LibraryFromUrl:
         # failing the request failed every page and file (docs/findings.md, #57).
         try:
             library_actions.bring_up_to_date(library.path)
+        except library_actions.NewerLibrary:
+            raise   # served by no version older than the library: __call__ says so
         except Exception as e:
             logger.warning("Could not bring %s up to date: %s", library.path, e)
         return library
+
+    @staticmethod
+    def _refuse_newer(environ, start_response, sentence):
+        """A library made by a newer TagPup is not served, page or API: the sentence says which app to start
+        (409, as a refused write is). The pages read the API's JSON error; a browser shown a page gets the text."""
+        if "/api/" in (environ.get("PATH_INFO") or "") + "/":
+            body = json.dumps({"success": False, "error": sentence}).encode("utf-8")
+            start_response("409 CONFLICT", [("Content-Type", "application/json")])
+        else:
+            body = sentence.encode("utf-8")
+            start_response("409 CONFLICT", [("Content-Type", "text/plain; charset=utf-8")])
+        return [body]
 
     def __call__(self, environ, start_response):
         path = environ.get("PATH_INFO") or "/"
@@ -96,7 +111,10 @@ class LibraryFromUrl:
         match = re.match(r"^/([^/]+)(/.*)?$", path)
         if match and names_a_library(match.group(1)):
             name = match.group(1)
-            library = self.resolve(name)
+            try:
+                library = self.resolve(name)
+            except library_actions.NewerLibrary as e:
+                return self._refuse_newer(environ, start_response, str(e))
             if library is None:
                 start_response("404 NOT FOUND", [("Content-Type", "text/plain; charset=utf-8")])
                 return [("There is no library called %s" % name).encode("utf-8")]

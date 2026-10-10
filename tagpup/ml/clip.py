@@ -77,6 +77,10 @@ class ClipModel:
         """Load the model now, if it is not loaded yet."""
         self._init_model()
 
+    def loaded(self):
+        """Are the weights in memory now?"""
+        return self.model is not None
+
     def unload(self):
         """Let the weights go, and the GPU memory they held (tagpup.runtime drops a model
         no library it serves uses any more). Used again, it loads again."""

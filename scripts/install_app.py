@@ -35,9 +35,19 @@ an edit is never installed; the version already installed starts instead. Two la
 started together install one at a time (INSTALL_LOCK), so the second finds the first's
 version installed rather than making another.
 
-Installing never stops a running server: it says which run another version, and the next
-launch of TagPup or TagTuner replaces them (tagpup.launcher). It never removes a version
-a running server or the always-on process runs from.
+Installing by hand (--apply) then hands a running server of an earlier version over to the
+new one (tagpup.launcher.hand_over, #795): it waits, saying for what, while the server
+finishes a Suggest run, an index, a bulk edit or its migrations, ends it once it is
+drained (or hangs), and starts the new version on the same ports with no window of its
+own and no new browser tab; a page left open says TagPup was updated, and a reload
+shows the new version. When the new version does not start, the old one is started
+again. With nothing running it only installs. A server run from a checkout and the
+always-on process's are left alone: the next launch replaces the one, and the always-on
+process moves its own at its next quiet moment. --no-restart installs only, leaving a
+running server for the next launch of TagPup or TagTuner to replace, as the launchers'
+own --if-changed install does. Two installs take turns (INSTALL_LOCK), and so do their
+hand-overs. An install never removes a version a running server or the always-on
+process runs from.
 """
 import argparse
 import datetime
@@ -54,7 +64,7 @@ from code_snapshot import REPO_ROOT, copy_code  # noqa: E402
 from tagpup import config as tagpup_config  # noqa: E402
 from tagpup import launcher as launches  # noqa: E402
 from tagpup import supervisor  # noqa: E402
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import byte_lock, paths, processes  # noqa: E402
 
 #: Versions kept: the new one and the two before it.
 KEEP = 3
@@ -197,7 +207,7 @@ def update(destination, home, python, say=print):
     failed install leaves the version there was. Returns the version installed, or None.
     One at a time: TagPup.cmd and TagTuner.cmd started together both run this, and the
     second, once the first is done, finds its version installed."""
-    lock = supervisor.Lock(os.path.join(destination, INSTALL_LOCK))
+    lock = byte_lock.Lock(os.path.join(destination, INSTALL_LOCK))
     if not lock.acquire(0):
         # The other launcher's install: say so, or the window is blank while it copies.
         say("TagPup: another install is running; waiting for it (at most %d s)..." % INSTALL_WAIT)
@@ -270,9 +280,36 @@ def to_remove(existing, new, previous, in_use=()):
     return [name for name in ordered[:-KEEP] if name not in (new, previous) and name not in set(in_use)]
 
 
-def install(destination, home, python, name=None, apply=False, say=print, shortcuts_in=()):
+def open_by_running_pythons(destination, names, lines):
+    """The versions among `names` that a running python has open: the version's folder is in the command line of a
+    python process (`lines`, processes.python_command_lines), however it was started. A server that began before
+    records existed, or by hand, has none to be found by (docs/findings.md, #756)."""
+    text = [paths.name_key(line) for line in lines]
+    return {name for name in names
+            if any(paths.key(os.path.join(destination, "versions", name)) + os.sep in line for line in text)}
+
+
+def leave_what_is_open(destination, removing, say):
+    """`removing` without the versions a running python has open. When the running programs cannot be
+    listed nothing can be shown not to be open, and no old version is removed this time."""
+    if not removing:
+        return removing
+    lines = processes.python_command_lines()
+    if lines is None:
+        say("keeping      %s (the running programs could not be listed to see whether one has them open)"
+            % ", ".join(removing))
+        return []
+    held = open_by_running_pythons(destination, removing, lines)
+    for name in removing:
+        if name in held:
+            say("keeping      %s (a running program has it open)" % os.path.join(destination, "versions", name))
+    return [name for name in removing if name not in held]
+
+
+def install(destination, home, python, name=None, apply=False, say=print, shortcuts_in=(), hand_over=False):
     """Install a new version, and make shortcuts to the apps in each folder of
-    `shortcuts_in`. Returns (the version's name, the versions removed)."""
+    `shortcuts_in`. Returns (the version's name, the versions removed). `hand_over`: what
+    it says of each server running is what the hand-over that follows does with it."""
     name = name or version_name()
     folder = os.path.join(destination, "versions", name)
     while os.path.exists(folder):   # two installs in one second
@@ -283,6 +320,9 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
     # a server started by a launcher runs from its version until the next launch replaces it.
     removing = to_remove(versions(destination), name, previous,
                          supervisor.versions_in_use(home) | launches.versions_running())
+    # And by what is running, whatever the records say: a server of before they existed left a version's
+    # folder empty under it (#756).
+    removing = leave_what_is_open(destination, removing, say)
 
     say("install      %s" % folder)
     say("home         %s  (data/)" % home)
@@ -337,27 +377,36 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
         else:
             removed.append(old)
     say("\nInstalled %s. Start the apps with the launchers above." % name)
-    for line in still_running(name):
+    for line in still_running(name, destination, hand_over):
         say(line)
     return name, removed
 
 
-def still_running(name):
-    """What to say of each server running another version than `name`, just installed:
-    the next launch replaces it; the always-on process moves its own."""
+def still_running(name, destination=None, hand_over=False):
+    """What to say of each server running another version than `name`, just installed into
+    `destination`: the hand-over that follows replaces it (`hand_over`), or else the next
+    launch; the always-on process moves its own; one run from a checkout or from another
+    installed folder is left to the next launch."""
     lines = []
     for found in sorted(launches.running(), key=lambda each: sorted((each.get("ports") or {}).values())):
-        if found.get("version") == name:
+        kind = launches.kind_of(found, destination or default_destination(), name)
+        if kind == launches.SAME:
             continue
-        ports = ", ".join(str(port) for port in sorted(set((found.get("ports") or {}).values())))
-        version = found.get("version") or "run from a checkout"
-        if found.get("supervised"):
-            lines.append("running      TagPup %s (process %s, port %s): the always-on process moves it onto %s at "
-                         "its next quiet moment" % (version, found.get("pid"), ports, name))
+        where = "TagPup %s (process %s, port %s)" % (found.get("version") or "run from a checkout", found.get("pid"),
+                                                    launches.ports_of(found))
+        if kind == launches.ALWAYS_ON:
+            lines.append("running      %s: the always-on process moves it onto %s at its next quiet moment"
+                         % (where, name))
+        elif kind == launches.REPLACE and hand_over:
+            lines.append("running      %s: handing it over to %s, once it has finished what it is doing (below)"
+                         % (where, name))
+        elif kind == launches.REPLACE or not hand_over:
+            lines.append("running      %s: the next launch of TagPup or TagTuner replaces it with %s, once it has "
+                         "finished what it is doing" % (where, name))
         else:
-            lines.append("running      TagPup %s (process %s, port %s): the next launch of TagPup or TagTuner "
-                         "replaces it with %s, once it has finished what it is doing" % (version, found.get("pid"),
-                                                                                          ports, name))
+            lines.append("running      %s: %s, so the install leaves it alone; the next launch of TagPup or TagTuner "
+                         "replaces it with %s" % (where, "run from a checkout" if kind == launches.CHECKOUT
+                                                  else "not a version of this installed app", name))
     return lines
 
 
@@ -376,13 +425,38 @@ def main(argv=None):
                         help="the interpreter the launchers use (default: %(default)s)")
     parser.add_argument("--no-shortcuts", action="store_true",
                         help="make no shortcuts on the Desktop or in the Start menu")
+    parser.add_argument("--no-restart", action="store_true",
+                        help="with --apply: install only, leaving a server of an earlier version running for the next "
+                             "launch of TagPup or TagTuner to replace")
     args = parser.parse_args(argv)
+    destination, home = os.path.abspath(args.to), os.path.abspath(args.home)
     if args.if_changed and args.apply:
-        update(os.path.abspath(args.to), os.path.abspath(args.home), args.python)
+        update(destination, home, args.python)
         return 0
-    install(os.path.abspath(args.to), os.path.abspath(args.home), args.python, apply=args.apply,
-            shortcuts_in=() if args.no_shortcuts else shortcut_folders())
-    return 0
+    shortcuts = () if args.no_shortcuts else shortcut_folders()
+    if not args.apply:
+        install(destination, home, args.python, shortcuts_in=shortcuts, hand_over=not args.no_restart)
+        return 0
+    if not launches.has_libraries(home):
+        # --home defaults to this checkout, a worktree's when an agent runs it: the launchers would
+        # all name it as TAGPUP_HOME. Before anything is written, a server or not (#816).
+        print("Nothing was installed: " + launches.no_library_said(home), flush=True)
+        return 1
+    # One install at a time, a launcher's among them; the hand-over after it, which may wait
+    # for a long job, holds a lock of its own and lets the launchers install meanwhile.
+    lock = byte_lock.Lock(os.path.join(destination, INSTALL_LOCK))
+    if not lock.acquire(0):
+        print("another install is running; waiting for it (at most %d s)..." % INSTALL_WAIT, flush=True)
+        if not lock.acquire(INSTALL_WAIT):
+            print("another install has not finished in %d s; nothing was installed." % INSTALL_WAIT)
+            return 1
+    try:
+        install(destination, home, args.python, apply=True, shortcuts_in=shortcuts, hand_over=not args.no_restart)
+    finally:
+        lock.release()
+    if args.no_restart:
+        return 0
+    return 0 if launches.hand_over(destination, args.python, home, say=lambda line: print(line, flush=True)) else 1
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@ import threading
 
 __all__ = ["stored", "key", "same", "is_under", "sql_equals", "sql_under", "sql_in", "COLLATE",
            "Roots", "to_row", "from_row", "root_name", "check_locations", "is_native_absolute",
+           "lost_unc_slash", "restore_unc_slash",
            "RootsError", "UnmappedRoot", "UnknownRoot", "outside_roots", "exiftool_spelling", "ROOT_MARK",
            "row_parent", "row_name"]
 
@@ -231,6 +232,22 @@ def is_native_absolute(path):
         return path.startswith("/")
     drive, rest = os.path.splitdrive(path)
     return bool(drive) and rest[:1] in ("", "\\", "/")
+
+
+def lost_unc_slash(address):
+    """Does this address start with ONE separator where a share's address starts with two?
+    Git Bash and other MSYS shells turn a leading double backslash in an argument into one
+    before the program sees it; the address then names no place, and is ignored, silently. Only where a separator and no drive starts an absolute path is a single
+    leading one a mistake: Windows."""
+    if not CASE_INSENSITIVE or not isinstance(address, str):
+        return False
+    return address[:1] in ("\\", "/") and address[1:2] not in ("\\", "/")
+
+
+def restore_unc_slash(address):
+    """`address` with the two leading backslashes a share's address has, for one that
+    lost_unc_slash; any other address as it is."""
+    return "\\\\" + address[1:] if lost_unc_slash(address) else address
 
 
 def _folded(path):

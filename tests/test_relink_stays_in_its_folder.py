@@ -27,6 +27,7 @@ from face_rows import add_face  # noqa: E402
 class FakeExifTool:
     """Answers get_tags from a table of {file name: tags}, reading no file."""
     table = {}
+    reads = []
 
     def __init__(self, *args, **kwargs):
         pass
@@ -38,6 +39,7 @@ class FakeExifTool:
         return False
 
     def get_tags(self, batch, tags=None):
+        self.reads.extend(os.path.basename(path) for path in batch)
         rows = []
         for path in batch:
             row = {"SourceFile": path.replace(os.sep, "/")}
@@ -58,6 +60,7 @@ class RelinkStaysInItsFolder(unittest.TestCase):
                              (self.meet_b, "Classic - 01.jpg"),
                              (self.meet_b, "Classic - 02.jpg")):
             open(os.path.join(folder, name), "wb").close()
+        FakeExifTool.reads = []
         FakeExifTool.table = {
             "Invitational - 01.jpg": {"XMP:PreservedFileName": "IMG_0001.CR3"},
             "Classic - 01.jpg": {"XMP:PreservedFileName": "IMG_0421.CR3"},
@@ -93,6 +96,11 @@ class RelinkStaysInItsFolder(unittest.TestCase):
         by_from = {m["from"]: m["to"] for m in moves}
         self.assertEqual(paths.key(by_from[self.dead_b]),
                          paths.key(os.path.join(self.meet_b, "Classic - 02.jpg")))
+
+    def test_each_file_of_a_dead_rows_folder_is_read_once(self):
+        # docs/findings.md, #340: the preserved names and the identities were two reads of the folder.
+        self.plan()
+        self.assertEqual(sorted(FakeExifTool.reads), sorted(set(FakeExifTool.reads)), FakeExifTool.reads)
 
 
 if __name__ == "__main__":

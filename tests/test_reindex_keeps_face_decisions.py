@@ -209,7 +209,8 @@ class TestResetKeepsHandGivenNames(FaceDecisionCase):
         index = PhotoIndex(self.db_path, configured_model())
         index.load()
         try:
-            self.assertEqual(store_faces.manual_names(index.conn), {
+            self.assertEqual({face_id: person.name if person else None
+                              for face_id, person in store_faces.manual_names(index.conn).items()}, {
                 ids["[0, 0, 4, 4]"]: "Rowan Thackeray",
                 ids["[4, 0, 8, 4]"]: None,
                 ids["[8, 0, 12, 4]"]: None,

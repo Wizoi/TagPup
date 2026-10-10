@@ -2,6 +2,7 @@
 in the review of the alphabetical lists (docs/findings.md): a keyword read from a file can hold any
 text, and one with a run of more than 4,300 digits must not fail every list that sorts tags."""
 import unittest
+from unittest import mock
 
 from tagpup.core import vocabulary
 from tagpup.store import library_view as store_library_view
@@ -40,10 +41,13 @@ class ThePeopleOfTheNavigator(unittest.TestCase):
             def execute(self, sql, params=()):
                 class Rows:
                     def fetchall(self_inner):
-                        return [("Zoe Abbott", 4), ("anh Tran", 4), ("Wen Zhao", 9)]
+                        # names no person is filed under: (name, photos); the people the tree files are none
+                        return [("Zoe Abbott", 4), ("anh Tran", 4), ("Wen Zhao", 9)] if "tag_id IS NULL" in sql else []
                 return Rows()
-        self.assertEqual([name for name, _ in store_library_view.people_counts(Conn())],
-                         ["Wen Zhao", "anh Tran", "Zoe Abbott"])
+        nobody = mock.Mock(node_names={})
+        with mock.patch.object(store_library_view.person_ids, "read", return_value=nobody):
+            self.assertEqual([ref.name for ref, _ in store_library_view.people_counts(Conn())],
+                             ["Wen Zhao", "anh Tran", "Zoe Abbott"])
 
 
 if __name__ == "__main__":

@@ -229,11 +229,9 @@ class TheJournalsQuestion(T.Bulk):
             found.set_trace_callback(seen.append)
             return found
         with mock.patch.object(file_journal.db, "connect", watching):
-            began = time.perf_counter()
             found = file_journal.photo_ids_done(self.vl.path, "bulk time shift (job 1)")
-            took = time.perf_counter() - began
         self.assertEqual(900 * 25, len(found))
-        self.assertLess(took, 0.5)
+        # One statement, driven from `changes`: its plan says so, where a time limit measured the machine (#721).
         selects = [text for text in seen if "f.state = 'done'" in text]
         self.assertEqual(1, len(selects))
         plan = [row[-1] for row in conn.execute("EXPLAIN QUERY PLAN " + selects[0])]

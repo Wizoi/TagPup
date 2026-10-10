@@ -102,13 +102,17 @@ export function syntheticPeople() {
   return people;
 }
 
-/** 61 years: 1970 up to this year, and as many years that are not dates (the year 1, 2099, ...) as make up the 61. */
+/**
+ * 61 years: 1970 up to this year, and as many years that are not dates (the year 1, 2099, ...) as make up the 61. Each
+ * carries `implausible` as the route says it (tagpup.store.library_view.plausible_year: before 1900 or after next year;
+ * tests/test_library_view.py holds the rule itself): the page only shows it.
+ */
 export function syntheticDates(thisYear = new Date().getFullYear()) {
   const years = [];
   const make = (year, count) => {
     const months = [];
     for (let m = 12; m >= 1; m--) months.push({ month: `${String(year).padStart(4, "0")}-${String(m).padStart(2, "0")}`, count: Math.floor(count / 12) });
-    return { year, count, months, other: count - 12 * Math.floor(count / 12) };
+    return { year, count, months, other: count - 12 * Math.floor(count / 12), implausible: year < 1900 || year > thisYear + 1 };
   };
   for (let year = 1970; year <= thisYear; year++) years.push(make(year, 600 + year % 97));
   const junk = [1, 1899, 1901, 2099, 2100, 2200, 9999, 1969, 1950, 1000];

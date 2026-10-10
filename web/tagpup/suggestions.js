@@ -1,8 +1,9 @@
 // TagPup's page: suggestions -- asking for them, following their progress and an index's,
 // showing them for a photo, and applying them.
 import { api } from './common/api.js';
+import { attachPersonFaces } from './common/person-faces.js';
 import { samePath } from './common/paths.js';
-import { leafOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
+import { leafOf, peopleListHas, personLabelOf, personTitleOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     btnFolderAutoApply, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
@@ -330,9 +331,11 @@ export function renderSuggestionsPanel(photoPath) {
     // already shown as one a few inches above.
     const photo = state.folderPhotos.find(p => p.path === photoPath);
     const outstanding = (list, key) =>
-        (list || []).filter(item => !photoAlreadyHas(photo, item[key], namesAPerson));
+        (list || []).filter(item => !photoAlreadyHas(photo, item[key], namesAPerson, state.people));
 
-    const people = outstanding(sugg.people, 'name');
+    // A name two people have is offered as one chip for each (replacing the question "which folder?"), and what is already on
+    // the photo is taken out after that, so the Sam the photo has is not offered and the other Sam is.
+    const people = outstanding(personChips(sugg.people), 'name');
     const tags = outstanding(sugg.tags, 'tag');
 
     // Nothing left to act on: the box would be a heading over two empty lists.
@@ -347,14 +350,21 @@ export function renderSuggestionsPanel(photoPath) {
         // Hide the half that has nothing rather than label an empty row.
         if (group) group.classList.toggle('hidden', items.length === 0);
         // Ranked by how sure the analysis was, the most sure first; the alphabet breaks a tie.
-        sortedTags(items, item => item[key], { rank: item => item.score }).forEach(item => {
+        const shownOf = item => (isPerson ? personLabelOf(item, key) : item[key]);
+        sortedTags(items, shownOf, { rank: item => item.score }).forEach(item => {
             const name = item[key];
+            const shown = shownOf(item);
             const pct = Math.round((item.score || 0) * 100);
             const chip = document.createElement('span');
             chip.className = 'suggestion-chip';
             chip.style.cursor = 'pointer';
-            chip.textContent = pct ? `${name} · ${pct}%` : name;
-            chip.title = `Click to add ${name} to this photo.`;
+            chip.textContent = pct ? `${shown} · ${pct}%` : shown;
+            chip.title = `Click to add ${shown} to this photo.`
+                + (isPerson && item.person && item.person.shared ? ` (${personTitleOf(item, key)})` : '');
+            if (isPerson) {
+                chip.tabIndex = 0;      // focusable, so the keyboard sees their faces as well
+                attachPersonFaces(chip, item.person && item.person.id !== null && item.person.id !== undefined ? item.person : name);
+            }
             chip.addEventListener('click', () => applySuggestedTagDirect(name, isPerson, photoPath));
             container.appendChild(chip);
         });
@@ -362,6 +372,21 @@ export function renderSuggestionsPanel(photoPath) {
 
     fill(suggestedPeopleContainer, people, 'name', true);
     fill(suggestedTagsContainer, tags, 'tag', false);
+}
+
+/**
+ * The people a run suggested, a name that two people have as one suggestion for each of them (the tag of each as its `name`, so a
+ * click writes exactly that person). A suggestion that names one person, or whose people the page has not read, stays as it is.
+ */
+export function personChips(list) {
+    const chips = [];
+    for (const item of list || []) {
+        const person = item.person;
+        const called = person && person.shared && (person.id === null || person.id === undefined) ? state.people.called(item.name) : [];
+        if (called.length > 1) called.forEach(each => chips.push({ ...item, name: each.tag, person: each }));
+        else chips.push(item);
+    }
+    return chips;
 }
 
 /**
@@ -391,7 +416,7 @@ export function applySuggestedTagDirect(tagName, isPerson, forPath = state.activ
 
         // Say so rather than doing nothing. A click that silently no-ops reads as
         // a broken button, which is how this was reported.
-        if (photoAlreadyHas(photo, resolved, namesAPerson)) {
+        if (photoAlreadyHas(photo, resolved, namesAPerson, state.people)) {
             setStatus('ready', `${leafOf(resolved)} is already on this photo`);
             return true;
         }
@@ -450,7 +475,7 @@ export async function applyAllSingleSuggestions() {
         for (const item of wanted) {
             const resolved = await resolveTagOrPerson(item.name, item.isPerson);
             if (!resolved) continue;
-            if (photoAlreadyHas(photo, resolved, namesAPerson)) continue;
+            if (photoAlreadyHas(photo, resolved, namesAPerson, state.people)) continue;
             if (resolvedSuggestions.includes(resolved)) continue;
             resolvedSuggestions.push(resolved);
         }
@@ -507,9 +532,19 @@ export function applyFolderSuggestionsLevel() {
     // The photos selected when it was clicked. It waits in the photo write queue
     // (edits.js) behind every write clicked before it, as a bulk tag write does
     // (selection.js), and the photos are snapshotted for undo as those left them.
-    const targets = state.selectedThumbnails.slice();
+    return queueApplyAll(folder, state.selectedThumbnails.slice(), []);
+}
+
+/**
+ * One Apply All of `targets`, in the write queue. `prior`: the undo record of an attempt that failed part-way, when this
+ * is its Retry -- the photos it wrote, as they were before it. Kept on the failed entry (`undoSoFar`), so that the undo
+ * recorded now covers both attempts: this one snapshots the photos after the first attempt wrote some, and its record
+ * alone would leave those without a way back (findings #879).
+ */
+function queueApplyAll(folder, targets, prior) {
     return queuePhotoWrite((entry) => {
         const before = snapshotPhotos(targets);
+        entry.undoSoFar = prior;
         setStatus('busy', `Applying suggestions to ${targets.length} photo(s)...`);
         return api.json('/api/folder/auto-apply', {
             method: 'POST',
@@ -525,17 +560,15 @@ export function applyFolderSuggestionsLevel() {
             })
         })
         .then(data => {
-            if (!data.success) throw new Error(data.error);
-            // Each photo as the server says it holds it now: undo takes back the
-            // difference (undo.js).
-            const written = Object.entries(data.written || {});
-            recordUndo({
-                label: `auto-apply to ${before.length} photo(s)`,
-                photos: before.map(photo => {
-                    const now = written.find(([path]) => samePath(path, photo.path));
-                    return { ...photo, after: now ? now[1] : photo.before };
-                }),
-            });
+            if (!data.success) {
+                // Stopped part-way: the reply names the photos it wrote, and undo is of those (findings #391).
+                // One that wrote none leaves the operation before it to Ctrl+Z.
+                const kept = recordAutoApplyUndo(before, data.written, false, prior);
+                entry.undoSoFar = kept;
+                entry.error = kept.length ? `${data.error} (${kept.length} written: Ctrl+Z takes them back)` : data.error;
+                throw new Error(data.error);
+            }
+            recordAutoApplyUndo(before, data.written, true, prior);
             // A photo found damaged was skipped, nothing written to it (write-queue.js).
             const skipped = data.skipped_damaged || 0;
             noteSkipped(entry, skipped);
@@ -558,11 +591,35 @@ export function applyFolderSuggestionsLevel() {
             scanFolder(true);
             // A failure that would otherwise pass unnoticed still earns a modal.
             setStatus('error', 'Applying suggestions failed', { transient: false });
-            entry.error = err.message;
+            entry.error = entry.error || err.message;
             alert("Error applying suggestions: " + err.message);
             return false;
         });
-    }, `Apply All suggestions (${targets.length} photos)`);
+    }, `Apply All suggestions (${targets.length} photos)`, (failed) => queueApplyAll(folder, targets, failed.undoSoFar || []));
+}
+
+/**
+ * Undo's record of an Apply All, built from the REPLY's `written` (path -> the tags the file holds now), never
+ * from what was attempted: undo takes back the difference (undo.js). `all`: a finished write, which records
+ * every photo it was asked for (those it left alone differ by nothing); else only the photos named. Returns how
+ * the photos the record holds ([] if it recorded nothing). `prior`: the photos an earlier attempt wrote, kept as they
+ * were before it, with the tags this attempt's reply says they hold now.
+ */
+function recordAutoApplyUndo(before, writtenByPath, all, prior = []) {
+    const written = Object.entries(writtenByPath || {});
+    const named = before.filter(photo => written.some(([path]) => samePath(path, photo.path)));
+    const photos = (all ? before : named).map(photo => {
+        const now = written.find(([path]) => samePath(path, photo.path));
+        return { ...photo, after: now ? now[1] : photo.before };
+    });
+    const merged = prior.map(earlier => {
+        const again = photos.find(photo => samePath(photo.path, earlier.path));
+        return again ? { ...earlier, after: again.after } : earlier;
+    }).concat(photos.filter(photo => !prior.some(earlier => samePath(earlier.path, photo.path))));
+    // Nothing written this time: the record that stands (the earlier attempt's, or none) is left to Ctrl+Z.
+    if (!photos.length) return prior;
+    recordUndo({ label: `auto-apply to ${merged.length} photo(s)`, photos: merged });
+    return merged;
 }
 
 export function updateFolderAutoApplyState() {
@@ -600,8 +657,8 @@ export function updateFolderAutoApplyState() {
         if (sugg.people) {
             for (let p of sugg.people) {
                 const leaf = leafOf(p.name);
-                if (!photoAlreadyHas(photo, p.name, namesAPerson)
-                    && !photoPeople.some(n => leafOf(n).toLowerCase() === leaf.toLowerCase())) {
+                if (!photoAlreadyHas(photo, p.name, namesAPerson, state.people)
+                    && !peopleListHas(photoPeople, leaf, state.people)) {
                     hasSomethingToApply = true;
                     break;
                 }

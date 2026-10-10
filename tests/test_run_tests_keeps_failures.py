@@ -48,6 +48,47 @@ class AFileThatRanNothingFails(unittest.TestCase):
         self.assertIn("no tests", output)
 
 
+class AFileThatRanFewerTestsFails(unittest.TestCase):
+    """The shape of the original flake: a run counted 1,427 tests where the last counted 1,469, and every file
+    passed (#101); a file that stopped early without failing is caught by its count (#290)."""
+
+    def check(self, results, counts, accept=False):
+        return run_tests.check_counts(results, counts, accept)
+
+    def test_a_file_that_ran_fewer_tests_than_last_time_fails(self):
+        results, counts = self.check([("test_fictional_a", True, 38, 0.1, "Ran 38 tests")], {"test_fictional_a": 40})
+        self.assertFalse(results[0][1])
+        self.assertIn("38", results[0][4])
+        self.assertIn("40", results[0][4])
+        self.assertEqual(40, counts["test_fictional_a"], "the count it fell from is kept, so the next run notices too")
+
+    def test_the_same_or_more_passes_and_is_recorded(self):
+        results, counts = self.check([("test_fictional_a", True, 40, 0.1, ""), ("test_fictional_b", True, 9, 0.1, ""),
+                                      ("test_fictional_c", True, 3, 0.1, "")],
+                                     {"test_fictional_a": 40, "test_fictional_b": 7})
+        self.assertEqual([True, True, True], [r[1] for r in results])
+        self.assertEqual({"test_fictional_a": 40, "test_fictional_b": 9, "test_fictional_c": 3}, counts)
+
+    def test_accepting_fewer_records_it(self):
+        results, counts = self.check([("test_fictional_a", True, 38, 0.1, "")], {"test_fictional_a": 40}, accept=True)
+        self.assertTrue(results[0][1])
+        self.assertEqual(38, counts["test_fictional_a"])
+
+    def test_a_file_that_failed_does_not_change_its_count(self):
+        results, counts = self.check([("test_fictional_a", False, 12, 0.1, "FAILED")], {"test_fictional_a": 40})
+        self.assertEqual("FAILED", results[0][4])
+        self.assertEqual({"test_fictional_a": 40}, counts)
+
+    def test_the_counts_are_kept_beside_the_times_and_neither_spoils_the_other(self):
+        folder = tempfile.mkdtemp(prefix="tagpup_run_tests_counts_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        with mock.patch.object(run_tests, "DURATIONS", os.path.join(folder, ".durations.json")):
+            run_tests.save_durations({"test_fictional_a": 1.5, run_tests.COUNTS: {"test_fictional_a": 40}})
+            durations = run_tests.load_durations()
+        self.assertEqual(40, durations[run_tests.COUNTS]["test_fictional_a"])
+        self.assertEqual(1.5, durations["test_fictional_a"])
+
+
 class AFailedRunIsKept(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.mkdtemp(prefix="tagpup_run_tests_logs_")
@@ -80,6 +121,14 @@ class AFailedRunIsKept(unittest.TestCase):
         code, _printed = self.main([("test_fictional_a", True, 4, 0.1, "Ran 4 tests in 0.1s\n\nOK")])
         self.assertEqual(code, 0)
         self.assertEqual(os.listdir(self.folder), [])
+
+    def test_a_failed_run_is_a_test_run_in_the_activity_page_and_pruned_by_the_runner(self):
+        # #375: the Activity page labels the runner's logs; the runner prunes its own.
+        from tagpup import logs
+        self.assertEqual("Test run", logs.source_of("run_tests-20261008-101500"))
+        self.assertEqual("Test run", logs.source_of("run_tests-20261008-101500-2"))
+        for name in ("run_tests-20261008-101500.log", "run_tests-20261008-101500-2.log"):
+            self.assertTrue(run_tests.FAILED_RUN.match(name), name)
 
     def test_only_the_latest_failed_runs_are_kept(self):
         for i in range(run_tests.KEEP_FAILED_RUNS + 3):

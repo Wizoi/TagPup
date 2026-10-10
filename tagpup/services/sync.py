@@ -26,6 +26,27 @@ folder scan's rule), and sorts what differs:
   and the catch-up sync queued it over and over (docs/findings.md, #407). Counted as
   `unreadable_files`, and the library is in step all the same: restoring the file is the
   owner's, and once the file changes it is new again;
+- pictures changed -- a changed file whose SIZE differs from its row's: its picture may have been
+  edited elsewhere, and its vector and face boxes are then the old picture's (docs/findings.md,
+  #336). Always COUNTED (`size_changed`, `size_changed_decided`), and shown by the CLI. Acted on only
+  with the library setting library.reread_resized_pictures, OFF unless the owner turns it on: a keyword
+  or caption write changes a file's size too, and of the 1,229 size changes photo_index's journal holds
+  every one was a metadata write; two libraries holding the same photos (kr-track's 1,139 are rows in
+  photo_index too) would take each other's faces away when one names faces. The proper detection of a
+  real picture edit is a small pixel fingerprint. ON, applied: a photo with no face a person decided
+  has its vector and faces taken away and is marked to be detected again (store.faces_pending, which
+  the Activity page and the doctor count, so an index that never runs is seen), and its folder queued;
+  a photo with a decided face (named or excluded by hand) keeps its faces and names, loses only its
+  vector (the index makes it again; its faces are not detected again, being on file) and its folder is
+  queued. Done before the rows are written: a crash between leaves the rows stale and the next sync
+  does it again (idempotent: a photo whose vector already carries the file's stamp is left as it is);
+- folders marked -- when a file is missing or moved, in a sync of any scope (a folder's, the watcher's, included),
+  and the library has marked folders (`folder-ids mark`, tagpup.services.folder_ids), a marked folder among the
+  rows' folders that is gone and found again by its marker in a folder where files were found new or moved to, or
+  beside it, is followed exactly: its rows, its id and the settings and folders added that name it, as a
+  journaled change of its own (`follow_folder_markers`), after the sync's own and before the new files' folders are
+  queued, so the indexer never reads a followed folder's files as new. A dry run only says what it would follow;
+  the report (`details["folder_markers"]`) carries its counts. A library that has marked nothing is not touched;
 - missing files -- a row whose file is gone and was not found elsewhere: reported, never
   removed. A folder on an unplugged drive looks the same as a deleted one, so removing
   rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
@@ -33,7 +54,8 @@ folder scan's rule), and sorts what differs:
 
 Which folders: the library's root folders (its settings, tagpup.services.settings) and
 every folder it holds photos in, each walked once from the topmost, or the one folder
-asked for. New files in a folder the library holds photos in are queued with that folder
+asked for. A library with no roots set yet walks the folders it holds, and a new subfolder
+of one is a folder to review as under a root, never queued unasked (#395). New files in a folder the library holds photos in are queued with that folder
 alone (indexed without its subfolders); a folder under a root that holds photos and no
 indexed photo is not indexed on its own: it is listed as a folder to review (`review`),
 which the page offers to include (`include`: indexed with its subfolders) or to ignore
@@ -50,6 +72,7 @@ the run is recorded in the library (tagpup.store.sync_runs): what it found and w
 changed, and whether it left the library in step -- nothing new, changed or moved left
 over; missing files do not count against it -- which is the pages' "last in step".
 """
+import logging
 import os
 import threading
 import time
@@ -57,11 +80,15 @@ import time
 from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
 from tagpup.files import images
-from tagpup.services import damaged_photos, maintenance, refresh_rows, relink_photos
+from tagpup.services import damaged_photos, folder_ids, maintenance, refresh_rows, relink_photos
 from tagpup.services import roots as roots_service
-from tagpup.store import damaged_files, db, generations, schema, sync_runs
+from tagpup.store import damaged_files, db, faces_pending, generations, schema, sync_runs
+from tagpup.store import embeddings as store_embeddings
+from tagpup.store import faces as store_faces
 from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
+
+logger = logging.getLogger(__name__)
 
 #: What the change is recorded as.
 OPERATION = "sync"
@@ -196,8 +223,8 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots, library_folde
     """Where each new file goes: ({indexed folder: new files}, the folders its new files
     are queued for; {folder to review: photos}; photos under an ignored folder; {folder
     held back: files}; photos in no folder the library holds and under none of `roots`).
-    With no `roots` (none set yet), a new file under a held folder is queued with its own
-    folder, whether the library holds it or not, and nothing is reviewed.
+    With no `roots` (none set yet), a new subfolder of a held folder is a folder to review, as
+    under a root: never queued unasked.
     A new file in a folder the library holds photos in is indexed
     with that folder alone. One in a folder holding none is under a folder to review: the
     topmost above it, below a root (`stops`, keys), that holds no indexed photo at any
@@ -244,15 +271,9 @@ def _sort_new(new, by_key, stops, ignored, ambiguous_files, roots, library_folde
                 top = parent
             tops[folder_key] = top
         top = tops[folder_key]
-        if not roots:
-            # A library with no roots (none set yet): every folder under one it holds is
-            # kept in step as indexing walked it -- a new subfolder queued too, each
-            # folder of new files indexed on its own -- and nothing is reviewed.
-            if folder_key in ambiguous_folders:
-                held_back[folder] = held_back.get(folder, 0) + 1
-            else:
-                queued.setdefault(folder_key, [folder, 0])[1] += 1
-        elif not _under_any(folder, roots):
+        # A library with no roots (none set yet) offers a new subfolder of a folder it holds for review, as it does
+        # under a root, and never queues it unasked (#395); nothing is "outside" the roots it has not got.
+        if roots and not _under_any(folder, roots):
             # Beside a folder the library holds outside every root (a folder indexed by
             # hand, elsewhere): kept in step itself, and nothing new beside it offered.
             outside += 1
@@ -296,7 +317,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "The library holds no photo under that folder, and it is under none of the library's root "
                 "folders: sync keeps the library's folders in step. To add it, add a root folder or index it."))
 
-        changed, missing, never_stamped = {}, [], 0
+        changed, missing, never_stamped, resized = {}, [], 0, {}
         for key, (photo_id, path, mtime, size) in by_key.items():
             stamp = on_disk.get(key)
             if stamp is None:
@@ -304,6 +325,8 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
             elif not store_photos.describes(mtime, size, stamp[1:]):
                 changed[path] = photo_id
                 never_stamped += mtime is None or size is None
+                if size is not None and size != stamp[2]:
+                    resized[photo_id] = (path, tuple(stamp[1:]))
         new, damaged = _pass_over_damaged(conn, {key: stamp for key, stamp in on_disk.items() if key not in by_key})
 
         # Moved: a missing row whose file turns up among the new ones. A folder alone also
@@ -332,6 +355,9 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
             found[path] = {"mtime": mtime, "size": size, "tags": tags, "captions": captions, "raw_metadata": raw}
         records, to_write, fields, unreadable, _shown, identities = refresh_rows.reread(
             conn, {path: ["mtime/size"] for path in changed}, exiftool_path)
+        # A file ExifTool could not read is left for the next sync: its faces are not thrown away unseen.
+        resized = {photo_id: found_at for photo_id, found_at in resized.items() if found_at[0] not in unreadable}
+        resized_decided = store_faces.decided_photo_ids(conn, list(resized))
     finally:
         conn.close()
 
@@ -345,6 +371,12 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     new_paths = sorted((path for path, _m, _s in new.values()
                         if paths.key(os.path.dirname(path)) in {paths.key(f) for f in queued}), key=paths.key)
     listed = [{"path": top, "photos": review[top]} for top in sorted(review, key=paths.key)]
+    # What the marked folders that moved are told by (tagpup.services.folder_ids): the folders of the rows missing or
+    # moved, and where files were found new or moved to. Nothing is looked for beyond them.
+    row_folders = {paths.key(os.path.dirname(path)): os.path.dirname(path)
+                   for path in [path for _id, path in missing] + [move["from"] for move in moves]}
+    marker_places = {paths.key(folder): folder for folder in new_folders}
+    marker_places.update({paths.key(os.path.dirname(move["to"])): os.path.dirname(move["to"]) for move in moves})
     return maintenance.Plan(
         size=len(edits) + len(moved_edits),
         counts={"rows": len(by_key), "files": len(on_disk), "folders_walked": len(walked) - len(roots_gone),
@@ -352,6 +384,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "review_folders": len(review), "review_photos": sum(review.values()),
                 "ignored_files": ignored_files, "outside_roots_files": outside,
                 "changed": len(changed), "never_stamped": never_stamped, "to_write": len(to_write),
+                "size_changed": len(resized), "size_changed_decided": len(resized_decided),
                 "fields": dict(fields.most_common()), "unreadable": len(unreadable),
                 "moved": len(moves), "moved_faces": sum(m["faces"] for m in moves),
                 "moved_named": sum(m["named"] for m in moves), "moved_changed": moved_changed,
@@ -371,7 +404,40 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                               "held_back_folders": sorted(held_back, key=paths.key)},
                 "missing_folders": [{"folder": f, "rows": n, "gone": gone} for f, n, gone in by_folder],
                 "roots_gone": roots_gone, "unreadable_files": sorted(damaged.values(), key=paths.key)},
-        work={"edits": edits + moved_edits, "new_folders": new_folders})
+        work={"edits": edits + moved_edits, "new_folders": new_folders, "pictures": resized,
+              "row_folders": list(row_folders.values()), "marker_places": list(marker_places.values()),
+              "marker_trees": sorted(review, key=paths.key)})
+
+
+NO_PICTURES = {"redetect": 0, "decided_kept": 0, "faces_removed": 0, "vectors_removed": 0, "pending": 0}
+
+
+def redo_pictures(library, resized):
+    """Make the library read again the pictures of the photos whose files changed size (`resized`, {photo id:
+    (path, (mtime, size) of the file now)}): see the module's docstring. In one write. Returns (what it did,
+    {redetect, decided_kept, faces_removed, vectors_removed, pending}; the folders to index again). A photo whose
+    vector is already stamped with the file's own stamp was read again meanwhile, and is left."""
+    done, folders = dict(NO_PICTURES), []
+    if not resized:
+        return done, folders
+
+    def work(conn):
+        decided = store_faces.decided_photo_ids(conn, list(resized))
+        for photo_id, (path, stamp) in resized.items():
+            if not store_embeddings.stale_or_missing(conn, photo_id, stamp):
+                continue
+            done["vectors_removed"] += store_embeddings.forget(conn, path)
+            folders.append(os.path.dirname(path))
+            if photo_id in decided:
+                done["decided_kept"] += 1
+            else:
+                done["faces_removed"] += store_faces.remove_for_photo(conn, path)
+                # Seen until an index has detected them again, and the index passes over no photo marked.
+                done["pending"] += faces_pending.mark(conn, path)
+                done["redetect"] += 1
+
+    db.write_with_connection(library.path, work, label="%d changed picture(s) to read again" % len(resized))
+    return done, folders
 
 
 def review(library, roots=(), ignored=()):
@@ -402,10 +468,11 @@ def review(library, roots=(), ignored=()):
     return {"folders": listed, "photos": sum(found.values())}
 
 
-def include(library, folder, roots, queue):
+def include(library, folder, roots, queue, ignored=()):
     """Index a folder to review, with its subfolders: `queue([folder])` (the index queue's
     start). Refused for a folder the rules do not take as one, one not on disk, and one
-    under none of the library's `roots`. A Result: `changed` 1 when it was queued."""
+    under none of the library's `roots` -- or, a library with no roots yet, under none of the
+    folders it holds (never an ignored one: `ignored`, the library's, as look has it). A Result: `changed` 1 when it was queued."""
     result = Result(attempted=1)
     problem = validation.problem("folder", folder)
     if problem:
@@ -415,9 +482,22 @@ def include(library, folder, roots, queue):
     if not os.path.isdir(folder):
         result.refuse("That folder is not on disk.")
         return result
-    if not _under_any(folder, {paths.key(r): paths.stored(r) for r in roots}):
-        result.refuse("That folder is under none of the library's root folders.")
+    if ignored and _under_any(folder, {paths.key(f): paths.stored(f) for f in ignored}):
+        result.refuse("That folder is one the library ignores (or under one).")
         return result
+    if roots:
+        if not _under_any(folder, {paths.key(r): paths.stored(r) for r in roots}):
+            result.refuse("That folder is under none of the library's root folders.")
+            return result
+    else:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            walked = store_folders.of(conn, [paths.stored(f) for f in ignored]).walked()
+        finally:
+            conn.close()
+        if not _under_any(folder, {paths.key(f): f for f in walked}):
+            result.refuse("That folder is under none of the folders the library holds.")
+            return result
     outcome = queue([folder])
     result.changed = outcome.changed
     for what, why in outcome.skipped:
@@ -444,7 +524,8 @@ def in_step(counts, result=None):
 
 
 @roots_service.canonical_args("folder")
-def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, roots=(), ignored=()):
+def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, roots=(), ignored=(),
+         reread_resized=False):
     """Bring `library` in step with its folders (or with `folder`), reading changed files
     with the ExifTool at `exiftool_path`; a dry run unless `apply`. A Result on the
     maintenance scaffold: `changed` is the rows the change changed (details["changed"]:
@@ -469,7 +550,7 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
         # One map for the whole pass: a place moved meanwhile (TagTuner's Roots) changes nothing
         # until it ends, and another process changing the library's roots stops it, cleanly.
         with runs.running(runs.sync_tag(library.name, started)), roots_service.pinned(library):
-            return _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
+            return _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started, reread_resized)
     except (roots_service.RootsChanged, roots_service.Unplaced) as stop:
         return _not_run(stop, apply)
 
@@ -484,22 +565,47 @@ def _not_run(stop, apply):
     return result
 
 
-def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started):
+def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started, reread_resized=False):
     held = {}
 
     def plan(found_library):
         held["plan"] = look(found_library, folder, exiftool_path, roots, ignored)
         return held["plan"]
 
-    result = maintenance.run(library, OPERATION, plan, lambda planned: planned.work["edits"],
-                             apply=apply, kinds=KINDS)
+    def edits(planned):
+        # The pictures first (module docstring): until the rows are written they still read as changed.
+        if apply and reread_resized:
+            held["pictures"], held["picture_folders"] = redo_pictures(library, planned.work["pictures"])
+        return planned.work["edits"]
+
+    result = maintenance.run(library, OPERATION, plan, edits, apply=apply, kinds=KINDS)
     planned = held.get("plan")
     counts = result.details["counts"]
+    # The marked folders that moved (folder_ids): only when the walk met a file missing or moved, and only for a
+    # library that has marked a folder; a dry run says what it would follow.
+    result.details["folders_marked"] = folder_ids.marked_count(library) if counts else 0
+    result.details["folder_markers"] = None
+    # Whatever the scope: the watcher syncs the folder a folder was renamed in, and that sync is the one that would
+    # otherwise queue the renamed folder as new.
+    # A folder queued as new that carries a marker of a marked folder recorded elsewhere is the folder moved into a
+    # folder the library holds, where this sync sees nothing missing or moved: followed as well (lost_among).
+    work = dict(planned.work) if planned is not None and planned.work else None
+    if work and result.details["folders_marked"] and work["new_folders"]:
+        try:
+            work["row_folders"] = list(work["row_folders"]) + folder_ids.lost_among(library, work["new_folders"])
+        except Exception as e:
+            logger.warning("Marked folders among the new folders were not looked at (%s: %s)", type(e).__name__, e)
+    follow_markers = bool(counts and work and result.details["folders_marked"]
+                          and (counts.get("missing") or counts.get("moved") or work["row_folders"]))
     if not apply:
+        if follow_markers:
+            result.details["folder_markers"] = _follow_markers(library, exiftool_path, work, False)
         result.details["in_step"] = in_step(counts)
         return result
 
     result.details.setdefault("changed", {kind: 0 for kind in KINDS})
+    result.details["pictures"] = held.get("pictures", dict(NO_PICTURES))
+    result.details["pictures_reread"] = bool(reread_resized)
     result.details["queued"] = 0
     result.details["warnings"] = []
     if not result.ok:
@@ -509,6 +615,16 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
         result.details["in_step"] = False
         return result
     new_folders = list(planned.work["new_folders"]) if planned is not None and planned.work else []
+    if follow_markers:
+        # After the sync's own change and before anything is queued: the files of a folder followed are not new.
+        report = result.details["folder_markers"] = _follow_markers(library, exiftool_path, work, True)
+        if report["error"]:
+            result.details["warnings"].append(report["error"])
+        followed_to = [new for _old, new in report["followed"]]
+        new_folders = [each for each in new_folders if not any(paths.same(each, new) for new in followed_to)]
+    known = {paths.key(folder) for folder in new_folders}
+    new_folders += [folder for folder in dict.fromkeys(held.get("picture_folders", ()))
+                    if paths.key(folder) not in known]
     try:
         # A damaged photo replaced, changed or deleted is no longer one (damaged_photos): a
         # changed one is indexed again for real, its folder queued with the new files'.
@@ -541,6 +657,23 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
         result.details["warnings"].append("The sync was not recorded (%s: %s); the next sync records its own."
                                           % (type(e).__name__, e))
     return result
+
+
+def _follow_markers(library, exiftool_path, work, apply):
+    """{"counts", "changed" (rows written), "followed" [(old, new)], "error"} of following the library's marked
+    folders that moved (tagpup.services.folder_ids.follow), over what the sync found (its plan's `work`). A failure
+    is reported in "error" and never stops the sync: its own change is written, and the next sync follows again."""
+    try:
+        followed = folder_ids.follow(library, work["marker_places"], work["marker_trees"], work["row_folders"], apply,
+                                     exiftool_path)
+    except Exception as e:
+        return {"counts": {}, "changed": 0, "followed": [], "error": "Marked folders were not followed (%s: %s)."
+                % (type(e).__name__, e)}
+    error = None
+    if followed.refused or followed.errors:
+        error = "Marked folders were not followed: %s" % followed.message()
+    return {"counts": followed.details.get("counts", {}), "changed": followed.changed,
+            "followed": list(followed.details.get("followed", [])) if apply else [], "error": error}
 
 
 #: {library key: (photos generation, the folders it holds photos in)}: watch_folders is

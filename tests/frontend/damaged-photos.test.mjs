@@ -215,6 +215,28 @@ describe("the Activity page's Needs attention", () => {
     assert.match(card.querySelector(".faces-to-detect").textContent, /2 photos wait for their faces to be detected again/);
   });
 
+  test("says how many names wait to be settled and opens them in TagTuner, quietly otherwise", async (t) => {
+    const { window, document } = await open(t, { unreadable: 0, incomplete: 0, names_to_review: 5,
+      libraries: [{ name: "harbour", photos: [], names_to_review: 5, names_url: "http://localhost:8080/harbour/?names-to-review=1" },
+                  { name: "regatta", photos: [], names_to_review: 0, names_url: null }] });
+    await flush(window, 6);
+    const card = document.querySelector('#attention-body .card[data-library="harbour"]');
+    assert.match(card.querySelector(".names-to-review").textContent, /^5 names wait for you to settle/);
+    assert.equal(card.querySelector(".names-to-review a").getAttribute("href"), "http://localhost:8080/harbour/?names-to-review=1");
+    assert.equal(card.querySelector("table"), null, "no damaged photos: no empty table");
+    assert.equal(document.querySelector('a[href="#attention"]').textContent, "Needs attention (5)");
+    assert.equal(document.querySelectorAll('#attention-body .card[data-library="regatta"]').length, 0);
+  });
+
+  test("says so when a library's names could not be counted, and never shows none for it", async (t) => {
+    const { window, document } = await open(t, { unreadable: 0, incomplete: 0, names_to_review: 0,
+      libraries: [{ name: "harbour", photos: [], names_to_review: 0, names_error: "The names to review could not be counted: the library is locked", names_url: null }] });
+    await flush(window, 6);
+    const card = document.querySelector('#attention-body .card[data-library="harbour"]');
+    assert.ok(card, "the library is shown, not quietly left out");
+    assert.match(card.querySelector(".names-error").textContent, /could not be counted: the library is locked/);
+  });
+
   test("says so, once, when nothing needs attention", async (t) => {
     const { window, document } = await open(t, { unreadable: 0, incomplete: 0, libraries: [{ name: "harbour", photos: [] }] });
     await flush(window, 6);

@@ -56,5 +56,26 @@ class ALookAtALibraryBehind(unittest.TestCase):
         self.assertFalse(os.path.exists(missing))
 
 
+class ALookAtALibraryTooFarBehindToRead(unittest.TestCase):
+    """docs/findings.md, #297: a library behind by migrations that change what the look reads cannot be loaded; the
+    look said "No photo index found" beside the note that it was behind."""
+
+    def setUp(self):
+        home = own_home.for_test(self)
+        self.db_path = home.library("harbour.db")
+        at_version(self.db_path, 0)
+
+    def test_it_says_the_library_is_behind_not_that_there_is_no_index(self):
+        for command in (["stats"], ["list-index"], ["search", "harbour"]):
+            with self.subTest(command=command[0]):
+                with mock.patch("tagpup.ml.clip.ClipModel._init_model"), \
+                        mock.patch("tagpup.ml.clip.ClipModel.embed_text", return_value=[0.1] * 512):
+                    result = CliRunner().invoke(cli, ["--db", self.db_path] + command)
+                output = " ".join(result.output.split())
+                self.assertIn("a look does not apply them", output)
+                self.assertIn("cannot be read until it is brought up to date", output)
+                self.assertNotIn("No photo index found", output)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,9 @@ format and the ExifTool it names. What is left here is the machine's:
   A library may name another.
 - Which folder on this machine holds each root of the libraries (machine_roots.json in the
   home; docs/ARCHITECTURE.md, "Roots and machines"). Absent means nothing is mapped.
+- `own_home_environment`, what makes a folder a home of its own -- a test's
+  (tests/own_home.py) or a measurement's sandbox (scripts/sandbox.py): TAGPUP_HOME, and the
+  folders of the user's own a process reads or writes beside the home, each moved into it.
 - `code_version`, the installed version the code is (scripts/install_app.py writes its
   name beside it), or None for a checkout: what the pages say answers them.
 """
@@ -44,6 +47,30 @@ def home():
 def data_dir():
     """The folder the libraries are in: data/ in the home."""
     return os.path.join(home(), DATA)
+
+
+def own_home_environment(root):
+    """The environment variables that make `root` a home of its own: TAGPUP_HOME, and each
+    folder of the user's own that a TagPup process reads or writes beside its home, moved
+    into `root`, so that nothing run in it touches the owner's (docs/findings.md, #796):
+
+    - TAGPUP_SERVERS, the records of where each server answers (tagpup.launcher): the
+      owner's, in %LOCALAPPDATA%\\TagPup\\servers, are what a launch or an install hands
+      over; a sandbox's server wrote its own among them and left them there.
+    - TAGPUP_GPU_LOCK, the turns on the graphics card (tagpup.ml.gpu): a test never waits
+      for the owner's index, nor holds it up. A sandbox that loads models takes it out
+      again (scripts/sandbox.py, #810) and shares the owner's line.
+    - TAGPUP_DOWNLOADS, the folder a delete from a share is copied through, and
+      TAGPUP_RECYCLE_BIN, the Recycle Bin's size and settings: a large empty Bin's
+      (tagpup.files.recycle_bin), so nothing reads or fills the owner's.
+
+    Both tests/own_home.py and scripts/sandbox.py use this, so a folder added to the one
+    is the other's too."""
+    return {"TAGPUP_HOME": root,
+            "TAGPUP_SERVERS": os.path.join(root, "servers"),
+            "TAGPUP_GPU_LOCK": os.path.join(root, "gpu"),
+            "TAGPUP_DOWNLOADS": os.path.join(root, "Downloads"),
+            "TAGPUP_RECYCLE_BIN": "1000000,0,0"}
 
 
 def code_version(code_root=None):

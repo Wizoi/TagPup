@@ -35,16 +35,14 @@ class SavingAPhoto(unittest.TestCase):
         session.return_value.__enter__.return_value = self.et
         session.return_value.__exit__.return_value = False
         for patcher in (mock.patch("tagpup.files.exiftool_session.ExifToolSession", session),
-                        mock.patch("tagpup.files.metadata.sync_title_to_filename", side_effect=self.rename)):
+                        mock.patch("tagpup.files.metadata.title_filename", side_effect=self.rename)):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.renamed_to = None
 
-    def rename(self, photo_path, title, exiftool, rename_format, *preserved):
-        if not self.renamed_to:
-            return photo_path
-        os.rename(photo_path, self.renamed_to)
-        return self.renamed_to
+    def rename(self, photo_path, title, rename_format, *preserved):
+        """The name Smart Rename would give it; the service renames it, through the journal."""
+        return self.renamed_to or photo_path
 
     def save(self, title="Start", tags=("Beach", "Relay"), date_taken=None):
         return tagging.save_photo(self.lib.library, self.photo, title, list(tags), date_taken,
@@ -88,6 +86,15 @@ class SavingAPhoto(unittest.TestCase):
         self.assertEqual(self.lib.rows("SELECT path FROM photos"), [(self.renamed_to,)])
         self.assertEqual(self.lib.rows("SELECT p.path FROM faces f LEFT JOIN photos p ON p.id = f.photo_id"),
                          [(self.renamed_to,)])
+
+    def test_a_write_that_fails_is_answered_in_the_result_not_raised(self):
+        # docs/findings.md, #299: the route answers from the Result.
+        self.et.set_tags.side_effect = OSError("the share went away")
+        result = self.save()
+        self.assertFalse(result.ok)
+        self.assertIn("the share went away", result.message())
+        self.assertEqual(result.changed, 0)
+        self.assertIsNone(result.refused)
 
 
 if __name__ == "__main__":

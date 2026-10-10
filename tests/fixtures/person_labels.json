@@ -1,0 +1,58 @@
+{
+  "about": "How a person is labelled where two people share a leaf (docs/ARCHITECTURE.md, 'People by id, stage 2', 'Showing the group'): one table, fed to the server (tests/test_person_labels.py: tagpup.core.vocabulary.person_labels, over every person of a library) and to the page (tests/frontend/person-labels.test.mjs: web/common/vocabulary.js personLabel and personTitle). `people` are the library's person tags, all of them, as the tree files them (a person is a leaf under a face root; the library's other people count: a filtered list of one Sam still says which Sam). `expect` gives, for each tag, `shared` (another person has the same leaf, compared without case), `group` (the shortest tail of the parent path that tells the sharing people apart, empty when not shared), `label` (what the page shows: the name alone, or 'name · group') and `title` (the full tag: the hover and the screen reader). Names are fictional.",
+  "cases": [
+    {"why": "nobody shares a leaf: no label beyond the name",
+     "people": ["Family/Thackeray/Rowan Thackeray", "Family/Ingersoll/Cora Ingersoll", "Pets/Biscuit"],
+     "expect": {
+       "Family/Thackeray/Rowan Thackeray": {"shared": false, "group": "", "label": "Rowan Thackeray", "title": "Family/Thackeray/Rowan Thackeray"},
+       "Family/Ingersoll/Cora Ingersoll": {"shared": false, "group": "", "label": "Cora Ingersoll", "title": "Family/Ingersoll/Cora Ingersoll"},
+       "Pets/Biscuit": {"shared": false, "group": "", "label": "Biscuit", "title": "Pets/Biscuit"}}},
+    {"why": "two cousins called Sam under two groups: one segment tells them apart",
+     "people": ["Family/Thackeray/Sam", "Family/Ingersoll/Sam", "Family/Thackeray/Wren"],
+     "expect": {
+       "Family/Thackeray/Sam": {"shared": true, "group": "Thackeray", "label": "Sam · Thackeray", "title": "Family/Thackeray/Sam"},
+       "Family/Ingersoll/Sam": {"shared": true, "group": "Ingersoll", "label": "Sam · Ingersoll", "title": "Family/Ingersoll/Sam"},
+       "Family/Thackeray/Wren": {"shared": false, "group": "", "label": "Wren", "title": "Family/Thackeray/Wren"}}},
+    {"why": "a dog and a friend called Max, under two roots: the root is the group",
+     "people": ["Pets/Max", "Friends/Max"],
+     "expect": {
+       "Pets/Max": {"shared": true, "group": "Pets", "label": "Max · Pets", "title": "Pets/Max"},
+       "Friends/Max": {"shared": true, "group": "Friends", "label": "Max · Friends", "title": "Friends/Max"}}},
+    {"why": "the groups end alike: two segments are needed",
+     "people": ["Family/Thackeray/Cousins/Sam", "Family/Ingersoll/Cousins/Sam"],
+     "expect": {
+       "Family/Thackeray/Cousins/Sam": {"shared": true, "group": "Thackeray/Cousins", "label": "Sam · Thackeray/Cousins", "title": "Family/Thackeray/Cousins/Sam"},
+       "Family/Ingersoll/Cousins/Sam": {"shared": true, "group": "Ingersoll/Cousins", "label": "Sam · Ingersoll/Cousins", "title": "Family/Ingersoll/Cousins/Sam"}}},
+    {"why": "the whole parent is needed: only the root differs",
+     "people": ["Family/Cousins/Sam", "Friends/Cousins/Sam"],
+     "expect": {
+       "Family/Cousins/Sam": {"shared": true, "group": "Family/Cousins", "label": "Sam · Family/Cousins", "title": "Family/Cousins/Sam"},
+       "Friends/Cousins/Sam": {"shared": true, "group": "Friends/Cousins", "label": "Sam · Friends/Cousins", "title": "Friends/Cousins/Sam"}}},
+    {"why": "one parent is shorter than the other: each shows what it has",
+     "people": ["Family/Sam", "Family/Cousins/Sam"],
+     "expect": {
+       "Family/Sam": {"shared": true, "group": "Family", "label": "Sam · Family", "title": "Family/Sam"},
+       "Family/Cousins/Sam": {"shared": true, "group": "Cousins", "label": "Sam · Cousins", "title": "Family/Cousins/Sam"}}},
+    {"why": "three share a leaf; the tail is the same length for all of them",
+     "people": ["Family/Thackeray/Sam", "Family/Ingersoll/Sam", "Friends/Sam"],
+     "expect": {
+       "Family/Thackeray/Sam": {"shared": true, "group": "Thackeray", "label": "Sam · Thackeray", "title": "Family/Thackeray/Sam"},
+       "Family/Ingersoll/Sam": {"shared": true, "group": "Ingersoll", "label": "Sam · Ingersoll", "title": "Family/Ingersoll/Sam"},
+       "Friends/Sam": {"shared": true, "group": "Friends", "label": "Sam · Friends", "title": "Friends/Sam"}}},
+    {"why": "the same leaf in another case is shared; the leaf is shown as filed",
+     "people": ["Family/Thackeray/Sam", "Family/Ingersoll/SAM"],
+     "expect": {
+       "Family/Thackeray/Sam": {"shared": true, "group": "Thackeray", "label": "Sam · Thackeray", "title": "Family/Thackeray/Sam"},
+       "Family/Ingersoll/SAM": {"shared": true, "group": "Ingersoll", "label": "SAM · Ingersoll", "title": "Family/Ingersoll/SAM"}}},
+    {"why": "groups that differ only in case are told apart by their spelling",
+     "people": ["Family/Thackeray/Sam", "Family/thackeray/Sam"],
+     "expect": {
+       "Family/Thackeray/Sam": {"shared": true, "group": "Family/Thackeray", "label": "Sam · Family/Thackeray", "title": "Family/Thackeray/Sam"},
+       "Family/thackeray/Sam": {"shared": true, "group": "Family/thackeray", "label": "Sam · Family/thackeray", "title": "Family/thackeray/Sam"}}},
+    {"why": "a leaf with spaces and a different leaf that starts alike are not shared",
+     "people": ["Family/Thackeray/Sam", "Family/Ingersoll/Samuel"],
+     "expect": {
+       "Family/Thackeray/Sam": {"shared": false, "group": "", "label": "Sam", "title": "Family/Thackeray/Sam"},
+       "Family/Ingersoll/Samuel": {"shared": false, "group": "", "label": "Samuel", "title": "Family/Ingersoll/Samuel"}}}
+  ]
+}

@@ -277,6 +277,35 @@ def adopt(library, name, address, location, machine, apply=False):
     return _apply(library, name, address or "", location, places, map_lacks, machine, result)
 
 
+def repair_addresses(library, apply=False):
+    """Give each root whose stored address lost a leading backslash (a share's address
+    written with one, #914) its two, as one journaled change `undo` reverses. A dry run unless
+    `apply`: details["repairs"] is [{"name", "was", "now"}] either way, `changed` the roots
+    written. Refused, nothing written, when the repaired addresses would nest or another process
+    holds the write lock. Needs no backup: it changes one text column and the journal holds the
+    way back. A run in another process that holds the library's roots (an index, a sync, in any app)
+    stops with RootsChanged when it commits, so it is to be run with TagPup and TagTuner stopped."""
+    result = Result(details={"dry_run": not apply})
+    try:
+        _there(library)
+    except NotFound as problem:
+        result.refuse(str(problem))
+        return result
+    todo = adoption.address_repairs(library.path)
+    result.attempted = len(todo)
+    result.details["repairs"] = [{"name": name, "was": was, "now": now} for name, was, now in todo]
+    if not apply or not todo:
+        return result
+    try:
+        done = adoption.repair_addresses(library.path)
+    except (adoption.Refused, paths.RootsError, ValueError) as problem:
+        result.refuse("Nothing was written: %s" % problem)
+        return result
+    result.changed = len(done)
+    result.details["repairs"] = [{"name": name, "was": was, "now": now} for name, was, now in done]
+    return result
+
+
 def _apply(library, name, address, location, places, map_lacks, machine, result):
     if map_lacks:
         try:

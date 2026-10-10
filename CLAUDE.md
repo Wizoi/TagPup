@@ -3,12 +3,17 @@
 Short on purpose. Every rule here is one that has actually cost time on this project.
 The reasoning lives in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); this is what to do.
 
-**New code goes where [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) puts it.** Today two servers,
-a CLI and many scripts each implement parts of the photo library. The code is moving
-into one `tagpup/` package, with one owner for each concern. Check the phase table
-before adding a module, a route or a query. **Record every review finding in
-[docs/findings.md](docs/findings.md) before fixing it.** Findings that lived only in a
-conversation were lost, and decisions were made twice.
+**New code goes where [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) puts it.** That file is a map
+(about 35 KB): the layers, what each package owns, the data model on one page, the processes, and where to
+look for each concern. Check it before adding a module, a route or a query.
+**[docs/INVARIANTS.md](docs/INVARIANTS.md)** is one page of the rules whose violation loses data, each with its
+owner and the test that enforces it; review against it. **[docs/DECISIONS.md](docs/DECISIONS.md)** is the
+owner's decisions, dated, not reopened without a new fact. **[docs/history/](docs/history/README.md)** holds the
+design logs (the phases, as built, with measurements) and the closed findings; read it only when asked.
+**Record every review finding in [docs/findings.md](docs/findings.md) (the open ones) before fixing it**; a
+worker's rows go to its own file, `tools/add_findings.py --branch-file`, and the main session numbers them with
+`--take` (see the header of findings.md). Findings that lived only in a conversation were lost, and decisions
+were made twice.
 
 New code imports from the package (`from tagpup.store import db`). `scripts/` holds
 programs to run, each with a `__main__` block, and the few helpers they share (`_root`,
@@ -33,18 +38,27 @@ this codebase, add it there with a comment saying why rather than working around
 No `pip.exe`, no `Activate.ps1`, no pytest — invoke the interpreter by path. Use the
 glob for the frontend suite; `node --test tests/frontend/` fails on `harness.mjs`.
 
-**The whole Python suite is `tools/run_tests.py`: 3,930 tests, about 4.5 minutes (200-600 s
-under load, counted 2026-10-04).** Run all of it
+**The whole Python suite is `tools/run_tests.py`: 4,431 tests, about 6 minutes (350-700 s
+under load, counted 2026-10-08).** Run all of it
 before a commit that touches Python; choosing which files to run cost more turns than
 it saved. `tools/affected_tests.py` is for the loop while editing, not for the commit.
+**Run the whole suite once per round, at the end, and never beside another suite run**
+(two or three at once on one machine tripped load-sensitive tests, and each worker ran
+it several times a round). While editing, run the affected files and the one file you
+are changing; the main session runs the whole suite once on the merged trunk.
 
 **The owner runs the apps from an installed copy** (`%LOCALAPPDATA%\TagPup\*.cmd`,
 made by `scripts/install_app.py`), with `TAGPUP_HOME` set to the repository. Saving a
 file here changes nothing they are running, and a merge reaches them only when the
 app is installed again: each launcher installs a newer clean commit, then replaces a
-server of another version still running once it has finished its work
-(`tagpup.launcher`; a server started before that existed has to be closed once by
-hand). Ask before installing; offer to after a merge they want to use. An app started from the repository itself still restarts whenever a `.py` is
+server of another version still running once it has finished its work, and
+`scripts/install_app.py --apply` does the same itself: it waits for the running
+server's work, ends it and starts the new version on the same ports with no window,
+so an open page shows the "updated" banner (`tagpup.launcher.hand_over`;
+`--no-restart` only installs; it refuses a `--home` with no library). A sandbox or
+test is a home of its own (`tagpup.config.own_home_environment`): never start a
+server in the owner's home to measure or test. Ask before installing; offer to after
+a merge they want to use. An app started from the repository itself still restarts whenever a `.py` is
 saved, wiping its in-memory state and orphaning any indexer, so check for one before
 editing. Run long indexes through the CLI (`TagPup CLI.cmd`).
 
@@ -206,6 +220,26 @@ reported 60 done, and wrote nothing; the paths did not match and nothing said so
 - Decide by the rules here and in docs/ARCHITECTURE.md; ask the owner only what they
   alone can answer. The cheapest correct change first: no extra backup, no workaround
   around the model where the model can be fixed.
+
+## Keeping the project small (owner, 2026-10-09: a feature freeze, and these rules)
+
+The project grew 43k to 103k lines of code and 44k to 110k of tests in two weeks
+(reports/Project health review 2026-10-09.md, untracked). Accuracy held; scope did not.
+
+- **No new feature until the owner lifts the freeze.** Allowed: deletion, simplification,
+  docs, test speed, bug fixes for something the owner hit, and installing what is merged.
+- **A branch is about 1,200 lines or fewer, one concern.** A larger piece is cut into
+  merges that each leave the trunk whole (the last one, identity stage 2, was 10,800 lines).
+- **At most two review rounds**, the ownership question in the second. A finding carries a
+  severity: `data` (can lose or corrupt data), `wrong` (a wrong result the owner sees),
+  `low`. Only `data` and `wrong` block a merge; `low` rows are batched into the findings.
+- **One migration in flight at a time**: no new migration until the last one is installed
+  and has run on the three live libraries.
+- **A new feature's brief states its live count** (how many rows or cases in the three
+  libraries it touches). Under about 20, it is a one-off script, not a feature.
+- **Each branch removes at least as many concepts, shims or tests as it adds**, or says why.
+- **Test files are named for what they test, never for a review round** (`..._followup`,
+  `..._third_review` are renamed or merged when touched).
 
 ## Performance work
 

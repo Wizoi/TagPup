@@ -63,6 +63,13 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
+    /* The header is one row: its left part gives way (the library's name is cut short with an ellipsis) before the page
+       scrolls sideways in a narrow window (#720). */
+    min-width: 0;
+}
+
+.logo-container h1 {
+    white-space: nowrap;
 }
 
 .logo-icon {
@@ -91,6 +98,7 @@ body {
     letter-spacing: 0.2px;
     white-space: nowrap;
     max-width: 280px;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
 }
@@ -104,6 +112,7 @@ body {
 
 .header-status {
     display: flex;
+    flex-shrink: 0;
     align-items: center;
     gap: 8px;
     font-size: 13px;
@@ -549,6 +558,9 @@ body {
 }
 
 .detail-item {
+    /* A grid item is as wide as its widest content unless told it may shrink: a camera and lens line that cannot wrap made
+       the grid scroll sideways (#720's cause; tests/frontend/photo-camera.test.mjs reads this rule). */
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -569,6 +581,13 @@ body {
 .detail-value {
     font-size: 14px;
     color: var(--text-primary);
+}
+
+/* One line however narrow the panel is: the rest is in the tooltip (the camera and lens, photo.js). */
+.detail-value.one-line {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .detail-value.font-bold {
@@ -767,6 +786,7 @@ body {
 
 /* Folder View Content */
 .folder-view-content {
+    position: relative;   /* the opened details panel lies over it in a narrow window (#720) */
     display: flex;
     flex-direction: row;
     height: 100%;
@@ -776,6 +796,9 @@ body {
 
 .folder-view-main {
     flex: 1;
+    /* A flex item is as wide as its widest content unless told it may shrink: the header's buttons made the grid's
+       scroller scroll sideways in a narrow window (#720). */
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -1069,6 +1092,37 @@ body {
     align-items: center;
 }
 
+/* The Selection Details panel in a narrow window (#720): the sidebar (360 px) and the panel (340 px) kept their widths and
+   left the grid 296 px at 1,000 and 40 at 720. Under 1,100 px (below it the grid cannot hold two cards beside both: 360 +
+   340 + 2 x 150 + the gap and the padding) the panel is out of the row, behind this button (aria-expanded, aria-controls),
+   and opened lies over the grid's right edge: the grid keeps the width, and nothing scrolls sideways either way.
+   details-panel.js sets .details-open and the button's aria-expanded; a wide window ignores both. */
+.details-toggle,
+.details-close {
+    display: none;
+}
+
+@media (max-width: 1099px) {
+    .details-toggle,
+    .folder-view-sidebar.details-open .details-close {
+        display: inline-flex;
+    }
+
+    .folder-view-sidebar {
+        display: none;
+    }
+
+    .folder-view-sidebar.details-open {
+        display: flex;
+        position: absolute;
+        top: 0;
+        right: 0;
+        z-index: 20;
+        max-width: 100%;
+        box-shadow: -8px 0 24px rgba(0, 0, 0, 0.45);
+    }
+}
+
 .selected-count-label {
     font-size: 12px;
     color: var(--text-secondary);
@@ -1140,6 +1194,87 @@ body {
 .selection-folder-count {
     color: var(--text-muted);
     font-size: 12px;
+}
+
+/* The selection's details in a library view, in two halves (#781): navigation (Folders to Organize, People jump, Keyword jump:
+   links that open a view) above, and below it Tagging, a section that starts closed. */
+.selection-navigation,
+.selection-tagging-body {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.selection-navigation.hidden,
+.selection-tagging-body.hidden {
+    display: none;
+}
+
+.selection-jump-list {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.selection-jump-link,
+.selection-jump-more {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 13px;
+    color: var(--accent);
+    cursor: pointer;
+    text-align: left;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+}
+
+.selection-jump-link:hover,
+.selection-jump-link:focus-visible,
+.selection-jump-more:hover,
+.selection-jump-more:focus-visible {
+    text-decoration: underline;
+}
+
+.selection-jump-more {
+    color: var(--text-secondary);
+}
+
+.selection-tagging-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 0;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border-color);
+    color: #a5b4fc;
+    font-family: var(--font-heading);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+
+.selection-tagging-toggle.hidden {
+    display: none;
+}
+
+.selection-tagging-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.selection-tagging-arrow {
+    display: inline-block;
+    transition: transform 0.15s;
+}
+
+.selection-tagging-toggle.open .selection-tagging-arrow {
+    transform: rotate(90deg);
 }
 
 .selection-summary-group {
@@ -1870,31 +2005,7 @@ body.just-looking #faces-strip {
     font-weight: 600;
 }
 
-/* The page is dark; without this Windows draws a select's drop-down list light,
-   and the list shows a white strip below the options styled dark. */
-select {
-    color-scheme: dark;
-}
-
-#db-select {
-    background-color: var(--bg-tertiary) !important;
-    color: var(--text-primary) !important;
-    border: 1px solid var(--border-color) !important;
-    font-family: var(--font-body) !important;
-    font-size: 13px !important;
-    height: 32px !important;
-    border-radius: 6px !important;
-    outline: none !important;
-    cursor: pointer !important;
-}
-
-#db-select option {
-    background-color: var(--bg-secondary) !important;
-    color: var(--text-primary) !important;
-    font-family: var(--font-body) !important;
-}
-
-
+/* The drop-down lists are dark, in web/common/dark-select.css (#782). */
 
 /* ---- Grid context menu ------------------------------------------------- */
 .context-menu {
@@ -2067,31 +2178,6 @@ select {
 #main-image {
     touch-action: pan-y;
     cursor: zoom-in;
-}
-
-/* Zoom: the whole window, above everything, the photo as large as fits. The image
-   element fills it and object-fit scales the original to fit; the 800px preview
-   sits behind as a background scaled the same way, so the first frame is not
-   empty. */
-.image-zoom-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 3000;
-    background: rgba(0, 0, 0, 0.94);
-    cursor: zoom-out;
-}
-
-.image-zoom-overlay img {
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    height: 100%;
-    padding: 4px;
-    object-fit: contain;
-    background-origin: content-box;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-size: contain;
 }
 
 /* A field the app has objected to. The message is on the status line and in the
@@ -2866,4 +2952,244 @@ select {
 
 .thumbnails-grid:focus {
     outline: none;
+}
+
+/* ---- The faces on the open photo (web/tagpup/face-boxes.js) ---------------------------------
+   A layer exactly over the picture. It takes no pointer itself, so a click on the photo still
+   zooms it; only the icon, the boxes and the panel do. */
+
+.image-viewer {
+    position: relative;
+}
+
+.face-layer {
+    position: absolute;
+    pointer-events: none;
+    z-index: 5;
+}
+
+.face-layer.hidden,
+body.just-looking .face-layer {
+    display: none !important;
+}
+
+.face-layer.is-busy,
+.image-zoom-layer.is-busy {
+    cursor: progress;
+}
+
+/* The same boxes over the picture in the full-window zoom (#859): a holder exactly over the picture, in the zoom's own
+   layer, which takes no pointer; the icon, the boxes and the panel in it do. */
+.face-zoom-picture {
+    position: absolute;
+    pointer-events: none;
+}
+
+.face-boxes-toggle {
+    position: absolute;
+    left: 6px;
+    top: 6px;
+    pointer-events: auto;
+    padding: 3px 9px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(15, 23, 42, 0.78);
+    color: #f3f4f6;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+    cursor: pointer;
+}
+
+.face-boxes-toggle:hover,
+.face-boxes-toggle.is-on {
+    background: rgba(37, 99, 235, 0.85);
+}
+
+.face-boxes-toggle:focus-visible,
+.face-box:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+
+.face-box {
+    position: absolute;
+    box-sizing: border-box;
+    padding: 0;
+    pointer-events: auto;
+    border: 2px solid #f59e0b;
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    overflow: visible;
+}
+
+.face-box.is-named {
+    border-color: #10b981;
+}
+
+.face-box:hover,
+.face-box.is-open {
+    background: rgba(255, 255, 255, 0.14);
+    border-width: 3px;
+}
+
+.face-box-name {
+    position: absolute;
+    left: -2px;
+    right: -2px;
+    bottom: 100%;
+    padding: 1px 4px;
+    border-radius: 3px 3px 0 0;
+    background: rgba(5, 150, 105, 0.9);
+    color: #fff;
+    font-size: 11px;
+    line-height: 1.3;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+}
+
+.face-panel {
+    position: fixed;
+    z-index: 2400;
+    box-sizing: border-box;
+    width: 280px;
+    max-width: calc(100vw - 16px);
+    padding: 10px;
+    pointer-events: auto;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #444);
+    background: var(--bg-secondary, #1f2937);
+    color: var(--text-primary, #f3f4f6);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    font-size: 12px;
+}
+
+.face-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.face-panel-crop {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.face-panel-title {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.face-panel-who {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.face-panel-sub,
+.face-panel-muted {
+    color: var(--text-muted, #9ca3af);
+    font-size: 11px;
+}
+
+.face-panel-close {
+    align-self: flex-start;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.face-panel-note {
+    margin: 8px 0 0;
+    padding: 4px 6px;
+    border-radius: 4px;
+    background: rgba(245, 158, 11, 0.16);
+    font-size: 11px;
+}
+
+.face-panel-section {
+    margin: 10px 0 4px;
+    color: var(--text-muted, #9ca3af);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.face-panel-suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.face-panel-suggestion {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color, #444);
+    background: var(--bg-tertiary, #111827);
+    color: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.face-panel-suggestion:hover,
+.face-panel-suggestion:focus-visible {
+    border-color: #60a5fa;
+}
+
+.face-panel-suggestion.is-likely .face-panel-suggestion-percent {
+    color: #34d399;
+}
+
+.face-panel-suggestion.is-possible .face-panel-suggestion-percent {
+    color: #fbbf24;
+}
+
+.face-panel-suggestion-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.face-panel-row {
+    display: flex;
+    gap: 6px;
+}
+
+.face-panel-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color, #444);
+    background: var(--bg-tertiary, #111827);
+    color: inherit;
+}
+
+.face-panel-message {
+    min-height: 14px;
+    margin-top: 6px;
+    color: #fca5a5;
+    font-size: 11px;
+}
+
+.face-panel-foot {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
 }
