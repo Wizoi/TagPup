@@ -203,7 +203,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
   Faces, the tag tree, settings, roots, history) on 8080. The library comes from the URL. It listens on this
   PC only (127.0.0.1 and ::1) until phase 10 adds logins. Also served: the Activity page (`/activity/`, the
   background work of every library, loopback only). The **CLI**
-  (`tagpup_cli.py`: index, sync, write, search, history, undo, jobs, folder-ids, roots, ...) and the **MCP
+  (`tagpup_cli.py`: index, sync, search, history, undo, jobs, folder-ids, roots, ...) and the **MCP
   server** (`python -m tagpup.mcp`, for Claude: reads give counts and ids, names and paths only with
   `reveal=true`) are the other entry points. All build one `Runtime` and call services.
 - **One composition root** (`tagpup.runtime.Runtime`): models built once from the library's own settings,
