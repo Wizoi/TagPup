@@ -1,14 +1,14 @@
 // The Identify grid: building it, and its tabs.
 import { api } from './common/api.js';
 import { attachPersonFaces } from './common/person-faces.js';
-import { compareTagNames } from './common/vocabulary.js';
+import { compareTagNames, personLabel } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     inputReassignName, matchingFacesGrid, matchingPersonCount, modeSelect, tabLowConf,
     tabMatches, tabOutliers,
 } from './elements.js';
 import { BAND_OF, BUCKET, UNKNOWN_YEAR } from './rules.js';
-import { personExists } from './shared.js';
+import { resolveTyped, suggestedLabel, suggestedWho } from './shared.js';
 import {
     clearFaceDetails, selectFace, showFaceDetails, updateMatchingSelectionUI,
 } from './selection.js';
@@ -194,6 +194,8 @@ export function renderPersonFaces(faces) {
             if (suggestion) {
                 const pct = Math.round((suggestion.suggested_similarity || 0) * 100);
                 const guessName = suggestion.suggested_name;
+                const guessWho = suggestedWho(suggestion);
+                const guessText = suggestedLabel(suggestion);
                 const guess = document.createElement('span');
                 guess.className = 'cluster-suggestion';
 
@@ -207,10 +209,10 @@ export function renderPersonFaces(faces) {
                 const isConfident = suggestion.suggestion_strength !== 'possible';
                 guess.classList.add(isConfident ? 'is-likely' : 'is-possible');
                 guessLabel.textContent = isConfident
-                    ? `Looks like ${guessName} (${pct}%)`
-                    : `Possibly ${guessName} (${pct}%)`;
+                    ? `Looks like ${guessText} (${pct}%)`
+                    : `Possibly ${guessText} (${pct}%)`;
                 guessLabel.title = `Compared against the faces already named `
-                    + `${guessName}. `
+                    + `${guessText}. `
                     + (isConfident ? '' : 'A weaker match, so check the faces first. ')
                     + `Click to put the name in the box without assigning anything.`;
                 guessLabel.addEventListener('click', (e) => {
@@ -227,7 +229,7 @@ export function renderPersonFaces(faces) {
                         section.querySelectorAll('.face-match-item')
                             .forEach(card => card.classList.add('selected'));
                         state.selectedFaceIds = sectionFaceIds(section);
-                        inputReassignName.value = guessName;
+                        inputReassignName.value = guessText;
                         state.nameFilledForFaceIds = [...state.selectedFaceIds];
                         updateMatchingSelectionUI();
                         inputReassignName.focus();
@@ -249,13 +251,13 @@ export function renderPersonFaces(faces) {
                     if (!ids.length) return;
                     guessAccept.disabled = true;
                     guessAccept.textContent = 'Assigning...';
-                    Promise.resolve(postMatchBulk(ids, guessName)).then(assigned => {
+                    Promise.resolve(postMatchBulk(ids, guessWho)).then(assigned => {
                         // Undo only for what the server says it did. Offered
                         // before the reply, a refused batch still read
                         // "Assigned 5" and its Undo unmatched faces nobody had
                         // assigned.
                         if (assigned && assigned.length) {
-                            offerAssignUndo(assigned, guessName, 'assign');
+                            offerAssignUndo(assigned, guessText, 'assign');
                         }
                         // Whatever is left -- all of it, on a failure -- can be
                         // tried again.
@@ -266,8 +268,8 @@ export function renderPersonFaces(faces) {
                     });
                 });
 
-                attachPersonFaces(guessLabel, guessName);
-                attachPersonFaces(guessAccept, guessName);
+                attachPersonFaces(guessLabel, guessWho);
+                attachPersonFaces(guessAccept, guessWho);
                 guess.appendChild(guessLabel);
                 guess.appendChild(guessAccept);
                 suggestionSlot.appendChild(guess);
@@ -303,8 +305,12 @@ export function renderPersonFaces(faces) {
             assignBtn.textContent = '👤 Assign Cluster';
             assignBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const executeAssignment = (name) => {
-                    if (!personExists(name)) {
+                const executeAssignment = (typed) => resolveTyped(typed).then(found => {
+                    // A name two people have is asked about, never guessed; declined, nothing is done.
+                    if (!found) return;
+                    const who = found.person || found.name;
+                    const name = found.person ? personLabel(found.person) : found.name;
+                    if (!found.person && !found.exists) {
                         if (!confirm(`"${name}" is not currently in the database. Do you want to create a new person tag and assign this cluster to it?`)) {
                             return;
                         }
@@ -318,8 +324,8 @@ export function renderPersonFaces(faces) {
                     // was open.
                     const faceIds = sectionFaceIds(section);
                     if (!faceIds.length) return;
-                    postMatchBulk(faceIds, name);
-                };
+                    postMatchBulk(faceIds, who);
+                });
 
                 if (state.activePersonName === BUCKET.UNKNOWN) {
                     showAutocompletePopup(sectionFaceIds(section).length, executeAssignment);
@@ -404,13 +410,15 @@ This photo also names ${face.other_names.join(', ')}. `
             // face can carry its own -- and that is exactly what this bucket is
             // full of.
             if (face.suggested_name) {
-                state.suggestionByFaceId.set(face.id, face.suggested_name);
+                // Held as the label shown: two people called alike are two badges, and typed text finds each again.
+                const guessText = suggestedLabel(face);
+                state.suggestionByFaceId.set(face.id, guessText);
                 const guess = document.createElement('button');
                 guess.className = 'face-guess'
                     + (face.suggestion_strength === 'possible' ? ' is-possible' : '');
                 const pct = Math.round((face.suggested_similarity || 0) * 100);
-                guess.textContent = `${face.suggested_name} ${pct}%`;
-                guess.title = `Resembles the faces already named ${face.suggested_name}`
+                guess.textContent = `${guessText} ${pct}%`;
+                guess.title = `Resembles the faces already named ${guessText}`
                     + ` (${pct}%). Click to select this face and put the name in the `
                     + `box, then Assign Selected.`;
                 guess.addEventListener('click', (ev) => {
@@ -420,7 +428,7 @@ This photo also names ${face.other_names.join(', ')}. `
                         item.classList.add('selected');
                     }
                     if (inputReassignName) {
-                        inputReassignName.value = face.suggested_name;
+                        inputReassignName.value = guessText;
                         state.nameFilledForFaceIds = [...state.selectedFaceIds];
                     }
                     updateMatchingSelectionUI();

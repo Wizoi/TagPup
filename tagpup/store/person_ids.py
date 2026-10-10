@@ -560,8 +560,29 @@ def link_added(conn, keys, known=None):
             if vocabulary.key(name) in keys:
                 found = known.id_of(name)
                 if found is not None:
-                    changed += conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS NULL" % table,
-                                            (found, known.by_id[found].name, name)).rowcount
+                    changed += _link(conn, table, name, known.by_id[found])
+    return changed
+
+
+def _link(conn, table, name, person):
+    """THE statement that gives the rows of `table` called `name` (exactly, and holding no id) the Person's id and name. Of the
+    listed people only those a FACE made: a keyword's row is its PATH's person (vocabulary.people_rows; people.rebuild writes it
+    so every time), never a name's."""
+    only = " AND source = 'face'" if table == "photo_people" else ""
+    return conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS NULL%s" % (table, only),
+                        (person.id, person.name, name)).rowcount
+
+
+def link_to(conn, key, person):
+    """The OWNER's choice for an unresolved name (the names to review): the faces and listed people whose name's key is `key` and
+    that hold no id are given `person` -- a Person the caller resolved in this transaction, whatever the name is called. Not
+    guessed from the name: the owner picked the person. Returns rows changed. The caller commits."""
+    if not key or not present(conn):
+        return 0
+    changed = 0
+    for table in TABLES:
+        for name in _spellings(conn, key, table):
+            changed += _link(conn, table, name, person)
     return changed
 
 
@@ -692,6 +713,86 @@ def unresolved(conn):
         listed = conn.execute("SELECT COUNT(*) FROM photo_people WHERE tag_id IS NULL AND name = ?", (name,)).fetchone()[0]
         counted[name] = (person, by_hand, by_guess, listed)
     return Unresolved(dict(none), dict(several), branch, counted)
+
+
+#: One unresolved name, as the names to review list it (all its spellings together): `name` the spelling with the most rows,
+#: `why` "none" (no person tag has it), "several" (two or more do), "one" (exactly one person has it, but these rows are not
+#: linked to them) or "branch" (only a group has it), `person` the one person for "one" (a Person) else None, `faces` the rows
+#: of faces and `by_hand` how many of them were decided by hand, `listed` the rows of photo_people a FACE made, `from_keyword` the rows
+#: a keyword or the metadata made, counted APART: such a row is its path's person (people.rebuild), not a row to settle by name,
+#: `spellings` the names as the rows hold them.
+Review = collections.namedtuple("Review", "key name why person faces by_hand listed from_keyword spellings")
+
+
+def _spellings(conn, key, table=None):
+    """The names, as the rows hold them, whose key is `key`, of those that hold no id (one table, or both)."""
+    return sorted({name for each in ((table,) if table else TABLES) for (name,) in conn.execute(
+        "SELECT DISTINCT name FROM %s WHERE tag_id IS NULL AND name IS NOT NULL" % each) if vocabulary.key(name) == key})
+
+
+def review_pairs(conn, key=None):
+    """[Review] of every name that faces and photos' people hold WITHOUT an id (see `unresolved`, which counts both tables
+    together and also those holding the id of a node that is gone; the doctor's out-of-step line is that), or only the one whose
+    key is `key`. Two grouped reads, no row's vector: faces from idx_faces_person, photo_people (80,000 small rows) by
+    idx_photo_people_name. Reads only."""
+    if not present(conn):
+        return []
+    only, marks = "", ()
+    if key is not None:
+        marks = _spellings(conn, key)
+        if not marks:
+            return []
+        only = " AND name IN (%s)" % _marks(marks)
+    known = read(conn)
+    found = {}
+
+    def row_of(name):
+        return found.setdefault(vocabulary.key(name),
+                                {"spellings": {}, "faces": 0, "by_hand": 0, "listed": 0, "from_keyword": 0})
+
+    for name, rows, by_hand in conn.execute(
+            "SELECT name, COUNT(*), COALESCE(SUM(name_source = 'manual'), 0) FROM faces"
+            " WHERE name IS NOT NULL AND tag_id IS NULL" + only + " GROUP BY name", marks):
+        row = row_of(name)
+        row["spellings"][name] = row["spellings"].get(name, 0) + rows
+        row["faces"] += rows
+        row["by_hand"] += by_hand
+    for name, rows, keyword in conn.execute(
+            "SELECT name, COUNT(*), COALESCE(SUM(source <> 'face'), 0) FROM photo_people"
+            " WHERE name IS NOT NULL AND tag_id IS NULL" + only + " GROUP BY name", marks):
+        row = row_of(name)
+        row["spellings"][name] = row["spellings"].get(name, 0) + rows
+        row["listed"] += rows - keyword
+        row["from_keyword"] += keyword
+    reviews = []
+    for each, row in found.items():
+        name = max(row["spellings"], key=lambda spelled: (row["spellings"][spelled], spelled))
+        why = known.why_not(name) or "one"
+        reviews.append(Review(each, name, why, known.by_id.get(known.id_of(name)) if why == "one" else None, row["faces"],
+                              row["by_hand"], row["listed"], row["from_keyword"], sorted(row["spellings"])))
+    return sorted(reviews, key=lambda review: (vocabulary.tag_sort_key(review.name), review.key))
+
+
+def keyword_photos(conn, key):
+    """The ids of the photos that list the name whose key is `key` with no id from a keyword or the metadata (not a face): what the
+    owner's "rebuild these photos" rebuilds by the path rule."""
+    found = set()
+    for name in _spellings(conn, key, "photo_people"):
+        found.update(photo_id for (photo_id,) in conn.execute(
+            "SELECT DISTINCT photo_id FROM photo_people WHERE name = ? AND tag_id IS NULL AND source <> 'face'", (name,)))
+    return sorted(found)
+
+
+def samples(conn, key, limit=4):
+    """([face ids], [photo ids]) of up to `limit` rows each that hold the name whose key is `key` with no id: the faces whose crops
+    an entry shows, the photos whose list holds it. By the exact spellings the rows hold (equality, the indexes)."""
+    face_ids, photo_ids = [], []
+    for name in _spellings(conn, key):
+        face_ids += [face_id for (face_id,) in conn.execute(
+            "SELECT id FROM faces WHERE name = ? AND tag_id IS NULL ORDER BY id LIMIT ?", (name, limit))]
+        photo_ids += [photo_id for (photo_id,) in conn.execute(
+            "SELECT DISTINCT photo_id FROM photo_people WHERE name = ? AND tag_id IS NULL ORDER BY photo_id LIMIT ?", (name, limit))]
+    return sorted(face_ids)[:limit], sorted(set(photo_ids))[:limit]
 
 
 def unlinked_counts(conn, name):

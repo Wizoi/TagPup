@@ -18,7 +18,8 @@ raw, downloaded) show background work. What it asks:
   what is loaded.
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
   watched folders, its snapshots, the always-on process, and one timeline of what was done.
-- GET /api/activity/attention: what needs the owner -- each library's photos found damaged
+- GET /api/activity/attention: what needs the owner -- each library's photos found damaged, and its names to review (the count,
+  with TagTuner's page that opens the list; tagpup.services.name_review)
   (tagpup.services.damaged_photos), with their paths and TagPup's page on each folder;
   POST /api/activity/attention/check reads them again now (Check again).
 - GET /api/activity/logs and /api/activity/logs/<name>[/raw|/download]: the logs in
@@ -53,6 +54,7 @@ from tagpup.services import activity
 from tagpup.services import damaged_photos
 from tagpup.services import file_access
 from tagpup.services import indexing
+from tagpup.services import name_review
 from tagpup.services import job_runs
 from tagpup.services import roots as roots_service
 from tagpup.web import responses, security
@@ -374,8 +376,17 @@ def attention():
         except Exception as e:
             logger.warning("Could not count the photos of %s whose faces are to be detected: %s", library.name, e)
             to_detect = 0
-        listed.append({"name": library.name, "photos": photos, "faces_to_detect": to_detect})
-    return jsonify({"libraries": listed, **totals})
+        names, names_error = 0, None
+        try:
+            names = name_review.count(library)
+        except Exception as e:
+            # Said, never "none": a library that could not be read is not a library with nothing to settle.
+            logger.warning("Could not count the names to review of %s: %s", library.name, e)
+            names_error = "The names to review could not be counted: %s" % e
+        listed.append({"name": library.name, "photos": photos, "faces_to_detect": to_detect, "names_to_review": names,
+                       "names_error": names_error,
+                       "names_url": _app_url("tuner", library.name, "?names-to-review=1") if names else None})
+    return jsonify({"libraries": listed, **totals, "names_to_review": sum(each.get("names_to_review", 0) for each in listed)})
 
 
 @routes.post("/api/activity/attention/check")

@@ -1,0 +1,95 @@
+/* "Which one?": the question a page asks when a name is two people's (web/common/person-choice.js). Self-contained, since TagTuner's
+   stylesheet has no .modal-overlay of TagPup's. */
+.person-choice {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    opacity: 1;
+    visibility: visible;
+}
+
+.person-choice .modal-container {
+    box-sizing: border-box;
+    width: 420px;
+    max-width: 92vw;
+    padding: 18px 20px;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    opacity: 1;
+    transform: none;
+}
+
+.person-choice .modal-header h2 {
+    margin: 0 0 10px 0;
+    font-size: 16px;
+}
+
+.person-choice-about {
+    margin: 0 0 10px 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.person-choice-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.person-choice-option {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.person-choice-option:hover {
+    background: var(--bg-tertiary);
+}
+
+.person-choice-tag {
+    color: var(--text-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+/* A person's label as an element (web/common/person-label.js): the name, then the group dimmed. With no room the GROUP loses its END
+   (`Sam · Thackeray/Cou...`) and the name loses nothing. The server's group is already the shortest tail of the path that tells the sharing
+   people apart, so its START is the discriminator: cutting it from the left made two cousins read alike (`Alex · ...ns`). The full tag is
+   the element's title. */
+.person-label {
+    display: inline-flex;
+    max-width: 100%;
+    min-width: 0;
+    vertical-align: bottom;
+}
+
+.person-label-name {
+    flex: none;
+    white-space: pre;
+}
+
+.person-label-group {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--text-muted);
+}
+
+.person-choice .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}

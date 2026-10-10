@@ -16,6 +16,7 @@
 // a reply for a view that is no longer `state.library` is dropped.
 import { api } from './common/api.js';
 import { baseName, pathKey } from './common/paths.js';
+import { personLabel } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { forgetSelectedIds, newIdSelection, reconcileIdSelection } from './selected.js';
@@ -300,6 +301,12 @@ export function sameView(a, b) {
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
     'October', 'November', 'December'];
 
+/** A person source in words: a tag path of a person who shares a name is their label (`Sam · Pets`); a name is itself. */
+function personWords(value) {
+    const known = state.people.ofTag(value);
+    return known && known.shared ? personLabel(known) : String(value);
+}
+
 /** What one source of a union or a search's list is called, short. */
 export function memberLabel(spec) {
     if (spec.kind === 'any_of') {
@@ -316,6 +323,7 @@ export function memberLabel(spec) {
     if (spec.kind === 'keyword_only') return `${spec.value} alone`;
     if (spec.kind === 'folder') return `${baseName(spec.value) || spec.value}${spec.recursive ? '' : ' alone'}`;
     if (spec.kind === 'all') return 'everything';
+    if (spec.kind === 'person') return personWords(spec.value);
     return String(spec.value);
 }
 
@@ -354,7 +362,7 @@ export function viewLabel(spec) {
         return `Photos of ${MONTHS[Number(month) - 1] || month} ${year}`;
     }
     if (spec.kind === 'keyword') return `Keyword ${spec.value}, and everything under it`;
-    if (spec.kind === 'person') return `Photos of ${spec.value}`;
+    if (spec.kind === 'person') return `Photos of ${personWords(spec.value)}`;
     return `Folder ${spec.value}${spec.recursive ? ', and its subfolders' : ''}`;
 }
 

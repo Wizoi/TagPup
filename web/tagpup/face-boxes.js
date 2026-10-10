@@ -37,13 +37,17 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { boxInContainedImage, onImageZoomChange, onImageZoomDismiss, zoomLayer, zoomedPicture } from './common/image-zoom.js';
 import { samePath } from './common/paths.js';
 import { attachPersonFaces, forgetPersonFaces, hidePersonFaces } from './common/person-faces.js';
-import { leafOf, nameProblem, samePerson } from './common/vocabulary.js';
+import { choosePerson } from './common/person-choice.js';
+import { personLabelNodeOf } from './common/person-label.js';
+import {
+    GROUP_SEPARATOR, leafOf, nameProblem, personFields, personLabel, personLabelOf, personTitleOf, sameNamed, sameTagPerson,
+} from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { faceLayer, imageViewer, mainImage } from './elements.js';
 import { isJustLooking } from './looking.js';
 import { setStatus } from './status.js';
-import { namesAPerson } from './tags.js';
+import { fetchKnownTagsAndPeople, namesAPerson } from './tags.js';
 
 /** How many suggestions the panel lists, and the room it keeps from the window's edge. */
 const FACE_SUGGESTIONS = 5;
@@ -234,7 +238,7 @@ function faceToggle(faces) {
 
 function faceBox(face, placed, faces) {
     const place = faces.indexOf(face) + 1;
-    const who = face.name ? face.name : 'not named';
+    const who = face.name ? personLabelOf(face) : 'not named';
     const button = buildElement('button', {
         className: 'face-box' + (face.name ? ' is-named' : ' is-unnamed'),
         data: { faceId: face.id },
@@ -242,14 +246,14 @@ function faceBox(face, placed, faces) {
             type: 'button', 'aria-haspopup': 'dialog', 'aria-expanded': state.faceBoxes.open === face.id ? 'true' : 'false',
             'aria-label': `Face ${place} of ${faces.length}: ${who}`,
         },
-        title: face.name ? `${face.name}. Click to change it.` : 'Not named. Click to name it.',
+        title: face.name ? `${personTitleOf(face)}. Click to change it.` : 'Not named. Click to name it.',
     });
     if (face.id === state.faceBoxes.open) button.classList.add('is-open');
     button.style.left = `${placed.left}px`;
     button.style.top = `${placed.top}px`;
     button.style.width = `${placed.width}px`;
     button.style.height = `${placed.height}px`;
-    if (face.name) button.append(buildElement('span', { className: 'face-box-name', text: face.name }));
+    if (face.name) button.append(buildElement('span', { className: 'face-box-name' }, [personLabelNodeOf(face)]));
     button.addEventListener('click', (event) => {
         event.stopPropagation();
         openFacePanel(face.id, { focus: true });
@@ -298,7 +302,7 @@ function facePanel(face) {
     const heading = buildElement('div', { className: 'face-panel-head' }, [
         buildElement('img', { className: 'face-panel-crop', attrs: { src: api.image(`/api/face-crop?id=${face.id}`), alt: '' } }),
         buildElement('div', { className: 'face-panel-title' }, [
-            buildElement('div', { className: 'face-panel-who', text: face.name || 'Not named yet' }),
+            buildElement('div', { className: 'face-panel-who', text: face.name ? personLabelOf(face) : 'Not named yet', title: face.name ? personTitleOf(face) : '' }),
             buildElement('div', { className: 'face-panel-sub', text: `Face ${place} of ${faces.length}` }),
         ]),
     ]);
@@ -403,9 +407,14 @@ function placeFacePanel() {
 
 // ---- Who it looks like ---------------------------------------------------------------------
 
-/** The people the photo's other faces already carry: not offered for this one (one person, one face). */
+/** The photo's other faces that already carry somebody: their people are not offered for this one (one person, one face). */
 function namedElsewhere(face) {
-    return state.faceBoxes.faces.filter(other => other.id !== face.id && other.name && !other.excluded).map(other => other.name);
+    return state.faceBoxes.faces.filter(other => other.id !== face.id && other.name && !other.excluded);
+}
+
+/** Who a match names, as a request names them: the person (their id) when the server sent one, else the name. */
+function whoOf(row) {
+    return row.person && row.person.id !== null && row.person.id !== undefined ? row.person : row.name;
 }
 
 function suggestionButtons(face) {
@@ -417,23 +426,26 @@ function suggestionButtons(face) {
         return [buildElement('span', { className: 'face-panel-muted', text: 'The suggestions could not be loaded.' })];
     }
     const elsewhere = namedElsewhere(face);
-    const offered = found.filter(match => !elsewhere.some(name => samePerson(name, match.name))
-        && !(face.name && samePerson(face.name, match.name))).slice(0, FACE_SUGGESTIONS);
+    // The same PERSON, by id: two people called Sam are two, and the one a face already is is not offered to it again.
+    const offered = found.filter(match => !elsewhere.some(other => sameNamed(other, match))
+        && !(face.name && sameNamed(face, match))).slice(0, FACE_SUGGESTIONS);
     if (!offered.length) return [buildElement('span', { className: 'face-panel-muted', text: 'No one it looks like yet.' })];
     return offered.map((match) => {
         const percent = Math.round((match.similarity || 0) * 100);
+        const shown = personLabelOf(match);
         const button = buildElement('button', {
             className: 'face-panel-suggestion' + (match.band === 'likely' ? ' is-likely' : ' is-possible'),
             attrs: { type: 'button' },
-            title: match.band === 'likely'
-                ? `Looks like ${match.name}. Click to name this face and add them to the photo.`
-                : `Possibly ${match.name}: a weaker match, so look first. Click to name this face and add them to the photo.`,
+            title: (match.band === 'likely'
+                ? `Looks like ${shown}. Click to name this face and add them to the photo.`
+                : `Possibly ${shown}: a weaker match, so look first. Click to name this face and add them to the photo.`)
+                + (match.person && match.person.shared ? ` (${personTitleOf(match)})` : ''),
         }, [
-            buildElement('span', { className: 'face-panel-suggestion-name', text: match.name }),
+            buildElement('span', { className: 'face-panel-suggestion-name' }, [personLabelNodeOf(match)]),
             buildElement('span', { className: 'face-panel-suggestion-percent', text: `${percent}%` }),
         ]);
-        attachPersonFaces(button, match.name);
-        button.addEventListener('click', () => nameFaceAs(face, match.name));
+        attachPersonFaces(button, whoOf(match));
+        button.addEventListener('click', () => nameFaceAs(face, whoOf(match)));
         return button;
     });
 }
@@ -477,9 +489,13 @@ function say(text) {
     else setStatus('error', text, { transient: false });
 }
 
-/** Is the person among the photo's KEYWORDS? Not photo.people, which also lists a person only a face names (#835). */
-function photoHasPerson(photo, name) {
-    return (photo.tags || []).some(tag => samePerson(tag, name) && namesAPerson(tag));
+/**
+ * Is the person among the photo's KEYWORDS? Not photo.people, which also lists a person only a face names (#835). By the id of
+ * the person's node: the other Sam's keyword is not this one's.
+ */
+function photoHasPerson(photo, who) {
+    const wanted = who && typeof who === 'object' ? who.tag : who;
+    return (photo.tags || []).some(tag => namesAPerson(tag) && sameTagPerson(tag, wanted, state.people));
 }
 
 /** Say what a refused write said, in the server's own words. */
@@ -497,15 +513,36 @@ async function post(route, body) {
 }
 
 /**
- * Name `face` as `name` AND put the person on the photo: the tag first, then the face. A typed name the
+ * Name `face` as a person AND put the person on the photo: the tag first, then the face. `who` is a person (the id of their
+ * node travels, and their exact tag is written: the way to name one of two people called alike) or typed text -- a label, a tag
+ * path or a name -- looked up among the library's people; a name two people have is asked about, never guessed. A typed name the
  * tree does not hold goes through the page's placement question (resolveTagOrPerson), which can be
  * answered "no": then nothing is done. One at a time: a second choice while this one is under way waits
  * for the first to be seen.
  */
-export async function nameFaceAs(face, rawName) {
+export async function nameFaceAs(face, who) {
     const box = state.faceBoxes;
     if (box.busy) return false;
-    const name = leafOf(rawName);
+    let person = who && typeof who === 'object' ? who : null;
+    let rawName = person ? person.tag : who;
+    if (!person) {
+        const found = state.people.match(rawName);
+        if (found.kind === 'person') {
+            person = found.person;
+            rawName = person.tag;
+        } else if (found.kind === 'choose') {
+            person = await choosePerson(found.people, {
+                title: 'Which person?', about: `${found.people.length} people are called ${found.people[0].name}.`,
+            });
+            if (!person) return false;
+            rawName = person.tag;
+        } else if (String(rawName).includes(GROUP_SEPARATOR)) {
+            say(`"${rawName}" is a person's label, and the page has not read the people yet: try again in a moment.`);
+            return false;
+        }
+    }
+    const name = person ? person.name : leafOf(rawName);
+    const shown = person ? personLabel(person) : name;
     const problem = nameProblem(name);
     if (problem) {
         say(problem);
@@ -519,38 +556,43 @@ export async function nameFaceAs(face, rawName) {
     }
     box.busy = true;
     showBusy(true);
-    setStatus('busy', `Naming ${name}...`);
+    setStatus('busy', `Naming ${shown}...`);
     try {
         // The tag. Already on the photo: nothing to write.
-        if (!photoHasPerson(photo, rawName)) {
+        if (!photoHasPerson(photo, person || rawName)) {
             await upper.applySuggestedTagDirect(rawName, true, path);
-            if (!photoHasPerson(photo, rawName)) {
+            if (!photoHasPerson(photo, person || rawName)) {
                 setStatus('ready', 'Ready');
-                say(`${name} was not added to the photo, so the face is not named.`);
+                say(`${shown} was not added to the photo, so the face is not named.`);
                 return false;
             }
         }
         // The face. The person is its photo's now; whichever photo is open, this face is named.
         let res;
         try {
-            res = await post('/api/face/match', { face_id: face.id, person_name: name, page_writes_tags: true });
+            res = await post('/api/face/match', { face_id: face.id, ...personFields(person || name), page_writes_tags: true });
         } catch (error) {
-            say(`${name} is on the photo, but the face could not be named: ${error.message}. Choose again to retry.`);
+            say(`${shown} is on the photo, but the face could not be named: ${error.message}. Choose again to retry.`);
             setStatus('error', 'The face was not named');
             return false;
         }
         if (!res.ok) {
-            say(`${name} is on the photo, but the face was not named: ${await whyRefused(res)}`);
+            // A person merged or deleted in another window (404): what this page holds of the people is out of date.
+            if (res.status === 404) fetchKnownTagsAndPeople();
+            say(`${shown} is on the photo, but the face was not named: ${await whyRefused(res)}`);
             setStatus('error', 'The face was not named');
             return false;
         }
         // A face that was another person's: that person's tag goes with the name, unless another face is them.
         const rest = await takeTagsOff(path, await res.json());
         forgetPersonFaces();
-        setStatus(rest ? 'ready' : 'error', untagged(rest, `Named ${name} and added to the photo`), { transient: rest });
+        setStatus(rest ? 'ready' : 'error', untagged(rest, `Named ${shown} and added to the photo`), { transient: rest });
         if (box.path && samePath(box.path, path)) {
             const mine = faceById(face.id);
-            if (mine) mine.name = name;
+            if (mine) {
+                mine.name = name;
+                mine.person = person;
+            }
             box.matches = {};
             const opener = box.open === face.id;
             box.open = null;

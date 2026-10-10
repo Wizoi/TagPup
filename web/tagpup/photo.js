@@ -5,7 +5,7 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
 import { attachPersonFaces } from './common/person-faces.js';
 import { baseName, isUnc, pathKey, samePath } from './common/paths.js';
-import { photoAlreadyHas, sortedTags } from './common/vocabulary.js';
+import { personLabel, personLabelOf, personTitleOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
@@ -90,7 +90,7 @@ export function renderPhotoFaces(photoPath) {
                 const img = document.createElement('img');
                 img.className = 'face-card-img';
                 img.src = api.image(`/api/face-crop?id=${face.id}`);
-                img.alt = face.name || 'Unidentified face';
+                img.alt = face.name ? personLabelOf(face) : 'Unidentified face';
                 frame.appendChild(img);
 
                 // How sure the match is, in the corner of the crop. It used to be
@@ -105,23 +105,30 @@ export function renderPhotoFaces(photoPath) {
                 }
                 card.appendChild(frame);
 
+                // Who the face is, or who it looks like, as a person (their id) when the server named one: two people called
+                // alike are two cards, each under its label.
+                const suggestionPerson = face.suggestion_person && face.suggestion_person.id !== null
+                    && face.suggestion_person.id !== undefined ? face.suggestion_person : null;
+                const suggestedWho = suggestionPerson || face.suggestion;
+                const suggestedLabel = suggestionPerson ? personLabel(suggestionPerson) : face.suggestion;
+                const facePerson = face.person && face.person.id !== null && face.person.id !== undefined ? face.person : null;
                 const label = document.createElement('span');
                 label.className = 'face-card-label';
                 if (face.excluded) {
                     label.textContent = face.excluded_reason || 'excluded';
                     card.title = 'Excluded from face matching';
                 } else if (face.name) {
-                    label.textContent = face.name;
-                    card.title = face.name;
+                    label.textContent = personLabelOf(face);
+                    card.title = personTitleOf(face);
                 } else if (face.suggestion) {
                     const pct = Math.round((face.similarity || 0) * 100);
                     // The percentage lives on the crop now; repeating it here is
                     // what pushed the name into an ellipsis.
-                    label.textContent = `${face.suggestion}?`;
-                    card.title = `Closest match: ${face.suggestion} (${pct}%). Not assigned.`;
+                    label.textContent = `${suggestedLabel}?`;
+                    card.title = `Closest match: ${suggestedLabel} (${pct}%). Not assigned.`;
                     label.classList.add('face-card-suggestion');
                     card.tabIndex = 0;
-                    attachPersonFaces(card, face.suggestion);
+                    attachPersonFaces(card, suggestedWho);
                 } else {
                     label.textContent = 'Unidentified';
                     card.title = 'No similar face in this database yet';
@@ -138,18 +145,20 @@ export function renderPhotoFaces(photoPath) {
                 // the person to the photo when the photo lacks them. And a proposed
                 // one whose person the photo has already is still clickable, to name
                 // the face. Only a card that would change nothing is settled.
-                const namesSomebody = face.name || face.suggestion;
+                const namesSomebody = face.name ? (facePerson || face.name) : suggestedWho;
+                const shownSomebody = face.name ? personLabelOf(face) : suggestedLabel;
                 const alreadyTagged = namesSomebody
-                    && photoAlreadyHas(photoRecord, namesSomebody, namesAPerson);
+                    && photoAlreadyHas(photoRecord, typeof namesSomebody === 'object' ? namesSomebody.tag : namesSomebody,
+                        namesAPerson, state.people);
 
                 if (namesSomebody && !face.excluded && (!alreadyTagged || !face.name)) {
                     card.classList.add('face-card-actionable');
                     // Keep what the card already said -- the closest match and how
                     // sure it is -- and add what pressing it does. Replacing it
                     // threw away the reading somebody hovers to check.
-                    const does = face.name ? `add ${namesSomebody} to this photo`
-                        : alreadyTagged ? `name this face ${namesSomebody}`
-                            : `name this face ${namesSomebody} and add them to this photo`;
+                    const does = face.name ? `add ${shownSomebody} to this photo`
+                        : alreadyTagged ? `name this face ${shownSomebody}`
+                            : `name this face ${shownSomebody} and add them to this photo`;
                     card.title = `${card.title || namesSomebody}`
                         + `
 Click to ${does}.`;
@@ -160,7 +169,7 @@ Click to ${does}.`;
                     // Not clickable, and saying so beats a card that looks live
                     // and does nothing when pressed.
                     card.classList.add('face-card-settled');
-                    card.title = `${namesSomebody} is already tagged on this photo`;
+                    card.title = `${shownSomebody} is already tagged on this photo`;
                 }
                 facesStrip.appendChild(card);
             });

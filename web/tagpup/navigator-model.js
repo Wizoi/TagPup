@@ -17,7 +17,7 @@
 // row below is selected is its whole), and `selectedRows` turns a view's sources back into the rows -- so the address
 // holds the selection and Back, Forward and a bookmark restore it.
 import { baseName, pathKey } from './common/paths.js';
-import { compareTagNames, leafOf } from './common/vocabulary.js';
+import { compareTagNames, leafOf, personLabel } from './common/vocabulary.js';
 
 /** The most rows one section draws; the rest are said in a line and reached by the filter. */
 export const NAV_MAX_ROWS = 1500;
@@ -149,6 +149,9 @@ export function indexPeople(list, groups = [], unfiled = 0) {
             id: `p:${identity}`, name: each.name, count: Number(each.count) || 0, groupTag: each.group || null, children: [],
             personId: each.person_id === undefined ? null : each.person_id, tag: typeof record.tag === 'string' ? record.tag : null,
             shared: record.shared === true,
+            // What a row shows where its branch is not above it (a flat list, a filter's result): the name, and the group where
+            // another person has it (`Sam · Thackeray`).
+            label: personLabel({ name: each.name, group: record.group, shared: record.shared === true }),
         });
     }
     people.sort((a, b) => compareTagNames(a.name, b.name) || compareTagNames(a.tag || '', b.tag || ''));
@@ -189,18 +192,19 @@ export function personSource(person) {
     return person.shared && person.tag ? person.tag : person.name;
 }
 
-function navPersonRow(person, level = 1) {
+function navPersonRow(person, level = 1, labelled = false) {
+    const shown = labelled ? person.label : person.name;
     return {
-        id: person.id, level, label: person.name, count: person.count,
-        title: `${person.name}${person.groupTag ? ` (${person.groupTag})` : ''}\n${navPlural(person.count, 'photo', 'photos')}`,
-        aria: `${person.name}, ${navPlural(person.count, 'photo', 'photos')}`,
+        id: person.id, level, label: shown, count: person.count,
+        title: `${person.shared && person.tag ? person.tag : person.name}${person.groupTag ? ` (${person.groupTag})` : ''}\n${navPlural(person.count, 'photo', 'photos')}`,
+        aria: `${shown}, ${navPlural(person.count, 'photo', 'photos')}`,
         hint: '', expandable: false, expanded: false,
         spec: { kind: 'person', value: personSource(person), recursive: false },
     };
 }
 
-function navPeopleRow(node, level, expanded) {
-    if (!node.group) return navPersonRow(node, level);
+function navPeopleRow(node, level, expanded, labelled = false) {
+    if (!node.group) return navPersonRow(node, level, labelled);
     const open = expanded.has(node.id);
     const people = node.unfiled ? node.people.length : navPeopleUnder(node);
     return {
@@ -321,7 +325,8 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
     const out = [];
     if (section === 'people') {
         if (!needle) {
-            navWalk(index.tops, 1, expanded, navPeopleRow, out);
+            // In a tree the branch above a person says which; in a flat list the row does.
+            navWalk(index.tops, 1, expanded, (node, depth, open) => navPeopleRow(node, depth, open, !index.grouped), out);
             return navCapped(out, index.grouped ? treeCap : cap, out.length);
         }
         for (const group of index.groups.values()) {
@@ -332,8 +337,8 @@ export function sectionRows(section, index, expanded, filter, capped = null) {
             out.push(row);
         }
         for (const person of index.people) {
-            if (!navMatches(person.name, needle)) continue;
-            const row = navPersonRow(person);
+            if (!navMatches(person.name, needle) && !navMatches(person.label, needle)) continue;
+            const row = navPersonRow(person, 1, true);
             row.hint = person.groupTag || '';
             out.push(row);
         }

@@ -315,7 +315,10 @@ Links the faces and listed people called NAME that are linked to nobody to the o
 `tagpup.store.person_ids.link_added`). Nothing else links an unresolved name that merely became one person's -- a same-named person
 renamed, merged or deleted -- so such a name is on no person's page until the owner says so; `tools/doctor.py` lists them ("names one
 person is called whose rows are linked to nobody"). A face decided by hand is linked too: this is the owner saying who it is. A dry run
-unless `--apply`; counts only (faces decided by hand, other faces, listed people). Applied, it is one journaled change of the faces
+unless `--apply`; counts only (faces decided by hand, other faces, listed people). The owner's other choices for a name -- make a person under a
+group, link the name to another person, unname the faces, set it aside -- are TagTuner's **Names to review** (`tagpup.services.name_review`,
+`/api/names-to-review`); `tools/doctor.py` prints "names to review: N waiting, M set aside" and the MCP's `checks` answer carries
+`names_to_review` (counts by reason; a name only with `reveal`). Applied, it is one journaled change of the faces
 (`history`; `undo` returns them to unresolved names). Refused (exit status 1), naming the candidates, for a name two people have, and for a
 name nobody is called or a group.
 

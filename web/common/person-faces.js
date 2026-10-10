@@ -4,8 +4,10 @@
  *
  * A suggestion is a name on a button. Scrolling over a list of them says nothing of who each
  * is, and a name alone is no help for the people one knows by face. attachPersonFaces(button,
- * name) makes the button show up to four square crops of that person -- the faces a person
+ * person) makes the button show up to four square crops of that person -- the faces a person
  * decided first, the one most like them first (/api/people-face-samples) -- beside the name.
+ * `person` is the person as the server sends them ({id, name, tag, group, shared}) and is looked up by their id, so two people
+ * called alike show their own faces, under their labels; a bare name is looked up as the name (identity by id, stage 2).
  *
  * The popup is a picture, not a control: it takes no clicks (pointer-events: none), never
  * the focus, and is described to assistive technology by aria-describedby while it is shown.
@@ -22,7 +24,7 @@
  */
 import { api } from './api.js';
 import { buildElement } from './dom.js';
-import { leafOf } from './vocabulary.js';
+import { leafOf, personLabel, personTitle } from './vocabulary.js';
 
 /** How long the pointer rests on a button before the popup shows. */
 export const DELAY_MS = 120;
@@ -51,6 +53,20 @@ const hovering = {
 };
 
 const personKey = (name) => leafOf(name).toLowerCase();
+
+/** What a hover is about: {id, name, label, title}, from a person record or a bare name. */
+function subjectOf(who) {
+    if (who && typeof who === 'object') {
+        return { id: who.id ?? null, name: String(who.name ?? ''), label: personLabel(who), title: personTitle(who) };
+    }
+    return { id: null, name: String(who ?? ''), label: leafOf(who), title: leafOf(who) };
+}
+
+/** The faces `samples` hold for the subject: by the id of their node when they have one, else by name. */
+function facesOf(samples, subject) {
+    if (subject.id !== null && samples.has(`id:${subject.id}`)) return samples.get(`id:${subject.id}`);
+    return samples.get(personKey(subject.name)) || [];
+}
 
 /** Ask again at the next hover: faces were named, or a person was. */
 export function forgetPersonFaces() {
@@ -94,8 +110,8 @@ function placePopup(button) {
     popup.style.left = `${left}px`;
 }
 
-function popupContent(name, ids) {
-    const heading = buildElement('div', { className: 'person-faces-name', text: leafOf(name) });
+function popupContent(subject, ids) {
+    const heading = buildElement('div', { className: 'person-faces-name', text: subject.label, title: subject.title });
     if (ids === null) {
         return [heading, buildElement('div', { className: 'person-faces-none', text: 'faces could not be loaded' })];
     }
@@ -109,10 +125,10 @@ function popupContent(name, ids) {
 }
 
 /** Show the popup beside `button`, if this is still the hover it was asked for. `ids` null: no answer. */
-function showPopup(button, name, token, ids) {
+function showPopup(button, subject, token, ids) {
     if (token !== hovering.token || !button.isConnected) return;
     const popup = popupBox();
-    popup.replaceChildren(...popupContent(name, ids));
+    popup.replaceChildren(...popupContent(subject, ids));
     popup.classList.remove('hidden');
     hovering.shownFor = button;
     hovering.describedBefore = button.getAttribute('aria-describedby');
@@ -141,26 +157,27 @@ function hidePopup() {
     }
 }
 
-function beginHover(button, name) {
+function beginHover(button, subject) {
     hidePopup();
     const token = ++hovering.token;
     hovering.timer = window.setTimeout(() => {
         hovering.timer = null;
         loadFaceSamples()
-            .then((samples) => showPopup(button, name, token, samples.get(personKey(name)) || []))
-            .catch(() => showPopup(button, name, token, null));
+            .then((samples) => showPopup(button, subject, token, facesOf(samples, subject)))
+            .catch(() => showPopup(button, subject, token, null));
     }, DELAY_MS);
 }
 
 /**
- * Make `button` show `name`'s faces while the pointer rests on it or it has the focus. The
- * button is left as it is: its click, its focus order and its label are the page's.
+ * Make `button` show the person's faces while the pointer rests on it or it has the focus. `who` is a person record
+ * ({id, name, ...}: looked up by id) or a name. The button is left as it is: its click, its focus order and its label are the page's.
  */
-export function attachPersonFaces(button, name) {
-    if (!button || !leafOf(name)) return button;
-    button.addEventListener('mouseenter', () => beginHover(button, name));
+export function attachPersonFaces(button, who) {
+    const subject = subjectOf(who);
+    if (!button || !leafOf(subject.name)) return button;
+    button.addEventListener('mouseenter', () => beginHover(button, subject));
     button.addEventListener('mouseleave', hidePersonFaces);
-    button.addEventListener('focus', () => beginHover(button, name));
+    button.addEventListener('focus', () => beginHover(button, subject));
     button.addEventListener('blur', hidePersonFaces);
     button.addEventListener('click', hidePersonFaces);
     button.addEventListener('keydown', (event) => { if (event.key === 'Escape') hidePersonFaces(); });

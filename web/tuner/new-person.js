@@ -1,6 +1,6 @@
 // The New Person dialog.
 import { api } from './common/api.js';
-import { nameProblem } from './common/vocabulary.js';
+import { nameProblem, personFields, rootOf } from './common/vocabulary.js';
 import { state } from './state.js';
 import { btnNewPerson } from './elements.js';
 import { upper } from './hooks.js';
@@ -12,6 +12,8 @@ const newPersonModal = document.getElementById('new-person-modal');
 const btnCloseModal = document.getElementById('btn-close-modal');
 const newPersonName = document.getElementById('new-person-name');
 const modalNameError = document.getElementById('modal-name-error');
+const newPersonGroup = document.getElementById('new-person-group');
+const newPersonNote = document.getElementById('new-person-note');
 const btnMatchSelectAll = document.getElementById('btn-match-select-all');
 const btnMatchSelectNone = document.getElementById('btn-match-select-none');
 const modalMatchesLoading = document.getElementById('modal-matches-loading');
@@ -19,10 +21,47 @@ const modalMatchesList = document.getElementById('modal-matches-list');
 const btnModalCancel = document.getElementById('btn-modal-cancel');
 const btnModalSave = document.getElementById('btn-modal-save');
 
+/** The places a person can be made: a root that holds faces, or a group under one (a face node with a node under it). */
+function groupsOf(nodes) {
+    const list = Array.isArray(nodes) ? nodes : [];
+    const parents = new Set(list.map(node => node.parent_id).filter(id => id !== null && id !== undefined));
+    return list.filter(node => node.has_face === 1 && node.tag && (rootOf(node.tag) === node.tag || parents.has(node.id)))
+        .map(node => ({ id: node.id, tag: node.tag })).sort((a, b) => a.tag.localeCompare(b.tag));
+}
+
+function loadGroups() {
+    if (!newPersonGroup) return Promise.resolve();
+    return api.json('/api/taxonomy/tree').then(nodes => {
+        state.newPersonGroups = groupsOf(nodes);
+        while (newPersonGroup.options.length > 1) newPersonGroup.remove(1);
+        for (const group of state.newPersonGroups) {
+            const option = document.createElement('option');
+            option.value = String(group.id);
+            option.textContent = group.tag;
+            newPersonGroup.appendChild(option);
+        }
+    }).catch(err => console.error('Could not read the groups a person can go under:', err));
+}
+
+/** The person already filed at `group/name` (without case), or null: the group already holds one of that name. */
+function alreadyUnder(group, name) {
+    if (!group) return null;
+    return state.people.ofTag(`${group.tag}/${name}`);
+}
+
+/** The group chosen in the Group box ({id, tag}), or null for the usual place. */
+function chosenGroup() {
+    if (!newPersonGroup || !newPersonGroup.value) return null;
+    return state.newPersonGroups.find(group => String(group.id) === newPersonGroup.value) || null;
+}
+
 export function openNewPersonModal(seedFaceId) {
     if (newPersonName) {
         newPersonName.value = '';
     }
+    if (newPersonGroup) newPersonGroup.value = '';
+    if (newPersonNote) newPersonNote.classList.add('hidden');
+    loadGroups();
     if (modalNameError) {
         modalNameError.classList.add('hidden');
     }
@@ -150,9 +189,28 @@ function validateNewPersonName() {
         return false;
     }
 
-    const isDup = [...state.everyKnownPerson, ...state.allKnownPeople].some(p => p.toLowerCase() === val.toLowerCase());
-    if (isDup) {
-        modalNameError.textContent = 'This name already exists in the database. Please enter a unique name.';
+    // Another person called this: not a duplicate when the new person goes in a group of their own (identity by id; they are
+    // then shown as `Sam · Group`), and the same person as that one when no group is chosen, which is not a new person.
+    const called = state.people.called(val);
+    const known = called.length > 0
+        || [...state.everyKnownPerson, ...state.allKnownPeople].some(p => p.toLowerCase() === val.toLowerCase());
+    const group = chosenGroup();
+    if (newPersonNote) {
+        newPersonNote.classList.toggle('hidden', !(called.length && group));
+        if (called.length && group && alreadyUnder(group, val)) {
+            // Not a second person: the tag exists, and making it again makes nobody.
+            newPersonNote.textContent = `This person already exists under ${group.tag}: Create & Tag Matches names the faces as them, `
+                + 'and makes no one new.';
+        } else if (called.length && group) {
+            newPersonNote.textContent = `Another person is called ${val} (${called.map(person => person.tag).join(', ')}): `
+                + `this one is filed under ${group.tag}, and both are shown with their group.`;
+        }
+    }
+    if (known && !group) {
+        modalNameError.textContent = called.length
+            ? `Another person is called ${val} (${called.map(person => person.tag).join(', ')}). Choose a group to make a different `
+              + 'person of that name, or name the faces as that person from the list.'
+            : 'This name already exists in the database. Please enter a unique name.';
         modalNameError.classList.remove('hidden');
         btnModalSave.disabled = true;
         return false;
@@ -215,6 +273,11 @@ export function wireNewPerson() {
             validateNewPersonName();
         });
     }
+    if (newPersonGroup) {
+        newPersonGroup.addEventListener('change', () => {
+            if (newPersonName && newPersonName.value.trim()) validateNewPersonName();
+        });
+    }
 
     if (btnModalSave) {
         btnModalSave.addEventListener('click', () => {
@@ -227,13 +290,30 @@ export function wireNewPerson() {
             btnModalSave.disabled = true;
             btnModalSave.textContent = 'Saving...';
 
-            api.fetch('/api/faces/match-bulk', {
+            // In a group the owner chose, the person's tag is made there first (the tag editor's create) and the faces are named by
+            // its id; without one, today's rule files them (the one face root) and the name is sent.
+            const group = chosenGroup();
+            let createdUnder = null;
+            const existing = alreadyUnder(group, name);
+            const made = existing
+                ? Promise.resolve({ id: existing.id, name: existing.name })
+                : group
+                ? api.json('/api/taxonomy/create', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, parent_id: group.id }),
+                }).then(data => {
+                    if (!data || !data.success) throw new Error((data && data.error) || `${name} could not be made under ${group.tag}`);
+                    createdUnder = group.tag;
+                    return { id: data.id, name };
+                })
+                : Promise.resolve(name);
+            made.then(who => api.fetch('/api/faces/match-bulk', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ face_ids: allFaceIdsToMatch, person_name: name })
-            })
+                body: JSON.stringify({ face_ids: allFaceIdsToMatch, ...personFields(who) })
+            }))
             .then(async res => {
                 if (!res.ok) {
                     let errMsg = 'Matching failed';
@@ -271,7 +351,8 @@ export function wireNewPerson() {
             })
             .catch(err => {
                 console.error(err);
-                alert('Error saving matches: ' + err.message);
+                alert('Error saving matches: ' + err.message
+                    + (createdUnder ? ` ${name} was made under ${createdUnder}, but the faces were not named.` : ''));
             })
             .finally(() => {
                 btnModalSave.disabled = false;

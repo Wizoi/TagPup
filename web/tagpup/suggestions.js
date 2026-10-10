@@ -3,7 +3,7 @@
 import { api } from './common/api.js';
 import { attachPersonFaces } from './common/person-faces.js';
 import { samePath } from './common/paths.js';
-import { leafOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
+import { leafOf, peopleListHas, personLabelOf, personTitleOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     btnFolderAutoApply, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand, indexProgressBar,
@@ -331,9 +331,11 @@ export function renderSuggestionsPanel(photoPath) {
     // already shown as one a few inches above.
     const photo = state.folderPhotos.find(p => p.path === photoPath);
     const outstanding = (list, key) =>
-        (list || []).filter(item => !photoAlreadyHas(photo, item[key], namesAPerson));
+        (list || []).filter(item => !photoAlreadyHas(photo, item[key], namesAPerson, state.people));
 
-    const people = outstanding(sugg.people, 'name');
+    // A name two people have is offered as one chip for each (replacing the question "which folder?"), and what is already on
+    // the photo is taken out after that, so the Sam the photo has is not offered and the other Sam is.
+    const people = outstanding(personChips(sugg.people), 'name');
     const tags = outstanding(sugg.tags, 'tag');
 
     // Nothing left to act on: the box would be a heading over two empty lists.
@@ -348,17 +350,20 @@ export function renderSuggestionsPanel(photoPath) {
         // Hide the half that has nothing rather than label an empty row.
         if (group) group.classList.toggle('hidden', items.length === 0);
         // Ranked by how sure the analysis was, the most sure first; the alphabet breaks a tie.
-        sortedTags(items, item => item[key], { rank: item => item.score }).forEach(item => {
+        const shownOf = item => (isPerson ? personLabelOf(item, key) : item[key]);
+        sortedTags(items, shownOf, { rank: item => item.score }).forEach(item => {
             const name = item[key];
+            const shown = shownOf(item);
             const pct = Math.round((item.score || 0) * 100);
             const chip = document.createElement('span');
             chip.className = 'suggestion-chip';
             chip.style.cursor = 'pointer';
-            chip.textContent = pct ? `${name} · ${pct}%` : name;
-            chip.title = `Click to add ${name} to this photo.`;
+            chip.textContent = pct ? `${shown} · ${pct}%` : shown;
+            chip.title = `Click to add ${shown} to this photo.`
+                + (isPerson && item.person && item.person.shared ? ` (${personTitleOf(item, key)})` : '');
             if (isPerson) {
                 chip.tabIndex = 0;      // focusable, so the keyboard sees their faces as well
-                attachPersonFaces(chip, name);
+                attachPersonFaces(chip, item.person && item.person.id !== null && item.person.id !== undefined ? item.person : name);
             }
             chip.addEventListener('click', () => applySuggestedTagDirect(name, isPerson, photoPath));
             container.appendChild(chip);
@@ -367,6 +372,21 @@ export function renderSuggestionsPanel(photoPath) {
 
     fill(suggestedPeopleContainer, people, 'name', true);
     fill(suggestedTagsContainer, tags, 'tag', false);
+}
+
+/**
+ * The people a run suggested, a name that two people have as one suggestion for each of them (the tag of each as its `name`, so a
+ * click writes exactly that person). A suggestion that names one person, or whose people the page has not read, stays as it is.
+ */
+export function personChips(list) {
+    const chips = [];
+    for (const item of list || []) {
+        const person = item.person;
+        const called = person && person.shared && (person.id === null || person.id === undefined) ? state.people.called(item.name) : [];
+        if (called.length > 1) called.forEach(each => chips.push({ ...item, name: each.tag, person: each }));
+        else chips.push(item);
+    }
+    return chips;
 }
 
 /**
@@ -396,7 +416,7 @@ export function applySuggestedTagDirect(tagName, isPerson, forPath = state.activ
 
         // Say so rather than doing nothing. A click that silently no-ops reads as
         // a broken button, which is how this was reported.
-        if (photoAlreadyHas(photo, resolved, namesAPerson)) {
+        if (photoAlreadyHas(photo, resolved, namesAPerson, state.people)) {
             setStatus('ready', `${leafOf(resolved)} is already on this photo`);
             return true;
         }
@@ -455,7 +475,7 @@ export async function applyAllSingleSuggestions() {
         for (const item of wanted) {
             const resolved = await resolveTagOrPerson(item.name, item.isPerson);
             if (!resolved) continue;
-            if (photoAlreadyHas(photo, resolved, namesAPerson)) continue;
+            if (photoAlreadyHas(photo, resolved, namesAPerson, state.people)) continue;
             if (resolvedSuggestions.includes(resolved)) continue;
             resolvedSuggestions.push(resolved);
         }
@@ -637,8 +657,8 @@ export function updateFolderAutoApplyState() {
         if (sugg.people) {
             for (let p of sugg.people) {
                 const leaf = leafOf(p.name);
-                if (!photoAlreadyHas(photo, p.name, namesAPerson)
-                    && !photoPeople.some(n => leafOf(n).toLowerCase() === leaf.toLowerCase())) {
+                if (!photoAlreadyHas(photo, p.name, namesAPerson, state.people)
+                    && !peopleListHas(photoPeople, leaf, state.people)) {
                     hasSomethingToApply = true;
                     break;
                 }

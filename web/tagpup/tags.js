@@ -2,7 +2,7 @@
 // offer, and turning what someone typed into a tag, asking where to file a new one.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { leafOf, rootOf, samePerson, sortedTags, tagProblem } from './common/vocabulary.js';
+import { PeopleDirectory, leafOf, personLabel, rootOf, samePerson, sortedTags, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { isJustLooking } from './looking.js';
@@ -18,6 +18,21 @@ export function fetchKnownTagsAndPeople() {
                 updatePeopleDatalist();
             })
             .catch(err => console.error("Error loading tags taxonomy:", err));
+
+        // The people with a tag, by id: a tag path names exactly one, and two called alike are two (identity by id).
+        api.json('/api/people?records=1&include_hidden=1')
+            .then(data => {
+                state.people = new PeopleDirectory(data);
+                updatePeopleDatalist();
+            })
+            .catch(err => console.error("Error loading the people records:", err));
+        // The ones offered while typing: those not hidden from autocomplete.
+        api.json('/api/people?records=1')
+            .then(data => {
+                state.offeredPeople = new PeopleDirectory(data);
+                updatePeopleDatalist();
+            })
+            .catch(err => console.error("Error loading the people offered:", err));
 
         api.json('/api/people')
             .then(data => {
@@ -36,6 +51,9 @@ export function namesAPerson(tag) {
     // Which roots hold people is the tree's has_face flag, below; a list of root
     // names here said Pets and Friends were people whatever the tree said
     // (docs/findings.md, #66).
+    if (state.people.ofText(tag)) {
+        return true;
+    }
     const leaf = leafOf(tag);
     if (state.knownPeople.includes(leaf)) {
         return true;
@@ -148,22 +166,27 @@ export function updatePeopleDatalist() {
         }
     });
     
-    // Helper to resolve a flat name to a full person tag path
-    function resolveToPersonPath(name) {
+    // Every person offered while typing, by their tag: two called alike are two entries.
+    state.offeredPeople.all().forEach(person => peopleSet.add(person.tag));
+
+    // Helper to resolve a flat name to the full tag paths of the people called it: one, or each of several that share the name
+    function resolveToPersonPaths(name) {
+        const called = state.people.called(name);
+        if (called.length) return called.map(person => person.tag);
         // Find in knownTags first
         const matchedTag = state.knownTags.find(t => {
             if (!namesAPerson(t)) return false;
             return samePerson(t, name);
         });
-        if (matchedTag) return matchedTag;
+        if (matchedTag) return [matchedTag];
         
         // Default fallback
-        return `People/${name}`;
+        return [`People/${name}`];
     }
     
     // Add from knownPeople
     state.knownPeople.forEach(name => {
-        peopleSet.add(resolveToPersonPath(name));
+        resolveToPersonPaths(name).forEach(tag => peopleSet.add(tag));
     });
     
     // Add from folderPhotos
@@ -177,7 +200,7 @@ export function updatePeopleDatalist() {
         }
         if (p.people) {
             p.people.forEach(name => {
-                peopleSet.add(resolveToPersonPath(name));
+                resolveToPersonPaths(name).forEach(tag => peopleSet.add(tag));
             });
         }
     });
@@ -190,16 +213,26 @@ export function updatePeopleDatalist() {
     //
     // The pathed form wins: it says where the person belongs, and a bare name is
     // what you get when that was lost.
+    //
+    // One entry per PERSON, not per leaf: a tag the people records know is that person's id, so two people called Sam are two
+    // entries; a bare name one person has is that person; a text no record knows is its leaf.
     const byPerson = new Map();
     Array.from(peopleSet).forEach(tag => {
         const leaf = leafOf(tag).toLowerCase();
         if (!leaf) return;
-        byPerson.set(leaf, preferPathed(byPerson.get(leaf), tag));
+        const known = state.people.ofText(tag);
+        // A bare name two people have is no one of them: their own entries stand for them.
+        if (!known && !tag.includes('/') && state.people.shared(leaf)) return;
+        const key = known ? `id:${known.id}` : `leaf:${leaf}`;
+        byPerson.set(key, preferPathed(byPerson.get(key), tag));
     });
 
     sortedTags(byPerson.values()).forEach(p => {
         const opt = document.createElement('option');
         opt.value = p;
+        // Where a name is shared the entry says which: `Sam · Pets`, beside the full tag it inserts.
+        const known = state.people.ofTag(p);
+        if (known && known.shared) opt.label = personLabel(known);
         peopleDatalist.appendChild(opt);
     });
 }

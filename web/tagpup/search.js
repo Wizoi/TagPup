@@ -138,7 +138,7 @@ function paintChips() {
         const members = s.lists[list];
         const chips = [];
         members.slice(0, MAX_CHIPS_SHOWN).forEach((member, at) => {
-            const { text, title } = chipLabel(member);
+            const { text, title } = chipLabel(member, people);
             if (member.kind === 'person' && !people) readForChips('people');
             if ((member.kind === 'keyword' || member.kind === 'keyword_only') && !keywords) readForChips('keywords');
             const known = chipKnown(member, keywords, people);

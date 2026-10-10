@@ -4,7 +4,7 @@ A person is told to the pages as `{"id", "name", "tag", "group", "shared"}` (tag
 `shared` says another person has the same leaf and `group` the tail of the path that tells them apart, so a
 page can label "Sam \u00b7 Thackeray" (web/common/vocabulary.js personLabel) without deciding either. Every
 answer that carries a person carries that as `person`, beside the name it has always held, which is unchanged
-(identity by id, stage 2, part A; the pickers read it from part C). `person` is None for a name no person tag
+(identity by id, stage 2, part A; the pages read it since part C). `person` is None for a name no person tag
 has, and has no id (and no tag) for a name two people are called.
 """
 from tagpup.core import vocabulary

@@ -7,7 +7,7 @@
 // Names are text, never markup. A folder view's panel is selection.js's own and is not touched.
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { sortedTags } from './common/vocabulary.js';
+import { personLabelOf, personTitleOf, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { selectionFoldersList, selectionPeopleList, selectionTagsList } from './elements.js';
@@ -25,14 +25,14 @@ function note(text) {
     return buildElement('span', { style: QUIET, text });
 }
 
-function chip({ label, title, count, total, kind, name }) {
+function chip({ label, title, count, total, kind, name, person = null }) {
     const element = buildElement('span', { className: 'selection-summary-chip', text: `${label} (${count.toLocaleString()})`, title });
     if (count < total) {
         const apply = buildElement('span', { className: 'selection-summary-chip-apply', text: ' ➡️', title: `Apply "${label}" to all selected photos` });
         apply.addEventListener('click', (event) => {
             event.stopPropagation();
             if (apply.getAttribute('aria-disabled') === 'true') return;
-            editByPill({ kind, name, remove: false });
+            editByPill({ kind, name, person, remove: false });
         });
         element.appendChild(apply);
     }
@@ -40,7 +40,7 @@ function chip({ label, title, count, total, kind, name }) {
     remove.addEventListener('click', (event) => {
         event.stopPropagation();
         if (remove.getAttribute('aria-disabled') === 'true') return;
-        editByPill({ kind, name, remove: true });
+        editByPill({ kind, name, person, remove: true });
     });
     element.appendChild(remove);
     return element;
@@ -48,8 +48,12 @@ function chip({ label, title, count, total, kind, name }) {
 
 function listOf(entries, more, total, kind, key) {
     if (!entries.length && !more) return [note('None')];
-    const shown = sortedTags(entries, each => each[key]).map(each => chip({
-        label: each[key], title: each[key], count: each.count, total, kind, name: each[key],
+    // A person is told by the id of their node and shown by their label (`Sam · Thackeray` where a name is shared); a click on
+    // their chip names the person by that id, not by a name another person may have.
+    const people = kind === 'person';
+    const shown = sortedTags(entries, each => (people ? personLabelOf(each, key) : each[key])).map(each => chip({
+        label: people ? personLabelOf(each, key) : each[key], title: people ? personTitleOf(each, key) : each[key],
+        count: each.count, total, kind, name: each[key], person: people ? each.person || null : null,
     }));
     if (more) shown.push(note(`${more.toLocaleString()} more, not listed`));
     return shown;

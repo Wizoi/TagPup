@@ -32,7 +32,7 @@ from flask import Blueprint, Flask, Response, abort, current_app, g, jsonify, re
 from tagpup import config as tagpup_config
 from tagpup.logs import REQUESTS
 from tagpup.web import (activity_routes, face_routes, history_routes, photo_face_routes, jobs_routes, libraries, lifecycle as lifecycles,
-                        name_faces_routes, roots_gate, roots_ingress, rules_routes, security, settings_routes, sync_routes, tagpup_routes,
+                        name_faces_routes, name_review_routes, roots_gate, roots_ingress, rules_routes, security, settings_routes, sync_routes, tagpup_routes,
                         taxonomy_routes, tuner_routes)
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.register_blueprint(activity_routes.routes)
     app.register_blueprint(face_routes.routes)
     app.register_blueprint(name_faces_routes.routes)
+    app.register_blueprint(name_review_routes.routes)
     app.register_blueprint(apps)
     app.register_blueprint(ROUTES[kind])
     if kind == "tagpup":

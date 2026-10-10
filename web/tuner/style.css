@@ -2129,6 +2129,46 @@ body {
 .review-about { margin: 0 1.5rem; opacity: 0.8; }
 .review-footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 
+/* Names to review (names-review.js): the first row of Review People, and the dialog it opens. */
+.names-to-review-row {
+    list-style: none;
+    padding: 0.55rem 0.8rem;
+    margin-bottom: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px dashed var(--accent-color, var(--border-color));
+    border-radius: 6px;
+}
+.names-to-review-row:hover, .names-to-review-row:focus { outline: none; border-style: solid; }
+.names-modal .names-body { max-height: 52vh; overflow-y: auto; }
+.names-results { margin: 0 1.5rem; max-height: 14vh; overflow-y: auto; }
+.names-result { margin: 0.2rem 0; font-size: 0.9rem; }
+.names-result-error { color: #f87171; }
+.names-list { list-style: none; margin: 0; padding: 0; }
+.names-entry { padding: 0.7rem 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.names-entry.is-busy { opacity: 0.6; }
+.names-why { opacity: 0.8; }
+.names-counts { margin: 0.2rem 0; opacity: 0.8; font-size: 0.9rem; }
+.names-crops { display: flex; gap: 6px; margin: 0.3rem 0; }
+.names-crop { width: 56px; height: 56px; object-fit: cover; border-radius: 4px; background: var(--bg-tertiary); }
+.names-choices { display: flex; flex-direction: column; gap: 6px; margin-top: 0.4rem; }
+.names-choice { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.names-person, .names-group {
+    min-width: 14rem;
+    max-width: 100%;
+    padding: 4px 6px;
+    font-family: inherit;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+.names-confirm { margin-top: 0.4rem; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 6px; }
+.names-sentence { margin: 0 0 0.4rem 0; }
+.names-toggle { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85rem; }
+
 /* Roots (roots.js): a row per root, with its place, what writes go to, and the buttons. */
 .roots-about { margin: 0 1.5rem; opacity: 0.8; }
 .roots-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }

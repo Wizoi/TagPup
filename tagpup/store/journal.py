@@ -920,12 +920,17 @@ def record(conn, operation, changes, summary=None, schema_version=None):
 PERSON_DELETED = "person deleted (force): faces unnamed"
 PERSON_MERGED = "person merged: faces renamed"
 PERSON_LINKED = "name linked to its person: faces linked"
+#: The names to review (docs/ARCHITECTURE.md, "Names to review"): a person made for a name, and a name's faces unnamed.
+PERSON_MADE = "person made for a name: faces linked"
+NAME_UNNAMED = "name unnamed (names to review): faces unnamed"
 
 #: What History says of those two changes: honest about what an undo gives back (the tree rows are not journaled).
 PERSON_NOTES = {
     PERSON_DELETED: "the faces return as unresolved names; the deleted person and the photos' keywords are not restored",
     PERSON_MERGED: "the faces return as unresolved names; the merged person and the photos' keywords are not restored",
     PERSON_LINKED: "the faces return as unresolved names",
+    PERSON_MADE: "the faces return as unresolved names; the person's tag stays in the tree",
+    NAME_UNNAMED: "the faces return with the name as an unresolved name",
 }
 
 #: Rows a face costs the journal when a person is deleted with force or merged: name, name_source and tag_id.
