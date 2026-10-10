@@ -461,28 +461,6 @@ class TheScripts(FilesCase):
         self.assertEqual(field_of(holds, "XMP-xmpMM:DocumentID"), "xmp.did:held-already")
         self.assertEqual(self.rows("SELECT COUNT(*) FROM photos WHERE document_id IS NOT NULL")[0][0], 0)
 
-    def test_relink_renamed_photos(self):
-        import relink_renamed_photos as script
-
-        dead = os.path.join(self.folder, "IMG_0421.jpg")
-        self.execute("INSERT INTO photos (path, tags, captions, raw_metadata) VALUES (?, '[]', '[]', '{}')", (dead,))
-        renamed = self.make("Regatta - 01.jpg", row=False)
-        write_outside(renamed, {"XMP-xmpMM:PreservedFileName": "IMG_0421.CR3"})
-        photo_id = self.photo_id(dead)
-
-        self.assertIn("the undo restored every one exactly", self.run_script(script))
-        self.assertEqual(self.rows("SELECT path FROM photos WHERE id = ?", (photo_id,)), [(dead,)])
-        applied = self.run_script(script, "--apply")
-        self.assertNotIn("backed up", applied)
-        self.assertIn("Recorded as change", applied)
-        self.assertEqual(self.rows("SELECT path FROM photos WHERE id = ?", (photo_id,)), [(renamed,)])
-
-        change = self.last_change()
-        self.assertEqual(self.rows("SELECT operation FROM changes WHERE id = ?", (change,)),
-                         [("relink_renamed_photos",)])
-        self.assertEqual(self.undo(change).changed, 1)
-        self.assertEqual(self.rows("SELECT path FROM photos WHERE id = ?", (photo_id,)), [(dead,)])
-
 
 if __name__ == "__main__":
     unittest.main()

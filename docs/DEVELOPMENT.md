@@ -256,7 +256,6 @@ lists every place that may still copy a whole library, and why.
 | --- | --- |
 | `scripts/verify_workflow.py` | End-to-end pass over both apps against a throwaway copy of a database. |
 | `scripts/backfill_document_ids.py` | Gives already-indexed photos the identity new ones get. Resumable. |
-| `scripts/relink_renamed_photos.py` | Re-points index rows at photos renamed under them, by identity then `PreservedFileName`. |
 
 Retired on 2026-09-24 with nothing left to do on either library, and in git's history: `canonicalize_paths.py`, `repair_bare_person_tags.py`, `tidy_exclusion_reasons.py`, `restore_face_names.py` and `cache_all_crops.py` (findings.md, #54).
 

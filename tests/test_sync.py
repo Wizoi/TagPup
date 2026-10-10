@@ -617,10 +617,8 @@ class Folders(SyncTestCase):
         self.addCleanup(os.rmdir, loop)   # the junction alone, never what it points at
         self.assertEqual([path], images.photos_under(self.meet))
         self.assertEqual([path], [stored for stored, _m, _s in images.stamps_under(self.meet).values()])
-        # Relink's walk and the folder picker's count too.
+        # The folder picker's count too.
         from tagpup.services import photos as photo_actions
-        from tagpup.services import relink_photos
-        self.assertEqual([path], relink_photos._photos_under(self.meet))
         self.assertEqual((1, False), photo_actions.count_photos(self.meet))
 
     def test_a_folder_alone_is_indexed_without_its_subfolders(self):

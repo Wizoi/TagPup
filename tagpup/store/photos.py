@@ -867,7 +867,7 @@ def row_as_recorded(conn, stored_path):
         raw=(3,))
 
 
-# ---- What relink_renamed_photos reads ---------------------------------------------------
+# ---- What pairing a missing row with a file reads ---------------------------------------------------
 
 def all_paths(conn):
     """Every photo's path, as stored."""
@@ -880,14 +880,6 @@ def identities(conn):
     roots = store_roots.roots_for(conn)
     return {paths.from_row(path, roots): str(doc_id).strip() for path, doc_id in conn.execute(
         "SELECT path, document_id FROM photos WHERE document_id IS NOT NULL") if path and doc_id}
-
-
-def evidence(conn):
-    """(id, path as stored, size, taken, document_id) of every photo: what a folder that was
-    renamed is told from the folders beside it by (tagpup.services.folder_moves). Nothing
-    large is read: no raw metadata, no vector."""
-    return store_roots.natives(
-        conn, conn.execute("SELECT id, path, size, taken, document_id FROM photos").fetchall(), 1)
 
 
 def evidence_under(conn, folder):

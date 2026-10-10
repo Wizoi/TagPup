@@ -649,7 +649,7 @@ class TheMapProviderIsNeverForgotten(unittest.TestCase):
         self.assertEqual("10", count)
 
     def test_each_script_that_opens_a_library_reads_a_rooted_one(self):
-        for script in ("relink_renamed_photos", "backfill_document_ids"):
+        for script in ("backfill_document_ids",):
             with self.subTest(script=script):
                 _before, count = self.read_in_a_fresh_interpreter(script)
                 self.assertEqual("10", count)

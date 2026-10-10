@@ -1,39 +1,27 @@
-"""Point index rows at photos that were renamed under them.
+"""Pairing a missing row with the file it became: what sync uses when it finds files new where rows are missing.
 
-Renaming a photo outside TagPup leaves its index row behind: the row still names the
-old file, which no longer exists, so the photo looks unindexed while its row looks
-dead. Both halves are wrong, and the row is the valuable half -- it carries the
-photo's embedding and its faces, including the names somebody assigned by hand.
+Renaming a photo outside TagPup leaves its index row behind: the row still names the old
+file, which no longer exists, so the photo looks unindexed while its row looks dead. The row
+is the valuable half -- it carries the photo's embedding and its faces, including the names
+somebody assigned by hand.
 
-Deleting those rows is the obvious move and the expensive one. In one library 78 dead
-rows held 234 faces, 88 of them named: an afternoon of identifying people, thrown away
-to tidy up a path.
-
-They can be re-pointed instead. A dead row is matched to a file by the identity
-indexing recorded for it (the file's DocumentID), else by the name TagPup's renamer
-kept in `XMP-xmpMM:PreservedFileName`, matched against the stem of the row's file name
-in the same folder -- extensions ignored on both sides, since the preserved name is
-usually the RAW original (.CR3) and the indexed file the JPEG made from it.
-
-scripts/relink_renamed_photos.py runs it, on the maintenance scaffold (tagpup.services.
-maintenance): a dry run is a rehearsal, and applying records one change of the journal
--- each row's path, as it was and as it is left -- which can be undone. The rows only:
-no photo file is written.
+A dead row is matched to a file by the identity indexing recorded for it (the file's
+DocumentID), else by the name TagPup's renamer kept in `XMP-xmpMM:PreservedFileName`,
+matched against the stem of the row's file name in the same folder -- extensions ignored on
+both sides, since the preserved name is usually the RAW original (.CR3) and the indexed file
+the JPEG made from it. `claims_of` reads the files, `pair` matches, `edits_for` makes the
+journaled re-pointing (sync applies it; a row whose new name already has one is left). The
+folder-wide command that used this on its own is gone (owner, 2026-10-10).
 """
 import os
 
 from tagpup.core import paths
-from tagpup.files import images
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session
-from tagpup.services import maintenance
 from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
-
-#: What the change is recorded as.
-OPERATION = "relink_renamed_photos"
 
 #: The two fields a dead row is matched to a file by.
 IDENTITY = "XMP-xmpMM:DocumentID"
@@ -42,21 +30,6 @@ PRESERVED = "XMP-xmpMM:PreservedFileName"
 
 def stem_of(path):
     return os.path.splitext(os.path.basename(str(path)))[0].strip().lower()
-
-
-def dead_rows(conn):
-    """Index rows whose file is not on disk."""
-    return [path for path in store_photos.all_paths(conn) if path and not os.path.exists(path)]
-
-
-def _photos_under(folder):
-    # The one walk (tagpup.files.images.photo_entries), which goes into no junction.
-    return [entry.path for entry in images.photo_entries(folder)]
-
-
-def _read(folder, field, exiftool_path):
-    """(SourceFile, row) of every photo under `folder`, read for `field`."""
-    return _read_files(_photos_under(folder), [field], exiftool_path)
 
 
 def _read_files(found, fields, exiftool_path):
@@ -84,17 +57,6 @@ def read_files(found, fields, exiftool_path=None):
     return _read_files(list(found), list(fields), exiftool_path)
 
 
-def identities(folder, exiftool_path=None):
-    """Every photo in a folder, keyed by its DocumentID.
-
-    The better of the two signals, and the one that survives what the other does not:
-    a move between folders, a rename by a tool that knows nothing about TagPup, a
-    filename that collides with another photo's original. PreservedFileName only ever
-    worked for renames TagPup itself performed.
-    """
-    return _by_identity(_read(folder, IDENTITY, exiftool_path))
-
-
 def _by_identity(rows):
     """{DocumentID: the file claiming it} of what ExifTool answered, an identity two files
     claim left out."""
@@ -112,17 +74,6 @@ def _by_identity(rows):
     return {k: v for k, v in by_id.items() if v}
 
 
-def preserved_names(folder, exiftool_path=None):
-    """Every photo under a folder, keyed by (its folder's key, the stem it was renamed from).
-
-    Keyed by folder as well as stem: a rename never moves a file, and camera names
-    repeat -- a library holds many IMG_0421s -- so a dead row may only be matched to
-    a renamed file beside it. Keyed by stem alone, the last folder searched won, and
-    a row's named faces could be re-pointed at a stranger's photo in another folder.
-    """
-    return _by_original(_read(folder, PRESERVED, exiftool_path))
-
-
 def _by_original(rows):
     """{(folder key, original stem): the file claiming it} of what ExifTool answered, a
     key two files claim left out."""
@@ -136,20 +87,6 @@ def _by_original(rows):
         # Two files claiming one original cannot be told apart; leave both.
         by_original[key] = None if key in by_original else paths.stored(source)
     return {k: v for k, v in by_original.items() if v}
-
-
-def merge_unambiguous(into, found):
-    """Add `found` to `into`, dropping any key two different files claim.
-
-    Folders are walked recursively, so one file can turn up from two walks -- that
-    is the same claim twice. Two different files claiming one key is a copy, not a
-    rename, and neither can be matched without guessing.
-    """
-    for key, path in found.items():
-        if key in into and (into[key] is None or not paths.same(into[key], path)):
-            into[key] = None
-        else:
-            into[key] = path
 
 
 def claims_of(files, exiftool_path=None):
@@ -182,30 +119,6 @@ def pair(dead, lookup, by_identity, row_identity, live):
         claimed.add(key)
         pairs.append((old, new))
     return pairs, unmatched
-
-
-def plan_for(library, exiftool_path=None):
-    """([{from, to, faces, named}] of the dead rows that can be re-pointed, [the dead
-    rows that cannot]). Reads only."""
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        dead = dead_rows(conn)
-        folders = sorted({os.path.dirname(p) for p in dead if os.path.isdir(os.path.dirname(p))})
-        lookup, by_identity = {}, {}
-        for folder in folders:
-            # One read of each folder for both claims.
-            preserved, claimed = claims_of(_photos_under(folder), exiftool_path)
-            merge_unambiguous(lookup, preserved)
-            merge_unambiguous(by_identity, claimed)
-
-        # A dead row's own identity, where indexing recorded one.
-        row_identity = store_photos.identities(conn)
-        live = {paths.key(path) for path in store_photos.all_paths(conn) if path and os.path.exists(path)}
-
-        pairs, unmatched = pair(dead, lookup, by_identity, row_identity, live)
-        return moves_with_faces(conn, pairs), unmatched
-    finally:
-        conn.close()
 
 
 def moves_with_faces(conn, pairs):
@@ -243,33 +156,3 @@ def edits_for(library, moves):
     return edits, skipped
 
 
-def apply_moves(library, moves):
-    """Re-point each row, and its faces, at the renamed file, as one change of the
-    journal. Returns (rows moved, (old, new) pairs left where they were)."""
-    edits, skipped = edits_for(library, moves)
-    if not edits:
-        return 0, skipped
-    applied = journal.apply(library.path, OPERATION, edits, {"counts": {"planned": len(moves)}})
-    return applied.changed, skipped
-
-
-def relink(library, exiftool_path=None, apply=False):
-    """Plan, and with `apply` make, the re-pointing of every dead row that a renamed file
-    beside it can be matched to. A Result on the maintenance scaffold: `changed` is the
-    rows re-pointed; details["reveal"] the moves and the rows left unmatched (paths)."""
-    def plan(found_library):
-        moves, unmatched = plan_for(found_library, exiftool_path)
-        edits, occupied = edits_for(found_library, moves)
-        return maintenance.Plan(
-            size=len(edits),
-            counts={"relinkable": len(moves), "faces": sum(m["faces"] for m in moves),
-                    "named": sum(m["named"] for m in moves), "occupied": len(occupied),
-                    "unmatched": len(unmatched)},
-            reveal={"moves": moves, "occupied": occupied, "unmatched": unmatched},
-            work=edits)
-
-    def remaining(found_library):
-        moves, unmatched = plan_for(found_library, exiftool_path)
-        return {"relinkable": len(moves), "unmatched": len(unmatched)}
-
-    return maintenance.run(library, OPERATION, plan, lambda planned: planned.work, apply=apply, remaining=remaining)

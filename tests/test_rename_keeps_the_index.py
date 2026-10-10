@@ -9,7 +9,7 @@ The row is the valuable half. It carries the photo's embedding and its faces, na
 included. One such rename in this library stranded 78 rows holding 234 faces, 88 of
 them named by hand. That work survived only because the renamer records where each
 file came from, so the rows could be matched back afterwards -- see
-scripts/relink_renamed_photos.py, which exists because of this bug.
+tagpup/services/relink_photos.py, which sync pairs by.
 
 Then the move itself looked rows up with forward slashes while the index holds native
 paths, so on Windows it matched nothing and reported success. The rows here are seeded
