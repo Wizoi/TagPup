@@ -31,12 +31,24 @@ def _this_pc_only():
 
 
 #: The writes the job's plan and grouping must not be written over (#871): adding or indexing folders, a sync's apply, a bulk edit,
-#: a photo's keywords and the bulk tag writes, and deleting photos. Answered 409 while names are given (the one owner of the
-#: refusal is tuner_routes.clustering_refusal, which TagTuner's own writes ask too); reads are never refused.
+#: a photo's keywords and the bulk tag writes, and deleting photos; and what can put faces' names, tags or the tree back or
+#: elsewhere without going through those: History's Undo, a stopped assignment of faces resumed or undone, a branch's flags.
+#: Keyed as Flask names the route (`<int:change_id>` stays in it). Answered 409 while names are given (the one owner of the
+#: refusal is tuner_routes.clustering_refusal, which TagTuner's own writes ask too); reads are never refused. Every other write
+#: route is guarded, or allowed with a reason, in tests/test_write_routes_are_classified.py.
 GUARDED = frozenset((
     "/api/folder/index-start", "/api/folder/add", "/api/sync/review/include", "/api/library/bulk/start",
     "/api/library/bulk/resume", "/api/photo/save-metadata", "/api/photos/bulk-tags", "/api/folder/auto-apply",
-    "/api/photo/delete", "/api/sync"))
+    "/api/photo/delete", "/api/sync", "/api/history/<int:change_id>/undo", "/api/faces/job/resume",
+    "/api/faces/job/undo", "/api/taxonomy/update", "/api/activity/jobs/run"))
+
+#: Routes of GUARDED that only write when the body says so: a rehearsal (Undo, sync without `apply`), or a recurring job
+#: that is not a sync (the one that writes), reads or changes nothing a name depends on.
+WRITES_WHEN = {
+    "/api/sync": lambda body: body.get("apply") is True,
+    "/api/history/<int:change_id>/undo": lambda body: body.get("apply") is True,
+    "/api/activity/jobs/run": lambda body: body.get("job") == "sync",
+}
 
 
 def refuse_writes_while_naming():
@@ -44,10 +56,12 @@ def refuse_writes_while_naming():
     if request.method != "POST":
         return None
     library = state.current()
-    at = request.path.find("/api/")
-    if library is None or at < 0 or request.path[at:] not in GUARDED:
+    rule = request.url_rule.rule if request.url_rule is not None else request.path
+    at = rule.find("/api/")
+    if library is None or at < 0 or rule[at:] not in GUARDED:
         return None
-    if request.path[at:] == "/api/sync" and (request.get_json(silent=True) or {}).get("apply") is not True:
+    writes = WRITES_WHEN.get(rule[at:])
+    if writes is not None and not writes(request.get_json(silent=True) or {}):
         return None     # a rehearsal reads
     return tuner_routes.clustering_refusal(library, only_naming=True)
 

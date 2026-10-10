@@ -168,8 +168,10 @@ class TwoClicksAndBusyLibraries(RoutesCase):
     def test_the_writes_that_would_be_written_over_are_refused_while_names_are_given(self):
         # #871: the plan was read, and grouping commits a name for every face it read.
         import json
-        guarded = {"/harbour" + path: {} for path in sorted(name_faces_routes.GUARDED) if path != "/api/sync"}
-        guarded["/harbour/api/sync"] = {"apply": True}
+        import re
+        writing = {"/api/sync": {"apply": True}, "/api/history/<int:change_id>/undo": {"apply": True},
+                   "/api/activity/jobs/run": {"job": "sync"}}
+        guarded = {"/harbour" + re.sub(r"<[^>]+>", "1", path): writing.get(path, {}) for path in sorted(name_faces_routes.GUARDED)}
         with self.while_names_are_given():
             for kind, client in self.apps.items():
                 for url, body in guarded.items():
@@ -179,6 +181,8 @@ class TwoClicksAndBusyLibraries(RoutesCase):
                         self.assertEqual(tuner_routes.NAMING_REFUSAL, answer.get_json()["error"])
             # Reads are not refused: a sync's rehearsal, a photo's faces, the status of the job itself.
             self.assertNotEqual(409, self.apps["tuner"].post("/harbour/api/sync", json={}).status_code)
+            self.assertNotEqual(409, self.apps["tuner"].post("/harbour/api/history/1/undo", json={}).status_code, "a rehearsal")
+            self.assertNotEqual(tuner_routes.NAMING_REFUSAL, (self.apps["tuner"].post("/harbour/api/activity/jobs/run", json={"job": "snapshots"}).get_json() or {}).get("error"))
             self.assertEqual(200, self.apps["tagpup"].get("/harbour/api/photo-faces", query_string={"path": self.single}).status_code)
             self.assertEqual(200, self.apps["tuner"].get(CURRENT).status_code)
             # TagTuner's own writes were already refused, now in the same words.
