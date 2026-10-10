@@ -3,8 +3,8 @@
  *
  * The panel (340 px) and the sidebar (360) kept their widths at every window width, leaving the grid 296 px at 1,000
  * and 40 px at 720, where the page scrolled sideways. Under NARROW px the panel is collapsed behind a button
- * (aria-expanded, aria-controls) and opened lies over the grid. The widths themselves are measured in a real
- * Chromium by scripts/measure_narrow_window.py; here, what jsdom can hold: the button and its attributes, the choice
+ * (aria-expanded, aria-controls) and opened lies over the grid. The widths themselves were measured in a real
+ * Chromium; here, what jsdom can hold: the button and its attributes, the choice
  * kept in this browser (and a browser that keeps nothing), and the stylesheet's rules, read as text.
  */
 import { test, describe } from "node:test";

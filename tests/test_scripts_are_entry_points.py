@@ -24,7 +24,7 @@ HELPERS = {
     "_root": "puts the repository root on sys.path for a script run directly",
     "code_snapshot": "the code, as the installer and the measurement sandbox copy it",
     "sandbox": "a private copy of a library, a free port and a clean-up that tells, which the measurement "
-               "scripts share (measure_identify_faces, measure_suggest_folder, measure_grid)",
+               "scripts share (measure_identify_faces, measure_suggest_folder, measure_select_list)",
     "reloader": "the development auto-reloader tagpup_web.py starts; "
                 "tagpup/dev/reloader.py in docs/ARCHITECTURE.md, 'Where everything goes'",
 }
