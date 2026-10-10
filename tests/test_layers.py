@@ -180,7 +180,7 @@ class ImportsGoDown(unittest.TestCase):
             (core, "import tagpup.files.identity", True),
             (files, "from ..store import db", True),
             (files, "from tagpup import store", True),
-            (store, "import dedupe_faces", True),
+            (store, "import relink_renamed_photos", True),
             (store, "def f():\n    from reloader import start_reloader_thread", True),
             (os.path.join("tagpup", "__init__.py"), "from tagpup import core", True),
         ]

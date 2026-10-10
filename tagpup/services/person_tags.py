@@ -15,7 +15,7 @@ libraries, a flat leaf. Rewriting those rows only made the database disagree wit
 file until the next index put it back. photos.people is left alone for the same reason:
 leaf names are its correct content.
 
-scripts/merge_duplicate_person_tags.py and the MCP server's tool both call
+The MCP server's tool calls
 `merge_duplicate_person_tags`, on the maintenance scaffold (tagpup.services.maintenance).
 """
 from tagpup.core import vocabulary
