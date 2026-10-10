@@ -1592,8 +1592,29 @@ def pending(db_path):
 #: backup was copied over keeps its id and creation time on Windows, but not its
 #: modified time (docs/findings.md, #56). Either is looked at again, as is a library
 #: whose file a checkpoint has written to since: one query, now and then.
+#:
+#: The stat of the main file does NOT see a newer app's commit: in WAL mode a commit goes to the
+#: -wal file, and the main file stays as it was while any connection holds a read mark. So a
+#: library found current is also asked its version again once RECHECK_SECONDS have passed since it
+#: was last asked (a read-only query): a long-lived server, MCP or watcher is refused within that
+#: bound after a newer app migrates the library (docs/findings.md, the newer-library guard).
 _current = {}
 _current_guard = threading.Lock()
+RECHECK_SECONDS = 2.0
+_clock = time.monotonic
+
+
+def _still_current(path):
+    """False when the library at `path`, found current, is now newer than this version knows (or cannot
+    be read just now: `ensure` then looks at it in full and says why)."""
+    try:
+        conn = db.connect(db.readonly_uri(path), uri=True)
+        try:
+            return version(conn) <= LATEST
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
 
 
 def _identity(db_path):
@@ -1612,7 +1633,9 @@ def ensure(db_path):
     the same library at once apply it once, and a check it names that fails rolls it
     back (CheckFailed). What each takes first follows from its kind (ADDITIVE, DATA,
     DESTRUCTIVE); each is recorded in the journal. A library this process has already
-    found current costs a stat and no connection.
+    found current costs a stat and no connection, except that its version is read again
+    (read only) every RECHECK_SECONDS, so a newer app's migration refuses a process that
+    has run on it for hours: NewerLibrary within that bound.
 
     The first time a process opens a library, a change of the journal that a crash left
     `derived_pending` is finished (tagpup.store.journal.settle).
@@ -1620,8 +1643,16 @@ def ensure(db_path):
     key = db._key(db_path)
     identity = _identity(db_path)
     with _current_guard:
-        if identity is not None and _current.get(key) == identity:
+        seen = _current.get(key)
+    if identity is not None and seen is not None and seen[0] == identity:
+        if _clock() - seen[1] < RECHECK_SECONDS:
             return []
+        if _still_current(db_path):
+            with _current_guard:
+                _current[key] = (identity, _clock())
+            return []
+        with _current_guard:
+            _current.pop(key, None)
     try:
         applied = _ensure(db_path)
     except NewerLibrary:
@@ -1631,7 +1662,7 @@ def ensure(db_path):
     from tagpup.store import journal   # the journal imports this module
     journal.settle_once(db_path)
     with _current_guard:
-        _current[key] = _identity(db_path)
+        _current[key] = (_identity(db_path), _clock())
     return applied
 
 
