@@ -14,7 +14,6 @@ Here is a quick reference table of the most common commands you will use in Tagp
 
 | Workflow / Task | Command | Description |
 | :--- | :--- | :--- |
-| **Launch Dashboard** | `python runner.py` | Starts the graphical GUI dashboard launcher. |
 | **Index Library** | `run.bat index "path/to/photos"` | Scans photos, extracts CLIP vectors, and detects faces in a single pass. |
 | **Cluster Faces** | `run.bat cluster-faces` | Performs DBSCAN clustering on face embeddings and resolves names. |
 | **Suggest Tags** | `run.bat suggest "path/to/untagged"` | Analyzes untagged photos and writes `data/<library>_suggestions.json` beside the library. |

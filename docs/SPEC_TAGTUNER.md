@@ -175,8 +175,7 @@ indexing, because folders now queue rather than collide.
 Indexing runs in the background with a progress bar, and **does not re-cluster**: that
 would re-derive every name in the database, discarding corrections made here. Name the faces
 deliberately when it is wanted: **Name faces from tags** (this header and gear, and TagPup's folder
-view), `tagpup_cli.py faces-from-tags` / `cluster-faces`, or the runner's **Run Identity
-Resolution Clustering** (still there).
+view), or `tagpup_cli.py faces-from-tags` / `cluster-faces`.
 
 Removing a folder deletes index rows only — the photo files are untouched — but the face
 rows go with the photos, so any assigned names and exclusions on them are discarded. The

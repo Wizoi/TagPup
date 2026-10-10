@@ -30,7 +30,7 @@ through the CLI where no reloader can reach them.
 
 **Run the apps from an installed copy** to stop that. `scripts/install_app.py` (a dry
 run; `--apply` to install) copies the code into `%LOCALAPPDATA%\TagPup\versions\<when>-<commit>`
-and writes `TagPup.cmd`, `TagTuner.cmd`, `TagPup Runner.cmd` and `TagPup CLI.cmd` beside
+and writes `TagPup.cmd`, `TagTuner.cmd` and `TagPup CLI.cmd` beside
 it. They run that copy with `TAGPUP_HOME` set to the checkout, so `data/` -- the
 libraries, which hold their own settings -- stays where it is. Saving a file in the repository changes nothing they are
 running. To update, install again; the two versions before stay, and `current.txt`

@@ -35,14 +35,11 @@ class OneValue(unittest.TestCase):
             default = inspect.signature(writer).parameters["min_score"].default
             self.assertEqual(suggesting.OFFER_A_TAG, default, writer.__name__)
 
-    def test_the_runner_starts_from_it(self):
-        self.assertIn('insert(0, "%.2f" % suggesting.OFFER_A_TAG)', source("runner.py"))
-
     def test_no_score_is_compared_with_a_number_of_its_own(self):
         # Where a tag's score decides, it is compared with the one value: TagPup's
-        # routes and the model that offers, the writer, the CLI and the runner.
+        # routes and the model that offers, the writer and the CLI.
         for name in ("tagpup/web/tagpup_routes.py", "tagpup/core/suggesting.py", "tagpup/jobs/suggestions.py",
-                     "tagpup/services/tagging.py", "tagpup_cli.py", "runner.py"):
+                     "tagpup/services/tagging.py", "tagpup_cli.py"):
             found = re.findall(r"score[\w\"'\].)]*\s*>=\s*0\.\d", source(name))
             self.assertEqual([], found, name)
         # What a run offers (tagpup.services.suggester.SuggestionModel.offered). The
