@@ -3,12 +3,17 @@
 Short on purpose. Every rule here is one that has actually cost time on this project.
 The reasoning lives in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); this is what to do.
 
-**New code goes where [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) puts it.** Today two servers,
-a CLI and many scripts each implement parts of the photo library. The code is moving
-into one `tagpup/` package, with one owner for each concern. Check the phase table
-before adding a module, a route or a query. **Record every review finding in
-[docs/findings.md](docs/findings.md) before fixing it.** Findings that lived only in a
-conversation were lost, and decisions were made twice.
+**New code goes where [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) puts it.** That file is a map
+(about 35 KB): the layers, what each package owns, the data model on one page, the processes, and where to
+look for each concern. Check it before adding a module, a route or a query.
+**[docs/INVARIANTS.md](docs/INVARIANTS.md)** is one page of the rules whose violation loses data, each with its
+owner and the test that enforces it; review against it. **[docs/DECISIONS.md](docs/DECISIONS.md)** is the
+owner's decisions, dated, not reopened without a new fact. **[docs/history/](docs/history/README.md)** holds the
+design logs (the phases, as built, with measurements) and the closed findings; read it only when asked.
+**Record every review finding in [docs/findings.md](docs/findings.md) (the open ones) before fixing it**; a
+worker's rows go to its own file, `tools/add_findings.py --branch-file`, and the main session numbers them with
+`--take` (see the header of findings.md). Findings that lived only in a conversation were lost, and decisions
+were made twice.
 
 New code imports from the package (`from tagpup.store import db`). `scripts/` holds
 programs to run, each with a `__main__` block, and the few helpers they share (`_root`,
