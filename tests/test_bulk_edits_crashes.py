@@ -14,7 +14,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_bulk_edits as T  # noqa: E402
-import test_bulk_edits_followup as F  # noqa: E402
+import test_bulk_edits_progress_record as F  # noqa: E402
 
 from tagpup.core import processes  # noqa: E402
 from tagpup.jobs import bulk_edits  # noqa: E402

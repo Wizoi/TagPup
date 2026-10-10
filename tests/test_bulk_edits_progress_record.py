@@ -1,6 +1,6 @@
 """The 9d-1 follow-up review's findings #583 to #589. A time shift is the one operation that cannot be done twice, and each is a way
 its progress record can be missing, stale or false; the rule they test: NOTHING IS WRITTEN TO A PHOTO FILE UNTIL THE RECORD THAT
-LETS A RESUME KNOW ABOUT IT IS DURABLY WRITTEN, and a record is never older than the files (tests/test_bulk_edits_review.py has
+LETS A RESUME KNOW ABOUT IT IS DURABLY WRITTEN, and a record is never older than the files (tests/test_bulk_edits_resume_records.py has
 the earlier round). Scenarios are the reviewer's. Fictional names only.
 """
 import os
@@ -13,7 +13,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_bulk_edits as T  # noqa: E402
-import test_bulk_edits_review as R  # noqa: E402
+import test_bulk_edits_resume_records as R  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import exiftool_session, job_files  # noqa: E402
