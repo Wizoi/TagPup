@@ -169,26 +169,15 @@ class TestFunctionalCLI(unittest.TestCase):
         target_photo = os.path.join(target_dir, "new_photo.jpg")
         create_dummy_jpeg(target_photo)
 
-        suggestions_file = os.path.join(self.workspace_path, "test_suggestions.json")
         # A folder the library does not hold is added only when asked (--add).
-        result = runner.invoke(cli, ["suggest", target_dir, "--output", suggestions_file])
+        result = runner.invoke(cli, ["suggest", target_dir])
         self.assertEqual(1, result.exit_code, result.output)
         self.assertIn("is not in", result.output)
-        result = runner.invoke(cli, ["suggest", target_dir, "--output", suggestions_file, "--add"])
+        result = runner.invoke(cli, ["suggest", target_dir, "--add"])
         self.assertEqual(result.exit_code, 0, f"suggest command failed: {result.output}")
-        self.assertTrue(os.path.exists(suggestions_file), "Suggestions file was not generated")
-
-        # Verify suggestions.json structure
-        with open(suggestions_file, 'r', encoding='utf-8') as f:
-            sugg_data = json.load(f)
-        self.assertEqual(len(sugg_data), 1)
-        self.assertEqual(os.path.abspath(target_photo), os.path.abspath(sugg_data[0]["path"]))
-        
-        # --- 6. WRITE COMMAND ---
-        # Run a live write to apply tags and verify ExifTool modifies target
-        result = runner.invoke(cli, ["write", suggestions_file, "-Live", "--nobackup"], input="YES\n")
-        self.assertEqual(result.exit_code, 0, f"write command failed: {result.output}")
-        self.assertIn("Finished writing metadata. Success: 1", result.output)
+        self.assertIn("new_photo.jpg", result.output)
+        # A preview: nothing is written beside the library.
+        self.assertEqual([], [name for name in os.listdir(self.workspace_path) if name.endswith(".json")])
 
 if __name__ == "__main__":
     unittest.main()

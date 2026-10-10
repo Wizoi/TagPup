@@ -1,4 +1,4 @@
-"""`tagpup_cli write` writes keywords the way the app does, and tells the index.
+"""Writing suggested tags writes keywords the way the app does, and tells the index.
 
 It had its own ExifTool code: every hierarchical tag was also split into its parts, so
 "Activity/Rowing" wrote loose "Activity" and "Rowing" keywords beside it; a person named
@@ -9,20 +9,19 @@ people resolved first, and tagpup.store.photos.record_tags, like every other key
 import json
 import os
 import unittest
-from unittest import mock
 
 from tests import photo_rows
 from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
-from tagpup_cli import write_suggestions_file
-
 from tagpup.files.exiftool_session import ExifToolSession
+from tagpup.services import tagging
+from tagpup.core.library import Library as CoreLibrary
 from tagpup.store import db
 
 
 @requires_exiftool
-class CliWriteFollowsTheKeywordRules(unittest.TestCase):
+class SuggestionWriteFollowsTheKeywordRules(unittest.TestCase):
     def setUp(self):
         from PIL import Image
 
@@ -45,15 +44,11 @@ class CliWriteFollowsTheKeywordRules(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
-        self.suggestions = os.path.join(self.lib.root, "suggestions.json")
-        with open(self.suggestions, "w", encoding="utf-8") as handle:
-            json.dump([{"path": self.photo, "suggested_tags": [
-                {"tag": "Activity/Rowing", "score": 0.9},
-                {"tag": "Rowan Thackeray", "score": 0.9}]}], handle)
 
     def write(self):
-        with mock.patch("builtins.input", return_value="YES"):
-            return write_suggestions_file(self.suggestions, self.lib.db_path, EXIFTOOL, live=True)
+        result = tagging.write_suggestions(CoreLibrary(self.lib.db_path),
+                                           [(self.photo, ["Activity/Rowing", "Rowan Thackeray"], "")], EXIFTOOL)
+        return not result.errors
 
     def keywords(self):
         with ExifToolSession(executable=EXIFTOOL) as et:

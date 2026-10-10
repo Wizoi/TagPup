@@ -22,13 +22,7 @@ The tool is built as a modular Python application with script wrappers. It relie
                        [TagTaxonomy]             ---> [TagSuggester] (Face Match)
                                |                              | (Aggregate & Score)
                                v                              v
-                       [photo_index.db: tree]   ---> [photo_index_suggestions.json]
-                                                              |
-                                                              v
-                                                      [write_suggestions (ExifTool)]
-                                                              |
-                                                              v
-                                                      [Tagged Image]
+                       [photo_index.db: tree]   ---> [a table of suggested tags (a preview)]
 ```
 
 - **`tagpup_cli.py` (CLI entry point)**: Unified Command Line Interface using `click` and `rich`.
@@ -40,7 +34,7 @@ The tool is built as a modular Python application with script wrappers. It relie
 - **`tagpup/services/identities.py` (Identity Clustering)**: Performs density-based clustering (**DBSCAN**) of a library's faces to resolve and assign names to visual identities based on co-occurrence tagging patterns, by the rules in `tagpup/core/clustering.py`.
 - **`tagpup/store/taxonomy.py` (Hierarchical Tag Taxonomy)**: Builds and updates a tree of all known hierarchical paths (e.g. `Family/Immediate/John Doe`). Resolves leaf tags to their ancestors.
 - **`tagpup/services/suggester.py` (Tag Suggestion Engine)**: Scores tags using cosine similarity of nearest visual neighbors and boosts matched tags if specific face embeddings are recognized in the target image. It is given its models.
-- **`tagpup/services/tagging.py` (`suggestion_writes`, `write_suggestions`)**: What `write` writes -- the tags at or above the score, and the caption made from them (`tagpup/core/suggesting.py`) -- written back to photos using ExifTool as one change of photo files (`tagpup/services/file_changes.py`), each file recorded in the index as it is written; `undo <change>` puts the files back. No `_original` copies are made. The CLI reads the suggestions file, shows the preview and asks for confirmation.
+- **`tagpup/services/tagging.py` (`write_suggestions`)**: Writes (path, tags, caption) back to photos using ExifTool as one change of photo files (`tagpup/services/file_changes.py`), each file recorded in the index as it is written; `undo <change>` puts the files back. No `_original` copies are made. No CLI command calls it since the JSON suggest/write flow was retired (2026-10-09); TagPup's pages write through the same journal.
 
 ---
 
@@ -220,22 +214,12 @@ Scans and indexes a photo library recursively: one or more directories, in one r
   - `--no-subfolders`: Only the photos directly in each DIRECTORY (`images.photos_in`): what sync queues for a folder the library holds, whose subfolders may be folders to review or ignored.
 
 #### 2. `suggest`
-Analyzes untagged photos and generates tag recommendations.
+Shows the tags TagPup would suggest for the photos of a folder, as a table. Nothing is written: no file, and no suggestions file (`--output` and the `write` command that read one were retired 2026-10-09); TagPup's Suggest keeps a folder's suggestions in the library and applies them.
 - **Usage**: `run.bat [global-options] suggest <DIRECTORY>`
 - **Options**:
   - `--k INTEGER`: Number of nearest neighbors to consider (default: `15`).
   - `--min-sim FLOAT`: Cosine similarity cutoff (default: `0.35`).
-  - `--output TEXT`: Path to write the output suggestions JSON file (default: `<library>_suggestions.json` beside the library, e.g. `data/photo_index_suggestions.json`; never the working folder).
   - `--add`: Add DIRECTORY to the library first when the library does not hold every folder of photos under it: the folder is recorded as added, as TagPup's Add does (`index` then reads its photos). Without it such a folder is refused, exit code 1, with a message naming the folder and the library: Suggest records faces and vectors on each photo's row, and a row makes its folder the library's -- kept in step, watched, its new files indexed (`tagpup.services.libraries.not_in`).
-
-#### 3. `write`
-Refused, exit code 1 and nothing written, when the library does not hold the folder of a photo the file names (`tagpup.services.libraries.refuse_writes`): "<folder> is not in <library>. Add it to <library> first."
-Writes suggested tags and descriptions back to photo file metadata using ExifTool.
-- **Usage**: `run.bat [global-options] write <SUGGESTIONS_FILE>`
-- **Options**:
-  - `-Live`: Write tags to files for real (actually modifies image files on disk).
-  - `-MinScore FLOAT`: Write tags at or above this score (default: `0.60`, `tagpup.core.suggesting.OFFER_A_TAG`, the value TagPup shows a tag from).
-  - `--nobackup`: Kept for scripts that pass it; a write makes no `_original` copies. It is recorded as one change, which `undo` reverses.
 
 #### 4. `search`
 Semantic natural language query against indexed visual vectors.

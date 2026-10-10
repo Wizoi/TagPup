@@ -109,14 +109,6 @@ def is_test_library(db_path):
     return os.path.basename(db_path).startswith(TEST_PREFIX)
 
 
-def suggestions_file(db_path):
-    """Where `suggest` writes when not told: beside the library, named for it, as the app's own files
-    are. It was suggestions.json in whatever folder the command was run from, which left one at the
-    checkout's root (docs/findings.md, #102); the runner window went by the same file (#293)."""
-    folder = os.path.dirname(os.path.abspath(db_path))
-    return os.path.join(folder, os.path.splitext(os.path.basename(db_path))[0] + "_suggestions.json")
-
-
 #: The one library a picker offers when the data folder holds none.
 FIRST_LIBRARY = "photo_index"
 

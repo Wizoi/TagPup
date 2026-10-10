@@ -12,16 +12,9 @@ Unlike cloud-dependent services, TagPup operates **100% locally** using PyTorch,
 
 ## 🗺️ System Architecture
 
-TagPup is structured around two equally important pillars, managed by a central desktop dashboard cockpit:
+TagPup is structured around two equally important pillars:
 
 ```
-                  ┌──────────────────────────────┐
-                  │   Desktop Dashboard Cockpit  │ (runner.py)
-                  │       (GUI Runner App)       │
-                  └──────────────┬───────────────┘
-                                 │
-         ┌───────────────────────┴───────────────────────┐
-         ▼                                               ▼
 ┌──────────────────┐                            ┌──────────────────┐
 │   TagPup GUI     │ (tagpup_web.py)            │   AI CLI Engine  │ (tagpup_cli.py)
 │  (Local Web UI)  │                            │  (Advanced CLI)  │
@@ -32,21 +25,6 @@ TagPup is structured around two equally important pillars, managed by a central 
          ├─ Sequential Renaming & Eviction               ├─ Face Clustering (DBSCAN)
          ├─ Camera Time-Shift Highlight                  ├─ Zero-Shot Year Consensus
          └─ Interactive Taxonomy Tree                    └─ ExifTool Metadata Writes
-```
-
----
-
-## 🎛️ The Dashboard Cockpit (Developer GUI Runner)
-
-For developers and advanced users, the **GUI Runner** dashboard (`runner.py`) provides an optional, unified desktop panel to run and monitor multiple processes side-by-side:
-
-*   **Multi-Server Control**: Spin up and stop both web servers simultaneously from a single panel.
-*   **Visual CLI Builder**: Graphically configure indexing options, face detection parameters, and search queries instead of using the terminal.
-*   **Live Console Log Viewer**: Stream server output and CLI execution logs in real-time.
-
-To launch the dashboard, run:
-```cmd
-.venv\Scripts\python runner.py
 ```
 
 ---
@@ -115,10 +93,6 @@ The **AI CLI Engine** is the underlying machine learning backend that indexes vi
    *   **Start Face Matching (TagTuner)**:
        ```cmd
        .venv\Scripts\python tagpup_web.py --open tuner
-       ```
-   *   **Start Developer Cockpit Dashboard**:
-       ```cmd
-       .venv\Scripts\python runner.py
        ```
 
 ---
