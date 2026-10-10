@@ -100,6 +100,26 @@ class Stamping(ALibrary):
         runtimes.library_settings(library)
         self.assertEqual(1, len(history(library)))
 
+    def test_a_setting_an_earlier_version_stored_and_this_one_no_longer_declares_is_harmless(self):
+        # library.reread_resized_pictures was a setting until 2026-10-10; the live libraries' tables still hold it.
+        library = self.new_library()
+        conn = db.connect(library.path)
+        try:
+            conn.execute("INSERT INTO settings (key, value) VALUES ('library.reread_resized_pictures', 'false')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        found = runtimes.library_settings(library)
+        self.assertEqual(found.values, settings.DEFAULTS)
+        self.assertNotIn("library.reread_resized_pictures", found.values)
+        self.assertIsNone(settings.change(library, {"candidates.tags": "Kayak"}).refused)
+        refused = settings.change(library, {"library.reread_resized_pictures": "true"})
+        self.assertEqual("There is no setting called library.reread_resized_pictures.", refused.refused)
+        self.assertEqual("false", settings_rows(library)["library.reread_resized_pictures"], "the stored row is left alone")
+        shown = {each["key"] for group in settings.described(found)["groups"] for each in group["settings"]}
+        self.assertNotIn("library.reread_resized_pictures", shown)
+
     def test_without_config_ini_a_library_in_use_gets_the_defaults(self):
         library = self.library_in_use()
         self.assertEqual(runtimes.library_settings(library).values, settings.DEFAULTS)

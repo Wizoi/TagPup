@@ -316,8 +316,7 @@ def sync(library, folder=None, apply=False, index_new=True):
             return indexing_jobs.queue_for(library).start(folders, index_folder(library, subfolders=False),
                                                           together=True)
     return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
-                             roots=settings.roots, ignored=settings.ignored,
-                             reread_resized=settings.reread_resized_pictures)
+                             roots=settings.roots, ignored=settings.ignored)
 
 
 def mark_folders(library, apply=False):

@@ -1173,11 +1173,8 @@ def sync(ctx, folder, apply_):
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
     if counts.get("size_changed"):
-        again = runtimes.peek_settings(library).reread_resized_pictures
-        console.print("  %d of the changed file(s) changed SIZE (%d with a face decided by hand): their pictures %s"
-                      % (counts["size_changed"], counts["size_changed_decided"],
-                         "are read again (library.reread_resized_pictures is on)." if again else
-                         "are not read again: library.reread_resized_pictures is off, as a keyword write changes the size too."))
+        console.print("  %d of the changed file(s) changed SIZE: their vectors and face boxes may be of an older picture "
+                      "(a keyword write changes the size too); they are left as they are." % counts["size_changed"])
     if counts.get("unreadable_files"):
         console.print("  %d photo(s) found damaged before, unchanged since, passed over: restore them from a"
                       " backup (the Activity page lists them)." % counts["unreadable_files"])

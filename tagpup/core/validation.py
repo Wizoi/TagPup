@@ -342,15 +342,6 @@ SETTINGS = {
         "Folders under a root that sync never offers to include, nor any folder under them, one a "
         "line. Photos already indexed in one stay in the library, and in step.",
         KINDS["folders"]["rules"]),
-    "library.reread_resized_pictures": _setting(
-        "library", "Read a resized photo's picture again", "boolean", "false",
-        "When sync finds a photo whose file changed SIZE, take away what was made of its picture -- its vector, "
-        "its faces unless one has a name or an exclusion -- and index it again (embedding and detecting on the "
-        "graphics card). Off, sync only counts them. Keyword and caption writes change a file's size too: on "
-        "photo_index every one of 1,229 size changes was a metadata write, so on is worth it only for a library "
-        "whose photos are edited in another program, and never for two libraries that share photos (naming faces "
-        "in one would have the other's sync take away its faces).",
-        [{"rule": "boolean", "message": "Reading a resized photo's picture again is true or false."}]),
     "candidates.tags": _setting(
         "suggest", "Candidate words", "list",
         "Landscape, Portrait, Nature, Urban, Sunset, Sunrise, Night, Ocean, Mountain, Forest, Animal, "

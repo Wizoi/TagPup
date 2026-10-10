@@ -272,19 +272,6 @@ def decided_for_photo(conn, photo_path):
                         + " AND (name_source = 'manual' OR excluded = 1)", params).fetchone()[0]
 
 
-def decided_photo_ids(conn, photo_ids):
-    """The ids among `photo_ids` of photos with a face somebody decided (decided_for_photo's rule): a name or a
-    "nobody" given by hand, or an exclusion. One lookup a chunk, by photo id (idx_faces_photo_id)."""
-    photo_ids = sorted(photo_ids)
-    found = set()
-    for start in range(0, len(photo_ids), CHUNK):
-        chunk = photo_ids[start:start + CHUNK]
-        found.update(photo_id for (photo_id,) in conn.execute(
-            "SELECT DISTINCT photo_id FROM faces WHERE photo_id IN (%s) AND (name_source = 'manual' OR excluded = 1)"
-            % ",".join("?" * len(chunk)), chunk))
-    return found
-
-
 def _photos_of(conn, face_ids):
     """The ids of the photos the faces among `face_ids` are in."""
     found = set()

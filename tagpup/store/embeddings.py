@@ -113,13 +113,6 @@ def lacking(conn, photo_id, held):
                         (photo_id,) + tuple(held)).fetchall()
 
 
-def stale_or_missing(conn, photo_id, stamp):
-    """Is the photo with no vector, or one made from the file as it was before `stamp`, (mtime, size) -- one under
-    any model? A vector stamped with the file's stamp now was made from it: the picture is not to be read again."""
-    stamps = conn.execute("SELECT mtime, size FROM embeddings WHERE photo_id = ?", (photo_id,)).fetchall()
-    return not stamps or any(tuple(held) != tuple(stamp) for held in stamps)
-
-
 def clear(conn):
     """Forget every photo's vectors. Returns rows deleted. The caller commits."""
     return conn.execute("DELETE FROM embeddings").rowcount
