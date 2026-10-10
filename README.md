@@ -143,7 +143,7 @@ Each library holds its own settings: the CLIP model its vectors are made with, t
 
 A new library starts with the defaults. The libraries are in `data/` in the TagPup home: the folder the code is in, unless the `TAGPUP_HOME` environment variable names another. ExifTool is found where its installer puts it, else on PATH.
 
-A `config.ini` from an older version is read once per library, the first time the library is opened, to give it the settings it was made with; after that it is unused and can be deleted.
+A `config.ini` from an older version is no longer read by anything; it can be deleted (TagPup never touches it).
 
 ---
 

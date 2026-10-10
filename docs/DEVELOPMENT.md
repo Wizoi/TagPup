@@ -149,8 +149,8 @@ A test that makes a library, or needs settings, logs or anything else a library 
 beside it, takes a home of its own from `tests/own_home.py`: `own_home.for_class(cls)`
 in `setUpClass`, `own_home.for_test(self)` in a test, then `home.library("x.db")`.
 Without one, the servers create libraries in the checkout's `data/`, where the owner's
-are, and stamp them from the checkout's `config.ini`. A test that needs an old
-`config.ini` to stamp from writes it with `home.write_old_config({...})`. A server a test starts holds its library
+are, and read the checkout's `data/`. A test that shows an old `config.ini` is ignored
+writes it with `home.write_old_config({...})`. A server a test starts holds its library
 until the process ends, so a home it still holds is deleted once the process has gone.
 
 ## Traps

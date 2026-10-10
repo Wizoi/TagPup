@@ -531,7 +531,7 @@ def _settings(conn):
 
     Written only through the journal (tagpup.services.settings), so every change is in
     the library's history and can be undone. The table starts empty: the service stamps
-    it -- from the defaults, or once from config.ini for a library in use. Only adds a
+    it with the defaults (once from config.ini, until that was retired). Only adds a
     table, so it needs no backup.
     """
     conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)")
