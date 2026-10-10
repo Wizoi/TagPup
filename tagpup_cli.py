@@ -283,8 +283,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     model_name = settings.embedder["model_name"]
 
     # Setup / Load components
+    # Connected, its vectors not read: the index needs their length alone (stored_dim).
     photo_index = library_index(runtime, db_path)
-    photo_index.load()
+    photo_index.open()
 
     # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
     mismatch = stored_mismatch(photo_index, model_name)
@@ -324,7 +325,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # By paths.key: a folder indexed under one spelling and scanned under another is
     # the same photos, and keyed by the raw string every one of them was re-embedded
     # and given a second row.
-    existing_entries = {paths.key(meta["path"]): meta for meta in photo_index.records()}
+    # The stamps alone: no photo's JSON is read to learn whether its file changed.
+    existing_entries = {paths.key(path): {"mtime": mtime, "size": size, "has_embedding": bool(vectored)}
+                        for path, mtime, size, vectored in photo_index.stamps()}
     images_to_process = []
     skipped_count = 0
 
@@ -586,7 +589,8 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
-            photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=True)
+            # Not reloaded: nothing below searches this index, and a reload reads every vector again.
+            photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=False)
             
             # Save the remaining face embeddings
             if batch_faces:

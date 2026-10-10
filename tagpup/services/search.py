@@ -35,7 +35,7 @@ def stored_mismatch(photo_index, model_name):
     # Here, not at the top: open_clip takes seconds to import, and the index needs none of it.
     from tagpup.ml.clip import output_dim
 
-    stored = photo_index.index.d if photo_index.index is not None else None
+    stored = photo_index.stored_dim()
     made = output_dim(model_name)
     if stored is None or made is None or stored == made:
         return None
@@ -195,7 +195,30 @@ class PhotoIndex:
         with self._load_lock:
             return self._load_unlocked()
 
-    def _load_unlocked(self) -> bool:
+    def open(self) -> bool:
+        """Connect, as load does, but read none of the vectors: for a command that needs only
+        the connection and `stored_dim` (the indexer, which read 267 MB of vectors to learn
+        their length). `index` stays None."""
+        with self._load_lock:
+            return self._load_unlocked(vectors=False)
+
+    def stored_dim(self):
+        """The length of the vectors the library holds under this index's model, read from one
+        of them; None when it holds none or is not connected."""
+        if self.conn is None or self.model is None:
+            return None
+        with self._read_lock:
+            return store_photos.vector_dim(self.conn, self.model)
+
+    def stamps(self):
+        """(path, mtime, size, holds a vector) of every photo, read now (store.photos.stamps_with_vectors):
+        what the indexer compares with the files. [] when not connected."""
+        if self.conn is None:
+            return []
+        with self._read_lock:
+            return store_photos.stamps_with_vectors(self.conn, self.model)
+
+    def _load_unlocked(self, vectors=True) -> bool:
         try:
             if self.read_only:
                 if not os.path.exists(self.db_path):
@@ -204,7 +227,7 @@ class PhotoIndex:
                 if self.conn is None:
                     self.conn = db.connect(db.readonly_uri(self.db_path), uri=True, timeout=30.0,
                                            check_same_thread=False)
-                return self._read_rows()
+                return self._read_rows(vectors)
             db_dir = os.path.dirname(self.db_path)
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
@@ -216,21 +239,22 @@ class PhotoIndex:
             if self.conn is None:
                 self.conn = db.connect(self.db_path, timeout=30.0, check_same_thread=False,
                                               foreign_keys=True)
-            return self._read_rows()
+            return self._read_rows(vectors)
         except Exception as e:
             index_log.error(f"Error loading SQLite database: {e}", exc_info=True)
             self.index = None
             self.count = self.indexed = 0
             return False
 
-    def _read_rows(self) -> bool:
-        """Read the photos' vectors on self.conn into memory, by photo id."""
+    def _read_rows(self, vectors=True) -> bool:
+        """Read the photos' vectors on self.conn into memory, by photo id; with `vectors` False,
+        none of them (open)."""
         # Taken before the rows: a write landing in between costs one reload
         # later, never a missed one. See reload_if_changed.
         self._signature = self._photos_signature()
         with self._read_lock:
             self.count, _vectored = store_photos.counts(self.conn, self.model)
-            rows = store_photos.vectors(self.conn, self.model) if self.model is not None else []
+            rows = store_photos.vectors(self.conn, self.model) if vectors and self.model is not None else []
         ids, embeddings = [], []
         for photo_id, emb_bytes in rows:
             if emb_bytes:
