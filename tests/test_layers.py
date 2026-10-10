@@ -42,6 +42,20 @@ MAY_IMPORT = {
     "mcp": {"core", "config", "logs", "runtime", "services", "jobs"},
 }
 
+#: The programs (the launchers in the repository's root, and scripts/) are not in the package, and used to be checked by nothing.
+#: They are a shell over the actions: they may import every layer above the data, but not the database or the files or the
+#: models directly (`store`, `files`, `ml`): that is the services' to do, and a program that did it wrote around the rules the
+#: services keep (docs/ARCHITECTURE.md, "Layers"). These import such a layer today, each as many times as listed; the count can
+#: only go down, and the test says when it has (lower the number here). A new program, or a new import, fails.
+PROGRAMS_MAY_NOT_IMPORT = {"store", "files", "ml"}
+PROGRAMS_TODAY = {
+    "tagpup_cli.py": 7,
+    "scripts/measure_suggest_folder.py": 2,
+    "scripts/prepare_test_environment.py": 7,
+    "scripts/sandbox.py": 2,
+    "scripts/verify_workflow.py": 3,
+}
+
 #: A line importing the package itself, not a module whose name starts with "tagpup".
 IMPORTS_THE_PACKAGE = re.compile(r"\s*(?:import|from)\s+tagpup(?:\.|\s|$)")
 
@@ -137,6 +151,25 @@ class ImportsGoDown(unittest.TestCase):
     def test_the_package_is_checked(self):
         """A guard that finds no files passes forever."""
         self.assertIn(os.path.join("tagpup", "store", "db.py"), package_sources())
+
+    def test_programs_reach_the_data_through_the_services(self):
+        from code_snapshot import LAUNCHERS
+        found = {}
+        for relative in python_sources():
+            name = relative.replace(os.sep, "/")
+            if not (relative in LAUNCHERS or name.startswith("scripts/")):
+                continue
+            with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
+                source = handle.read()
+            count = sum(1 for target in imported_names(source, module_name(relative), False)
+                        if layer_of(target) in PROGRAMS_MAY_NOT_IMPORT)
+            if count:
+                found[name] = count
+        over = {name: n for name, n in found.items() if n > PROGRAMS_TODAY.get(name, 0)}
+        self.assertEqual({}, over, "a program imports store, files or ml directly: go through a service "
+                                   "(docs/ARCHITECTURE.md), do not raise the number")
+        under = {name: n for name, n in PROGRAMS_TODAY.items() if found.get(name, 0) < n}
+        self.assertEqual({}, under, "fewer than listed (now %s): lower PROGRAMS_TODAY, it can only go down" % found)
 
     def test_scripts_reach_the_package_through_root(self):
         """A module in scripts/ imports _root before tagpup, or works only by luck.
