@@ -61,7 +61,7 @@ _waiting = {}
 
 
 def _key(db_path):
-    return os.path.normcase(os.path.abspath(db_path))
+    return paths.key(db_path)
 
 
 def updating(db_path):
