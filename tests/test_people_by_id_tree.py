@@ -86,28 +86,14 @@ class Operations(TwoSams, unittest.TestCase):
             return face
         return write(self.path, add)
 
-    def test_renaming_a_name_no_tag_has_into_a_persons_name_gives_the_faces_that_person(self):
-        """Fix round 3: the faces were written the new NAME alone -- on no person's page, in no list, linked by nothing later."""
-        wren = self.node("People/Wren Halloway")
+    def test_renaming_a_name_no_tag_has_is_refused_whatever_the_new_name_is(self):
+        self.node("People/Wren Halloway")
         face = self.unresolved_face()
-        result = self.rename("Zed Mercer", "Wren Halloway")
-        self.assertTrue(result.ok, result.message())
-        self.assertEqual(1, result.details["faces_renamed"])
-        self.assertEqual((wren, "Wren Halloway", "manual"), self.face(face), "the writer knew the id and wrote it")
-        self.assertIn((wren, "Wren Halloway", "face"), self.listed(self.other))
-
-    def test_renaming_a_name_no_tag_has_into_a_name_two_people_have_is_refused_naming_them(self):
-        face = self.unresolved_face()
-        with self.assertRaises(Refused) as why:
-            self.rename("Zed Mercer", "Sam")
-        self.assertIn(SAM_T, str(why.exception))
-        self.assertIn(SAM_I, str(why.exception))
-        self.assertEqual((None, "Zed Mercer", "manual"), self.face(face), "nothing was written")
-
-    def test_renaming_a_name_no_tag_has_into_a_name_nobody_has_stays_a_name(self):
-        face = self.unresolved_face()
-        self.assertTrue(self.rename("Zed Mercer", "Zed Marlowe").ok)
-        self.assertEqual((None, "Zed Marlowe", "manual"), self.face(face))
+        for new in ("Wren Halloway", "Sam", "Zed Marlowe"):
+            with self.subTest(new):
+                result = self.rename("Zed Mercer", new)
+                self.assertIn("create the person first", result.refused)
+                self.assertEqual((None, "Zed Mercer", "manual"), self.face(face), "nothing was written")
 
     def test_rename_never_merges_into_a_person_who_is_there(self):
         result = self.rename(self.sam_i, "Wren Halloway")      # a free name: fine

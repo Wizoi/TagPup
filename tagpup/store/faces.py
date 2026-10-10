@@ -641,26 +641,6 @@ def unname_person(conn, tag_ids, source=None):
     return _rebuilt(conn, photo_ids, changed)
 
 
-def rename_unresolved(conn, old, new):
-    """The faces and listed people called `old` (without case) whose name no person is filed under (no id) are called `new`
-    (Rename Person for a name with no tag). When `new` IS a person's name -- one node is called so -- the faces are that person's:
-    this writer knows the id, and writes it with the node's leaf (a name written alone would be on no person's page, and
-    nothing links it later: person_ids.link_added). A `new` two people have (or a group) is PersonProblem, naming them. Returns
-    (faces renamed, photos changed). The caller commits."""
-    key = old.strip().lower()
-    new_id, new = person_ids.target(conn, new)
-    spellings = {name for (name,) in conn.execute("SELECT DISTINCT name FROM faces WHERE tag_id IS NULL AND name IS NOT NULL")
-                 if name.strip().lower() == key}
-    photo_ids = {photo_id for spelling in spellings for (photo_id,) in conn.execute(
-        "SELECT DISTINCT photo_id FROM faces WHERE tag_id IS NULL AND name = ?", (spelling,))}
-    renamed = sum(conn.execute("UPDATE faces SET name = ?, tag_id = ? WHERE tag_id IS NULL AND name = ?",
-                               (new, new_id, spelling)).rowcount for spelling in spellings)
-    photo_ids |= {photo_id for (photo_id, name) in conn.execute(
-        "SELECT DISTINCT photo_id, name FROM photo_people WHERE tag_id IS NULL") if name.strip().lower() == key}
-    changed = people.rebuild(conn, sorted(photo_ids)) if photo_ids else 0
-    return renamed, changed
-
-
 def unname_photo(conn, photo_path):
     """Take the names off every named face in a photo, as a decision. Returns rows
     changed. By equality: a LIKE pass as well cleared every name in IMG-1234.jpg along

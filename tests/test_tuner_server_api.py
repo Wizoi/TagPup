@@ -508,19 +508,17 @@ class TestUnmatchAll(TunerAPITestBase):
 
 
 class TestPersonRename(TunerAPITestBase):
-    def test_renames_across_faces_and_photo_people(self):
+    def test_a_name_no_person_tag_has_is_refused_and_nothing_changes(self):
         photo = self.add_photo(self.make_photo_file("a.jpg"))
         face_id = self.add_face(photo, unit_vector(90), name="Jane Doe")
         self.rebuild(photo)
-        self.assertEqual(["Jane Doe"], self.photo_people(photo))
 
         status, body = self.post(
             "/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Smith"}
         )
-        self.assertEqual(status, 200, body)
-        self.assertEqual(self.face_name(face_id), "Jane Smith")
-        self.assertIn("Jane Smith", self.photo_people(photo))
-        self.assertNotIn("Jane Doe", self.photo_people(photo))
+        self.assertEqual(status, 400, body)
+        self.assertEqual(self.face_name(face_id), "Jane Doe")
+        self.assertEqual(["Jane Doe"], self.photo_people(photo))
 
     def test_leaves_other_people_untouched(self):
         photo = self.add_photo(self.make_photo_file("a.jpg"))
@@ -531,15 +529,6 @@ class TestPersonRename(TunerAPITestBase):
         self.post("/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Smith"})
         self.assertEqual(self.face_name(bob), "Bob Roe")
         self.assertIn("Bob Roe", self.photo_people(photo))
-
-    def test_renaming_to_the_same_name_is_a_noop(self):
-        photo = self.add_photo(self.make_photo_file("a.jpg"), people=["Jane Doe"])
-        face_id = self.add_face(photo, unit_vector(93), name="Jane Doe")
-        status, body = self.post(
-            "/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Doe"}
-        )
-        self.assertEqual(status, 200, body)
-        self.assertEqual(self.face_name(face_id), "Jane Doe")
 
     def test_rejects_the_reserved_unmatched_label(self):
         status, _ = self.post(

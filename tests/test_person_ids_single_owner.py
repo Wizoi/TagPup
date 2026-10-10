@@ -38,16 +38,12 @@ NAME_WRITE = re.compile(r"\b(?:UPDATE\s+faces\s+SET\b(?:(?!\bWHERE\b).)*\bname\b
 IDS_WRITTEN_WITH_THE_PAIR = {
     # target() gives the pair (the node's id and its leaf) and the INSERT writes both.
     ("tagpup/store/faces.py", "insert"): "person_ids.target",
-    # Renames faces with no person to the name of one: target() gives the pair, and the UPDATE writes both.
-    ("tagpup/store/faces.py", "rename_unresolved"): "person_ids.target",
     # The ids vocabulary.people_rows gave from the tree it was read from; settled by person_ids.follow_listed right after.
     ("tagpup/store/people.py", "rebuild"): "person_ids.follow_listed",
 }
 
 #: (module, function) that write names and say so, with the function that gives the ids.
 COVERED_ELSEWHERE = {
-    # Renames faces whose name no person is filed under; the photos' lists are rebuilt by the rule (the id comes from target).
-    ("tagpup/store/faces.py", "rename_unresolved"): ("tagpup/store/people.py", "rebuild"),
     # Migration 4 rebuilt faces before the column existed; migration 21 fills it (_person_ids).
     ("tagpup/store/schema.py", "_photo_ids"): ("tagpup/store/schema.py", "_person_ids"),
     # The journal writes any row of a journaled table; _derive follows what it wrote.
@@ -103,7 +99,7 @@ class PersonIdsHaveOneOwner(unittest.TestCase):
         """A guard that matches nothing passes forever."""
         found = {(module, name) for module, name, _node in self.names}
         self.assertLessEqual({("tagpup/store/faces.py", "name"), ("tagpup/store/faces.py", "insert"),
-                              ("tagpup/store/faces.py", "set_names"), ("tagpup/store/faces.py", "rename_unresolved"),
+                              ("tagpup/store/faces.py", "set_names"),
                               ("tagpup/store/people.py", "rebuild")}, found)
         self.assertIn((OWNER, "follow_faces"), self.ids)
 

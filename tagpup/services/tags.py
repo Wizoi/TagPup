@@ -289,7 +289,7 @@ def rename_person(library, person, new_name, exiftool_path):
 
     It never merges: a person already filed at the new place is refused ("merge them instead", tags.merge). Other people
     called the same are other people and are left. A photo that could not be rewritten still names the person the old way;
-    the Result fails for it. A name no person tag has -- faces named with no node -- renames those faces alone.
+    the Result fails for it. A name no person tag has is refused: the person is made first (owner, 2026-10-10).
 
     details: `photos_affected`, `photos_rewritten`, `faces_renamed`.
     """
@@ -312,11 +312,8 @@ def rename_person(library, person, new_name, exiftool_path):
 
     found = people_service.resolve(library, person)   # NotFound for a stale id; Refused naming the candidates
     if found is None:
-        old_name = str(person).strip()
-        if old_name == new_name:
-            return result
-        result.details["faces_renamed"] = _rename_unnamed_records(library, old_name, new_name)
-        _tree_changed(library)
+        result.refuse("No person is called '%s': create the person first (a name with no person tag is flagged, not renamed)."
+                      % str(person).strip())
         return result
     if found.name == new_name:
         return result
@@ -502,19 +499,6 @@ def _rewrite(library, carrying, old, new, exiftool_path):
     """
     outcome = tagging.replace_tag(library, carrying, old, new, exiftool_path)
     return outcome.changed, len(carrying) - outcome.changed - len(outcome.skipped)
-
-
-def _rename_unnamed_records(library, old, new):
-    """The faces called `old` whose name no person tag has renamed `new`, and each photo's list of people. Returns the faces
-    renamed."""
-    try:
-        faces_renamed, _ = db.write_with_connection(
-            library.path, lambda conn: faces.rename_unresolved(conn, old, new), label="rename a name's faces")
-    except person_ids.PersonProblem as problem:
-        people_service.translate(problem)   # a new name two people have: Refused, naming them
-    if faces_renamed:
-        logger.info("Renamed %d face(s) with no person tag.", faces_renamed)
-    return faces_renamed
 
 
 def _count(result, affected, rewritten, add_up):
