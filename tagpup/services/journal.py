@@ -10,7 +10,7 @@ library is photographs of real people, many of them minors.
 
 A stamp of a library's settings (tagpup.services.settings.STAMPS) is never undone: it
 is the library's first settings, and undone the library held none -- the next read
-stamped it again, from config.ini if one was still there.
+stamped it again.
 
 A change of photo files (tagpup.services.file_changes) is undone file by file, and its
 rows follow: a file that no longer holds what the change left is refused, named, and the

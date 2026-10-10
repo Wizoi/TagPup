@@ -1,9 +1,8 @@
-"""Where TagPup's libraries are, which ExifTool the machine has, and -- once, for each
-library that has no settings of its own yet -- what the old config.ini said.
+"""Where TagPup's libraries are and which ExifTool the machine has.
 
 config.ini was read in 26 places, each with its own idea of where the file is and what
-a missing value means, and then by this module alone. Its settings are each library's
-now (tagpup.services.settings; docs/ARCHITECTURE.md, phase 7.6): the CLIP model a
+a missing value means, and then by this module alone. Now nothing reads it; an old file
+may sit in a home, ignored. Its settings are each library's (tagpup.services.settings; docs/ARCHITECTURE.md, phase 7.6): the CLIP model a
 library's vectors were made with, the face thresholds, Suggest's words, the rename
 format and the ExifTool it names. What is left here is the machine's:
 
@@ -17,13 +16,7 @@ format and the ExifTool it names. What is left here is the machine's:
   home; docs/ARCHITECTURE.md, "Roots and machines"). Absent means nothing is mapped.
 - `code_version`, the installed version the code is (scripts/install_app.py writes its
   name beside it), or None for a checkout: what the pages say answers them.
-- `config_ini`, what a home's config.ini says, which tagpup.runtime hands to the
-  one-time stamping of a library holding no settings (tagpup.services.settings.of), so
-  a library in use keeps the settings it was made with. Nothing else reads the file
-  (tests/test_config_single_owner.py); once every library has been stamped it is unused,
-  and can be deleted.
 """
-import configparser
 import contextlib
 import json
 import os
@@ -87,37 +80,6 @@ def exiftool_path(named=""):
     if os.path.exists(path):
         return path
     return shutil.which("exiftool") or path
-
-
-def _same_file(a, b):
-    """Are `a` and `b` one program on this machine? Asked of the file system, not the
-    spelling (tagpup.core.paths spells photo paths; this is neither)."""
-    try:
-        return os.path.samefile(a, b)
-    except OSError:
-        return False
-
-
-def config_ini(folder=None):
-    """What the config.ini of this home (or of `folder`) says, as {"section.key": value},
-    or None when there is none: for stamping a library that holds no settings yet, and
-    for nothing else.
-
-    An ExifTool it names that is the one the installer put where it puts it is given as
-    "" -- found on each machine, rather than this machine's profile folder written into
-    the library.
-    """
-    path = os.path.join(folder or home(), "config.ini")
-    if not os.path.exists(path):
-        return None
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.read(path, encoding="utf-8")
-    found = {"%s.%s" % (section, key): value for section in parser.sections()
-             for key, value in parser.items(section)}
-    exiftool = found.get("paths.exiftool", "").strip()
-    if exiftool and _same_file(os.path.expandvars(exiftool), default_exiftool()):
-        found["paths.exiftool"] = ""
-    return found
 
 
 #: The file in a home that says where this machine keeps each root of the libraries.

@@ -1,5 +1,4 @@
-"""tagpup.config: the home, where the libraries are, the machine's ExifTool, and the one
-reading of an old config.ini, for stamping a library that holds no settings yet.
+"""tagpup.config: the home, where the libraries are and the machine's ExifTool.
 
 Each case here was a difference between two of the 26 places that read config.ini:
 where it was, what a relative path meant, what a missing value meant, and which
@@ -50,43 +49,6 @@ class WhereThingsAre(WithAHome):
         # found in data/ in its home, by every program alike.
         self.home.write_old_config({"paths": {"data_dir": self.elsewhere}})
         self.assertEqual(config.data_dir(), os.path.join(self.home.root, "data"))
-
-
-class WhatAnOldConfigSays(WithAHome):
-    def test_none_without_one(self):
-        self.assertIsNone(config.config_ini())
-
-    def test_each_setting_by_section_and_key(self):
-        self.home.write_old_config({"model": {"name": "ViT-B-32"}, "faces": {"min_face_size": "32"}})
-        self.assertEqual(config.config_ini(), {"model.name": "ViT-B-32", "faces.min_face_size": "32"})
-
-    def test_the_file_is_read_as_utf8(self):
-        # metadata.py read it as cp1252: "–" came back as "â€“".
-        self.home.write_old_config({"renaming": {"format": "{grouping} – {index} – {caption}"}})
-        self.assertEqual(config.config_ini()["renaming.format"], "{grouping} – {index} – {caption}")
-
-    def test_percent_signs_are_not_interpolation(self):
-        # The default ConfigParser, which metadata.py used, raises on a lone "%".
-        tool = "%USERPROFILE%" + os.sep + "Tools" + os.sep + "exiftool.exe"
-        self.home.write_old_config({"paths": {"exiftool": tool}})
-        self.assertEqual(config.config_ini()["paths.exiftool"], tool)
-
-    def test_an_exiftool_where_the_installer_puts_it_is_left_to_be_found(self):
-        installed = os.path.join(self.elsewhere, "exiftool.exe")
-        open(installed, "w").close()
-        with mock.patch.object(config, "default_exiftool", return_value=installed):
-            self.home.write_old_config({"paths": {"exiftool": installed.upper()}})
-            self.assertEqual(config.config_ini()["paths.exiftool"], "")
-            other = os.path.join(self.home.root, "exiftool.exe")
-            open(other, "w").close()
-            self.home.write_old_config({"paths": {"exiftool": other}})
-            self.assertEqual(config.config_ini()["paths.exiftool"], other, "another program is kept")
-
-    def test_another_folders(self):
-        other = own_home.OwnHome()
-        self.addCleanup(other.close)
-        other.write_old_config({"model": {"name": "ViT-L-14"}})
-        self.assertEqual(config.config_ini(other.root), {"model.name": "ViT-L-14"})
 
 
 class WhichExifTool(WithAHome):

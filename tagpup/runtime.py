@@ -7,9 +7,8 @@ objects.
 
 A library's settings are its own (tagpup.services.settings; docs/ARCHITECTURE.md, phase
 7.6), and `library_settings` is where an entry point reads them: the first time a
-library holding none is opened, it is stamped from what the home's config.ini says, if
-it has one, else with the defaults. That is the one read of config.ini left
-(tests/test_config_single_owner.py).
+library holding none is opened, it is stamped with the defaults. Nothing reads
+config.ini (tests/test_config_single_owner.py).
 
 A Runtime builds each CLIP model and each set of face models once per set of settings,
 the first time a library with those settings asks: two libraries on one model share it,
@@ -63,14 +62,13 @@ logger = logging.getLogger(__name__)
 
 def library_settings(library):
     """The library's settings (tagpup.services.settings.LibrarySettings), a library
-    holding none stamped first: from the home's config.ini if it has one, else with the
-    defaults.
+    holding none stamped first, with the defaults.
 
     The first time this process reads them, a change of photo files a crash left half
     done is settled, with the ExifTool they name (tagpup.services.file_changes.settle_once):
     the changes of rows are settled when the library is first opened (schema.ensure), but
     files need ExifTool, which only the library's settings say where to find."""
-    settings = library_settings_service.of(library, tagpup_config.config_ini)
+    settings = library_settings_service.of(library)
     file_changes.settle_once(library, tagpup_config.exiftool_path(settings.exiftool))
     return settings
 
@@ -78,7 +76,7 @@ def library_settings(library):
 def peek_settings(library):
     """The library's settings, writing nothing: for a read-only look (the MCP server's
     inspections, tools/doctor.py). A library never stamped reads as stamping would make it."""
-    return library_settings_service.read(library, tagpup_config.config_ini)
+    return library_settings_service.read(library)
 
 
 #: Set, a process a test started runs the recurring jobs, which it otherwise never does;
