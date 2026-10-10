@@ -605,18 +605,6 @@ def faces_using(conn, ids):
     return found
 
 
-def put_aside(conn, face_ids):
-    """The faces `face_ids` hold no id (NULL): a change recorded before the id was recorded wrote their name alone, and the id they
-    hold is another person's now (the journal's _named_by_name). They are unresolved names after it, not guessed. Returns rows
-    changed."""
-    if not face_ids or not present(conn):
-        return 0
-    changed = 0
-    for chunk in _chunks(face_ids):
-        changed += conn.execute("UPDATE faces SET tag_id = NULL WHERE id IN (%s)" % _marks(chunk), chunk).rowcount
-    return changed
-
-
 def release(conn, node_ids):
     """The rows that name the nodes `node_ids` are left with the name alone (tag_id NULL): the journal's undo of a node's
     insert takes the node away, and the faces and listed people it was linked to by their name go back to being that name.

@@ -100,10 +100,7 @@ DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta"
 #: every inserted photo changed since.
 #:
 #: A face's `tag_id` is NOT one: it is the person (docs/ARCHITECTURE.md, "People by id, stage 2"), recorded
-#: with the change like any column, and `name` beside it is only its cache (`cache_columns`). A change
-#: recorded before that -- one that wrote a face's name and not its id -- is replayed by the name: the id of
-#: the rows it wrote is put by the name and the tree as they stand (`_derive`, `_named_by_name`), and nothing
-#: in the journal is rewritten.
+#: with the change like any column, and `name` beside it is only its cache (`cache_columns`).
 DERIVED_COLUMNS = {"photos": ("taken", "year")}
 
 
@@ -801,22 +798,6 @@ def _face_photos(conn, changes):
     return found
 
 
-def _named_by_name(conn, changes):
-    """A change recorded before a face's person was an id wrote a face's NAME and not its id (a naming, an unnaming, a
-    guess): the faces it wrote still hold the id they had, which is another person's now, or none. Their id is put aside --
-    NULL: an unresolved name for the owner, never guessed from the name; the journal knows no id --
-    and nothing recorded is rewritten. A change that recorded the id is replayed as it was. Returns the faces."""
-    ids = set()
-    for change in changes:
-        if change.table != "faces" or change.key is None:
-            continue
-        values = [d for d in (change.old, change.new) if d]
-        if any("name" in d and "tag_id" not in d for d in values):
-            ids.add(change.key[0])
-    person_ids.put_aside(conn, sorted(ids))
-    return ids
-
-
 def _derive(conn, changes):
     """Rebuild what `changes` touched of the derived data: the people of each photo whose
     keywords or faces changed or whose keywords a changed node names, the dates of each photo
@@ -833,7 +814,6 @@ def _derive(conn, changes):
     if nodes:
         changed += people.follow_nodes(conn, nodes)
     if photo_ids:
-        _named_by_name(conn, changes)
         person_ids.follow_faces(conn, sorted(photo_ids))
         changed += people.rebuild(conn, sorted(photo_ids))
     if nodes:

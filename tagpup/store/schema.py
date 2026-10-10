@@ -1561,8 +1561,7 @@ MIGRATIONS = (
 #: older change's rows mean: an undo writes the columns it recorded and the derived ones are made
 #: again from them (journal._derive), so it blocks no undo of a change made before it
 #: (journal.schema_gap_blocker). Version 21's `faces.tag_id` was derived from the name then; it is the
-#: person since 29 (journal.cache_columns), and a change recorded before that is replayed by the name
-#: (journal._named_by_name). tests/test_person_ids.py holds each to the columns it really adds.
+#: person since 29 (journal.cache_columns). tests/test_person_ids.py holds each to the columns it really adds.
 ADDS_DERIVED_COLUMNS = {21: {"faces": ("tag_id",)}}
 
 LATEST = MIGRATIONS[-1].version
