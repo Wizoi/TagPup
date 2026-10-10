@@ -280,7 +280,10 @@ class Choices(unittest.TestCase):
         said = "\n".join(self.said)
         self.assertIn("TagPup %s did not start (it exited with 7)" % NEW, said)
         self.assertIn("Started TagPup %s again" % OLD, said)
-        self.assertIn("write %s in" % OLD, said)
+        self.assertNotIn("as before", said, "the library may be one the new version already migrated (#1042)")
+        self.assertIn("may refuse a library that TagPup %s had already brought up to date" % NEW, said)
+        self.assertIn("snapshots restore", said, "the way back is a snapshot, not current.txt")
+        self.assertIn("start the newest TagPup", said)
 
     def test_the_always_on_process_chosen_is_started_rather_than_a_server_of_the_installs(self):
         self.drains = [{"drained": True}]

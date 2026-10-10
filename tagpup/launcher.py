@@ -599,8 +599,14 @@ def _start_again(found, installed, python, home, say, sleep, clock, new, back):
     again = start_server(python, code, home, ports)
     why = wait_for(port, old, again, sleep=sleep, clock=clock)
     if why is None:
-        say("Started TagPup %s again (process %s): the pages answer as before. The launchers start %s now: run "
-            "TagPup.cmd to see why it does not start, or write %s in %s to go back." % (old, again.pid, new, old, back))
+        # Not "as before": TagPup `new` may have brought the libraries to its schema before it failed, and
+        # `old` cannot be run against a migrated library (a version with the newer-library check refuses it; an
+        # older one would write it with old rules). Writing `old` in current.txt is therefore no way back (#1042).
+        say("Started TagPup %s again (process %s), but its pages may refuse a library that TagPup %s had already "
+            "brought up to date. The launchers start %s now: run TagPup.cmd to see why it does not start and start "
+            "the newest TagPup. Writing %s in %s does not roll back a library that was updated; for that restore a "
+            "snapshot (tagpup_cli.py snapshots list, then snapshots restore <name> --apply)."
+            % (old, again.pid, new, new, old, back))
         return False
     if again.poll() is None:
         processes.kill_tree(again.pid)
