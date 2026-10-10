@@ -97,7 +97,8 @@ months while reporting success. In the pages, `pathKey` / `samePath` (`web/commo
 words, the rename format and ExifTool's path are each library's own (`settings`, read
 through `tagpup.services.settings`, changed only by a journaled change). An entry point
 reads them from the library it was given (`tagpup.runtime.library_settings`); nothing
-reads `config.ini` but the one-time stamping of a library that has none. `tagpup/config.py`
+reads `config.ini`, not even to stamp a library that has no settings (that gets the
+defaults; an old file in a home is ignored, left on disk, never written). `tagpup/config.py`
 owns only where the libraries are (`TAGPUP_HOME/data`) and where ExifTool is found by
 default. 26 places once read `config.ini` and disagreed on four things. A test that
 selects or creates a library runs with a `TAGPUP_HOME` of its own.

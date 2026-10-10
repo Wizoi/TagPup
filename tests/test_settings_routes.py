@@ -128,17 +128,17 @@ class TheSettingsRoutes(unittest.TestCase):
         client.post("/library/api/settings", json={"values": {"model.name": "ViT-B-32"}, "acknowledged": ["clip"]})
         runtime.settings_changed.assert_not_called()
 
-    def test_a_library_in_use_is_stamped_from_config_ini_when_its_settings_are_asked(self):
+    def test_a_library_in_use_is_stamped_with_the_defaults_when_its_settings_are_asked(self):
         for kind, client, home in self.apps():
             with self.subTest(app=kind):
                 schema.ensure(home.library("quarry.db"))
-                home.write_old_config({"candidates": {"tags": "Kayak, Lighthouse"}})
+                home.write_old_config({"candidates": {"tags": "Kayak, Lighthouse"}})   # ignored
                 shown = client.get("/quarry/api/settings").get_json()
-                # Either app's asking stamps the library; TagPup's dialog shows the words.
                 if kind == "tagpup":
                     words = [s for g in shown["groups"] for s in g["settings"] if s["key"] == "candidates.tags"][0]
-                    self.assertEqual(words["value"], "Kayak, Lighthouse")
-                self.assertEqual(rows(home.library("quarry.db"))["candidates.tags"], "Kayak, Lighthouse")
+                    self.assertEqual(words["value"], words["default"])
+                self.assertEqual(rows(home.library("quarry.db"))["candidates.tags"],
+                                 settings.DEFAULTS["candidates.tags"])
 
     def test_the_file_routes_use_the_librarys_exiftool(self):
         from unittest import mock
