@@ -357,12 +357,12 @@ class RenamingAPerson(TreeCase):
                                                "People/Rowan Vale"])
         self.assertEqual([], self.rewrites, "no photo %s was rewritten" % photo)
 
-    def test_a_name_no_person_tag_has_renames_those_faces_alone(self):
+    def test_a_name_no_person_tag_has_is_refused_and_its_faces_are_left(self):
         photo = self.photo("a.jpg")
         self.face(photo, [0, 0, 10, 10], name="Tamsin Vey")
         result = self.rename("Tamsin Vey", "Tamsin Vale")
-        self.assertEqual(result.details["faces_renamed"], 1)
-        self.assertEqual(self.lib.rows("SELECT tag_id, name FROM faces"), [(None, "Tamsin Vale")])
+        self.assertIn("create the person first", result.refused)
+        self.assertEqual(self.lib.rows("SELECT tag_id, name FROM faces"), [(None, "Tamsin Vey")])
 
     def test_what_cannot_be_asked(self):
         for old, new in ((self.people_rowan, tags.UNMATCHED), (self.people_rowan, "A/B"), (self.people_rowan, "")):

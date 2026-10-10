@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import web_client  # noqa: E402
 
 import tagpup_web  # noqa: E402
+from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import tagpup_routes, taxonomy_routes, tuner_routes  # noqa: E402
 
@@ -132,6 +133,8 @@ class TagTunersRewritesForgetTagPupsScans(unittest.TestCase):
         cache = tagpup_routes.folders.of(library)
         self.addCleanup(tagpup_routes.folders.forget, library)
         cache.put("D:/Library/2020", {"d:/library/2020/a.jpg": {"tags": ["Places/Harbour"]}})
+        db.write_with_connection(library.path, lambda conn: taxonomy.add_node(conn, "People/Hazel Brookmire", root_has_face=1),
+                                 label="a person")
         return tuner.test_client(), cache
 
     def test_a_merge_applied_forgets_them(self):

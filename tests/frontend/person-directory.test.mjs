@@ -13,10 +13,10 @@ import {
 } from "../../web/common/vocabulary.js";
 
 const PEOPLE = [
-  { id: 31, name: "Rowan Thackeray", tag: "Family/Thackeray/Rowan Thackeray", group: "", shared: false },
-  { id: 40, name: "Sam", tag: "Friends/Sam", group: "Friends", shared: true },
-  { id: 41, name: "Sam", tag: "Pets/Sam", group: "Pets", shared: true },
-  { id: 52, name: "Wren", tag: "Family/Ingersoll/Wren", group: "", shared: false },
+  { id: 31, name: "Rowan Thackeray", tag: "Family/Thackeray/Rowan Thackeray" },
+  { id: 40, name: "Sam", tag: "Friends/Sam" },
+  { id: 41, name: "Sam", tag: "Pets/Sam" },
+  { id: 52, name: "Wren", tag: "Family/Ingersoll/Wren" },
 ];
 
 const isPerson = (tag) => /^(Family|Friends|Pets)\//.test(tag) || ["Sam", "Wren"].includes(tag);
@@ -48,7 +48,7 @@ describe("the directory", () => {
   test("only the people with a tag are held: a name, a failed lookup's object, a record with no id are let go", () => {
     assert.equal(new PeopleDirectory(["Sam", "Wren"]).size, 0);
     assert.equal(new PeopleDirectory({ error: "no library" }).size, 0);
-    assert.equal(new PeopleDirectory([{ id: null, name: "Sam", tag: null, group: "", shared: true }]).size, 0);
+    assert.equal(new PeopleDirectory([{ id: null, name: "Sam", tag: null }]).size, 0);
     assert.equal(new PeopleDirectory(undefined).size, 0);
   });
 });
@@ -108,10 +108,9 @@ describe("a photo that already has a person", () => {
 describe("what typed text means to a picker", () => {
   const directory = new PeopleDirectory(PEOPLE);
 
-  test("a label, a tag path and a name one person has are that person", () => {
-    assert.equal(directory.match("Sam · Pets").person.id, 41);
-    assert.equal(directory.match("sam · friends").person.id, 40);
+  test("a tag path and a name one person has are that person", () => {
     assert.equal(directory.match("Pets/Sam").person.id, 41);
+    assert.equal(directory.match("friends/sam").person.id, 40);
     assert.equal(directory.match("  Wren ").person.id, 52);
     assert.equal(directory.match("Wren").kind, "person");
   });
@@ -130,10 +129,9 @@ describe("what typed text means to a picker", () => {
 });
 
 describe("what a row is shown as, and how a request names a person", () => {
-  test("the label of the nested person when the row has one, else the name it holds", () => {
-    assert.equal(personLabelOf({ name: "Sam", person: PEOPLE[1] }), "Sam · Friends");
-    assert.equal(personLabelOf({ name: "Sam", person: PEOPLE[2] }), "Sam · Pets");
-    assert.equal(personLabelOf({ name: "Sam", person: { id: null, name: "Sam", tag: null, group: "", shared: true } }), "Sam");
+  test("the name of the nested person when the row has one, else the name it holds", () => {
+    assert.equal(personLabelOf({ name: "Sam", person: PEOPLE[1] }), "Sam");
+    assert.equal(personLabelOf({ name: "Sam", person: null }), "Sam", "a name two people have: nobody's person");
     assert.equal(personLabelOf({ name: "Fenn", person: null }), "Fenn");
     assert.equal(personLabelOf({ name: "Fenn" }), "Fenn");
     assert.equal(personLabelOf({ person: PEOPLE[0] }), "Rowan Thackeray");

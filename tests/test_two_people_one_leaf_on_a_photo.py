@@ -114,15 +114,16 @@ class TwoSamsOnAPhoto(InStep):
         self.assertEqual(0, self.files.writes)
         self.assertEqual([], self.look("SELECT 1 FROM job_runs WHERE job = 'assign faces'"), "no run for a refusal")
 
-    def test_a_persons_faces_are_asked_for_by_id_and_a_shared_name_reads_all_of_them(self):
+    def test_a_persons_faces_are_asked_for_by_id_and_a_shared_name_is_refused_naming_the_paths(self):
         self.match(self.first, person_id=self.sam_t)
         self.match(self.second, person_id=self.sam_i)
         found = self.tuner_client.get("/library/api/person-faces", query_string={"person_id": self.sam_i, "limit": -1}).get_json()
         self.assertEqual([self.second], [face["id"] for face in found["faces"]])
-        # An open page has only the name: a READ answers for everyone called it (nothing is created or linked).
+        # A page that has only the name is told which Sams there are (the page asks which one); nothing is read or linked.
         by_name = self.tuner_client.get("/library/api/person-faces", query_string={"name": "Sam", "limit": -1})
-        self.assertEqual(200, by_name.status_code)
-        self.assertEqual({self.first, self.second}, {face["id"] for face in by_name.get_json()["faces"]})
+        self.assertEqual(400, by_name.status_code)
+        self.assertIn(SAM_T, by_name.get_json()["error"])
+        self.assertIn(SAM_I, by_name.get_json()["error"])
         self.assertEqual(self.sam_t, self.row(self.first)[3], "reading linked nobody")
         stale = self.tuner_client.get("/library/api/person-faces", query_string={"person_id": 99999})
         self.assertEqual(404, stale.status_code)
@@ -165,20 +166,19 @@ class TwoSamsOnAPhoto(InStep):
         grid = self.tuner_client.get("/library/api/unmatched-faces/person-matches", query_string={"person_id": self.sam_t}).get_json()
         self.assertEqual(2, grid["total_count"])
 
-    def test_an_open_page_that_has_only_the_name_still_opens_the_grid_of_a_name_two_people_have(self):
-        """Fix round 1: the pages send names, and a name two people have used to be a 400 on every read, so the owner's one
-        shared leaf could not be opened in Identify. A read answers for all of them; a write still refuses and names them."""
+    def test_an_open_page_that_has_only_the_name_is_asked_which_one_for_a_name_two_people_have(self):
+        """A name two people have is refused on a read and a write alike, naming their paths (owner, 2026-10-10: the leaf is
+        never identity; a page asks which one and sends the id)."""
         for number in (1, 2, 3, 4):
             self.face(self.held("quay_%d.jpg" % number, [SAM_T] if number < 3 else [SAM_I]))
         by_name = self.tuner_client.get("/library/api/unmatched-faces/person-matches", query_string={"name": "Sam"})
-        self.assertEqual(200, by_name.status_code, by_name.get_data(as_text=True))
-        self.assertEqual(4, by_name.get_json()["total_count"], "both Sams' candidates")
+        self.assertEqual(400, by_name.status_code, by_name.get_data(as_text=True))
+        self.assertIn(SAM_I, by_name.get_json()["error"])
         status = self.tuner_client.get("/library/api/unmatched-faces/build-status", query_string={"name": "Sam"})
         self.assertEqual(200, status.status_code)
         from tagpup.services import identify as identify_service
         faces_by_key = identify_service.for_pages(self.library, {self.sam_t: 11, self.sam_i: 12})
-        self.assertEqual({"id:%d" % self.sam_t: 11, "id:%d" % self.sam_i: 12, "Sam": 11}, faces_by_key,
-                         "by id, and by the name (the first of them) for a page that has only the name")
+        self.assertEqual({"id:%d" % self.sam_t: 11, "id:%d" % self.sam_i: 12}, faces_by_key, "a shared name keys neither")
         write = self.match(self.first, person_name="Sam")
         self.assertEqual(400, write.status_code, "a write with the shared name still names the candidates")
         self.assertIn(SAM_I, write.get_json()["error"])

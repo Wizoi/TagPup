@@ -234,7 +234,7 @@ export function updateSelectedThumbnailsCount() {
                         if (!alreadyAdded) {
                             // A person who shares a name is counted, and applied, by their tag: not as the other Sam.
                             const known = state.people.ofText(p.name);
-                            noteSuggestion(suggPeopleCounts, known && known.shared ? known.tag : leaf, photo.path, p.score);
+                            noteSuggestion(suggPeopleCounts, known && state.people.shared(known.name) ? known.tag : leaf, photo.path, p.score);
                         }
                     });
                 }
@@ -252,7 +252,7 @@ export function updateSelectedThumbnailsCount() {
                             const cleanLeaf = leafOf(leaf);
                             if (peopleListHas(photoPeople, cleanLeaf, state.people)) return;
                             const known = state.people.ofText(leaf);
-                            noteSuggestion(suggPeopleCounts, known && known.shared ? known.tag : cleanLeaf, photo.path, t.score);
+                            noteSuggestion(suggPeopleCounts, known && state.people.shared(known.name) ? known.tag : cleanLeaf, photo.path, t.score);
                         } else {
                             noteSuggestion(suggTagCounts, leaf, photo.path, t.score);
                         }

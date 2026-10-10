@@ -8,7 +8,7 @@ saying whose.
 import collections
 import os
 
-from tagpup.core import paths
+from tagpup.core import paths, vocabulary
 from tagpup.store import derived, generations, name_review, people, person_ids, schema, search_index
 from tagpup.store import roots as store_roots
 
@@ -189,6 +189,16 @@ def names_without_a_person(conn):
     broken: none has an id, none is guessed, and the tree is the owner's to settle (the ambiguous person
     path, docs/findings.md, #27; a branch is not a person, #660)."""
     return person_ids.unresolved(conn)
+
+
+def people_sharing_a_leaf(conn):
+    """{leaf: [the tag paths of the people called so]} for each leaf more than one person node has (a pet and a person; the
+    same name in two groups). Reported, not broken: the owner renames one by hand (TagTuner's Rename Person), and a name typed
+    for either is asked "which one?" by path (owner, 2026-10-10). Counts in the doctor; the leaves and paths only with --show."""
+    sharing = {}
+    for _node_id, tag, name in person_ids.read(conn).listing:
+        sharing.setdefault(vocabulary.key(name), []).append(tag)
+    return {leaf: sorted(tags) for leaf, tags in sharing.items() if len(tags) > 1}
 
 
 def names_to_review(conn):

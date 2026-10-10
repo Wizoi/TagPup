@@ -317,7 +317,7 @@ describe("two people called alike", () => {
   ];
   const sam = (id, group, count) => ({
     name: "Sam", count, group: `Family/${group}`, person_id: id,
-    person: { id, name: "Sam", tag: `Family/${group}/Sam`, group, shared: true },
+    person: { id, name: "Sam", tag: `Family/${group}/Sam` },
   });
   const navigator = { people: { people: [sam(12, "Ingersoll", 2), sam(10, "Thackeray", 3)], groups, unfiled: 0 } };
 

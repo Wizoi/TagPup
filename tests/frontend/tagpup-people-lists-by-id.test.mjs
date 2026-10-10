@@ -13,11 +13,11 @@ afterEach(() => {
   assert.deepEqual(pageErrors(), [], "the page raised an error");
 });
 
-const SAM_FRIEND = { id: 40, name: "Sam", tag: "Friends/Sam", group: "Friends", shared: true };
-const SAM_PET = { id: 41, name: "Sam", tag: "Pets/Sam", group: "Pets", shared: true };
-const WREN = { id: 52, name: "Wren", tag: "Family/Ingersoll/Wren", group: "", shared: false };
+const SAM_FRIEND = { id: 40, name: "Sam", tag: "Friends/Sam" };
+const SAM_PET = { id: 41, name: "Sam", tag: "Pets/Sam" };
+const WREN = { id: 52, name: "Wren", tag: "Family/Ingersoll/Wren" };
 const RECORDS = [SAM_FRIEND, SAM_PET, WREN];
-const NO_ID = { id: null, name: "Sam", tag: null, group: "", shared: true };   // a name two people have: the server cannot say which
+const NO_ID = null;   // a name two people have: the server cannot say which, so the person is none
 
 const TAXONOMY = [
   { id: 1, tag: "Friends", name: "Friends", parent_id: null, has_face: 1 },
@@ -56,15 +56,15 @@ async function openPhoto(t, { tags = [], people = [], suggestions = {} } = {}) {
 }
 
 describe("Suggest's chips", () => {
-  test("a name two people have is offered as two chips, one each, by label -- in place of asking which folder", async (t) => {
+  test("a name two people have is offered as two chips, one each -- in place of asking which folder", async (t) => {
     const ctx = await openPhoto(t, { suggestions: { people: [{ name: "Sam", score: 0.8, person: NO_ID }, { name: "Wren", score: 0.7, person: WREN }], tags: [] } });
-    assert.deepEqual(chipsOf(ctx, "suggested-people-container"), ["Sam · Friends · 80%", "Sam · Pets · 80%", "Wren · 70%"]);
+    assert.deepEqual(chipsOf(ctx, "suggested-people-container"), ["Sam · 80%", "Sam · 80%", "Wren · 70%"]);
   });
 
   test("a click on one writes that person's exact keyword, with no question", async (t) => {
     const ctx = await openPhoto(t, { suggestions: { people: [{ name: "Sam", score: 0.8, person: NO_ID }], tags: [] } });
-    const chip = [...ctx.document.querySelectorAll("#suggested-people-container .suggestion-chip")].find((each) => /Pets/.test(each.textContent));
-    assert.match(chip.title, /Click to add Sam · Pets to this photo\. \(Pets\/Sam\)/);
+    const chip = [...ctx.document.querySelectorAll("#suggested-people-container .suggestion-chip")][1];
+    assert.match(chip.title, /Click to add Sam to this photo\./);
     click(ctx.window, chip);
     await wait(ctx.window, 80);
     assert.equal(ctx.document.querySelector(".modal-overlay.active"), null, "no placement question");
@@ -75,7 +75,7 @@ describe("Suggest's chips", () => {
   test("the Sam the photo already has is not offered; the other Sam is", async (t) => {
     const ctx = await openPhoto(t, { tags: ["Friends/Sam"], people: ["Sam"],
       suggestions: { people: [{ name: "Sam", score: 0.8, person: NO_ID }], tags: [] } });
-    assert.deepEqual(chipsOf(ctx, "suggested-people-container"), ["Sam · Pets · 80%"]);
+    assert.deepEqual(chipsOf(ctx, "suggested-people-container"), ["Sam · 80%"]);
   });
 
   test("a suggestion that names one person by their path is that person: a name nobody shares stays as it is", async (t) => {
@@ -114,14 +114,14 @@ describe("the selection panel of a folder", () => {
     return ctx;
   }
 
-  test("two people called Sam are two chips, each by label, each counted apart", async (t) => {
+  test("two people called Sam are two chips, each counted apart and titled by its tag", async (t) => {
     const ctx = await select(t, [
       photoRecord({ filename: "a.jpg", tags: ["Friends/Sam", "Family/Ingersoll/Wren"], people: ["Sam", "Wren"] }),
       photoRecord({ filename: "b.jpg", tags: ["Pets/Sam"], people: ["Sam"] }),
       photoRecord({ filename: "c.jpg", tags: ["Friends/Sam"], people: ["Sam"] }),
     ]);
     const chips = [...ctx.document.querySelectorAll("#selection-people-list .selection-summary-chip")];
-    assert.deepEqual(chips.map((chip) => chip.firstChild.textContent), ["Sam · Friends (2)", "Sam · Pets (1)", "Wren (1)"]);
+    assert.deepEqual(chips.map((chip) => chip.firstChild.textContent), ["Sam (2)", "Sam (1)", "Wren (1)"]);
     assert.deepEqual(chips.map((chip) => chip.title), ["Friends/Sam", "Pets/Sam", "Family/Ingersoll/Wren"]);
   });
 });
@@ -142,20 +142,19 @@ describe("a library view's tally", () => {
     return ctx;
   }
 
-  test("each Sam is a chip under their label; the jump list opens each by tag", async (t) => {
+  test("each Sam is a chip of their own; the jump list opens each by tag", async (t) => {
     const ctx = await tallied(t);
     const chips = [...ctx.document.querySelectorAll("#selection-people-list .selection-summary-chip")];
-    assert.deepEqual(chips.map((chip) => chip.firstChild.textContent), ["Sam · Friends (3)", "Sam · Pets (1)", "Wren (2)"]);
+    assert.deepEqual(chips.map((chip) => chip.firstChild.textContent), ["Sam (3)", "Sam (1)", "Wren (2)"]);
     assert.deepEqual(chips.map((chip) => chip.title), ["Friends/Sam", "Pets/Sam", "Family/Ingersoll/Wren"]);
     const jumps = [...ctx.document.querySelectorAll("#selection-people-jump a, #selection-people-jump button")].map((each) => each.textContent);
-    assert.ok(jumps.some((text) => text.startsWith("Sam · Friends")), jumps.join("|"));
-    assert.ok(jumps.some((text) => text.startsWith("Sam · Pets")), jumps.join("|"));
+    assert.equal(jumps.filter((text) => text.startsWith("Sam")).length, 2, jumps.join("|"));
   });
 
   test("taking the pet Sam off the selection names that person by id, not the name the friend has too", async (t) => {
     const ctx = await tallied(t);
     ctx.window.confirm = () => true;
-    const pet = [...ctx.document.querySelectorAll("#selection-people-list .selection-summary-chip")].find((chip) => /Pets/.test(chip.firstChild.textContent));
+    const pet = [...ctx.document.querySelectorAll("#selection-people-list .selection-summary-chip")].find((chip) => /Pets/.test(chip.title));
     click(ctx.window, pet.querySelector(".selection-summary-chip-remove"));
     await ctx.settle(60);
     const started = ctx.server.calls.filter((call) => call.url.includes("/api/library/bulk/start"));
@@ -167,7 +166,7 @@ describe("a library view's tally", () => {
   test("putting the friend Sam on every selected photo names that person by id", async (t) => {
     const ctx = await tallied(t);
     ctx.window.confirm = () => true;
-    const friend = [...ctx.document.querySelectorAll("#selection-people-list .selection-summary-chip")].find((chip) => /Friends/.test(chip.firstChild.textContent));
+    const friend = [...ctx.document.querySelectorAll("#selection-people-list .selection-summary-chip")].find((chip) => /Friends/.test(chip.title));
     click(ctx.window, friend.querySelector(".selection-summary-chip-apply"));
     await ctx.settle(60);
     const started = ctx.server.calls.filter((call) => call.url.includes("/api/library/bulk/start"));
@@ -203,9 +202,9 @@ describe("the navigator's people", () => {
   }
   const labels = (ctx) => ctx.rows("people").map((row) => row.querySelector(".nav-label").textContent);
 
-  test("in a flat list each Sam is a row under their label; a name nobody shares is its name", async (t) => {
+  test("in a flat list each Sam is a row, told apart by its title; a name nobody shares is its name", async (t) => {
     const ctx = await people(t, { people: LIST, groups: [], unfiled: 0 });
-    assert.deepEqual(labels(ctx), ["Sam · Friends", "Sam · Pets", "Wren"]);
+    assert.deepEqual(labels(ctx), ["Sam", "Sam", "Wren"]);
     assert.deepEqual(ctx.rows("people").map((row) => row.title.split("\n")[0]), ["Friends/Sam", "Pets/Sam", "Wren"]);
   });
 
@@ -220,7 +219,7 @@ describe("the navigator's people", () => {
     assert.deepEqual(labels(ctx).filter((label) => /^Sam/.test(label)), ["Sam", "Sam"]);
   });
 
-  test("a filter lists each match with its label, so two Sams are told apart out of their branches", async (t) => {
+  test("a filter lists each match by name, with the branch as its hint", async (t) => {
     const grouped = LIST.map((each) => ({ ...each, group: each.person.tag.replace(/\/[^/]*$/, "") }));
     const ctx = await people(t, {
       people: grouped,
@@ -231,11 +230,8 @@ describe("the navigator's people", () => {
     input.value = "sam";
     input.dispatchEvent(new ctx.window.Event("input"));
     await ctx.settle(200);
-    assert.deepEqual(labels(ctx), ["Sam · Friends", "Sam · Pets"]);
-    input.value = "pets";
-    input.dispatchEvent(new ctx.window.Event("input"));
-    await ctx.settle(200);
-    assert.ok(labels(ctx).includes("Sam · Pets"), "found by its group");
+    assert.deepEqual(labels(ctx), ["Sam", "Sam"]);
+    assert.deepEqual(ctx.rows("people").map((row) => row.title.split("\n")[0]), ["Friends/Sam (Friends)", "Pets/Sam (Pets)"]);
   });
 
   test("a click on the pet Sam opens the view of THAT person, by tag", async (t) => {
