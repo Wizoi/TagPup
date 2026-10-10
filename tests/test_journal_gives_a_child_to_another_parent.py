@@ -2,7 +2,7 @@
 
 The cascade of a delete was read from the rows as they stood before the change, so a face re-pointed at another photo by one
 edit was taken as a child of the photo another edit deletes, and deleted with it. A row an update of the change writes the
-column of that names its parent is left out of the cascade. Needed by tagpup.services.duplicate_rows: the faces of a row
+column of that names its parent is left out of the cascade. Was needed by the merge of the rows of one file (gone 2026-10-10): the faces of a row
 are moved onto the row kept, and the row is deleted, in one change that one undo takes back.
 """
 import os

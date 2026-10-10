@@ -1,4 +1,4 @@
-"""relink_renamed_photos.py only matches a dead row to a renamed file beside it.
+"""Sync's pairing (relink_photos.pair) only matches a dead row to a renamed file beside it.
 
 Matching is by the stem of the name a file was renamed from, and camera names repeat
 across a library. Every folder's matches were merged into one dict keyed by stem

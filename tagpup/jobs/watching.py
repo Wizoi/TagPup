@@ -250,7 +250,7 @@ class Watcher:
         """Note what `event`, from the watch on the parent `parent_key` of watched folders, says:
         only a watched folder renamed, moved or deleted matters, and its libraries are synced
         whole -- its rows name a folder that is not there, and what follows is the owner's
-        (tagpup.services.folder_moves). Windows reports a folder gone as a file gone, so
+        (tagpup.services.folder_follow). Windows reports a folder gone as a file gone, so
         is_directory is not asked."""
         if event.event_type not in ("moved", "deleted"):
             return

@@ -29,7 +29,7 @@ TABLE = "folder_ids"
 IDENTITY = "library_identity"
 
 #: What the journaled change that follows marked folders is recorded as: here, with the table it moves rows of, so that
-#: the services that undo it (folder_moves) and write it (folder_ids) name it without importing one another.
+#: the services that undo it (folder_follow) and write it (folder_ids) name it without importing one another.
 FOLLOW_OPERATION = "follow_folder_markers"
 
 TIME = "%Y-%m-%d %H:%M:%S"
