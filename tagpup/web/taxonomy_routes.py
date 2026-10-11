@@ -120,9 +120,12 @@ def taxonomy_rename():
     if failed:
         return failed
     tagpup_routes.forget_scans(state.require())
+    # The tree has the new name once every photo is rewritten; one that could not be keeps the old, and so does the tree.
+    if not result.ok and not result.changed:
+        return tuner_routes.not_renamed(result)
     reply = {"success": True, "photos_affected": result.details["photos_affected"],
              "photos_rewritten": result.details["photos_rewritten"]}
-    # The tree has the new name once every photo is rewritten; one that could not be keeps the old, and so does the tree.
     if not result.ok:
         reply["warning"] = result.message()
+        reply["failed"] = result.details.get("failed_photos", [])
     return jsonify(reply)

@@ -14,9 +14,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_batches as B  # noqa: E402
 import test_bulk_edits as T  # noqa: E402
 
+from tagpup.core import paths  # noqa: E402
 from tagpup.services import batches, tags  # noqa: E402
 from tagpup.store import taxonomy  # noqa: E402
-from tagpup.web import lifecycle  # noqa: E402
+from tagpup.web import lifecycle, tuner_routes  # noqa: E402
 
 OLD, NEW = "Trips/Coast", "Trips/Shore"
 
@@ -61,6 +62,34 @@ class Rename(T.Bulk):
         self.assertEqual([NEW], self.in_tree(), "the second try moved the tree")
         self.assertEqual((60, 0), (self.holding("Trips/Shore"), self.holding(OLD)))
         self.assertEqual(before + 60, self.files.writes, "no photo was written twice")
+
+    def test_a_photo_that_cannot_be_written_means_not_renamed_and_the_reply_names_it(self):
+        stuck = self.path(self.ids[7])
+        self.files.fails.add(paths.key(stuck))
+        reply = self.rename()
+        body = reply.get_json()
+        self.assertEqual((200, False, False), (reply.status_code, body["success"], body["renamed"]))
+        self.assertIn("could not be rewritten", body["error"])
+        self.assertEqual([stuck], [each["path"] for each in body["failed"]])
+        self.assertEqual(1, body["failed_count"])
+        self.assertEqual([OLD], self.in_tree(), "the tree keeps the old name")
+        self.files.fails.clear()
+        self.assertEqual(200, self.rename().status_code)
+        self.assertEqual([NEW], self.in_tree())
+
+    def test_a_photo_whose_file_is_gone_does_not_hold_the_tree_back(self):
+        os.remove(self.path(self.ids[7]))
+        body = self.rename().get_json()
+        self.assertTrue(body["success"], body)
+        self.assertEqual(([NEW], self.PHOTOS - 1), (self.in_tree(), self.holding("Trips/Shore")))
+
+    def test_a_move_with_no_photo_left_still_moves_the_branch(self):
+        self.vl.tree("Old/Stuff/Deep")
+        node = self.vl.rows("SELECT id FROM tag_taxonomy WHERE tag = 'Old/Stuff'")[0][0]     # setUp took it off every photo
+        done = tags.delete(self.library, node, "move", OLD, "exiftool")
+        self.assertTrue(done.ok, done.message())
+        self.assertEqual((None, True), (taxonomy.find(self.library.path, "Old/Stuff"),
+                                        bool(taxonomy.find(self.library.path, OLD + "/Deep"))), "the branch went on under the target")
 
     def test_cancelled_while_it_waits_writes_nothing_and_leaves_the_tree(self):
         release, started = threading.Event(), threading.Event()
@@ -139,6 +168,31 @@ class PersonRename(T.Bulk):
 
     def holding(self, tag):
         return len([each for each in self.ids if tag in self.tags(each)])
+
+    def test_a_photo_that_cannot_be_written_means_not_renamed_for_a_person_too(self):
+        stuck = self.path(self.ids[3])
+        self.files.fails.add(paths.key(stuck))
+        result = tags.rename_person(self.library, self.NAME, self.NEW, "exiftool")
+        self.assertEqual((False, 0), (result.ok, result.changed))
+        self.assertEqual([stuck], [each["path"] for each in result.details["failed_photos"]])
+        self.assertTrue(taxonomy.find(self.library.path, "People/" + self.NAME))
+        with self.app.app_context():
+            reply = tuner_routes.not_renamed(result).get_json()
+        self.assertEqual((False, False), (reply["success"], reply["renamed"]))
+
+    def test_stopped_in_the_bare_name_stage_the_sentence_says_how_to_finish(self):
+        self.vl.photo("2024 A", "bare.jpg", taken="2024:06:01 10:00:00", tags=[self.NAME], real=True, size=(16, 16))
+        real = tags._rewrite
+        calls = []
+
+        def second_is_stopped(*args):
+            calls.append(1)
+            return real(*args) if len(calls) == 1 else (0, 0, "Stopped as asked after 0 of 1 photos.", [])
+        with mock.patch.object(tags, "_rewrite", side_effect=second_is_stopped):
+            result = tags.rename_person(self.library, self.NAME, self.NEW, "exiftool")
+        self.assertEqual(2, len(calls))
+        self.assertIn("merge that tag into", result.refused)
+        self.assertTrue(taxonomy.find(self.library.path, "People/" + self.NEW), "the tree was renamed")
 
     def test_stopped_after_the_first_chunk_the_person_keeps_their_node_until_it_is_made_again(self):
         first_write = self.files.writes

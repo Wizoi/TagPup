@@ -245,6 +245,9 @@ class Lifecycle:
                 self._closed = True
                 self._drained_at = None
                 self._lease = LEFT_DRAINED if lease is None else lease
+                # Under the lock a resume takes: a resume cannot reopen before the batches are told to stop.
+                if batches.stop_all():
+                    logger.info("Asked the batches of photo files to stop at their chunk.")
             in_flight = self._in_flight
             self._draining = True
         try:
@@ -256,8 +259,6 @@ class Lifecycle:
 
     def _drain_until(self, deadline, seconds, in_flight):
         logger.info("Draining for an update: taking no new work; %d request(s) in flight.", in_flight)
-        if batches.stop_all():
-            logger.info("Asked the batches of photo files to stop at their chunk.")
         if self._background is not None:
             self._background.stop(timeout=max(0.0, deadline - self._clock()))
         while True:

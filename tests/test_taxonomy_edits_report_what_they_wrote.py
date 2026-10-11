@@ -88,9 +88,11 @@ class TaxonomyEditsReportWhatTheyWrote(unittest.TestCase):
         status, reply = self.call("/api/taxonomy/rename", {"tag_id": 4, "new_name": "Sculling"})
 
         self.assertEqual(200, status, reply)
+        self.assertEqual((False, False), (reply["success"], reply["renamed"]), "not renamed: the tree keeps the old name")
         self.assertEqual(2, reply["photos_affected"])
         self.assertEqual(1, reply["photos_rewritten"])
-        self.assertIn("warning", reply)
+        self.assertEqual(["broken.jpg"], [os.path.basename(each["path"]) for each in reply["failed"]])
+        self.assertNotIn("Activity/Sculling", self.tree())
 
     def test_a_delete_that_cannot_rewrite_every_photo_keeps_the_tag(self):
         good = self.add_photo("boathouse.jpg", ["Activity/Rowing"])

@@ -138,9 +138,11 @@ class PersonRenameReachesTheFiles(unittest.TestCase):
 
         reply = self.rename()
 
+        self.assertEqual((False, False), (reply["success"], reply["renamed"]), "not renamed: the tree keeps the old name")
         self.assertEqual(2, reply["photos_affected"], reply)
         self.assertEqual(1, reply["photos_rewritten"], reply)
-        self.assertIn("warning", reply)
+        self.assertEqual(["broken.jpg"], [os.path.basename(each["path"]) for each in reply["failed"]])
+        self.assertEqual(1, reply["failed_count"])
 
 
 if __name__ == "__main__":

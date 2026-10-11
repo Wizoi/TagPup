@@ -594,7 +594,7 @@ export function renameTaxonomyNode(tagId, newName) {
         }
         if (!data.success) {
             back();
-            alert("Error renaming tag: " + data.error);
+            alert((data.renamed === false ? "Not renamed: " : "Error renaming tag: ") + data.error);
             return settleAfterFailure(view);
         }
         view.setBusy(tagId, null);

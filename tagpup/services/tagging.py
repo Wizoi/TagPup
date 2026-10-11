@@ -525,6 +525,11 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
         return _keywords_plan(vocabulary.resolve_people(new_tags, people))
 
     operation = "rename tag" if new else "remove tag"
+    # A photo whose file is gone (or whose root is not there) carries nothing to rewrite: skipped, so it does not hold the tree
+    # back. One that is there and cannot be written (a share that does not answer, a locked file) is an error that does.
+    present, gone = leave_out_missing([path for path, _t, _r in rows])
     # The tag tree's rewrite has no cap (owner, 2026-10-11): it has progress, and Cancel, as every batch.
-    return file_changes.write_fields(library, operation, exiftool_path, [path for path, _t, _r in rows],
-                                     KEYWORD_READ, plan_one, summary={"photos": len(rows)}, uncapped=True)
+    result = file_changes.write_fields(library, operation, exiftool_path, present, KEYWORD_READ, plan_one,
+                                       summary={"photos": len(present)}, uncapped=True)
+    result.skipped.extend(gone)
+    return result

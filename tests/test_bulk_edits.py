@@ -52,6 +52,7 @@ class Bulk(unittest.TestCase):
     PHOTOS = 60
 
     def setUp(self):
+        batches.reopen()        # a test that drained a server in this process leaves batches stopped
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
