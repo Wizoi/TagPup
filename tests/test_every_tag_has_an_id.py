@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import people_by_id  # noqa: E402
 import photo_rows  # noqa: E402
 
+from tagpup.services import tags as tag_service  # noqa: E402
 from tagpup.store import faces, taxonomy  # noqa: E402
 
 NEW = "Trips/Harbour Walk/Pier"
@@ -165,6 +166,17 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
             return faces.name(conn, [self.faces[0]], ZED)
         people_by_id.write(self.path, empty)
         self.assertEqual([("People",)], people_by_id.look(self.path, "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND parent_id IS NULL AND tag = 'People'"))
+
+    def test_rapid_clicks_creating_the_same_new_person_twice_make_one_node(self):
+        """The New Person dialog creates the tag, then names the faces: a second click finds the node, and a face named
+        meanwhile by the name finds it too."""
+        first = tag_service.create(self.library, ZED, has_face=1)
+        people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], ZED))
+        second = tag_service.create(self.library, ZED, has_face=1)
+        self.assertEqual((1, 0), (first.changed, second.changed))
+        self.assertEqual(first.details["id"], second.details["id"])
+        self.assertEqual(1, self.count(ZED))
+        self.assertEqual(first.details["id"], self.face(self.faces[0])[0])
 
     def test_ensure_node_run_twice_is_one_node(self):
         def twice(conn):

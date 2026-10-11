@@ -52,7 +52,7 @@ class ALibraryKeepsAFaceRoot(unittest.TestCase):
         self.assertIn("only root that holds faces", result.refused)
 
     def test_with_another_face_root_it_may_go(self):
-        self.write(lambda conn: taxonomy.add_path(conn, "Crew", root_has_face=1))
+        self.write(lambda conn: taxonomy.add_path(conn, "Crew/Divers Club", root_has_face=1))   # a root with someone under it
         result = tags.set_flags(self.lib.library, self.node("People"), has_face=0)
         self.assertFalse(result.refused)
         self.assertEqual(["Crew"], self.face_roots())

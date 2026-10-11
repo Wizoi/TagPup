@@ -39,6 +39,7 @@ migrations before it write faces and people too. The caller commits.
 import collections
 
 from tagpup.core import vocabulary
+from tagpup.store import db
 
 #: The tables that name a person, and the column beside `name` that holds the node's id.
 TABLES = ("faces", "photo_people")
@@ -656,3 +657,14 @@ def unresolved(conn):
         listed = conn.execute("SELECT COUNT(*) FROM photo_people WHERE tag_id IS NULL AND name = ?", (name,)).fetchone()[0]
         counted[name] = (person, by_hand, by_guess, listed)
     return Unresolved(dict(none), dict(several), branch, counted)
+
+
+def repair(db_path):
+    """Settle every id and cached name, in one write under the library's write lock: drop the id of a node that is gone, give a
+    row its node's name, take an id off a face with no name. A name with no id is NOT linked (People.settle: nothing links one
+    but `link_added`, for a name a person was ADDED under). Returns {table: rows changed}. Only the id and name columns of faces
+    and photo_people change: no photo, tag or file."""
+    def write(conn):
+        return sync(conn)
+
+    return db.write_with_connection(db_path, write, label="people's ids")
