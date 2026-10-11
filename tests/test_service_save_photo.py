@@ -27,7 +27,7 @@ class SavingAPhoto(unittest.TestCase):
         self.lib.add_face(self.photo, [0, 0, 10, 8], name="Rowan Thackeray")
         self.holds = {"XMP:Subject": ["Beach"]}
         self.et = mock.MagicMock()
-        self.et.get_tags.side_effect = lambda paths, tags=None: [dict(self.holds, SourceFile=paths[0])]
+        self.et.get_tags.side_effect = lambda paths, tags=None, params=None: [dict(self.holds, SourceFile=paths[0])]
         # A write is kept, as a file keeps it: the save is a journaled write, which reads
         # back what it wrote (docs/findings.md, #266, #276).
         self.et.set_tags.side_effect = lambda paths, tags=None, params=None: self.holds.update(tags or {})

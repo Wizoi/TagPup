@@ -379,7 +379,7 @@ class AStalledExifTool(T.Bulk):
         class Stalled:
             timeout = 60
 
-            def get_tags(self, batch, tags=None):
+            def get_tags(self, batch, tags=None, params=None):
                 calls.append(list(batch))
                 raise exiftool_session.ExifToolTimeout("ExifTool did not answer")
         found = field_values.read(Stalled(), ["a.jpg", "b.jpg", "c.jpg"], ["XMP:Subject"])
@@ -391,7 +391,7 @@ class AStalledExifTool(T.Bulk):
         calls = []
 
         class Refuses:
-            def get_tags(self, batch, tags=None):
+            def get_tags(self, batch, tags=None, params=None):
                 calls.append(list(batch))
                 if len(batch) > 1:
                     raise RuntimeError("one of them is no file")

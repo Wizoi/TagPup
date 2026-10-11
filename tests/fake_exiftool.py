@@ -84,7 +84,7 @@ class Files:
                 return False
         return Session()
 
-    def get_tags(self, photo_paths, tags=None):
+    def get_tags(self, photo_paths, tags=None, params=None):
         with self.lock:
             self.read_calls += 1
         rows = []

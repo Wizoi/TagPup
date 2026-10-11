@@ -391,7 +391,7 @@ class AnIndexBehindItsFiles(unittest.TestCase):
         class Files:
             """ExifTool over `files`: each photo's keywords, read and written."""
 
-            def get_tags(self, photo_paths, tags=None):
+            def get_tags(self, photo_paths, tags=None, params=None):
                 return [{"SourceFile": p, "XMP:Subject": list(files[p])} for p in photo_paths]
 
             def set_tags(self, photo_paths, tags=None, params=None):

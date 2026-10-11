@@ -230,10 +230,13 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     result.details.update(change=None, conflicts=[], read_back={})
     settle(library, exiftool_path)
     stored = [paths.stored(p) for p in photo_paths]
-    held = fresh if fresh is not None else field_values.read(et, stored, read)
+    held = fresh if fresh is not None else field_values.read(et, stored, read, validate=True)
     planned, followed = [], []
     for path in stored:
         now = held.get(paths.key(path))
+        if isinstance(now, field_values.CutShort):
+            skip_cut_short(result, path, now)
+            continue
         if now is None or isinstance(now, Exception):
             why = now or "ExifTool answered nothing for it"
             if unreadable == "skip":
@@ -304,6 +307,17 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         raise
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
     return result
+
+
+#: details key: how many photos of a write were left out because their files do not open whole.
+SKIPPED_DAMAGED = "skipped_damaged"
+
+
+def skip_cut_short(result, path, why):
+    """`path`, a photo whose file does not open whole (field_values.CutShort), is left out of the write: skipped, with
+    the reason, and counted in details[SKIPPED_DAMAGED]. The file is not touched, and the photo is in no change."""
+    result.skip(path, "damaged, nothing is written to it: %s" % why)
+    result.details[SKIPPED_DAMAGED] = result.details.get(SKIPPED_DAMAGED, 0) + 1
 
 
 def _rows_of(library, photo_paths):

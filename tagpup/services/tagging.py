@@ -3,7 +3,7 @@ import logging
 import os
 
 from tagpup.core import fields, paths, suggesting, validation, vocabulary
-from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREADABLE_BASE_SENTENCE, Result
+from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, DAMAGED_PHOTOS, UNREADABLE_BASE_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, metadata, names
@@ -121,7 +121,13 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     # plan's before, and the name Smart Rename kept.
     read = list(dict.fromkeys(SAVE_READ + tuple(wanted)))
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        now = field_values.read_one(et, photo_path, read)
+        try:
+            now = field_values.read_one(et, photo_path, read, validate=True)
+        except field_values.CutShort as cut:
+            result.refuse("%s: damaged, nothing is written to it: %s. Restore it from a backup, then try again." % (
+                os.path.basename(photo_path), cut))
+            result.details[DAMAGED_PHOTOS] = [photo_path]
+            return result
         if base is None:
             result.refuse(UNREADABLE_BASE_SENTENCE)
             result.details[CHANGED_ON_DISK] = True

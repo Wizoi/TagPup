@@ -33,7 +33,7 @@ def fake_exiftool(fields):
     (docs/findings.md, #276)."""
     held = dict(fields)
     et = mock.MagicMock()
-    et.get_tags.side_effect = lambda paths, tags=None: [dict(held)]
+    et.get_tags.side_effect = lambda paths, tags=None, params=None: [dict(held)]
 
     def set_tags(paths, tags=None, params=None):
         held.update(tags or {})
@@ -117,7 +117,7 @@ class Tagging(PhotoCase):
         _session, et = self.exiftool()
         held = dict(fields)
         et.get_tags.return_value = None
-        et.get_tags.side_effect = lambda files, tags=None: [
+        et.get_tags.side_effect = lambda files, tags=None, params=None: [
             {key: value for key, value in held.items() if tags is None or key in tags}]
         # And keeps what is written, as a file does.
         et.set_tags.side_effect = lambda files, tags=None, params=None: held.update(tags or {})

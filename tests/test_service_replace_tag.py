@@ -20,7 +20,7 @@ def exiftool(files):
     """A session whose photos hold the keywords in `files` (path -> tags), and which
     accepts every write and keeps what it was told."""
     et = mock.MagicMock()
-    et.get_tags.side_effect = lambda paths, tags=None: [
+    et.get_tags.side_effect = lambda paths, tags=None, params=None: [
         {"SourceFile": p, "XMP:Subject": list(files.get(p, []))} for p in paths]
     keeps_writes(et, files)
     session = mock.MagicMock()

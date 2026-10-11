@@ -25,7 +25,7 @@ class LeavingOutMissing(unittest.TestCase):
             self.lib.add_row(path, tags=[])
         self.files = {self.a: [], self.b: [], self.c: []}
         self.et = mock.MagicMock()
-        self.et.get_tags.side_effect = lambda paths, tags=None: [
+        self.et.get_tags.side_effect = lambda paths, tags=None, params=None: [
             {"SourceFile": p, "XMP:Subject": list(self.files.get(p, []))} for p in paths]
         keeps_writes(self.et, self.files)
         session = mock.MagicMock()

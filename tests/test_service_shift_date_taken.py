@@ -26,7 +26,7 @@ class Dates:
     def __init__(self, files, refuses=()):
         self.files, self.refuses = files, set(refuses)
 
-    def get_tags(self, photo_paths, tags=None):
+    def get_tags(self, photo_paths, tags=None, params=None):
         return [dict(self.files[p], SourceFile=p) for p in photo_paths]
 
     def set_tags(self, photo_paths, tags=None, params=None):

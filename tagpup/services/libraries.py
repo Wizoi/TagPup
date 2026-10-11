@@ -460,7 +460,7 @@ def with_skipped(result, left):
     result.attempted += len(left)
     for what, why in left:
         result.skip(what, why)
-    result.details[SKIPPED_DAMAGED] = len(left)
+    result.details[SKIPPED_DAMAGED] = result.details.get(SKIPPED_DAMAGED, 0) + len(left)
     return result
 
 

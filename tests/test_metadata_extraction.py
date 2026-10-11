@@ -463,7 +463,7 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
                 self.terminate()
                 return False
 
-            def get_tags(self, files, tags=None):
+            def get_tags(self, files, tags=None, params=None):
                 if outer.bad in files:
                     raise RuntimeError("execute returned a non-zero exit status: 1")
                 return [outer._tags_for(f) for f in files]
@@ -560,7 +560,7 @@ class TestABatchReadsTheLibrarysPeopleOnce(unittest.TestCase):
         from tagpup.store import taxonomy
 
         session = mock.MagicMock()
-        session.return_value.__enter__.return_value.get_tags.side_effect = lambda files, tags=None: [
+        session.return_value.__enter__.return_value.get_tags.side_effect = lambda files, tags=None, params=None: [
             {"SourceFile": f, "XMP:Subject": ["Crew/Tamsin Oakes"]} for f in files]
         with mock.patch("tagpup.files.metadata.ExifToolSession", session), \
                 mock.patch.object(taxonomy, "people_vocabulary",
