@@ -302,19 +302,6 @@ class TakingOne(Cache):
         self.assertEqual(1, len(left))
         self.assertTrue(left[0].startswith("%d_" % elsewhere))
 
-    def test_the_indexer_removing_photos_sweeps_the_cache(self):
-        from tagpup.services.search import PhotoIndex
-        gone = self.vl.photo("Regatta", "going.jpg", real=True)
-        self.serve()
-        self.serve(gone)
-        index = PhotoIndex.__new__(PhotoIndex)
-        index.db_path, index.conn = self.library.path, self.vl.conn
-        with mock.patch.object(PhotoIndex, "load"):
-            index.remove_paths({self.vl.path_of(gone)})
-        left = entries_of(self.library)
-        self.assertEqual(1, len(left))
-        self.assertTrue(left[0].startswith("%d_" % self.id))
-
     def test_sweeping_takes_what_no_photo_owns_and_keeps_the_rest(self):
         self.serve()
         thumbs.write(self.library.thumbs, 4242, "00000000", 1.0, 1, b"orphan")

@@ -48,7 +48,7 @@ Ensure ExifTool is installed on your machine.
 
 ## 1.5 Testing & Validation Mode
 
-If you want to run tests, validate commands, or experiment without cluttering your actual production index database, you can prefix any of the database-access commands (`index`, `remove`, `index-faces`, `cluster-faces`) with the global `--test` flag.
+If you want to run tests, validate commands, or experiment without cluttering your actual production index database, you can prefix any of the database-access commands (`index`, `cluster-faces`) with the global `--test` flag.
 
 ```cmd
 # Build a test index using test folders (generates test_photo_index.db)
@@ -86,9 +86,6 @@ run.bat index "D:\Photos\Tagged_Archive" --reset
 If you want the system to match face embeddings against specific family members, you must group them and resolve names after indexing.
 
 ```cmd
-# Retroactively extract faces on already indexed files (optional standalone)
-run.bat index-faces "D:\Photos\Tagged_Archive"
-
 # Cluster and assign identities using photo-level tags (Self-Tuning)
 run.bat cluster-faces
 ```
