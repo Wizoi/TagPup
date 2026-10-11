@@ -2,7 +2,7 @@
 
 From now on a photo's save, its index and the recording of its faces do this for the photo they
 touch (tagpup.store.face_tags). This is the same rule applied once to what is there already --
-`tagpup_cli.py faces-from-tags` -- on the maintenance scaffold (tagpup.services.maintenance): a
+(the Name faces from tags dialog, tagpup.jobs.naming_faces) -- on the maintenance scaffold (tagpup.services.maintenance): a
 dry run unless applied, counts only, and the apply one change of the library's journal, so
 `undo` takes it back. It also names, by comparison, the faces of photos with several faces or
 several people, which a save does not (it would build the decided faces' matrix inside a write):
@@ -26,11 +26,10 @@ from tagpup.store import db, face_tags, journal
 #: The journal kind of each face named.
 KIND = "face named from its photo's tag"
 
-#: Why a second apply asks for --again (#840).
-AGAIN = ("faces-from-tags was applied to this library before, and not undone. The faces it named then are references for "
+#: Why a second apply asks to be said again (#840).
+AGAIN = ("Naming faces from tags was applied to this library before, and not undone. The faces it named then are references for "
          "the next run, which names the faces that look like them from 0.70, so each apply can name more and a person's "
-         "references can drift one step at a time (the rule on a save does the same). Run it again with --again if that "
-         "is wanted.")
+         "references can drift one step at a time (the rule on a save does the same).")
 
 
 def earlier_apply(library):
@@ -46,15 +45,14 @@ def earlier_applies(library):
                  if entry["operation"] == "faces_from_tags" and entry["status"] != "undone"), None)
 
 
-def earlier_sentence(entry, how="cli"):
+def earlier_sentence(entry):
     """Where the earlier apply `entry` was (earlier_applies): the whole library or one folder, and its change. The folder's path is
-    behind History's reveal, as a change's values are: the CLI's sentence says how to ask for it."""
+    behind History's reveal, as a change's values are."""
     if entry is None:
         return ""
     change = entry["id"]
     if entry["summary"].get("scope") == "folder":
-        named = "; `history --change %d --reveal` names it" % change if how == "cli" else ""
-        return "It was applied to one folder (change %d%s)." % (change, named)
+        return "It was applied to one folder (change %d)." % change
     return "It was applied to the whole library (change %d)." % change
 
 

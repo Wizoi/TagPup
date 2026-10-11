@@ -1,6 +1,6 @@
 """Name faces from tags, as one job with a question in the middle (docs/ARCHITECTURE.md, "Name faces from tags", #789).
 
-A photo's person tag names its face on a save (#788), and `faces-from-tags` and `cluster-faces` do it for the photos
+A photo's person tag names its face on a save (#788), and this job and `cluster-faces` do it for the photos
 already in a library, from the command line. The apps' button, here, does both, on a thread of its own in the process that
 was asked, and the page asks how it is getting on. Nothing is run on the owner's data without an answer:
 
@@ -9,10 +9,10 @@ was asked, and the page asks how it is getting on. Nothing is run on the owner's
    nowhere. On photo_index it is about 13 s, so it is the job's first step, with its progress and Cancel, never a request.
    The job then WAITS FOR AN ANSWER with the plan in memory and no claim held (a question left open for a day holds nothing up):
    the owner is asked "Name N faces in M photos ...?".
-2. **Apply** (on Yes). The plan the question showed is applied by the same code the CLI's `--apply` uses
+2. **Apply** (on Yes). The plan the question showed is applied by the service's apply
    (faces_from_tags.faces_from_tags, `planned=`): one journaled change of the library, which History undoes. It is
    all or nothing: a face named or ruled out since the plan was read refuses the whole change and nothing is written. A second
-   apply of a library is the CLI's `--again` (#840): the question says "applied before", and the Yes is that.
+   apply of a library needs the question (#840): the question says "applied before", and the Yes is that.
 3. **Group** (if the owner ticked it; off by default; never for a folder). tagpup.services.identities.resolve: the faces of the whole library
    are grouped by who they look like and each group is named from its photos' tags. It re-derives every automatic name in the
    library, keeps the names given by hand, and is not journaled, so History cannot take it back. It uses no model and no
@@ -103,7 +103,7 @@ REFUSED_SAYS = ("Something changed while the question was open (a name given, or
                 "TagPup, say): nothing was written. Ask again.")
 APPLIED_MEANWHILE = ("The names were written by another run since this plan was read (in another window or process); they are "
                      "references for this one now. Nothing was written. Start again to see what can be named now.")
-#: What the dialog says of a library this has been done to before (#872): the CLI's sentence (AGAIN) is about a flag.
+#: What the dialog says of a library this has been done to before (#872): the service's sentence (AGAIN) is for a refusal.
 AGAIN_SAYS = ("Names were given from tags in this library before, and not undone. Those faces are references now, so this run can "
               "name faces that look like them: each run can name more, and a person's references can drift one step at a time. "
               "Identify Faces is where a drifted name is taken back. Yes does it again.")
@@ -284,7 +284,7 @@ class Job:
                     self.in_folder = None
                     return self._finish(FAILED, planned.refused, what, failed=True)
                 earlier = faces_from_tags.earlier_apply(self.library)
-                where = faces_from_tags.earlier_sentence(faces_from_tags.earlier_applies(self.library), how="page") if earlier else ""
+                where = faces_from_tags.earlier_sentence(faces_from_tags.earlier_applies(self.library)) if earlier else ""
                 counts = planned.counts
                 by_tag = counts["named_by_the_tag_alone"]
                 with self.lock:

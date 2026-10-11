@@ -74,7 +74,7 @@ function runNowControls(job, library) {
         className: 'btn run-now', text: 'Run now',
         attrs: { type: 'button', disabled: !state.jobs.runs_jobs || job.running || !!state.asking[jobKey(job.name, library)] },
         title: state.jobs.runs_jobs ? `Run ${job.name} for ${library} now, whether or not it is due`
-            : 'This server runs no recurring jobs; run it with the CLI (jobs run)',
+            : 'This server runs no recurring jobs; Run now works in the always-on server',
         data: { job: job.name, library },
     });
     button.addEventListener('click', () => {

@@ -1,7 +1,7 @@
 """Limiting a library-wide backfill to one folder (the owner's request, 2026-10-09; docs/findings.md #994).
 
-`faces-from-tags` and `tags-from-faces` ran over a whole library. Run for `--folder` -- or from the dialog's "Only this
-folder" -- they act on the photos under that folder, at any depth, and on no others.
+`tags-from-faces` and Name faces from tags ran over a whole library. Run for `--folder` (tags-from-faces) or from the
+dialog's "Only this folder" they act on the photos under that folder, at any depth, and on no others.
 
 The scope is a filter on WHICH PHOTOS A PLAN READS, never a different rule: who a photo's tags name, the decided faces a face is
 compared with, and the "several photos of this person wait" gate stay the library's, so a folder's plan is exactly the

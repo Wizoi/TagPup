@@ -49,7 +49,7 @@ ROOTS = "library.roots"
 IGNORED = "library.ignored"
 
 #: What a stamp writes: every setting but the roots. A library has no roots until the
-#: owner sets them (`settings set library.roots`, an ordinary change, which can be
+#: owner sets them (the gear dialog, an ordinary change, which can be
 #: undone); nothing sets them on its own (owner, 2026-09-26).
 STAMPED = {key: value for key, value in DEFAULTS.items() if key != ROOTS}
 

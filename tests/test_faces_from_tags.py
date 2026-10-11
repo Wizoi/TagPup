@@ -313,18 +313,6 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         self.assertEqual(0, faces_from_tags.faces_from_tags(self.library, apply=True, again=True).changed,
                          "a third run has nothing to do")
 
-    def test_the_command_says_what_is_left_after_the_write(self):
-        from click.testing import CliRunner
-
-        import tagpup_cli
-        self.one_pass_leaves_one_more()
-        said = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags", "--apply"])
-        self.assertEqual(0, said.exit_code, said.output)
-        self.assertIn("Still to be named by the rule now: 1 face(s).", said.output)
-        dry = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags"])
-        self.assertIn("the face is like them, at 0.80 or more", dry.output)
-        self.assertIn("not like them (under 0.70)", dry.output)
-
     def test_a_second_apply_needs_again_and_says_why(self):
         self.one_pass_leaves_one_more()
         first = faces_from_tags.faces_from_tags(self.library, apply=True)
@@ -345,21 +333,6 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         journal_service.undo(self.library, change, apply=True)
         self.assertFalse(faces_from_tags.faces_from_tags(self.library).details["earlier_apply"])
         self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True).changed)
-
-    def test_the_command_refuses_a_second_apply_without_again(self):
-        from click.testing import CliRunner
-
-        import tagpup_cli
-        self.one_pass_leaves_one_more()
-        runner = CliRunner()
-        self.assertEqual(0, runner.invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags", "--apply"]).exit_code)
-        said = runner.invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags", "--apply"])
-        self.assertEqual(1, said.exit_code)
-        self.assertIn("--again", said.output)
-        self.assertIn("Would name 1 face(s). Nothing changed.", said.output)
-        dry = runner.invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags"])
-        self.assertIn("Applied before", dry.output)
-        self.assertEqual(0, runner.invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags", "--apply", "--again"]).exit_code)
 
     def test_the_dry_run_counts_the_bands(self):
         self.decided(0)

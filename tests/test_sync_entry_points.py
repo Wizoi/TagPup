@@ -240,23 +240,6 @@ class TheCli(Drifted, unittest.TestCase):
         self.assertEqual(("completed", "completed"), (queue.status(self.folder)["status"],
                                                       queue.status(other)["status"]))
 
-    def test_jobs_run_sync_waits_for_the_indexing_it_queued(self):
-        """The CLI is a process that ends: the index queue it filled is indexed on its
-        thread, so `jobs run sync` waits for it, as `sync --apply` does."""
-        waited = []
-        real_wait = indexing_jobs.IndexQueue.wait
-
-        def wait(queue):
-            waited.append(queue)
-            return real_wait(queue)
-
-        with mock.patch.object(indexing_jobs.IndexQueue, "wait", autospec=True, side_effect=wait):
-            result = CliRunner().invoke(cli, ["--db", self.db_path, "jobs", "run", "sync"])
-        self.assertEqual(0, result.exit_code, result.output + repr(result.exception))
-        self.assertEqual([self.folder], self.indexed)
-        self.assertIn(indexing_jobs.queue_for(Library(self.db_path)), waited)
-        indexing_jobs.forget(Library(self.db_path))
-
 
 class TheTools(Drifted, unittest.TestCase):
     def setUp(self):

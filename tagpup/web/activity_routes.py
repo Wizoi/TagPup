@@ -268,7 +268,7 @@ def run_job():
     runner = _task(JOBS)
     if runner is None:
         return responses.error(409, "This server runs no recurring jobs (one a test started, or TAGPUP_NO_JOBS "
-                                    "is set); run it with the CLI: tagpup_cli.py jobs run NAME --db LIBRARY")
+                                    "is set); Run now works in the always-on server")
     job = runner.registry.get(body.get("job") or "")
     if job is None:
         return responses.error(404, "There is no recurring job called %s" % (body.get("job"),))

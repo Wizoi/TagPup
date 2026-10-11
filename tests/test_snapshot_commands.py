@@ -1,6 +1,6 @@
 """The snapshots job and the commands (docs/ARCHITECTURE.md, phase 8): the recurring job
-takes a library's snapshots and records what it took; `jobs`, `jobs run`, `snapshots
-list` and `snapshots restore` list, run and restore them.
+takes a library's snapshots and records what it took; `snapshots
+list` and `snapshots restore` list and restore them.
 """
 import os
 import sys
@@ -65,14 +65,8 @@ class TheJobAndTheCommands(Base):
         snapshot_service.restore(self.library, daily.name, apply=True, now=NOON + 60)
         self.assertEqual([("abandoned",)], self.query("SELECT outcome FROM job_runs"))
 
-    def test_the_commands_list_run_and_restore(self):
-        taken = self.cli("jobs", "run", "snapshots")
-        self.assertEqual(0, taken.exit_code, taken.output)
-        self.assertIn("snapshots for harbour: done, 3 changed", taken.output)
-        listed = self.cli("jobs")
-        self.assertEqual(0, listed.exit_code, listed.output)
-        self.assertIn("snapshots", listed.output)
-
+    def test_the_commands_list_and_restore(self):
+        snapshots.take(self.library.path, now=NOON)
         self.change_tags('["Beach", "Harbour"]')
         name = snapshots.listed(self.library.path, "daily")[0].name
         shown = self.cli("snapshots", "list")
@@ -89,11 +83,6 @@ class TheJobAndTheCommands(Base):
         self.assertEqual(0, applied.exit_code, applied.output)
         self.assertIn("before-restore/", applied.output)
         self.assertNotIn("Harbour", self.tags())
-
-    def test_a_job_it_has_not_is_named(self):
-        answer = self.cli("jobs", "run", "nosuch")
-        self.assertNotEqual(0, answer.exit_code)
-        self.assertIn("There is no recurring job nosuch", answer.output)
 
 
 if __name__ == "__main__":

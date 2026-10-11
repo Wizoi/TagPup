@@ -66,7 +66,6 @@ from tagpup.runtime import Runtime
 from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
-from tagpup.services import faces_from_tags as faces_from_tags_service
 from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import tree_fill as tree_fill_service
 from tagpup.services import identities
@@ -133,16 +132,6 @@ def scan_for_images(dir_path: str) -> List[str]:
     produced relative rows.
     """
     return image_files.photos_under(dir_path)
-
-def _outcome_text(outcome):
-    if outcome.error is not None:
-        return "failed: %s" % outcome.error
-    result = outcome.result
-    text = "%s, %d changed" % ("done" if result.ok else "failed: %s" % result.message(), result.changed)
-    for what, why in result.skipped:
-        text += "; %s skipped: %s" % (what, why)
-    return text
-
 
 @click.group()
 @click.option("--db", type=str, help="The library to work on: a name in the data folder (e.g. 'my_photos') or a path. Required.")
@@ -770,71 +759,6 @@ def sync(ctx, folder, apply_):
         raise SystemExit(1)
 
 
-@cli.command("faces-from-tags")
-@click.option("--apply", "apply_", is_flag=True,
-              help="Name the faces, as one change of the journal. Without it, only says how many it would.")
-@click.option("--again", is_flag=True,
-              help="Apply once more to a library it was applied to before: the names it gave then are references now.")
-@click.option("--folder", default=None, type=click.Path(file_okay=False),
-              help="Only the photos under this folder, at any depth (a second location of a root works). Without it, the whole "
-                   "library. A folder the library holds no photo under is refused.")
-@click.pass_context
-def faces_from_tags(ctx, apply_, again, folder):
-    """Name the faces a photo's person tag names: a photo with one face still to be named and
-    one tagged person no face of it carries gives the face that person; several faces or
-    people only when one person's named faces alike leave no doubt. Names are automatic, so
-    clustering may revise them; faces unmatched by hand or excluded are left alone. A dry run
-    unless --apply; counts only, never names.
-
-    --folder limits the plan and the write to the photos under one folder and its subfolders: the
-    same rule, the same references (the people's named faces anywhere in the library), only the
-    photos read are fewer. A second --apply needs --again, whichever folder the first was for."""
-    library = _existing_library(ctx)
-    result = faces_from_tags_service.faces_from_tags(library, apply=apply_, again=again, folder=folder)
-    if result.refused and result.details.get("earlier_apply"):
-        console.print("Would name %d face(s). Nothing changed." % result.details["counts"]["faces"])
-    if result.refused or result.errors:
-        for line in ([result.refused] if result.refused else []) + maintenance.failed(result):
-            console.print(line, markup=False, soft_wrap=True)
-        raise SystemExit(1)
-    counts = result.details["counts"]
-    if folder:
-        console.print("Only the photos under the folder given, and its subfolders.")
-    console.print("%d photo(s) have a face to be named and a tagged person no face carries."
-                  % counts["photos_with_a_face_and_a_person_to_place"])
-    console.print("  %d photo(s): one face, one person; named by the tag alone: %d"
-                  % (counts["one_face_one_person"], counts["named_by_the_tag_alone"]))
-    console.print("      the person has no named face to compare with: %d (named)" % counts["person_has_no_decided_face"])
-    console.print("      the face is like them, at 0.80 or more: %d, from 0.70 to 0.80: %d (named)"
-                  % (counts["like_them_from_0.80"], counts["like_them_from_0.70_to_0.80"]))
-    console.print("      the face is not like them (under 0.70): %d (left for Identify Faces)" % counts["not_like_them"])
-    if counts["not_decidable_yet"]:
-        console.print("      the person has no named face and several photos wait: %d (left for Identify Faces)"
-                      % counts["not_decidable_yet"])
-    if counts["face_unreadable"]:
-        console.print("      the face cannot be compared: %d (left)" % counts["face_unreadable"])
-    if counts["background_sized_faces_passed_over"]:
-        console.print("  %d face(s) under 2,000 square pixels passed over" % counts["background_sized_faces_passed_over"])
-    console.print("  %d photo(s): named by comparison with the person's named faces"
-                  % counts["photos_named_by_comparison"])
-    console.print("  %d photo(s) left for Identify Faces" % counts["photos_left_for_identify_faces"])
-    console.print("%d face(s) %s." % (counts["faces"], "named" if apply_ else "would be named"))
-    if not apply_:
-        console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
-        if result.details.get("earlier_apply"):
-            console.print("Applied before: " + faces_from_tags_service.AGAIN + " " + faces_from_tags_service.earlier_sentence(
-                faces_from_tags_service.earlier_applies(library)), markup=False, soft_wrap=True)
-        console.print("Nothing changed. --apply names them%s."
-                      % (" (with --again)" if result.details.get("earlier_apply") else ""))
-        return
-    console.print("Wrote %d face(s). %s" % (result.changed, maintenance.recorded(result, library.path)),
-                  markup=False, soft_wrap=True)
-    # Counted again after the write: the faces just named change which photos have one face left.
-    console.print("Still to be named by the rule now: %d face(s)." % result.details.get("remaining", {"faces": 0})["faces"])
-    for line in maintenance.skipped(result):
-        console.print(line, markup=False, soft_wrap=True)
-
-
 @cli.command("tags-from-faces")
 @click.option("--apply", "apply_", is_flag=True,
               help="Write the keywords into the photo files. Without it, only says how many photos it would write.")
@@ -972,68 +896,6 @@ def _tree_fill_said(verb, report):
                   % (linked["faces"], linked["listed_people"], report["keyword_rows_added"]), markup=False)
 
 
-def _job_libraries(ctx):
-    """The library --db names, or every library in the data folder."""
-    if ctx.obj.get("db"):
-        return [_existing_library(ctx)]
-    return runtimes.home_libraries(ctx.obj.get("test", False))
-
-
-@cli.group("settings", invoke_without_command=True)
-@click.pass_context
-def settings_command(ctx):
-    """The library's settings (tagpup.services.settings): each key and its value, read
-    without stamping the library. `settings set KEY VALUE` changes one."""
-    if ctx.invoked_subcommand is not None:
-        return
-    library = _existing_library(ctx)
-    found = runtimes.peek_settings(library)
-    for key, value in found.values.items():
-        console.print("%s = %s" % (key, value.replace(chr(10), " | ")), markup=False, soft_wrap=True)
-
-
-@settings_command.command("set")
-@click.argument("key")
-@click.argument("value")
-@click.option("--acknowledge", "acknowledged", multiple=True,
-              help="A locked group whose consequences you accept (clip, faces, exiftool).")
-@click.option("--apply", "apply_", is_flag=True, help="Write the change. Without it, only says what it would change.")
-@click.pass_context
-def settings_set(ctx, key, value, acknowledged, apply_):
-    """Change the setting KEY to VALUE as one journaled change, undoable (`history`,
-    `undo`). Folders (library.roots, library.ignored) are given one a line, or separated
-    by |. Setting the roots also ignores every folder under a new root that holds photos
-    and none indexed. A dry run unless --apply."""
-    library = _existing_library(ctx)
-    if key in (library_settings.ROOTS, library_settings.IGNORED):
-        value = chr(10).join(part.strip() for part in value.replace("|", chr(10)).split(chr(10)) if part.strip())
-    result = library_settings.change(library, {key: value}, acknowledged=list(acknowledged), apply=apply_)
-    if result.refused:
-        console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
-        raise SystemExit(1)
-    if key == library_settings.ROOTS:
-        # Taken, but said: a root on a drive not plugged in now is walked when it is back.
-        for root in value.split(chr(10)):
-            if root and not os.path.isdir(root):
-                console.print("Warning: %s is not on disk now; sync finds nothing under it until it is." % root,
-                              markup=False, soft_wrap=True)
-    changed = result.details.get("changed", [])
-    added = result.details.get("ignored_added", 0)
-    if not changed:
-        console.print("%s already holds that value; nothing to change." % key, markup=False)
-        return
-    also = " and %d folder(s) under the new roots added to library.ignored" % added if added else ""
-    if not apply_:
-        console.print("Would change %s%s. Nothing changed. --apply writes it." % (", ".join(changed), also),
-                      markup=False, soft_wrap=True)
-        if result.details.get("behind"):
-            console.print("The library is behind this version by %d migration(s); --apply brings it up to date "
-                          "first." % result.details["behind"], markup=False)
-        return
-    console.print("Changed %s%s. %s" % (", ".join(changed), also, maintenance.recorded(result, library.path)),
-                  markup=False, soft_wrap=True)
-
-
 def _machine():
     """This machine's map of the roots (machine_roots.json in the TagPup home), handed to the
     service: tagpup.services does not import tagpup.config."""
@@ -1159,62 +1021,6 @@ def thumbs_warm(ctx, folder, limit, apply_):
         console.print("Stopped at --limit; run it again to go on.", markup=False)
 
 
-@cli.group(invoke_without_command=True)
-@click.pass_context
-def jobs(ctx):
-    """The recurring jobs (snapshots, pruning the journal, sync): each one's last run and when
-    it is due next, for the library --db names or every library in the data folder. The
-    web server runs them; `jobs run NAME` runs one now, by hand."""
-    if ctx.invoked_subcommand is not None:
-        return
-    from tagpup.jobs import recurring
-    libraries = _job_libraries(ctx)
-    if not libraries:
-        console.print("There is no library in %s." % tagpup_config.data_dir(), markup=False)
-        return
-    table = Table(title="Recurring jobs")
-    for column in ("Job", "Period", "Why", "Library", "Last run", "Outcome", "Changed", "Next due"):
-        table.add_column(column)
-    for library in libraries:
-        for entry in recurring.status(library):
-            last = entry["last"] or {}
-            changed = ", ".join("%s %s" % (value, name) for name, value in sorted((last.get("changed") or {}).items()))
-            table.add_row(entry["name"], entry["period"], entry["reason"], library.name, last.get("started") or "never",
-                          last.get("outcome") or "", changed, entry["next_due"])
-    console.print(table)
-
-
-@jobs.command("run")
-@click.argument("name")
-@click.pass_context
-def jobs_run(ctx, name):
-    """Run the recurring job NAME now, for the library --db names or every library, whether
-    or not it is due: unless another process is running it."""
-    runner = runtimes.recurring_jobs(Runtime(), libraries=lambda: runtimes.home_libraries(ctx.obj.get("test", False)))
-    if runner.registry.get(name) is None:
-        raise click.ClickException("There is no recurring job %s; there are %s." % (name, ", ".join(runner.registry.names())))
-    library = _existing_library(ctx) if ctx.obj.get("db") else None
-    failed = False
-    for outcome in runner.run(name, library):
-        if outcome.ran:
-            console.print("%s for %s: %s" % (name, outcome.library or "every library", _outcome_text(outcome)),
-                          markup=False)
-            failed = failed or outcome.error is not None or not outcome.result.ok
-        else:
-            console.print("%s for %s: not run, %s" % (name, outcome.library or "every library", outcome.why),
-                          markup=False)
-            failed = True
-    # A job may have filled this process's index queue (sync's new files): the process
-    # ends when this command does, so it waits for them, as `sync --apply` does.
-    for each in ([library] if library else runner.libraries()):
-        queue = indexing_jobs.queue_for(each)
-        if queue.active()["busy"]:
-            console.print("Indexing the new files' folders for %s..." % each.name, markup=False)
-        queue.wait()
-    if failed:
-        raise SystemExit(1)
-
-
 @cli.group()
 def snapshots():
     """The library's snapshots, its backup: three daily, one weekly and one monthly, in
@@ -1229,7 +1035,7 @@ def snapshots_list(ctx):
     library = _existing_library(ctx)
     found = library_snapshots.listing(library)
     if not found["snapshots"]:
-        console.print("%s has no snapshots yet; `jobs run snapshots` takes one." % library.name, markup=False)
+        console.print("%s has no snapshots yet; the Activity page's Run now takes one." % library.name, markup=False)
         return
     table = Table(title="Snapshots of %s" % library.name)
     for column in ("Name", "Taken", "Size", "Changes since"):
