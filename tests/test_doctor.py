@@ -159,6 +159,25 @@ class TheDoctor(Library):
         self.assertIn("Wren Halloway at the lake.jpg", "\n".join(shown))
         self.assertEqual(1, doctor.main(["--db", self.db_path]))
 
+    def test_counts_the_photos_whose_file_fails_to_open_and_names_them_only_when_asked(self):
+        import damaged_photos
+        for name, make in (("whole.jpg", damaged_photos.whole_jpeg), ("incomplete copy.jpg", damaged_photos.second_half_zeros),
+                           ("nothing.jpg", lambda path: open(path, "wb").close()),
+                           ("zeros.jpg", damaged_photos.all_zeros)):
+            self.photo(name, on_disk=False)
+            make(os.path.join(self.dir, name))
+        self.photo("gone.jpg", on_disk=False)
+        _broken, lines = self.run_doctor()
+        said = [line for line in lines if line.startswith("photos whose file fails to open")]
+        self.assertEqual(1, len(said), lines)
+        self.assertIn("fails to open: 3 ", said[0])   # the copy that stops in zeros, the empty file, the file of zeros
+        self.assertNotIn("incomplete copy", "\n".join(lines))
+        _broken, shown = self.run_doctor(5)
+        listed = "\n".join(shown)
+        for name in ("incomplete copy.jpg", "nothing.jpg", "zeros.jpg"):
+            self.assertIn(name, listed)
+        self.assertNotIn("whole.jpg", listed)
+
     def test_changes_nothing(self):
         self.face(self.photo("a.jpg"), name="Wren Halloway", rebuilt=False)
         self.conn.close()
