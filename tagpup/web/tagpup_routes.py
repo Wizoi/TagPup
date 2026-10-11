@@ -65,6 +65,15 @@ class FolderCache:
     page record}}. Written by a scan, kept true by every write the page makes through
     this server, and read by Suggest for the folder's photos.
 
+    A scan is kept with the library's photos counter as it was before the scan (`stamp`,
+    tagpup.services.photos.scan_stamp), and `get` hands it back only while the counter is
+    where it was: a CLI `sync --apply`, an MCP undo or a snapshot restore in another process
+    moves it, and the page's next open of the folder reads it again instead of showing what the
+    photos held before (docs/INVARIANTS.md, contract table row 11). A write through this server
+    moves the counter too: the scan after one is read again from the library's rows, which the
+    write recorded, at the cost of a stat of each file. `peek` is `get` without that check, for
+    a caller that wants the scan's spellings and not its content.
+
     A scan stores its whole recursive walk under the scanned folder's key, so a photo in
     a subfolder is filed under an ancestor, not under its own directory. The writers
     looked it up under paths.key(dirname(photo)) and never found it: its record went on
@@ -72,25 +81,52 @@ class FolderCache:
     photo, since a folder and a subfolder of it may both have been scanned.
     """
 
-    def __init__(self):
+    def __init__(self, library=None):
+        self._library = library
         self._maps = {}
+        self._stamps = {}
         self._lock = threading.Lock()
 
+    def stamp(self):
+        """The library's photos counter now: taken before a scan, given to `put` with it, so a write that
+        lands during the scan costs one more scan later and is never missed."""
+        return photo_actions.scan_stamp(self._library) if self._library is not None else None
+
     def get(self, folder):
+        key = paths.key(folder)
+        with self._lock:
+            held = self._maps.get(key)
+            if held is None:
+                return None
+            kept = self._stamps.get(key)
+        if kept == self.stamp():
+            return held
+        with self._lock:
+            if self._maps.get(key) is held:
+                del self._maps[key]
+                self._stamps.pop(key, None)
+        return None
+
+    def peek(self, folder):
         with self._lock:
             return self._maps.get(paths.key(folder))
 
-    def put(self, folder, photos):
+    def put(self, folder, photos, stamp=None):
+        """Keep a scan; `stamp` is `self.stamp()` as it was before the scan (taken now when not given)."""
+        stamp = self.stamp() if stamp is None else stamp
         with self._lock:
             self._maps[paths.key(folder)] = photos
+            self._stamps[paths.key(folder)] = stamp
 
     def pop(self, folder):
         with self._lock:
+            self._stamps.pop(paths.key(folder), None)
             return self._maps.pop(paths.key(folder), None)
 
     def clear(self):
         with self._lock:
             self._maps.clear()
+            self._stamps.clear()
 
     def entries_for(self, photo_path):
         """Every map holding this photo, as (map, record) pairs."""
@@ -107,7 +143,7 @@ class FolderCache:
         return found
 
 
-folders = state.PerLibrary(lambda library: FolderCache())
+folders = state.PerLibrary(FolderCache)
 
 
 @routes.before_request
@@ -156,8 +192,9 @@ def _folder_photos(library, folder):
     found = cache.get(folder)
     if not found:
         logger.info("Folder cache empty for %s; scanning it.", folder)
+        stamp = cache.stamp()
         found = photo_actions.scan_folder(library, folder, state.exiftool(library))
-        cache.put(folder, found)
+        cache.put(folder, found, stamp)
     return found
 
 
@@ -250,8 +287,9 @@ def folder_scan():
     # opened never showed until Refresh, since its empty scan was kept like any other.
     photos = None if force else cache.get(folder)
     if not photos:
+        stamp = cache.stamp()
         photos = photo_actions.scan_folder(library, folder, state.exiftool(library))
-        cache.put(folder, photos)
+        cache.put(folder, photos, stamp)
     return jsonify(_sorted(photos))
 
 
@@ -325,7 +363,7 @@ def folder_suggest_status():
     if not folder:
         return responses.error(400, "Missing 'path' parameter")
     # Under the spellings this server's scan gave the page (tagpup.jobs.suggestions).
-    status = suggestion_jobs.runs_for(library).status(folder, folders.of(library).get(folder))
+    status = suggestion_jobs.runs_for(library).status(folder, folders.of(library).peek(folder))
     return jsonify(people_service.annotate_suggestions(library, status))
 
 
@@ -435,8 +473,9 @@ def folder_time_shift():
     photos = cache.get(folder)
     if not photos:
         try:
+            stamp = cache.stamp()
             photos = photo_actions.read_folder(library, folder, state.exiftool(library))
-            cache.put(folder, photos)
+            cache.put(folder, photos, stamp)
         except Exception as e:
             logger.error("Error scanning folder on the fly for time shift: %s", e)
             return responses.error(500, "Folder must be scanned first, and scan fallback failed: %s" % e)

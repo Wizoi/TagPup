@@ -99,7 +99,7 @@ class TestASubfolderPhotoIsFoundInTheCache(unittest.TestCase):
         self.assertEqual(len(reply), 1)
 
     def cached(self):
-        return self.lib.folders().get(self.lib.photos).get(paths.key(self.photo))
+        return self.lib.folders().peek(self.lib.photos).get(paths.key(self.photo))
 
     def test_save_metadata_updates_its_record(self):
         status, reply = self.lib.post("/api/photo/save-metadata", {

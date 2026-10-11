@@ -251,7 +251,7 @@ class ASmartRenameSplitsOnce(jl.Base):
         self.assertIn("tmp_rename_", body["error"])
         # The server's folder cache holds the new names too.
         from tagpup.web import tagpup_routes
-        cached = tagpup_routes.folders.of(self.library).get(paths.stored(self.regatta)) or {}
+        cached = tagpup_routes.folders.of(self.library).peek(paths.stored(self.regatta)) or {}
         self.assertTrue(all(os.path.exists(record["path"]) for record in cached.values()))
 
 
