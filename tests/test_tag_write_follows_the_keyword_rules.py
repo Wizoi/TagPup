@@ -1,6 +1,7 @@
-"""Writing suggested tags writes keywords the way the app does, and tells the index.
+"""Writing tags to a selection writes keywords the way the app does, and tells the index.
 
-It had its own ExifTool code: every hierarchical tag was also split into its parts, so
+The write of suggested tags (gone: Apply All and Add to all selected are tagging.change_tags and add_tags) had its
+own ExifTool code: every hierarchical tag was also split into its parts, so
 "Activity/Rowing" wrote loose "Activity" and "Rowing" keywords beside it; a person named
 by a bare leaf was written bare; and the index was never told, so its rows described
 what the photos used to hold. It now writes through the journaled keyword write (tagpup.services.tagging),
@@ -21,7 +22,7 @@ from tagpup.store import db
 
 
 @requires_exiftool
-class SuggestionWriteFollowsTheKeywordRules(unittest.TestCase):
+class TagWriteFollowsTheKeywordRules(unittest.TestCase):
     def setUp(self):
         from PIL import Image
 
@@ -46,8 +47,8 @@ class SuggestionWriteFollowsTheKeywordRules(unittest.TestCase):
             conn.close()
 
     def write(self):
-        result = tagging.write_suggestions(CoreLibrary(self.lib.db_path),
-                                           [(self.photo, ["Activity/Rowing", "Rowan Thackeray"], "")], EXIFTOOL)
+        result = tagging.change_tags(CoreLibrary(self.lib.db_path), [self.photo],
+                                     ["Activity/Rowing", "Rowan Thackeray"], [], EXIFTOOL)
         return not result.errors
 
     def keywords(self):

@@ -584,18 +584,6 @@ class TwoTabs(Base):
         self.assert_library_unchanged()
 
 
-class WhatStaysRefused(Base):
-    """The CLI's write of suggestions needs the library's database: still refused in a folder it does
-    not hold. (Suggest and Apply All are not: tests/test_analyse_only_suggest.py.)"""
-
-    def test_the_cli_write_of_suggestions(self):
-        from tagpup.services import tagging
-        result = tagging.write_suggestions(self.library, [(self.loose[0], ["Trips/Lighthouse"], "")], EXIFTOOL)
-        self.assertTrue(result.refused)
-        self.assertEqual([], tags_in(self.loose[0]))
-        self.assert_library_unchanged()
-
-
 class TheLibraryCannotBeReadJustNow(Base):
     def test_the_write_fails_and_the_file_is_not_written(self):
         import sqlite3

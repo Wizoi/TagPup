@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_a_number_compares_as_read import ReadFilesCase  # noqa: E402
 from test_file_journal import EXIFTOOL, write_outside  # noqa: E402
 
-from tagpup.services import photos as photo_actions, tagging  # noqa: E402
+from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
 ELSEWHERE = "2011:05:06 07:08:09"
@@ -45,10 +45,6 @@ class ARowTheFileHasMovedOnFrom(ReadFilesCase):
         self.assertEqual(1, self.add([self.a]).changed)
         self.assert_not_stamped()
         self.assertEqual(["Beach", "Harbour"], self.indexed(self.a))
-
-    def test_is_not_stamped_by_a_caption_write(self):
-        self.assertEqual(1, tagging.write_suggestions(self.library, [(self.a, [], "Quay at dusk")], EXIFTOOL).changed)
-        self.assert_not_stamped()
 
     def test_is_not_stamped_by_a_rotation(self):
         self.assertTrue(photo_actions.rotate(self.library, self.a, "left", EXIFTOOL).ok)

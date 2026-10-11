@@ -186,10 +186,6 @@ class Outcome:
     #: Why the whole write was refused (a share holding a recorded-damaged photo did not answer, the roots changed), or None.
     refused: str = None
 
-    @property
-    def total(self):
-        return self.changed + self.unchanged + self.skipped_missing + self.skipped_damaged + len(self.errors)
-
     def reply(self):
         """The numbers and the first MOST_ERRORS errors, for the page."""
         return {"changed": self.changed, "unchanged": self.unchanged, "skipped_missing": self.skipped_missing,

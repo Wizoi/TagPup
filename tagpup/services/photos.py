@@ -422,19 +422,16 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     return result
 
 
-def date_shift_plan(minutes, strict=False):
+def date_shift_plan(minutes):
     """The `plan_one` of a Date Taken shift by `minutes` (tagpup.services.file_changes.write_fields): each date the photo
-    holds is moved by the same minutes; one it does not hold is not made, and a photo holding none is skipped. The one plan
-    of Camera Time Shift (shift_date_taken) and of the bulk edit (tagpup.services.bulk_edit). `strict` (the edit): a date the
-    shift would move out of range (dates.ShiftOutOfRange) is raised, and so the photo's error with a sentence; Camera Time
-    Shift leaves such a photo alone, as it always did."""
-    shift = dates.shifted_strictly if strict else dates.shifted
+    holds is moved by the same minutes; one it does not hold is not made, and a photo holding none is skipped. The plan
+    of Camera Time Shift (shift_date_taken); a date the shift would move out of range is left alone."""
 
     def plan_one(_path, held):
         after = {}
         for field in dates.SHIFTED_FIELDS:
             values = held.get(field) or []
-            moved = shift(values[0], minutes) if len(values) == 1 else None
+            moved = dates.shifted(values[0], minutes) if len(values) == 1 else None
             if moved is not None:
                 after[field] = [moved]
         return file_changes.Plan(after=after) if after else file_changes.skip("holds no Date Taken to move")
