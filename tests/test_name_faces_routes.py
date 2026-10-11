@@ -69,7 +69,7 @@ class StartingAndAnswering(RoutesCase):
         # TagPup, on the same library, sees the job TagTuner started and answers it.
         seen = self.apps["tagpup"].get(CURRENT).get_json()["status"]
         self.assertEqual(started["job"], seen["job"])
-        answered = self.apps["tagpup"].post(CONFIRM, json={"job": started["job"], "group": False})
+        answered = self.apps["tagpup"].post(CONFIRM, json={"job": started["job"]})
         self.assertEqual(200, answered.status_code, answered.get_json())
         self.join(started["job"])
         done = self.apps["tuner"].get(STATUS, query_string={"job": started["job"]}).get_json()["status"]
@@ -166,7 +166,7 @@ class TwoClicksAndBusyLibraries(RoutesCase):
         return blocked()
 
     def test_the_writes_that_would_be_written_over_are_refused_while_names_are_given(self):
-        # #871: the plan was read, and grouping commits a name for every face it read.
+        # #871: the plan was read, and a name given meanwhile would make it stale.
         import json
         import re
         writing = {"/api/sync": {"apply": True}, "/api/history/<int:change_id>/undo": {"apply": True}}

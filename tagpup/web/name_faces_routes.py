@@ -30,7 +30,7 @@ def _this_pc_only():
     return None
 
 
-#: The writes the job's plan and grouping must not be written over (#871): adding or indexing folders, a sync's apply, a bulk edit,
+#: The writes the job's plan must not be written over (#871): adding or indexing folders, a sync's apply, a bulk edit,
 #: a photo's keywords and the bulk tag writes, and deleting photos; and what can put faces' names, tags or the tree back or
 #: elsewhere without going through those: History's Undo, a stopped assignment of faces resumed or undone, a branch's flags.
 #: Keyed as Flask names the route (`<int:change_id>` stays in it). Answered 409 while names are given (the one owner of the
@@ -156,15 +156,13 @@ def name_faces_current():
 
 @routes.post("/api/name-faces/confirm")
 def name_faces_confirm():
-    """The answer Yes to the plan of job `job`: write its names (one change of the library's journal) and, if `group` is true,
-    group the rest of the faces by who they look like and name those groups from the tags (tagpup.services.identities)."""
+    """The answer Yes to the plan of job `job`: write its names (one change of the library's journal)."""
     library = state.require()
     body = request.get_json(silent=True)
     body = body if isinstance(body, dict) else {}
 
     def confirm():
-        job = naming_faces.confirm(library, _job_number(body.get("job")), group=body.get("group") is True,
-                                   busy=lambda: _busy(library))
+        job = naming_faces.confirm(library, _job_number(body.get("job")), busy=lambda: _busy(library))
         return jsonify({"success": True, "status": job.status()})
     return _reply(confirm)
 

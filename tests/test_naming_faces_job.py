@@ -1,7 +1,6 @@
-"""docs/findings.md, #789: the button "Name faces from tags" is one job: a plan, a question, the names, and (if asked) grouping.
+"""docs/findings.md, #789: the button "Name faces from tags" is one job: a plan, a question and the names.
 
-tagpup.jobs.naming_faces runs faces-from-tags (its plan, then the journaled change the CLI's --apply makes) and, when ticked,
-identities.resolve, on a thread of its own. Nothing is written before the answer Yes. These tests run it on small libraries made
+tagpup.jobs.naming_faces runs faces-from-tags (its plan, then the journaled change the CLI's --apply makes) on a thread of its own. Nothing is written before the answer Yes. These tests run it on small libraries made
 as the indexer makes them (tests/test_faces_from_tags.py's Case), in a home of their own, and join the job's thread: no port, no
 sleep. They cover how it fails: two clicks, Cancel at each step, a restart, a plan gone stale, a library with no faces, two
 libraries, and the other work that must finish first.
@@ -21,7 +20,7 @@ from test_faces_from_tags import ODA, WREN, Case, at, look, write  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Conflict, NotFound, Refused  # noqa: E402
 from tagpup.jobs import naming_faces  # noqa: E402
-from tagpup.services import faces_from_tags, identities  # noqa: E402
+from tagpup.services import faces_from_tags  # noqa: E402
 from tagpup.services import job_runs as runs_service  # noqa: E402
 from tagpup.store import faces, people, schema, taxonomy  # noqa: E402
 
@@ -113,16 +112,14 @@ class ThePlanIsAJobAndWritesNothing(Case789):
         with self.assertRaises(Conflict):
             naming_faces.confirm(self.library, job.handle)
 
-    def test_a_plan_with_nothing_to_name_still_offers_the_grouping(self):
-        # Faces, and no keyword names anyone: the question is only about grouping.
+    def test_a_plan_with_nothing_to_name_cannot_be_answered_yes(self):
+        # Faces, and no keyword names anyone.
         self.face(self.photo("plain_001.jpg"), at(0))
         job = self.start()
         self.assertEqual(naming_faces.ASKING, job.status()["state"])
         self.assertEqual(0, job.status()["plan"]["faces"])
         with self.assertRaises(Refused):
             naming_faces.confirm(self.library, job.handle)
-        again = naming_faces.confirm(self.library, job.handle, group=True)
-        self.assertEqual(naming_faces.DONE, wait(again)["state"])
 
 
 class YesWritesTheChange(Case789):
@@ -133,7 +130,7 @@ class YesWritesTheChange(Case789):
         found = wait(job)
         self.assertEqual(naming_faces.DONE, found["state"], found["message"])
         self.assertEqual(2, found["applied"]["changed"])
-        self.assertIn("which Undo takes back", found["message"], "without grouping the change can still be undone")
+        self.assertIn("which Undo takes back", found["message"])
         self.assertIsNotNone(found["applied"]["change"])
         self.assertEqual(WREN, look(self.path, "SELECT name FROM faces WHERE id = ?", (self.single_face,))[0][0])
         self.assertTrue(faces_from_tags.earlier_apply(self.library), "History has it, with Undo")
@@ -372,7 +369,7 @@ class Cancel(Case789):
         self.assertIn("nothing was changed", found["message"])
         self.assertEqual(before, self.names())
 
-    def test_cancel_during_the_write_lets_the_write_finish_whole_and_skips_the_grouping(self):
+    def test_cancel_during_the_write_lets_the_write_finish_whole(self):
         self.seed()
         job = self.start()
         real = faces_from_tags.faces_from_tags
@@ -380,33 +377,11 @@ class Cancel(Case789):
         def cancelled_while_writing(*args, **more):
             naming_faces.cancel(self.library, job.handle)
             return real(*args, **more)
-        with mock.patch.object(faces_from_tags, "faces_from_tags", cancelled_while_writing), \
-                mock.patch.object(identities, "resolve", side_effect=AssertionError("grouped")):
-            naming_faces.confirm(self.library, job.handle, group=True)
+        with mock.patch.object(faces_from_tags, "faces_from_tags", cancelled_while_writing):
+            naming_faces.confirm(self.library, job.handle)
             found = wait(job)
-        self.assertEqual(naming_faces.CANCELLED, found["state"])
+        self.assertEqual(naming_faces.DONE, found["state"])
         self.assertEqual(2, found["applied"]["changed"], "a write begun is finished, never half")
-        self.assertIn("written as one change", found["message"])
-        self.assertIn("Grouping was not run", found["message"])
-
-    def test_cancel_in_the_grouping_writes_no_name(self):
-        self.seed()
-        job = self.start()
-        naming_faces.confirm(self.library, job.handle)
-        wait(job)
-        self.assertEqual(naming_faces.DONE, job.state)
-        before = self.names()
-        second = self.start()
-        real = identities.resolve
-
-        def cancelled_in_the_middle(index, max_iterations=5, on_step=None):
-            naming_faces.cancel(self.library, second.handle)
-            return real(index, max_iterations, on_step)
-        with mock.patch.object(identities, "resolve", cancelled_in_the_middle):
-            naming_faces.confirm(self.library, second.handle, group=True)
-            found = wait(second)
-        self.assertEqual(naming_faces.CANCELLED, found["state"])
-        self.assertEqual(before, self.names(), "grouping stopped before its commit: no name changed")
 
     def test_cancel_of_a_job_that_ended_is_no_error(self):
         self.seed()
@@ -416,104 +391,6 @@ class Cancel(Case789):
         self.assertEqual(naming_faces.DONE, naming_faces.cancel(self.library, job.handle)["state"])
         with self.assertRaises(NotFound):
             naming_faces.cancel(self.library, 999999)
-
-
-class Grouping(Case789):
-    def test_grouping_runs_identities_resolve_and_keeps_names_given_by_hand(self):
-        self.seed()
-        job = self.start()
-        naming_faces.confirm(self.library, job.handle, group=True)
-        found = wait(job)
-        self.assertEqual(naming_faces.DONE, found["state"], found["message"])
-        self.assertIsNotNone(found["grouped"])
-        self.assertEqual((WREN, "manual"), look(self.path, "SELECT name, name_source FROM faces WHERE id = ?",
-                                                (self.known_face,))[0], "a name given by hand is kept")
-        self.assertIn("Grouping re-derived the library's automatic names", found["message"])
-
-    def rewrites_a_name_the_change_wrote(self, face):
-        """A grouping that takes the name of `face` away, as it did a name between 0.70 and 0.80 before #855."""
-        real = identities.resolve
-
-        def resolve(index, max_iterations=5, on_step=None):
-            found = real(index, max_iterations, on_step)
-            faces.set_names(index.conn, {face: None})
-            index.conn.commit()
-            return found
-        return mock.patch.object(identities, "resolve", resolve)
-
-    def test_the_result_of_a_grouping_that_rewrote_the_names_does_not_say_undo_takes_them_back(self):
-        # #870
-        self.seed()
-        job = self.start()
-        with self.rewrites_a_name_the_change_wrote(self.single_face):
-            naming_faces.confirm(self.library, job.handle, group=True)
-            message = wait(job)["message"]
-        self.assertIn(naming_faces.UNDO_LOST, message)
-        self.assertNotIn("Undo takes back", message)
-
-    def test_history_refuses_the_undo_once_grouping_rewrote_a_name_the_change_wrote(self):
-        from tagpup.services import journal as journal_service
-        known = self.photo("known_001.jpg", ["People/" + WREN])
-        self.face(known, at(0), name=WREN, name_source="manual")
-        face = self.face(self.photo("middling_001.jpg", ["People/" + WREN]), at(40))
-        job = self.start()
-        with self.rewrites_a_name_the_change_wrote(face):
-            naming_faces.confirm(self.library, job.handle, group=True)
-            found = wait(job)
-        undone = journal_service.undo(self.library, found["applied"]["change"], apply=False)
-        self.assertTrue(undone.refused, "the result's warning is true: the change cannot be undone now")
-        self.assertIn(naming_faces.UNDO_LOST, found["message"])
-
-    def test_grouping_keeps_a_name_its_photos_tag_confirms_and_the_undo_still_works(self):
-        # #855: a face the tag names at 0.77 of the person (offered, not named unasked) was taken away by grouping, which
-        # kept a name only from 0.80, after which History refused the undo. The tag bears the name out: it stays.
-        from tagpup.services import journal as journal_service
-        known = self.photo("known_001.jpg", ["People/" + WREN])
-        self.face(known, at(0), name=WREN, name_source="manual")
-        face = self.face(self.photo("middling_001.jpg", ["People/" + WREN]), at(40))
-        job = self.start()
-        naming_faces.confirm(self.library, job.handle, group=True)
-        found = wait(job)
-        self.assertEqual(WREN, look(self.path, "SELECT name FROM faces WHERE id = ?", (face,))[0][0],
-                         "grouping took the name away")
-        undone = journal_service.undo(self.library, found["applied"]["change"], apply=False)
-        self.assertFalse(undone.refused, undone.refused)
-        self.assertNotIn(naming_faces.UNDO_LOST, found["message"])
-        self.assertIn("which Undo takes back", found["message"])
-        self.assertIn("History cannot undo grouping", found["message"])
-
-    def test_grouping_is_not_run_unless_ticked(self):
-        self.seed()
-        job = self.start()
-        with mock.patch.object(identities, "resolve", side_effect=AssertionError("grouped")):
-            naming_faces.confirm(self.library, job.handle)
-            self.assertEqual(naming_faces.DONE, wait(job)["state"])
-
-    def test_grouping_uses_no_model(self):
-        # It loads the library's photos without their vectors: no model, no graphics card.
-        self.seed()
-        job = self.start()
-        from tagpup.services import search
-        made = []
-        real = search.PhotoIndex
-
-        def watching(db_path, model=None, read_only=False):
-            made.append(model)
-            return real(db_path, model=model, read_only=read_only)
-        with mock.patch.object(search, "PhotoIndex", watching):
-            naming_faces.confirm(self.library, job.handle, group=True)
-            wait(job)
-        self.assertEqual([None], made)
-
-    def test_grouping_that_fails_says_so_and_what_was_written_before(self):
-        self.seed()
-        job = self.start()
-        with mock.patch.object(identities, "resolve", side_effect=RuntimeError("secret " + WREN)):
-            naming_faces.confirm(self.library, job.handle, group=True)
-            found = wait(job)
-        self.assertEqual(naming_faces.FAILED, found["state"])
-        self.assertIn("2 face names were written as one change", found["message"])
-        self.assertNotIn(WREN, found["message"], "an exception's text can carry a name or a path")
 
 
 class WhatMustFinishFirst(Case789):

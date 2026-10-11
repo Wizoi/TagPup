@@ -8,14 +8,11 @@
  *   2. The question: "Name N faces in M photos (X by their tag, Y by looking like the person's confirmed faces)? Z are left
  *      for you." Yes writes them, as one change of the library's History. No changes nothing. When it was done before, the
  *      question says so, and Yes is the CLI's --again.
- *   3. Optionally, a second box (off): also group the rest of the faces by who they look like and name those groups from the
- *      tags. It re-derives every automatic name in the library, so its text says so. Not offered for a folder (below).
- *   4. The result, in counts, and for the folder the page has open what changed in it.
+ *   3. The result, in counts, and for the folder the page has open what changed in it.
  *
  * When the page has a folder open, a first step asks how much to look at (docs/findings.md, #994): "Only this folder and its
  * subfolders" (the default) or the whole library, each with the count of its unnamed faces. The plan, the question and the
- * write are then that scope's, and the question says which. The grouping works on every face of the library and cannot be
- * limited, so a folder is not offered it, and the dialog says why. With no folder open it works on the whole library, as before,
+ * write are then that scope's, and the question says which. With no folder open it works on the whole library, as before,
  * and says so at the top. The dialog is a `.modal`, so the pages'
  * shortcuts leave it alone while it is open (web/common/dialog.js). Closing it does not stop the job: the button, pressed
  * again, shows the one that runs. The page is told (`changed`) when names were written, so it shows what its faces hold now.
@@ -39,7 +36,6 @@ const nfDialog = {
     no: null,
     cancel: null,
     close: null,
-    group: null,
     go: null,
     scope: null,
     /** The first step's choice: the folder it is about (path, and its leaf as offered and as chosen for the question), and the two radios. */
@@ -137,7 +133,7 @@ function nfRenderWorking(status) {
         bar,
         buildElement('p', { className: 'name-faces-elapsed', text: nfElapsed(status.elapsed) + ' so far' }),
     ];
-    if (status.phase === 'applying' || status.phase === 'grouping') {
+    if (status.phase === 'applying') {
         children.push(buildElement('p', { className: 'name-faces-note',
             text: 'Until it finishes, changes to faces, tags and folders in this library are refused: saving a photo, bulk tags, '
                 + 'adding or indexing folders, a sync, deleting photos, and naming faces in TagTuner. Looking is not refused.' }));
@@ -149,9 +145,6 @@ function nfRenderWorking(status) {
     } else if (status.phase === 'applying') {
         children.push(buildElement('p', { className: 'name-faces-note',
             text: 'The names are written in one step. Cancel now lets that step finish, and runs nothing after it.' }));
-    } else if (status.phase === 'grouping') {
-        children.push(buildElement('p', { className: 'name-faces-note',
-            text: 'Cancel before the names are written changes nothing; the write itself, one step at the end, finishes whole.' }));
     }
     replaceContent(nfDialog.body, ...children);
     nfButtons({ cancel: status.can_cancel && !status.cancelling });
@@ -166,25 +159,8 @@ function nfRenderQuestion(status) {
     if (plan.earlier_apply) {
         children.push(buildElement('p', { className: 'name-faces-again', text: 'Applied before. ' + plan.again }));
     }
-    nfDialog.undoNote = buildElement('p', { className: 'name-faces-again' });
-    if (plan.faces) children.push(nfDialog.undoNote);
-    nfDialog.group = null;
-    if (status.only_folder) {
-        // The grouping re-derives every automatic name of the library: it cannot be limited, so a folder is not offered it.
-        children.push(buildElement('p', { className: 'name-faces-no-group',
-            text: 'Grouping the rest of the faces is not offered for one folder: it works on every face in the library and '
-                + 'cannot be limited to a folder. Choose the whole library for it.' }));
-    } else {
-        nfDialog.group = buildElement('input', { id: 'name-faces-group', attrs: { type: 'checkbox' } });
-        nfDialog.group.addEventListener('change', nfSyncYes);
-        children.push(buildElement('label', { className: 'name-faces-group', attrs: { for: 'name-faces-group' } }, [
-            nfDialog.group,
-            buildElement('span', { text: 'Also group the rest of the faces by who they look like, and name those groups from the tags. '
-                + 'This works on every face in the library and re-derives the automatic names it has been given. A name '
-                + "its photo's own tags confirm is kept, and so is a name you gave by hand. It can take about an hour on a large library, "
-                + 'needs no graphics card, and History cannot undo it. Once it has run, History can no longer be counted on to undo '
-                + 'the change that writes those names either.' }),
-        ]));
+    if (plan.faces) {
+        children.push(buildElement('p', { className: 'name-faces-again', text: 'Yes writes them as one change that History can undo.' }));
     }
     replaceContent(nfDialog.body, ...children);
     nfButtons({ yes: true, no: true });
@@ -192,16 +168,10 @@ function nfRenderQuestion(status) {
     nfSay('Nothing has been written. This plan is kept for ' + Math.round(status.ask_seconds / 60) + ' minutes.');
 }
 
-/** Yes needs something to do: names to write, or the grouping ticked. */
+/** Yes needs something to do: names to write. */
 function nfSyncYes() {
     const plan = nfDialog.last && nfDialog.last.plan;
-    if (nfDialog.undoNote) {
-        nfDialog.undoNote.textContent = nfDialog.group && nfDialog.group.checked
-            ? 'With the grouping ticked, History can no longer be counted on to undo this change once grouping has run: '
-                + 'grouping rewrites names of faces the change wrote.'
-            : 'Yes writes them as one change that History can undo.';
-    }
-    nfDialog.yes.disabled = nfDialog.busy || !plan || (!plan.faces && !(nfDialog.group && nfDialog.group.checked));
+    nfDialog.yes.disabled = nfDialog.busy || !plan || !plan.faces;
 }
 
 function nfRenderEnded(status) {
@@ -227,7 +197,7 @@ function nfStopPolling() {
 }
 
 function nfWrote(status) {
-    return Boolean((status.applied && status.applied.changed) || status.grouped);
+    return Boolean(status.applied && status.applied.changed);
 }
 
 /** Show `status`, and ask again while the job works; tell the page when it ended with names written. */
@@ -313,7 +283,7 @@ function nfAct(path, body) {
 }
 
 function nfYes() {
-    return nfAct('/api/name-faces/confirm', { job: nfDialog.job, group: Boolean(nfDialog.group && nfDialog.group.checked) });
+    return nfAct('/api/name-faces/confirm', { job: nfDialog.job });
 }
 
 function nfNo() {
@@ -357,7 +327,7 @@ function nfRenderChoice(folderPath, scope) {
     }
     children.push(buildElement('p', { className: 'name-faces-note',
         text: 'For a folder only its photos are read and written. A face is still compared with the confirmed faces of the person '
-            + 'wherever in the library they are. Grouping the rest of the faces works on the whole library and is only offered for it.' }));
+            + 'wherever in the library they are.' }));
     nfDialog.leaf = leaf;
     replaceContent(nfDialog.body, ...children);
     nfButtons({ go: true });
@@ -478,7 +448,7 @@ export function openNameFaces({ folder, changed } = {}) {
 export function attachNameFaces({ folder, changed } = {}) {
     return api.json('/api/name-faces/current').then(answer => {
         const status = answer && answer.success ? answer.status : null;
-        if (!status || !['planning', 'applying', 'grouping'].includes(status.state)) return null;
+        if (!status || !['planning', 'applying'].includes(status.state)) return null;
         if (!nfDialog.modal) nfBuild();
         nfDialog.folder = typeof folder === 'function' ? folder : null;
         nfDialog.changed = typeof changed === 'function' ? changed : null;
