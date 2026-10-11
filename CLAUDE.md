@@ -205,7 +205,9 @@ reported 60 done, and wrote nothing; the paths did not match and nothing said so
 - The right agent for the size: `tagpup-worker-small` (cheaper model) for a bounded fix,
   `tagpup-worker` for design and anything touching sync, the journal, the supervisor or
   writes; `tagpup-reviewer` for a branch's first review, `tagpup-quick-reviewer` for the
-  follow-up on fixes it asked for. A one-file fix is often cheapest done directly.
+  follow-up on fixes it asked for. A branch in one domain also gets that domain's owner
+  (`tagpup-owner-data`, `-people`, `-files`, `-views-ai`; `-integration` for a change across
+  two); the brief names the domain ([docs/OWNERS.md](docs/OWNERS.md)). A one-file fix is often cheapest done directly.
 - A number told to the owner about their libraries is one counted this session, not relayed.
 - One session per phase: `/clear` at a phase boundary (the memory handoff carries the state),
   `/compact` inside a long one. Most of the cost was context re-read, not work.

@@ -19,6 +19,8 @@ Everything below holds for every task; the brief does not repeat it.
   reviews, merges and pushes.
 - Another agent may be working in the same worktree; the brief says which files are
   yours. Touch no others. If one needs a change, say so in your report.
+- If the brief names a domain, read that domain owner's charter first
+  (`.claude/agents/tagpup-owner-<domain>.md`): its contract, invariants and checklist bind your change.
 
 ## How you edit
 - Read CLAUDE.md and the part of docs/ARCHITECTURE.md the task touches first.
