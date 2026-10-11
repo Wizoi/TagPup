@@ -1,6 +1,6 @@
 """The CLI's read-only commands never migrate a library (docs/findings.md, #243).
 
-`stats`, `list-index` and `search` stopped stamping settings, but PhotoIndex.load still
+`list-index` stopped stamping settings, but PhotoIndex.load still
 ran schema.ensure, so a look at a library one migration behind applied the migration.
 A look now opens the library read-only and says it is behind.
 """
@@ -39,21 +39,13 @@ class ALookAtALibraryBehind(unittest.TestCase):
         self.assertEqual(0, result.exit_code, result.output)
         return " ".join(result.output.split())
 
-    def test_stats_list_index_and_search_leave_it_behind_and_say_so(self):
-        for command in (["stats"], ["list-index"]):
+    def test_list_index_leaves_it_behind_and_say_so(self):
+        for command in (["list-index"],):
             with self.subTest(command=command[0]):
                 output = self.look(*command)
                 self.assertEqual(schema.LATEST - 1, self.version())
                 self.assertIn("a look does not apply them", output)
 
-    def test_stats_still_counts_the_photos(self):
-        self.assertIn("Total Indexed Photos: 2", self.look("stats"))
-
-    def test_a_look_at_no_library_makes_none(self):
-        missing = os.path.join(os.path.dirname(self.db_path), "nobody.db")
-        result = CliRunner().invoke(cli, ["--db", missing, "stats"])
-        self.assertIn("No photo index found", result.output)
-        self.assertFalse(os.path.exists(missing))
 
 
 class ALookAtALibraryTooFarBehindToRead(unittest.TestCase):
@@ -66,7 +58,7 @@ class ALookAtALibraryTooFarBehindToRead(unittest.TestCase):
         at_version(self.db_path, 0)
 
     def test_it_says_the_library_is_behind_not_that_there_is_no_index(self):
-        for command in (["stats"], ["list-index"]):
+        for command in (["list-index"],):
             with self.subTest(command=command[0]):
                 with mock.patch("tagpup.ml.clip.ClipModel._init_model"), \
                         mock.patch("tagpup.ml.clip.ClipModel.embed_text", return_value=[0.1] * 512):

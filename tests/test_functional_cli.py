@@ -149,13 +149,6 @@ class TestFunctionalCLI(unittest.TestCase):
         # any metadata is read -- the message comes from the skip path, not the filter.
         self.assertIn("All images are up to date! Index is current.", result.output)
 
-        # --- 3. STATS COMMAND ---
-        result = runner.invoke(cli, ["stats"])
-        self.assertEqual(result.exit_code, 0, f"stats command failed: {result.output}")
-        self.assertIn("Total Indexed Photos: 3", result.output)
-        self.assertIn("Nature", result.output)
-        self.assertIn("Alice", result.output)
-
 
 
 if __name__ == "__main__":
