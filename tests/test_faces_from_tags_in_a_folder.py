@@ -13,9 +13,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_faces_from_tags import Case, ODA, TAMSIN, WREN, at, look, write  # noqa: E402
 
-from click.testing import CliRunner  # noqa: E402
 
-import tagpup_cli  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import faces_from_tags, folder_scope  # noqa: E402
@@ -193,17 +191,6 @@ class TheJournalSaysWhatItWasFor(InFolders):
         self.assertEqual("folder", body["changes"][0]["summary"]["scope"])
         self.assertNotIn(self.sibling, str(body))
 
-    def test_the_command_names_where_the_earlier_apply_was_and_the_reveal_gives_the_path(self):
-        faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling)
-        said = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags", "--folder", self.look_alike])
-        self.assertIn("It was applied to one folder (change 1; `history --change 1 --reveal` names it).", said.output)
-        self.assertNotIn(self.sibling, said.output)
-        shown = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "history", "--change", "1"])
-        self.assertIn("scope: folder", shown.output)
-        self.assertNotIn(self.sibling, shown.output)
-        revealed = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "history", "--change", "1", "--reveal"])
-        self.assertIn("scope: folder: " + self.sibling, revealed.output)
-
 
 class AFolderThatHoldsNothing(InFolders):
     def test_a_folder_with_no_photo_is_refused_and_nothing_is_written(self):
@@ -261,42 +248,6 @@ class TwoLibrariesHoldingOneFolder(Case):
         self.assertIsNone(look(second.path, "SELECT name FROM faces WHERE id = ?", (second_face,))[0][0],
                           "the other library holds the same folder and was not touched")
         self.assertEqual(1, faces_from_tags.faces_from_tags(second, folder=run).details["counts"]["faces"])
-
-
-class TheCommand(InFolders):
-    def run_cli(self, *arguments):
-        return CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "faces-from-tags", *arguments])
-
-    def test_a_dry_run_says_the_folder_and_counts_it(self):
-        said = self.run_cli("--folder", self.run)
-        self.assertEqual(0, said.exit_code, said.output)
-        self.assertIn("Only the photos under the folder given, and its subfolders.", said.output)
-        self.assertIn("3 face(s) would be named.", said.output)
-        self.assertEqual({None}, set(self.names(*self.named).values()))
-
-    def test_apply_writes_only_there(self):
-        said = self.run_cli("--folder", self.run, "--apply")
-        self.assertEqual(0, said.exit_code, said.output)
-        self.assertIn("Wrote 3 face(s).", said.output)
-        self.assertIn("Still to be named by the rule now: 0 face(s).", said.output)
-        self.assertIsNone(self.name(self.named["Run2/b1.jpg"]))
-
-    def test_a_folder_with_no_photo_is_refused_with_a_message_and_exit_1(self):
-        said = self.run_cli("--folder", os.path.join(self.folder, "Nowhere"), "--apply")
-        self.assertEqual(1, said.exit_code)
-        self.assertIn("holds no photo of", said.output)
-        self.assertIn("Nothing was done", said.output)
-        self.assertEqual({None}, set(self.names(*self.named).values()))
-
-    def test_a_second_apply_is_refused_without_again_in_another_folder_too(self):
-        self.assertEqual(0, self.run_cli("--folder", self.sibling, "--apply").exit_code)
-        said = self.run_cli("--folder", self.look_alike, "--apply")
-        self.assertEqual(1, said.exit_code)
-        self.assertIn("--again", said.output)
-        self.assertEqual(0, self.run_cli("--folder", self.look_alike, "--apply", "--again").exit_code)
-
-    def test_the_output_never_names_a_person(self):
-        self.assertNotIn(WREN, self.run_cli("--folder", self.run).output)
 
 
 if __name__ == "__main__":

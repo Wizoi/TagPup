@@ -49,6 +49,7 @@ history section named. The rules these produce are in [INVARIANTS.md](INVARIANTS
 | 2026-10-07 | People by id stage 2: the 4 names with no person tag get the tag created; a name matching two tags is confirmed by name before anything is written; deleting a person tag faces use refuses unless forced; old history is translated to stay undoable. |
 | 2026-10-09 | Names on a group tag, or with no person tag, are **not unnamed on their own**: they are listed for the owner to decide (names to review), possibly linking the name to a person in another library. Every recommendation of the people-by-id design accepted as written. |
 | 2026-10-09 | The backfills `tags-from-faces` and `faces-from-tags` take `--folder` (#994). |
+| 2026-10-11 | The CLI commands `faces-from-tags`, `settings` (and `settings set`) and `jobs` (and `jobs run`) are deleted ("I never use these from the command line"). Their forms in the pages stay: Name faces from tags, the gear dialog, the Activity page. #994's `--folder` form of `faces-from-tags` went with the command (the dialog's "Only this folder" stays); `tags-from-faces --folder` is untouched. |
 
 ## Folders, roots and markers
 

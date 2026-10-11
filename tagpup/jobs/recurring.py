@@ -23,8 +23,8 @@ schema is left alone until an app opens it and migrates it: running a job never
 migrates a library.
 
 Only the web server -- the always-on process -- runs them: it looks every CHECK_EVERY on
-a thread of its own (Runner.start), stopped at shutdown (owner, 2026-09-26). The CLI
-lists them and runs one by hand (`jobs`, `jobs run NAME`); neither it nor the MCP server
+a thread of its own (Runner.start), stopped at shutdown (owner, 2026-09-26). The Activity page
+lists them and runs one by hand; neither the CLI nor the MCP server
 runs what is due as it starts. No Windows Task Scheduler. A server the tests started
 runs none, unless a test asks (tagpup.runtime.runs_recurring_jobs).
 """
@@ -100,7 +100,7 @@ class Job:
 class Run:
     """What a job is called with beside its library."""
     now: float
-    #: Asked for now (`jobs run`), not found due.
+    #: Asked for now (the Activity page's Run now), not found due.
     forced: bool = False
     given: Dict[str, Any] = field(default_factory=dict)
 

@@ -54,7 +54,7 @@ tags of their photos name (docs/ARCHITECTURE.md, "Name faces from tags"; the dia
 library, or only the folder of the selected photo**: when a photo is selected in the list a first step asks which
 (**only this folder and its subfolders**, the default, with its photos and unnamed faces counted; or the whole library,
 with its unnamed faces counted), and the question says which. With none selected it is the whole library, as before. Pressing it reads the plan of
-`tagpup_cli.py faces-from-tags` as a job, with a progress bar and **Cancel** (about 14 s on
+the naming (`tagpup.services.faces_from_tags.plan`) as a job, with a progress bar and **Cancel** (about 14 s on
 photo_index), and asks:
 
 > Name N faces in M photos (X by their tag, Y by looking like the person's confirmed faces)? Z photos are left for you.
@@ -110,7 +110,7 @@ The page opened with `?review=1` opens the dialog as it starts: the Activity pag
 made with, face detection, the ExifTool program, and the library's folders -- its root
 folders, which sync walks, and the folders it ignores, one full path a line, none a whole
 drive and none holding `"`, `<`, `>`, `|`, `?` or `*` (the validator's `folders`); not locked. A library has no roots until the owner
-sets them, here or with the CLI's `settings set library.roots`; until then nothing is
+sets them, here; until then nothing is
 offered for review and the review notice shows nothing. When a library's roots are set, every folder under a new root that holds photos and no indexed photo at that moment is added to the ignored folders in the same journaled change (`settings.excluded_under`; owner, 2026-09-26: "any folders not added assume excluded"): only a folder that appears later is offered for review. Suggest's candidate words and the
 rename format are TagPup's features, and are in TagPup's gear. They are the library's own, kept in it (`tagpup.services.settings`), not the
 machine's. The dialog is made from each setting's one declaration
@@ -172,7 +172,7 @@ indexing, because folders now queue rather than collide.
 Indexing runs in the background with a progress bar, and **does not re-cluster**: that
 would re-derive every name in the database, discarding corrections made here. Name the faces
 deliberately when it is wanted: **Name faces from tags** (this header and gear, and TagPup's folder
-view), or `tagpup_cli.py faces-from-tags` / `cluster-faces`.
+view), or `tagpup_cli.py cluster-faces`.
 
 Removing a folder deletes index rows only — the photo files are untouched — but the face
 rows go with the photos, so any assigned names and exclusions on them are discarded. The
