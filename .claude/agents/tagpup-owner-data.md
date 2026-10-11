@@ -43,7 +43,6 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | One migration in flight (CLAUDE.md) | none: review only |
 | Journal keys never reused; every cascade recorded, rebuilt or forbidden | `tests/test_journal_keys_and_cascades.py`, `tests/test_journal.py` |
 | A photo file written only through the journaled path; a changed file is a conflict | `tests/test_file_journal.py` |
-| A look never migrates or stamps | `tests/test_a_look_does_not_migrate.py` |
 | An older app refuses a newer library, also when it cached the library as current | `tests/test_newer_library_guard_in_a_long_lived_process.py`, `tests/test_migration_28_and_the_newer_library.py` |
 | A request for a library being migrated gets 503, not a parked thread | `tests/test_library_being_migrated.py` |
 | Snapshot is one read transaction, placed after a quick check | `tests/test_snapshots.py`, `tests/test_snapshot_commands.py` |
