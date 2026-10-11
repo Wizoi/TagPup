@@ -1448,37 +1448,6 @@ def snapshots_restore(ctx, name, apply_):
                   markup=False)
 
 
-@cli.command()
-@click.argument("photo_path", type=click.Path(exists=True, dir_okay=False))
-@click.pass_context
-def inspect(ctx, photo_path: str):
-    """Inspect metadata found in a single image (useful for debugging)."""
-    # Who the keywords name depends on the library's taxonomy.
-    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
-    exiftool_path = get_exiftool_path(db_path, read_only=True)
-
-    console.print(f"Inspecting file: [bold cyan]{photo_path}[/bold cyan]")
-    extractor = MetadataExtractor(exiftool_path=exiftool_path)
-    meta = extractor.batch_read([photo_path], people=store_taxonomy.people_vocabulary(db_path))[0]
-
-    console.print("\n[bold underline]Parsed Output[/bold underline]")
-    console.print(f"Path: {meta['path']}")
-    console.print(f"Tags: {meta['tags']}")
-    console.print(f"People: {meta['people']}")
-    console.print(f"Captions: {meta['captions']}")
-
-    # Raw metadata output
-    raw = meta.get("raw_metadata", {})
-    if raw:
-        table = Table(title="Raw Read Fields")
-        table.add_column("ExifTool Tag", style="yellow")
-        table.add_column("Value", style="green")
-        for k, v in sorted(raw.items()):
-            table.add_row(k, str(v))
-        console.print(table)
-    else:
-        console.print("[yellow]No raw metadata fields read by ExifTool.[/yellow]")
-
 @cli.command("list-index")
 @click.option("--folder", default=None, help="Filter results to paths under this directory.")
 @click.pass_context
