@@ -27,7 +27,6 @@ from tagpup.jobs import identify as identify_jobs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import suggestions as suggestion_jobs
-from tagpup.jobs import verifying as verify_jobs
 from tagpup.services import face_assignment, face_people
 from tagpup.services import faces as faces_service
 from tagpup.services import identify as identify_service
@@ -36,7 +35,7 @@ from tagpup.services import libraries as library_actions
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
-from tagpup.services import roots_location, roots_verify
+from tagpup.services import roots_location
 from tagpup.services import tags as tags_service
 from tagpup.web import desktop, face_routes, responses, roots_gate, roots_ingress, security, state, tagpup_routes
 from tagpup.web import libraries as web_libraries
@@ -679,16 +678,12 @@ def browse_folder():
 # ---- Roots: where this machine keeps each root of the library ----------------------------------
 #
 # The library's rows say `@pictures/2024/a.jpg`; this machine's map (machine_roots.json) says where
-# `pictures` is. These routes show each root, Verify a place, and move a root: the map is edited, never
+# `pictures` is. These routes show each root and move a root: the map is edited, never
 # a row (tagpup.services.roots_location; docs/ARCHITECTURE.md, "Roots and machines"). They answer this
 # PC only, as the Activity page does.
 
 #: The background task the folder watcher is (tagpup.runtime.BACKGROUND).
 WATCHER = "folder watcher"
-
-#: How often the page asks how a full Verify is going, in milliseconds.
-POLL_MS = 1000
-
 
 @routes.before_request
 def _roots_from_this_pc():
@@ -699,13 +694,12 @@ def _roots_from_this_pc():
 def _machine():
     """This machine's map, handed to the services (they do not import tagpup.config)."""
     return roots_service.Machine(tagpup_config.machine_roots, tagpup_config.add_machine_root,
-                                 tagpup_config.machine_roots_path, tagpup_config.set_location,
-                                 tagpup_config.change_back)
+                                 tagpup_config.machine_roots_path, tagpup_config.set_location)
 
 
 def _busy_in(library):
     """What is running or queued for `library` in this process, as sentences: the index queue,
-    Suggest, the folder watcher's sync and a full Verify. (The library's own job runs, any
+    Suggest and the folder watcher's sync. (The library's own job runs, any
     process's, are read by the service.)"""
     said = []
     if indexing_jobs.queue_for(library).busy():
@@ -717,8 +711,6 @@ def _busy_in(library):
     syncing = watcher.status().get("syncing") if watcher is not None and hasattr(watcher, "status") else None
     if syncing and syncing.get("library", "").lower() == library.name.lower():
         said.append("a sync is running")
-    if verify_jobs.running(library):
-        said.append("a verify of every row is running")
     return said
 
 
@@ -754,56 +746,20 @@ def _root_named(body):
 
 @routes.get("/api/roots")
 def roots_list():
-    """Each root of the library, where this machine keeps it, and how a Verify is going."""
+    """Each root of the library and where this machine keeps it."""
     library = state.require()
     found = _roots_answer(lambda: roots_location.overview(library, _machine(), web_libraries.home_libraries()))
-    running = verify_jobs.status(library)
-    for entry in found["roots"]:
-        entry["verifying"] = running.get(entry["name"])
     found["busy"] = _busy(library)
-    found["poll_ms"] = POLL_MS
     return jsonify(found)
 
 
-@routes.post("/api/roots/verify")
-def roots_verify_root():
-    """Verify a root at its place (or at `location`): a sample, answered at once; `all`, every row
-    and the photos no row has, a job that `/api/roots` reports on."""
-    library = state.require()
-    body = request.get_json(silent=True) or {}
-    name = _root_named(body)
-    machine = _machine()
-
-    def run():
-        roots_location.require_root(library, name)
-        place = body.get("location")
-        if not place:
-            places = machine.roots().get(name) or ()
-            if not places:
-                raise Refused("This machine does not place %s: name a location to look at." % name)
-            place = places[0]
-        if body.get("all") is True:
-            return {"success": True, "started": True, "status": verify_jobs.start(library, name, place, machine).status()}
-        return {"success": True, "started": False, "verify": roots_location.run_verify(
-            library, name, place, machine, budget=roots_verify.SAMPLE_BUDGET)}
-    return jsonify(_roots_answer(run))
-
-
-@routes.post("/api/roots/verify-cancel")
-def roots_verify_cancel():
-    """Stop the full Verify of a root, between folders: what it counted is kept, as partial."""
-    library = state.require()
-    name = _root_named(request.get_json(silent=True) or {})
-    return jsonify({"success": True, "cancelled": _roots_answer(lambda: verify_jobs.cancel(library, name))})
-
-
-def _moved(library, name, back):
+def _moved(library, name):
     body = request.get_json(silent=True) or {}
     machine = _machine()
     apply = body.get("dry_run") is False
     result = _roots_answer(lambda: roots_location.change_location(
         library, name, body.get("location"), machine, apply=apply, override=body.get("override") is True,
-        expected=body.get("from") or None, busy=lambda: _busy(library, name), back=back,
+        expected=body.get("from") or None, busy=lambda: _busy(library, name),
         others=web_libraries.home_libraries()))
     if result.changed:
         # The map moved: what this process kept of the old places is let go -- the connections
@@ -823,13 +779,4 @@ def roots_change_location():
     of what the new place holds, and why it would be refused. `from` is the place the page saw."""
     library = state.require()
     name = _root_named(request.get_json(silent=True) or {})
-    return _moved(library, name, back=False)
-
-
-@routes.post("/api/roots/change-back")
-def roots_change_back():
-    """Put a root back at the place it was before the last change (the first two places swap),
-    unless that place is gone."""
-    library = state.require()
-    name = _root_named(request.get_json(silent=True) or {})
-    return _moved(library, name, back=True)
+    return _moved(library, name)

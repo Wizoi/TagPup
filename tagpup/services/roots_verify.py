@@ -1,5 +1,5 @@
-"""Verify: how well a place on this machine holds the files a root's rows describe
-(docs/ARCHITECTURE.md, "Roots and machines", TagTuner's Roots).
+"""A sample of a place: how well it holds the files a root's rows describe, which Change location
+shows before it moves a root (docs/ARCHITECTURE.md, "Roots and machines", TagTuner's Roots).
 
 Asked of a root and a CANDIDATE location -- a place the machine's map may not say yet, the one
 the owner is about to point the root at, or the one it has now -- it reads the root's rows as the
@@ -16,10 +16,9 @@ machine's own map is never touched), and looks at the disk. For each row:
   never read; sync reads it, and it is not "changed since indexed";
 - **unreadable**: the disk refused the folder or the file's stamp.
 
-And, in a full run, how many photos lie at the location that no row has, the rows held under no
-root (grouped by folder), and the rows stored by this machine's spelling that lie where the
-candidate would put the root (they would be missed by every lookup: a second set of rows on the
-next index).
+And the rows held under no root (grouped by folder), and the rows stored by this machine's spelling that
+lie where the candidate would put the root (they would be missed by every lookup: a second set of rows
+on the next index).
 
 **A location that cannot be reached is not "all missing".** A drive that is not connected, a
 share that is away, a folder that is not there, a share that stops answering half-way: each is
@@ -27,13 +26,11 @@ said as it is ("this location cannot be reached"), and the rows not looked at ar
 all. Every look at the disk -- the location itself, each folder -- is made on a thread of its own
 and waited for `LIST_SECONDS` at most; a share that did not answer is "away" for `AWAY_SECONDS`
 (by its drive or server and share), so a second look, a second click, does not start another
-blocked thread. A sample is also bounded in time (`SAMPLE_BUDGET`); a full run is a job
-(tagpup.jobs.verifying) that reports progress and can be cancelled.
+blocked thread. A sample is also bounded in time (`SAMPLE_BUDGET`).
 
 A sample takes `SAMPLE` rows, chosen to cover every folder the root's rows are in (at least one
 from each, the rest in proportion), the same rows for the same library; each folder is listed
-once and the chosen rows are looked for in the listing. A full run walks the location, listing
-each folder once, so the rows and the photos no row has are counted by the one walk.
+once and the chosen rows are looked for in the listing.
 
 **Read-only.** It writes no row, no file and not the map. The library is read through
 `store.root_rows`, with its own connection; `machine` is only asked where the other roots are.
@@ -45,7 +42,7 @@ import time
 
 from tagpup.core import paths
 from tagpup.core.result import NotFound, Refused
-from tagpup.files import images, shares
+from tagpup.files import shares
 from tagpup.store import photos as store_photos
 from tagpup.store import root_rows
 from tagpup.store import roots as store_roots
@@ -229,7 +226,6 @@ class _Tally:
 
     def __init__(self):
         self.matches = self.differs = self.missing = self.unreadable = self.unread = 0
-        self.extra = 0
         self.checked = 0
         self.folders = 0
         self.stopped = None
@@ -270,15 +266,12 @@ def _list_bounded(location, folder, seconds):
     return "unreadable", None
 
 
-def _sample_run(location, chosen, by_folder, tally, cancel, progress, deadline, total, seconds):
+def _sample_run(location, chosen, by_folder, tally, deadline, seconds):
     # In an order spread over the root, not alphabetical: a sample that runs out of time on a slow
     # share has then looked at folders from everywhere, not at the first few years only.
     order = sorted(chosen)
     random.Random(len(order)).shuffle(order)
     for key in order:
-        if cancel():
-            tally.stopped = "cancelled"
-            return
         if deadline is not None and time.monotonic() >= deadline:
             tally.stopped = "time"
             return
@@ -292,82 +285,24 @@ def _sample_run(location, chosen, by_folder, tally, cancel, progress, deadline, 
             for row in chosen[key]:
                 tally.judge(row, value[0])
         tally.folders += 1
-        progress(tally.checked, total, tally.folders)
 
 
-def _full_run(location, by_folder, tally, cancel, progress, total, seconds):
-    """Walk the location, one listing of each folder: rows judged where they are, photos no row
-    has counted. Then a folder of rows the walk did not come to is listed directly (a link, a
-    folder the walk was not let into) before its rows are called missing."""
-    rows_of = {key: {row[0] for row in rows} for key, (_folder, rows) in by_folder.items()}
-    done = set()
-    waiting = [paths.stored(location)]
-    while waiting:
-        if cancel():
-            tally.stopped = "cancelled"
-            return
-        folder = waiting.pop()
-        key = paths.key(folder)
-        state, value = _list_bounded(location, folder, seconds)
-        if state == "away":
-            tally.stopped = "unreachable"
-            return
-        tally.folders += 1
-        done.add(key)
-        held = by_folder.get(key)
-        if state != "ok":
-            if held is not None:
-                tally.refused_folder(held[1], state)
-            continue
-        files, folders = value
-        if held is not None:
-            for row in held[1]:
-                tally.judge(row, files)
-        known = rows_of.get(key, ())
-        tally.extra += sum(1 for name_key, (name, _m, _s) in files.items()
-                           if name_key not in known and images.is_photo(name))
-        waiting.extend(sorted(folders, reverse=True))
-        progress(tally.checked, total, tally.folders)
-    for key in sorted(by_folder):
-        if key in done:
-            continue
-        if cancel():
-            tally.stopped = "cancelled"
-            return
-        folder, rows = by_folder[key]
-        state, value = _list_bounded(location, folder, seconds)
-        if state == "away":
-            tally.stopped = "unreachable"
-            return
-        if state != "ok":
-            tally.refused_folder(rows, state)
-        else:
-            for row in rows:
-                tally.judge(row, value[0])
-        tally.folders += 1
-        progress(tally.checked, total, tally.folders)
-
-
-def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=None, progress=None,
-           budget=None, seconds=None):
+def verify(library, name, location, machine, sample=SAMPLE, budget=None, seconds=None):
     """How well `location` holds the files of root `name`'s rows: a sample (`sample` rows, one of
-    them from every folder at least), or with `full` every row and the photos no row has.
+    them from every folder at least).
 
-    Returns a dict -- "root", "location", "mode" ("sample" | "all"), "reachable", "state",
+    Returns a dict -- "root", "location", "reachable", "state",
     "message" (why not, when it cannot be reached), "rows" (the root's rows), "checked",
-    "matches", "differs", "missing", "unreadable", "folders" (looked at), "not_in_library" (None
-    unless full), "other_rows" (held under no root, or under another), "outside" (the rows under no
+    "matches", "differs", "missing", "unreadable", "folders" (looked at),
+    "other_rows" (held under no root, or under another), "outside" (the rows under no
     root, by folder: paths.outside_roots), "native_inside", "not_converting", "partial",
-    "stopped" (None | "cancelled" | "unreachable" | "time"), "poor" and "poor_why", and "summary", a
+    "stopped" (None | "unreachable" | "time"), "poor" and "poor_why", and "summary", a
     sentence. Refused (Refused, NotFound) for a root the library does not have, a location that
     is not an absolute folder on this machine, a map that cannot be read or that the location
     does not fit.
 
-    `cancel()` is asked between folders; `progress(checked, rows, folders)` is called as it goes,
-    on this thread. `budget` seconds, when given, end a sample with what it has (SAMPLE_BUDGET is
+    `budget` seconds, when given, end a sample with what it has (SAMPLE_BUDGET is
     the web route's); `seconds` is how long one look at the disk is waited for (LIST_SECONDS)."""
-    cancel = cancel or (lambda: False)
-    progress = progress or (lambda checked, total, folders: None)
     seconds = LIST_SECONDS if seconds is None else seconds
     name = paths.root_name(name)
     if not isinstance(location, str) or not paths.is_native_absolute(location):
@@ -378,10 +313,10 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
     ours, counts = _read_rows(library, name, roots)
     by_folder = _group(ours)
     total = len(ours) + counts["not_converting"]
-    answer = {"root": name, "location": location, "mode": "all" if full else "sample", "rows": total,
+    answer = {"root": name, "location": location, "rows": total,
               "checked": 0, "matches": 0, "differs": 0, "unread": 0, "missing": 0,
               "unreadable": counts["not_converting"],
-              "folders": 0, "not_in_library": None, "other_rows": counts["other_roots"],
+              "folders": 0, "other_rows": counts["other_roots"],
               "native_inside": counts["native_inside"], "not_converting": counts["not_converting"],
               "outside": paths.outside_roots(counts["outside"], roots), "outside_rows": len(counts["outside"]),
               "partial": False, "stopped": None, "poor": False, "poor_why": []}
@@ -392,17 +327,12 @@ def verify(library, name, location, machine, full=False, sample=SAMPLE, cancel=N
         answer["stopped"] = "unreachable"
         return _conclude(answer, total)
     tally = _Tally()
-    if full:
-        _full_run(location, by_folder, tally, cancel, progress, total, seconds)
-    else:
-        chosen = sample_of(by_folder, sample)
-        deadline = None if budget is None else time.monotonic() + budget
-        _sample_run(location, chosen, by_folder, tally, cancel, progress, deadline, total, seconds)
+    chosen = sample_of(by_folder, sample)
+    deadline = None if budget is None else time.monotonic() + budget
+    _sample_run(location, chosen, by_folder, tally, deadline, seconds)
     answer.update(checked=tally.checked, matches=tally.matches, differs=tally.differs, unread=tally.unread, missing=tally.missing,
                   unreadable=tally.unreadable + counts["not_converting"], folders=tally.folders,
                   stopped=tally.stopped)
-    if full and not tally.stopped:
-        answer["not_in_library"] = tally.extra
     answer["partial"] = bool(tally.stopped)
     if tally.stopped == "unreachable":
         answer.update(reachable=False, state="away", message=(
@@ -441,10 +371,7 @@ def _conclude(answer, total):
 def _summary(answer, total):
     if not answer["reachable"] and not answer["checked"]:
         return answer["message"]
-    if answer["mode"] == "all":
-        kind = "%d of %d rows" % (answer["checked"], total)
-    else:
-        kind = "a sample of %d of %d rows covering %d folder(s)" % (answer["checked"], total, answer["folders"])
+    kind = "a sample of %d of %d rows covering %d folder(s)" % (answer["checked"], total, answer["folders"])
     parts = ["%d match" % answer["matches"], "%d differ (changed since indexed; sync settles them)" % answer["differs"],
              "%d are missing" % answer["missing"]]
     if answer["unread"]:
@@ -454,12 +381,8 @@ def _summary(answer, total):
     text = "Looked at %s: %s." % (kind, ", ".join(parts))
     if answer["differs"]:
         text += " " + SYNC_REPLACES
-    if answer["not_in_library"]:
-        text += " %d photo(s) at the location have no row." % answer["not_in_library"]
-    if answer["stopped"] == "cancelled":
-        text += " Cancelled before it finished."
-    elif answer["stopped"] == "time":
-        text += " It ran out of time; run All for the rest."
+    if answer["stopped"] == "time":
+        text += " It ran out of time."
     elif answer["stopped"] == "unreachable":
         text += " " + answer["message"]
     return text
