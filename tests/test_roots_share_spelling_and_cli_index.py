@@ -41,35 +41,11 @@ class ShareSpelledRows(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
-        self.machine = rl.machine()
-
-    def adopt(self, address, apply=False):
-        return roots_service.adopt(self.side.library, rl.NAME, address, self.side.pictures, self.machine, apply=apply)
-
-    def test_with_an_address_they_are_share_spelled_in_the_dry_run_and_the_apply_refuses(self):     # #478
-        dry = self.adopt(SHARE)
-        report = dry.details["rehearsal"]
-        self.assertEqual(3, report["tables"]["photos"]["share_spelled"])
-        self.assertEqual(3, report["share_spelled"]["rows"])
-        self.assertEqual([{"group": SHARE, "count": 3}], report["share_spelled"]["folders"])
-        self.assertEqual([], [g for g in report["outside"] if g["group"].startswith("\\\\")], "counted outside")
-        self.assertIn("spelled by the share's address", dry.refused)
-        before = json.dumps(self.side.dump(), default=repr, sort_keys=True)
-        applied = self.adopt(SHARE, apply=True)
-        self.assertIn("spelled by the share's address", applied.refused)
-        self.assertEqual(before, json.dumps(self.side.dump(), default=repr, sort_keys=True), "something was written")
-
-    def test_without_an_address_nothing_changes(self):                                              # #478
-        dry = self.adopt("")
-        self.assertIsNone(dry.refused, dry.refused)
-        self.assertEqual(0, dry.details["rehearsal"]["share_spelled"]["rows"])
-        self.assertEqual(3, sum(g["count"] for g in dry.details["rehearsal"]["outside"] if g["group"].startswith("\\\\")))
-        self.assertIsNone(self.adopt("", apply=True).refused)
 
     def test_the_check_reports_native_rows_the_roots_resolve_to_a_root(self):                      # #478
-        self.assertIsNone(self.adopt("", apply=True).refused)
+        self.assertIsNone(self.side.adopt(address="").refused)
         self.assertEqual([], roots_service.check(self.side.library))
-        # The address is given afterwards (an edit, an older adoption): Roots.locate now resolves them.
+        # The address is given afterwards (an edit): Roots.locate now resolves them.
         db.write_with_connection(self.side.db_path, lambda conn: conn.execute(
             "UPDATE roots SET address = ? WHERE name = ?", (SHARE, rl.NAME)))
         found = roots_service.check(self.side.library)

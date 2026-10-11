@@ -38,7 +38,7 @@ def _this_pc_only():
 #: route is guarded, or allowed with a reason, in tests/test_write_routes_are_classified.py.
 GUARDED = frozenset((
     "/api/folder/index-start", "/api/folder/add", "/api/sync/review/include", "/api/library/bulk/start",
-    "/api/library/bulk/resume", "/api/photo/save-metadata", "/api/photos/bulk-tags", "/api/folder/auto-apply",
+    "/api/photo/save-metadata", "/api/photos/bulk-tags", "/api/folder/auto-apply",
     "/api/photo/delete", "/api/sync", "/api/history/<int:change_id>/undo", "/api/faces/job/resume",
     "/api/faces/job/undo", "/api/taxonomy/update"))
 

@@ -20,7 +20,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 - Backups and checks: `tagpup/store/snapshots.py`, `tagpup/services/snapshots.py`, `tagpup/store/checks.py`, `tools/doctor.py`
 - Journal and maintenance services: `tagpup/services/journal.py`, `tagpup/services/maintenance.py`, `tagpup/services/job_runs.py`, `tagpup/store/job_runs.py`, `tagpup/store/sync_runs.py`
 - Settings: `tagpup/store/settings.py`, `tagpup/services/settings.py` (the `SETTINGS` registry in `tagpup/core/validation.py` is shared with Integration)
-- Roots as data: `tagpup/store/roots.py`, `tagpup/store/root_rows.py`, `tagpup/store/adoption.py`, `tagpup/services/roots.py`, `tagpup/services/roots_location.py`, `tagpup/services/roots_verify.py`
+- Roots as data: `tagpup/store/roots.py`, `tagpup/store/root_rows.py`, `tagpup/store/roots_check.py`, `tagpup/services/roots.py`, `tagpup/services/roots_location.py`, `tagpup/services/roots_verify.py`
 - Small stores: `tagpup/store/added_folders.py`, `tagpup/store/faces_pending.py`, `tagpup/store/faces_detected.py`, `tagpup/store/removals.py`
 - Tables: `schema_version`, `changes`, `change_rows`, `change_files`, `settings`, `generations`, `job_runs`, `sync_runs`, `roots`, `added_folders`, `damaged_files`, `faces_pending`, `faces_detected`, every derived table (`photo_tags`, `folders`, `photo_folder`, `photo_people`, `search_words`, `search_names` and their FTS shadows) and every trigger. The schema file holds every domain's tables, so a new table anywhere is a Data review.
 - State on 2026-10-11 (counted): the three live libraries are at schema 30; none is waiting for a migration.
@@ -32,7 +32,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 4. `file_journal`: a photo file is planned, then `writing`, then `done` in the transaction that records its row; `unfinished` finds what a crash left.
 5. `derived.refresh_photos / record / prune / follow_tree / follow_nodes / rebuild_all` and `people.rebuild`: after any of them, in the writing transaction, the derived tables describe the photos; the caller commits. `tools/doctor.py --rebuild-derived` rebuilds the same rows in the same order.
 6. `snapshots.take / listed / restore` (three daily, one weekly, one monthly; restore snapshots first). `services.settings.of / change / stamp` (a change is journaled; a locked group needs acknowledgement).
-7. `store.roots` (`roots_for / to_row / from_row / sql_equals / sql_under`): with roots a path column holds `@root/relative`, converted only at the store boundary. Do not reach `store.roots._rows / _forget / _of_root` (`tagpup/store/adoption.py` and `tagpup/store/checks.py` still do: a missing public accessor, do not add callers).
+7. `store.roots` (`roots_for / to_row / from_row / sql_equals / sql_under`): with roots a path column holds `@root/relative`, converted only at the store boundary. Do not reach `store.roots._rows / _forget / _of_root` (`tagpup/store/checks.py` still does: a missing public accessor, do not add callers).
 
 ## Invariants and their guards
 | Invariant | Guard |
@@ -70,7 +70,7 @@ Recurring classes to look for (closed ones are in docs/history/findings_closed_*
 
 ## Who decides
 - **You decide:** how a documented invariant is implemented, an index, wording of a refusal, test consolidation inside the domain, a performance fix with a before and after of a user action, making a check cheaper, removing a probe for a version below every live library and every kept snapshot.
-- **The human owner decides:** running or installing a migration, collapsing the chain to a baseline, what a snapshot or backup keeps or deleting one, retention (journal 90 days, snapshots 3/1/1), a new meaning for a stored column, stamping or converting a library, dropping a table with data, a new derived table (it brings a writer, a check and a rebuild), whether roots adoption stays as code. Ask in your report; do not decide.
+- **The human owner decides:** running or installing a migration, collapsing the chain to a baseline, what a snapshot or backup keeps or deleting one, retention (journal 90 days, snapshots 3/1/1), a new meaning for a stored column, stamping or converting a library, dropping a table with data, a new derived table (it brings a writer, a check and a rebuild), a new way to convert a library's paths under a root (the adoption was deleted, DECISIONS 2026-10-11). Ask in your report; do not decide.
 - **Between domains:** you are the callee for the journal, derived tables and `schema`: you decide their contract. The integration owner reviews only the contract-table diff and the scenario list; veto only for a second owner of a rule, an unguarded new contract, anything unsafe for an update or hand-over, or a second migration in flight.
 
 ## How you review (the standing rules of tagpup-reviewer)

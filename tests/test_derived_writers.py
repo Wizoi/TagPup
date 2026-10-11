@@ -39,13 +39,7 @@ PHOTO_WRITERS_COVERED_ELSEWHERE = {
     ("tagpup/store/schema.py", "_photo_ids"): ("tagpup/store/schema.py", "_derived_tables"),
     # A photo made for a path nothing was read from (Suggest's, a face's): ensure_row refreshes it.
     ("tagpup/store/photos.py", "_unread_row"): ("tagpup/store/photos.py", "ensure_row"),
-    # The adoption converts every path in one pass; the folders are rebuilt after it, in the same
-    # transaction, by adopt and by undo_in (the keywords and the metadata are not changed by it).
-    ("tagpup/store/adoption.py", "_photos_pass"): ("tagpup/store/adoption.py", "adopt"),
 }
-
-#: The adoption's undo rebuilds the folders too.
-ALSO_CALLS = {("tagpup/store/adoption.py", "_photos_pass"): [("tagpup/store/adoption.py", "undo_in")]}
 
 #: Functions that write the tree and are only ever called inside people.tree_edit.
 TREE_WRITERS_COVERED_ELSEWHERE = {
@@ -121,7 +115,7 @@ class DerivedTablesAreKeptByTheirWriters(unittest.TestCase):
         """A guard that matches nothing passes forever."""
         found = {name for _module, name, _node in self.photos}
         for known in ("record_indexed", "record_tags", "move_rows_in", "follow_fields", "record_saved",
-                      "forget_photo", "remove", "remove_under", "_photos_pass"):
+                      "forget_photo", "remove", "remove_under"):
             self.assertIn(known, found)
         self.assertIn("add_path", {name for _module, name, _node in self.tree})
         self.assertTrue(writes_photos("UPDATE photos SET tags = ?, raw_metadata = ? WHERE id = ?"))
@@ -149,7 +143,7 @@ class DerivedTablesAreKeptByTheirWriters(unittest.TestCase):
         writers = {(module, name) for module, name, _node in self.photos}
         for key, covering in PHOTO_WRITERS_COVERED_ELSEWHERE.items():
             self.assertIn(key, writers, "%s:%s is no longer a writer: take it out of the list" % key)
-            for each in [covering] + ALSO_CALLS.get(key, []):
+            for each in [covering]:
                 self.assertTrue(calls_derived(self.nodes[each]), "%s:%s does not call derived" % each)
         for key, covering in GENERIC_WRITERS.items():
             self.assertIn(key, self.nodes, "%s:%s is gone" % key)

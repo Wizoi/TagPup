@@ -1,5 +1,4 @@
-"""A bulk edit through the real ExifTool and real JPEGs: tags added and taken off, Date Taken shifted, a restart in the middle of
-a shift (tests/test_bulk_edits.py stands ExifTool in for everything else).
+"""A bulk edit through the real ExifTool and real JPEGs: tags added and taken off (tests/test_bulk_edits.py stands ExifTool in for everything else).
 
 The routes are Flask's test client; the job runs on its thread and the test joins it. Photos are small JPEGs written with
 Pillow and ExifTool, rows as the indexer records them. Fictional names only.
@@ -66,13 +65,6 @@ class RealFiles(unittest.TestCase):
             self.assertEqual('["Trips/Coast"]', tags)
         again = self.run_job("tags", {"add": ["Trips/Coast"], "remove": ["Old/Stuff"]})
         self.assertEqual((0, self.PHOTOS), (again["changed"], again["unchanged"]))
-
-    def test_date_taken_is_shifted_once_in_every_file_and_the_row_has_the_new_date(self):
-        done = self.run_job("time_shift", {"minutes": 90})
-        self.assertEqual(("done", self.PHOTOS), (done["state"], done["changed"]))
-        for path in self.paths:
-            self.assertEqual("2024:07:04 11:30:00", self.read(path, "EXIF:DateTimeOriginal")["EXIF:DateTimeOriginal"])
-        self.assertEqual({"2024:07:04 11:30:00"}, {taken for (taken,) in self.vl.rows("SELECT taken FROM photos")})
 
     def test_a_file_that_is_not_a_picture_is_an_error_entry_and_the_others_are_written(self):
         with open(self.paths[3], "wb") as handle:

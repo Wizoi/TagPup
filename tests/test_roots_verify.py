@@ -1,11 +1,11 @@
-"""Verify: how well a place holds the files a root's rows describe (tagpup.services.roots_verify;
+"""A sample of a place: how well it holds the files a root's rows describe (tagpup.services.roots_verify;
 docs/ARCHITECTURE.md, "Roots and machines", TagTuner's Roots).
 
 The library is made as the roots tests make it (tests/roots_library.py: rows the indexer's code
 makes, adopted by the explicit command, so the rows are `@pictures/...`), and the places are real
 folders: the one the photos are in, a copy that keeps the files' times (robocopy does), a copy
 that does not, another folder with some of the same names, a drive that is not connected, a share
-that does not answer. Verify must say what each is, count a file that changed as "differs" and never
+that does not answer. The sample must say what each is, count a file that changed as "differs" and never
 "missing", say "this location cannot be reached" for a place that is away and not "all missing",
 and write nothing: no row, no file, not the map.
 """
@@ -15,6 +15,7 @@ import shutil
 import sys
 import threading
 import time
+import types
 import unittest
 from unittest import mock
 
@@ -40,7 +41,7 @@ def unused_drive():
     raise unittest.SkipTest("every drive letter is in use")
 
 
-class VerifyCase(unittest.TestCase):
+class SampleCase(unittest.TestCase):
     #: Photos on disk in each of three folders, and rows that have none.
     REAL, BULK = 6, 0
 
@@ -67,7 +68,7 @@ class VerifyCase(unittest.TestCase):
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
-class WhatItCounts(VerifyCase):
+class WhatItCounts(SampleCase):
     def test_the_place_the_photos_are_in_matches_and_nothing_is_written(self):
         before = self.fingerprint()
         found = self.verify()
@@ -77,7 +78,7 @@ class WhatItCounts(VerifyCase):
                                                  found["unreadable"]))
         self.assertFalse(found["poor"], found["poor_why"])
         self.assertEqual(rows, found["checked"])
-        self.assertEqual(before, self.fingerprint(), "Verify wrote a row or the map")
+        self.assertEqual(before, self.fingerprint(), "the sample wrote a row or the map")
 
     def test_the_rows_under_no_root_are_grouped_by_folder(self):
         found = self.verify()
@@ -92,7 +93,7 @@ class WhatItCounts(VerifyCase):
         self.assertFalse(found["poor"])
 
     def test_a_copy_whose_times_differ_is_differs_never_missing(self):
-        """A plain copy gets new modified times: sync settles those, and Verify must not call the
+        """A plain copy gets new modified times: sync settles those, and the sample must not call the
         files missing -- or the owner would be refused a move to a place holding every photo."""
         copy = self.copy_of_pictures(keep_times=False)
         for folder, _dirs, files in os.walk(copy):
@@ -134,17 +135,6 @@ class WhatItCounts(VerifyCase):
         self.assertTrue(found["poor"], found)
         self.assertGreater(found["missing"], 0.05 * found["checked"])
         self.assertIn("another folder", " ".join(found["poor_why"]))
-
-    def test_a_full_run_counts_the_photos_no_row_has_and_ignores_other_files(self):
-        rl.make_jpeg(os.path.join(self.side.pictures, rl.FOLDERS[0], "Never indexed.jpg"))
-        rl.make_jpeg(os.path.join(self.side.pictures, "Unlisted folder", "Also never.jpg"))
-        with open(os.path.join(self.side.pictures, "notes.txt"), "w", encoding="utf-8") as handle:
-            handle.write("not a photo")
-        found = self.verify(full=True)
-        self.assertEqual(2, found["not_in_library"])
-        self.assertEqual("all", found["mode"])
-        self.assertEqual(18, found["matches"])
-        self.assertIsNone(self.verify()["not_in_library"], "a sample does not walk the place for photos no row has")
 
     def test_rows_stored_native_where_the_place_would_be_are_warned_of(self):
         """A row kept as this machine spells it, under the place the root would be at: every
@@ -197,7 +187,7 @@ class WhatItCounts(VerifyCase):
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
-class ASampleCoversEveryFolder(VerifyCase):
+class ASampleCoversEveryFolder(SampleCase):
     REAL, BULK = 1, 50
 
     def test_it_takes_at_least_one_row_from_each_folder_and_the_same_rows_each_time(self):
@@ -219,9 +209,10 @@ class ASampleCoversEveryFolder(VerifyCase):
             seen.append(folder)
             return real_list(folder)
 
-        with mock.patch.object(roots_verify, "_list_one", listing):
-            found = self.verify(cancel=lambda: len(seen) >= 2)
-        self.assertEqual("cancelled", found["stopped"])
+        clock = types.SimpleNamespace(monotonic=lambda: 100.0 if len(seen) >= 2 else 0.0)
+        with mock.patch.object(roots_verify, "_list_one", listing), mock.patch.object(roots_verify, "time", clock):
+            found = self.verify(budget=10)
+        self.assertEqual("time", found["stopped"])
         everything = sorted(os.path.dirname(path) for path in self.side.real)
         self.assertNotEqual(sorted(set(everything))[:2], sorted(seen), "the sample went through the folders in order")
 
@@ -235,7 +226,7 @@ class ASampleCoversEveryFolder(VerifyCase):
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
-class APlaceThatCannotBeReached(VerifyCase):
+class APlaceThatCannotBeReached(SampleCase):
     def test_a_drive_that_is_not_connected_is_not_all_missing(self):
         before = self.fingerprint()
         found = self.verify(unused_drive() + "\\Pictures")
@@ -306,22 +297,6 @@ class APlaceThatCannotBeReached(VerifyCase):
         self.assertEqual(0, found["missing"])
         self.assertEqual(self.REAL, found["checked"], "only the folder that answered was looked at")
         self.assertIn("stopped answering", found["message"])
-
-    def test_cancel_stops_between_folders_and_the_result_says_it_is_partial(self):
-        copy = self.copy_of_pictures()
-        asked = []
-        found = self.verify(copy, full=True, cancel=lambda: bool(asked.append(1)) or len(asked) > 2)
-        self.assertEqual("cancelled", found["stopped"])
-        self.assertTrue(found["partial"])
-        self.assertIsNone(found["not_in_library"], "a cancelled run did not count the photos no row has")
-        self.assertIn("Cancelled", found["summary"])
-
-    def test_progress_is_reported_as_it_goes(self):
-        seen = []
-        self.verify(full=True, progress=lambda checked, rows, folders: seen.append((checked, rows, folders)))
-        self.assertTrue(seen)
-        self.assertEqual(18, seen[-1][1])
-        self.assertEqual(sorted(seen), seen)
 
 
 class ALibraryWithNoRoots(unittest.TestCase):

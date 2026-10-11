@@ -1,13 +1,13 @@
 // TagPup's page: the strip that shows a bulk edit of the library's photos -- a bar, `done of total`, what was changed, left out and
-// refused, the time left, Cancel while it runs; when it ends, the sentence it ends in, the first 50 errors, and Resume or Start again
-// where they apply (docs/ARCHITECTURE.md, phase 9d-2). It draws `state.bulk` and nothing else: bulk-job.js owns the job.
+// refused, the time left, Cancel while it runs; when it ends, the sentence it ends in, the first 50 errors, and Start again
+// where it applies (docs/ARCHITECTURE.md, phase 9d-2). It draws `state.bulk` and nothing else: bulk-job.js owns the job.
 //
 // It is under the header, whatever is open below it, because the job belongs to the library and not to the view or the folder. It
 // never takes the focus when it appears. A screen reader is told at coarse steps (the start, each tenth, the end), not each second.
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
 import {
-    btnBulkAgain, btnBulkCancel, btnBulkDismiss, btnBulkResume, btnBulkShow,
+    btnBulkAgain, btnBulkCancel, btnBulkDismiss, btnBulkShow,
     bulkStrip, bulkStripBar, bulkStripCounts, bulkStripErrorList, bulkStripErrors, bulkStripErrorsSummary,
     bulkStripEta, bulkStripLive, bulkStripMessage, bulkStripProgress, bulkStripTitle, thumbnailsGrid
 } from './elements.js';
@@ -94,7 +94,6 @@ export function renderBulkStrip() {
         bulkStripMessage.classList.toggle('bulk-strip-problem', Boolean(bulk.conflict));
         show(bulkStripErrors, false);
         show(btnBulkCancel, false);
-        show(btnBulkResume, false);
         show(btnBulkAgain, false);
         show(btnBulkShow, another);
         btnBulkShow.textContent = 'Show it';
@@ -140,18 +139,16 @@ export function renderBulkStrip() {
     show(btnBulkCancel, running);
     btnBulkCancel.disabled = Boolean(bulk.cancelling || job.cancelling);
     btnBulkCancel.textContent = btnBulkCancel.disabled ? 'Cancelling...' : 'Cancel';
-    show(btnBulkResume, !running && Boolean(job.resumable));
-    show(btnBulkAgain, !running && Boolean(bulk.request) && !job.resumable && job.state !== 'done');
+    show(btnBulkAgain, !running && Boolean(bulk.request) && job.state !== 'done');
     show(btnBulkShow, bulk.gaveUp);
     btnBulkShow.textContent = 'Ask again';
     show(btnBulkDismiss, !running);
     announce(job, desc);
 }
 
-/** Wire the strip's buttons: `handlers` -- cancel, resume, again, show, dismiss -- are bulk-job.js's. */
+/** Wire the strip's buttons: `handlers` -- cancel, again, show, dismiss -- are bulk-job.js's. */
 export function wireBulkStrip(handlers) {
     btnBulkCancel.addEventListener('click', handlers.cancel);
-    btnBulkResume.addEventListener('click', handlers.resume);
     btnBulkAgain.addEventListener('click', handlers.again);
     btnBulkShow.addEventListener('click', handlers.show);
     btnBulkDismiss.addEventListener('click', () => {

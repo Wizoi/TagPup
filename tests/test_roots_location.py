@@ -1,4 +1,4 @@
-"""Moving a root on this machine: the map's writer (tagpup.config.set_location, change_back) and the
+"""Moving a root on this machine: the map's writer (tagpup.config.set_location) and the
 service that asks first (tagpup.services.roots_location; docs/ARCHITECTURE.md, "Roots and machines",
 TagTuner's Roots).
 
@@ -6,7 +6,7 @@ The edit is the map's alone: never a row. A dry run shows what a sample of the n
 result is refused unless the request says override; a place that is not there, a drive that is not
 connected, one over another root, are refused whatever is said; while anything of the library is running
 or queued nothing moves; two tabs and a double click move it once; a map edited by hand while the owner
-looked is not overwritten; Change back is the reverse, and refused when the old place has been deleted.
+looked is not overwritten.
 """
 import json
 import os
@@ -26,7 +26,6 @@ import roots_library as rl  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core.result import NotFound  # noqa: E402
 from tagpup.services import activity  # noqa: E402
-from tagpup.services import job_runs as job_run_service  # noqa: E402
 from tagpup.services import roots_location, roots_verify  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import job_runs as store_job_runs  # noqa: E402
@@ -37,7 +36,7 @@ WINDOWS = os.name == "nt"
 def machine():
     from tagpup.services import roots as roots_service
     return roots_service.Machine(config.machine_roots, config.add_machine_root, config.machine_roots_path,
-                                 config.set_location, config.change_back)
+                                 config.set_location)
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
@@ -60,18 +59,6 @@ class TheMapsWriter(unittest.TestCase):
         self.assertEqual([self.new, self.old], self.places())
         self.assertEqual([self.old], found["previous"])
         self.assertEqual([], [n for n in os.listdir(self.home.root) if n.endswith((".tmp", ".lock"))])
-
-    def test_change_back_swaps_the_first_two_and_is_its_own_reverse(self):
-        config.set_location("pictures", self.new)
-        config.change_back("pictures")
-        self.assertEqual([self.old, self.new], self.places())
-        config.change_back("pictures")
-        self.assertEqual([self.new, self.old], self.places())
-
-    def test_a_root_with_one_place_has_nothing_to_go_back_to(self):
-        with self.assertRaises(config.MachineMapError) as why:
-            config.change_back("pictures")
-        self.assertIn("no previous place", str(why.exception))
 
     def test_the_same_place_in_another_spelling_changes_nothing_and_writes_nothing(self):
         before = open(self.file, "rb").read()
@@ -365,7 +352,7 @@ class ChangingTheLocation(RootsCase):
 
     def test_a_unc_spelling_of_a_place_is_a_place_and_the_drive_letter_one_is_kept_after_it(self):
         """The same folder by its administrative share, as a server's share is reached: another
-        spelling of the place is another place of the map, and the old is kept for Change back."""
+        spelling of the place is another place of the map, and the old is kept after it."""
         drive, rest = os.path.splitdrive(self.copy)
         unc = "\\\\localhost\\%s$%s" % (drive[0], rest)
         if not os.path.isdir(unc):
@@ -400,11 +387,10 @@ class ChangingTheLocation(RootsCase):
         with self.assertRaises(NotFound):
             roots_location.change_location(self.library, "scans", self.copy, self.machine)
 
-    def test_a_library_that_has_not_adopted_a_root_answers_cleanly(self):
+    def test_a_library_with_no_roots_answers_cleanly(self):
         plain = rl.Side(self.home, "plain", real=1, bulk=0, outside=0)
         found = roots_location.overview(plain.library, self.machine)
         self.assertEqual([], found["roots"])
-        self.assertIn("roots adopt", found["adopt_hint"])
         with self.assertRaises(NotFound):
             roots_location.change_location(plain.library, "pictures", self.copy, self.machine)
 
@@ -446,41 +432,6 @@ class TwoLibrariesHoldingOneFolder(RootsCase):
         after = (self.rows_dump(), json.dumps(self.second.dump(leave_out=("job_runs",)), default=repr, sort_keys=True))
         self.assertEqual(before, after)
 
-    def test_a_verify_of_one_is_not_the_others(self):
-        from tagpup.jobs import verifying
-        self.addCleanup(verifying.forget, self.library)
-        self.addCleanup(verifying.forget, self.second.library)
-        claim = roots_location.begin_verify(self.library, "pictures")
-        self.addCleanup(lambda: store_job_runs.finish(self.side.db_path, claim.run_id, "done", time.time(), {}))
-        other = roots_location.begin_verify(self.second.library, "pictures")    # not refused: another library's
-        store_job_runs.finish(self.second.db_path, other.run_id, "done", time.time(), {})
-        self.assertEqual({}, verifying.status(self.second.library))
-
-
-@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
-class ChangingBack(RootsCase):
-    def test_change_back_is_the_reverse_and_one_step(self):
-        before = self.rows_dump()
-        self.move(apply=True)
-        result = self.move(apply=True, back=True)
-        self.assertIsNone(result.refused, result.refused)
-        self.assertEqual(1, result.changed)
-        self.assertEqual([self.side.pictures, self.copy], self.places())
-        self.assertEqual(before, self.rows_dump())
-
-    def test_change_back_after_the_old_place_was_deleted_is_refused_and_says_so(self):
-        self.move(apply=True)
-        shutil.rmtree(self.side.pictures)
-        before = open(config.machine_roots_path(), "rb").read()
-        result = self.move(apply=True, back=True)
-        self.assertIn("not there any more", result.refused)
-        self.assertIn(self.side.pictures, result.refused)
-        self.assertEqual(before, open(config.machine_roots_path(), "rb").read())
-
-    def test_change_back_with_no_previous_place_is_refused(self):
-        result = self.move(apply=True, back=True)
-        self.assertIn("no previous place", result.refused)
-
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class TheOverview(RootsCase):
@@ -511,32 +462,6 @@ class TheOverview(RootsCase):
         found = roots_location.overview(self.library, self.machine)
         self.assertIn("machine_roots.json", found["problem"])
         self.assertEqual("pictures", found["roots"][0]["name"])
-
-    def test_the_last_verify_is_the_runs_counts_and_when(self):
-        self.assertIsNone(roots_location.overview(self.library, self.machine)["roots"][0]["last_verify"])
-        roots_location.run_verify(self.library, "pictures", self.side.pictures, self.machine)
-        last = roots_location.overview(self.library, self.machine)["roots"][0]["last_verify"]
-        self.assertEqual((18, 18, 0, "sample", "done"), (last["checked"], last["matches"], last["missing"], last["mode"],
-                                                          last["outcome"]))
-        entries = [e for e in activity.timeline(self.library) if e["kind"] == "job"]
-        self.assertTrue(any(e["what"].startswith("verified root pictures") for e in entries))
-
-    def test_a_verify_of_an_unreachable_place_ends_failed_in_the_run_log_and_not_as_missing(self):
-        letter = next(l + ":" for l in "QRSTUVWXYZ" if not os.path.exists(l + ":\\"))
-        answer = roots_location.run_verify(self.library, "pictures", letter + "\\Pictures", self.machine)
-        self.assertEqual(0, answer["missing"])
-        run = store_job_runs.runs(self.side.db_path, roots_location.VERIFY_JOB % "pictures", 1)[0]
-        self.assertEqual("failed", run.outcome)
-        self.assertIn("cannot be reached", run.note)
-        self.assertEqual(0, run.changed["missing"])
-
-    def test_a_second_verify_of_the_root_is_told_one_is_under_way(self):
-        from tagpup.core.result import Conflict
-        claim = roots_location.begin_verify(self.library, "pictures")
-        self.addCleanup(lambda: store_job_runs.finish(self.side.db_path, claim.run_id, "done", time.time(), {}))
-        with self.assertRaises(Conflict):
-            roots_location.run_verify(self.library, "pictures", self.side.pictures, self.machine)
-        self.assertIsNotNone(job_run_service)
 
 
 if __name__ == "__main__":

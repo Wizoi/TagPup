@@ -4,8 +4,7 @@
 //
 // What is asked is what is sent: the selection is read BEFORE the question and the request carries that, whatever is clicked while a
 // question or a placement dialog is open. A limit of the request (more than 20,000 ids, more than 200,000 photos) is said in a sentence
-// before anything is asked of the server. Smart Rename and Shift Date Taken are Organize's, not a view's (#669): the server's bulk time
-// shift (op `time_shift`) is still there, and a job of it found running or stopped is shown and resumed by the strip (bulk-job.js).
+// before anything is asked of the server. Smart Rename and Shift Date Taken are Organize's, not a view's (#669).
 import { api } from './common/api.js';
 import { tagProblem } from './common/vocabulary.js';
 import { state } from './state.js';

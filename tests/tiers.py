@@ -31,9 +31,7 @@ SLOW = frozenset({
 SCENARIO = frozenset({
     # Bulk edits: a job over many photos, its crashes, its resume, real ExifTool.
     "test_bulk_edits",
-    "test_bulk_edits_resume_records",
-    "test_bulk_edits_progress_record",
-    "test_bulk_edits_crashes",
+    "test_bulk_edits_stalled_exiftool",
     "test_bulk_edits_real_exiftool",
     "test_bulk_writes_start_from_the_file",
     # The file journal and the writes it covers.
@@ -60,7 +58,6 @@ SCENARIO = frozenset({
     "test_migration_28_and_the_newer_library",
     # Roots: the folders a library holds, through a whole scenario.
     "test_roots_scenarios",
-    "test_roots_adoption",
     "test_roots_location",
     "test_roots_ingress",
     "test_roots_store",

@@ -3,19 +3,18 @@
 
 Two libraries are built alike in folders of their own (tests/roots_library.py): thousands of
 rows' worth of shape -- photos under a root-shaped folder, a few beside it, faces,
-suggestions, added folders, damaged files, a journal of changes made before anything was
+suggestions, added folders, a journal of changes made before anything was
 adopted -- and one is adopted by the root. Then the same flows run on both, with real
 ExifTool on real JPEGs, and what each answers must be the same once its own folder is taken
 out of it: the folder listing, a tag save, bulk tags, a rename and its undo, a delete, a sync that
 finds a file moved, new and gone, the indexer recording a photo, Suggest keeping a suggestion,
-a damaged file recorded, a folder added, a search, and the doctor. Then the machine's map is
+a folder added, a search, and the doctor. Then the machine's map is
 changed to another place and nothing in the rows changes, and the same flows work there.
 """
 import json
 import os
 import shutil
 import sys
-import time
 import unittest
 from unittest import mock
 
@@ -29,12 +28,11 @@ import roots_library as rl  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
-from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.services import sync, tagging  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import added_folders, db, folders, journal, suggestions  # noqa: E402
-from tagpup.store import adoption, checks  # noqa: E402
+from tagpup.store import checks, roots_check  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
@@ -288,87 +286,17 @@ class TheOwnersFlows(Twins):
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
-class NestedRootsAreRefused(unittest.TestCase):
-    """The model resolves a root nested inside another (the deeper wins); the adoption does not make
-    one: one root holds each folder, since the outer root's rows that lie under the inner would have
-    to move and an undo could not put back what a later rename or index had changed."""
+class NestedRoots(unittest.TestCase):
+    """The model resolves a root nested inside another (the deeper wins); no command makes one any more,
+    and the check finds a library edited by hand into holding one."""
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="roots_nested_")
         self.side = rl.Side(self.home, "nested", real=2, bulk=15, outside=1)
         self.regatta = os.path.join(self.side.pictures, "2024 Regatta")
 
-    def adopt(self, name, location, address=""):
-        # A backup's name carries the second it was taken in: a copy taken by a refused attempt
-        # must not be able to overwrite the earlier one's name and so hide.
-        time.sleep(1.1)
-        self.last = (name, location, address)
-        return roots_service.adopt(self.side.library, name, address, location, rl.machine(), apply=True)
-
-    def backups(self):
-        """What data/backups holds, every file by its path under it: a refused adoption takes no
-        copy, and a copy the refusal comes after would show here."""
-        folder = os.path.join(self.home.data, "backups")
-        return sorted((os.path.relpath(os.path.join(where, name), folder),
-                       os.stat(os.path.join(where, name)).st_mtime_ns)
-                      for where, _folders, names in os.walk(folder) for name in names)
-
-    def refused_and_unchanged(self, result, first, second):
-        self.assertTrue(result.refused, "a nested root was adopted")
-        self.assertEqual(self.copies, self.backups(), "a refused adoption took a backup")
-        self.assertIn("%r" % first, result.refused)
-        self.assertIn("%r" % second, result.refused)
-        self.assertIn("one root must hold each folder", result.refused)
-        self.assertEqual(self.before, self.side.dump())
-        self.assertFalse(os.path.exists(self.side.db_path + ".busy"))
-        # The service refuses at its dry run, before the store is asked; the store refuses too, on its
-        # own, before it takes a copy or marks the library busy.
-        name, location, address = self.last
-        time.sleep(1.1)
-        with self.assertRaises(adoption.Refused) as raised:
-            adoption.adopt(self.side.db_path, name, address, [location])
-        self.assertIn("one root must hold each folder", str(raised.exception))
-        self.assertEqual(self.copies, self.backups(), "the store took a backup before it refused")
-        self.assertEqual(self.before, self.side.dump())
-        self.assertFalse(os.path.exists(self.side.db_path + ".busy"))
-
-    def test_a_root_inside_one_the_library_has(self):
-        self.assertTrue(self.side.adopt().ok)
-        self.before = self.side.dump()
-        self.copies = self.backups()
-        self.assertEqual(1, len([c for c in self.copies if c[0].endswith(".db")]), "the first adoption's own backup")
-        self.refused_and_unchanged(self.adopt("regatta", self.regatta), "regatta", "pictures")
-        dry = roots_service.adopt(self.side.library, "regatta", "", self.regatta, rl.machine())
-        self.assertIn("one root must hold each folder", dry.refused)
-        self.assertEqual(self.copies, self.backups())
-
-    def test_a_root_around_one_the_library_has(self):
-        self.assertTrue(self.adopt("regatta", self.regatta).ok)
-        self.before = self.side.dump()
-        self.copies = self.backups()
-        self.refused_and_unchanged(self.adopt("pictures", self.side.pictures), "pictures", "regatta")
-
-    def test_a_root_at_the_same_place(self):
-        self.assertTrue(self.side.adopt().ok)
-        self.before = self.side.dump()
-        self.copies = self.backups()
-        result = self.adopt("again", self.side.pictures)
-        self.assertTrue(result.refused)
-        self.assertEqual(self.before, self.side.dump())
-        self.assertEqual(self.copies, self.backups())
-
-    def test_a_root_whose_address_lies_under_anothers(self):
-        self.assertTrue(self.side.adopt().ok)
-        self.before = self.side.dump()
-        self.copies = self.backups()
-        result = self.adopt("scans", self.side.outside_folder, address=rl.ADDRESS + "\\Scans")
-        self.refused_and_unchanged(result, "scans", "pictures")
-
-    def test_a_root_beside_another_is_still_adopted_and_the_model_still_resolves_nesting(self):
+    def test_the_model_resolves_the_deeper_root(self):
         from tagpup.core import paths
-        self.assertTrue(self.side.adopt().ok)
-        beside = self.adopt("loose", self.side.outside_folder)
-        self.assertTrue(beside.ok, beside.message())
         both = paths.Roots.of({"pictures": rl.ADDRESS, "regatta": ""},
                               {"pictures": [self.side.pictures], "regatta": [self.regatta]})
         self.assertEqual(("regatta", "IMG_1001.jpg"), both.locate(os.path.join(self.regatta, "IMG_1001.jpg")))
@@ -381,7 +309,7 @@ class NestedRootsAreRefused(unittest.TestCase):
         config.add_machine_root("regatta", self.regatta)
         conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
         try:
-            problems = adoption.verify(conn, store_roots.roots_for(conn))
+            problems = roots_check.verify(conn, store_roots.roots_for(conn))
             broken = checks.rooted_rows_convert(conn).count
         finally:
             conn.close()
@@ -390,67 +318,13 @@ class NestedRootsAreRefused(unittest.TestCase):
 
     def test_verify_is_clean_when_nothing_is_nested(self):
         self.assertTrue(self.side.adopt().ok)
-        self.assertTrue(self.adopt("loose", self.side.outside_folder).ok)
+        self.assertTrue(self.side.adopt(location=self.side.outside_folder, name="loose", address="").ok)
         conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
         try:
-            self.assertEqual([], adoption.verify(conn, store_roots.roots_for(conn)))
+            self.assertEqual([], roots_check.verify(conn, store_roots.roots_for(conn)))
             self.assertEqual(0, checks.rooted_rows_convert(conn).count)
         finally:
             conn.close()
-
-
-@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
-@requires_exiftool
-class AnAdoptionUndoneAfterWork(unittest.TestCase):
-    """The owner adopts, works -- a tag edit that writes files, a rename -- and then undoes the
-    adoption. It is allowed, and the work stays undoable: every row and file ends as it began."""
-
-    def setUp(self):
-        self.home = own_home.for_test(self, prefix="roots_after_work_")
-        self.side = rl.Side(self.home, "work", real=2, bulk=5, outside=1)
-        self.begin = self.state()
-
-    def state(self):
-        conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
-        try:
-            # The photos of real files take their tags from the files, which the seeded rows
-            # only claimed to hold: what the owner undoes to is what the file held.
-            rows = sorted((path, None if path in self.side.real else tags)
-                          for path, _m, _s, tags, *_ in store_photos.rows_under(conn, self.side.base))
-        finally:
-            conn.close()
-        files = sorted(os.path.join(folder, name) for folder, _d, names in os.walk(self.side.base) for name in names)
-        return rows, files, [keywords(path) for path in self.side.real]
-
-    def test_adopt_then_edit_then_rename_then_undo_the_adoption_then_the_work(self):
-        adopted = self.side.adopt()
-        self.assertTrue(adopted.ok, adopted.message())
-        tag = tagging.change_tags(self.side.library, self.side.real, ["Later"], [], EXIFTOOL)
-        self.assertEqual(6, tag.changed)
-        with mock.patch("tagpup.services.photos.preserve_names", return_value=Result()):
-            renamed = photo_actions.smart_rename(self.side.library, self.side.real[:2], "Regatta", FORMAT, EXIFTOOL)
-        self.assertEqual(2, renamed.changed)
-        held = self.side.raw_paths("change_files", "path") + self.side.raw_paths("change_files", "new_path")
-        self.assertTrue([p for p in held if p and p.startswith("@pictures/")], "the later changes hold row paths")
-
-        rehearsal = journal_service.undo(self.side.library, adopted.details["change"], apply=False,
-                                         exiftool_path=EXIFTOOL)
-        self.assertIsNone(rehearsal.refused, rehearsal.refused)
-        said = " ".join(rehearsal.details["rehearsal"]["notes"])
-        self.assertIn("recorded in later changes' values", said)
-        undone = journal_service.undo(self.side.library, adopted.details["change"], apply=True, exiftool_path=EXIFTOOL)
-        self.assertIsNone(undone.refused, undone.refused)
-        self.assertEqual([], self.side.library_roots())
-        self.assertEqual([], [p for p in self.side.raw_paths("change_files", "path") if p.startswith("@")])
-        self.assertEqual([], [p for p in self.side.raw_paths() if p.startswith("@")])
-
-        back = journal_service.undo(self.side.library, renamed.details["change"], apply=True, exiftool_path=EXIFTOOL)
-        self.assertIsNone(back.refused, back.refused)
-        self.assertEqual((2, []), (back.changed, back.errors))
-        back = journal_service.undo(self.side.library, tag.details["change"], apply=True, exiftool_path=EXIFTOOL)
-        self.assertIsNone(back.refused, back.refused)
-        self.assertEqual((6, []), (back.changed, back.errors))
-        self.assertEqual(self.begin, self.state(), "every row and file as at the start")
 
 
 def keywords(path):

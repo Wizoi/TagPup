@@ -2,7 +2,7 @@
  * The strip of a bulk edit of the library's photos and the job behind it (web/tagpup/bulk-job.js, bulk-strip.js, bulk-words.js;
  * docs/ARCHITECTURE.md, phase 9d-2): a bar, `done of total`, what was changed, left out and refused, the time left, Cancel; polling about
  * once a second (every 5 s while the tab is hidden), never for ever; what the page does when the job ends; finding the job again after a
- * reload or a restart; Resume and Start again. The page's slow clocks are made fast (`speedUp`): a second is 10 ms. Fictional names only.
+ * reload or a restart; Start again. The page's slow clocks are made fast (`speedUp`): a second is 10 ms. Fictional names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -117,7 +117,7 @@ describe("when it ends", () => {
     const cards = ctx.cardsAsked.length;
     const tallies = calls(ctx, "/selection/tally").length;
     ctx.bulk.status = jobStatus({
-      total: 3412, done: 3412, changed: 3380, skipped_missing: 32, state: "done", finished: 1760000100, resumable: false,
+      total: 3412, done: 3412, changed: 3380, skipped_missing: 32, state: "done", finished: 1760000100,
     });
     await ctx.settle(80);
     assert.equal(text(ctx, "bulk-strip-message"), "Added Trips/Lighthouse to 3,380 photos; 32 missing on disk were skipped; 0 errors.");
@@ -186,8 +186,7 @@ describe("Cancel", () => {
     ctx.bulk.status = jobStatus({ total: 100, done: 50, changed: 50, state: "cancelled", message: "Cancelled after 50 of 100 photos.", finished: 1760000100 });
     await ctx.settle(60);
     assert.match(text(ctx, "bulk-strip-message"), /^Cancelled after 50 of 100 photos\. Added Trips\/Lighthouse to 50 photos; 0 errors\.$/);
-    assert.ok(!el(ctx, "btn-bulk-again").classList.contains("hidden"), "a cancelled tags job is started again, not resumed");
-    assert.ok(el(ctx, "btn-bulk-resume").classList.contains("hidden"));
+    assert.ok(!el(ctx, "btn-bulk-again").classList.contains("hidden"), "a cancelled tags job is started again");
   });
 
   test("after the job ended: the answer says so and the strip shows the end, not a cancel", async (t) => {
@@ -248,28 +247,18 @@ describe("the server not answering", () => {
     assert.equal(text(ctx, "bulk-strip-progress"), "10 of 100");
   });
 
-  test("a server that restarted: the job is abandoned, and the strip says how far it got; a time shift offers Resume", async (t) => {
+  test("an abandoned time shift an older version left is shown with how far it got, and offers nothing to do", async (t) => {
     const ctx = await started(t, { begin: false, total: 60 });
-    ctx.bulk.start = { op: "time_shift", total: 60 };
-    await ctx.module("bulk-job.js").startBulk({ op: "time_shift", selection: { ids: [2] }, params: { minutes: 30 },
-      desc: { op: "time_shift", verb: "Shift", past: "Shifted", what: "Date Taken 30 minutes later", prep: "in", reverse: "shift them earlier by the same minutes to reverse it" }, picked: 1 });
-    await ctx.settle(40);
-    ctx.bulk.status = jobStatus({
-      op: "time_shift", total: 60, done: 25, changed: 25, state: "abandoned", resumable: true,
-      message: "TagPup was closed before this finished: 25 of 60 photos were done. Resume it to carry on from there; no photo already shifted is shifted again.",
+    ctx.bulk.current = jobStatus({
+      op: "time_shift", total: 60, done: 25, changed: 25, state: "abandoned",
+      message: "TagPup was closed before this finished: 25 of 60 photos were done.",
     });
+    ctx.module("bulk-job.js").attachBulk({ force: true });
     await ctx.settle(60);
-    assert.match(text(ctx, "bulk-strip-message"), /^TagPup was closed before this finished: 25 of 60 photos were done\. Resume it/);
+    assert.match(text(ctx, "bulk-strip-message"), /^TagPup was closed before this finished: 25 of 60 photos were done\./);
     assert.equal(text(ctx, "bulk-strip-progress"), "25 of 60");
-    assert.ok(!el(ctx, "btn-bulk-resume").classList.contains("hidden"));
-    assert.ok(el(ctx, "btn-bulk-again").classList.contains("hidden"), "a shift is resumed, never started again");
-    ctx.bulk.resume = { total: 60, done: 25 };
-    ctx.bulk.status = jobStatus({ op: "time_shift", total: 60, done: 25, changed: 25 });
-    click(ctx.window, el(ctx, "btn-bulk-resume"));
-    await ctx.settle(60);
-    assert.deepEqual(plain(calls(ctx, "/bulk/resume")[0].body), { job: 7 });
-    assert.ok(!el(ctx, "btn-bulk-cancel").classList.contains("hidden"), "running again");
-    assert.equal(calls(ctx, "/bulk/start").length, 1, "the same job: no new start");
+    assert.ok(el(ctx, "btn-bulk-again").classList.contains("hidden"), "the page did not start it: nothing to start again");
+    assert.ok(!el(ctx, "btn-bulk-dismiss").classList.contains("hidden"));
   });
 
   test("a tags job that was abandoned is started again with the same selection and edit", async (t) => {
