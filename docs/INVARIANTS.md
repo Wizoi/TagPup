@@ -40,7 +40,7 @@ review and the scrub of 2026-10-09.*
 | Journal keys are never reused; a cascade into a journaled table is recorded or forbidden | `tagpup/store/journal.py` (`KEYS`) | an undo could put a row back on a key a newer row had taken | `tests/test_journal_keys_and_cascades.py` |
 | A photo file is written only through the journaled path (the file marked `writing`, then `done` with its row); a file changed outside is a conflict and never overwritten | `tagpup/services/file_changes.py`, `tagpup/files/field_values.py` | a crash between a file and its row left them disagreeing | `tests/test_file_journal.py` |
 | A write reports what it changed, not what it attempted (`changed` counts a file whose read-back differs) | the service that writes | a backfill read 60 photos, reported 60 done, and wrote nothing | `tests/test_changed_counts_what_changed.py`, `tests/test_relink_reports_rows_changed.py` |
-| Check the destination before moving data into it | `tagpup/services/relink_photos.py`, `folder_follow.py` | re-pointing rows at paths that already had rows created 233 duplicate faces | `tests/test_relink_checks_the_destination.py` |
+| Check the destination before moving data into it | `tagpup/services/relink_photos.py` | re-pointing rows at paths that already had rows created 233 duplicate faces | `tests/test_relink_checks_the_destination.py` |
 | A bulk write tells the index what it wrote (`record_tags_in_index`); a row keeps the shape the indexer records | `tagpup/store/photos.py` | the bulk paths left rows describing what photos used to hold | `tests/test_tag_writes_keep_the_index_true.py`, `tests/test_a_saved_row_is_the_indexers_shape.py` |
 | A row nobody read from its file is never stamped as read | `tagpup/store/photos.py` | a caption-only write stamped a path-only row, and the scan trusted it for ever | `tests/test_partial_writes_leave_rows_unread.py`, `tests/test_a_stamped_empty_row_is_never_read.py` |
 | Nothing is written into a photo that does not decode, or may be an incomplete copy | `tagpup/services/damaged_photos.py` | an XMP id was written into 13 damaged files | `tests/test_no_writes_to_damaged_photos.py`, `tests/test_damaged_photo_writes_never_fail_open.py` |
@@ -62,8 +62,7 @@ review and the scrub of 2026-10-09.*
 |---|---|---|
 | **A person is a leaf tag.** A branch is a group, never a person; a group tag is never put on a photo as a person; a tag used on photos gets no children | `person_ids.resolve`, `tags` service | `tests/test_group_tag_is_not_a_person.py` |
 | **A name with no person tag is not converted automatically**: it is listed for the owner (names to review), who decides each | `tagpup/services/name_review.py` | `tests/test_name_review.py` |
-| **Nothing converts a library unasked.** Adopting a root, marking folders (`.tagpup`) and stamping a library id are explicit commands, a dry run first, and never run by indexing, sync or the watcher | `tagpup/services/roots.py`, `folder_ids.py` | `tests/test_roots_adoption.py`, `tests/test_folder_ids.py` |
-| **A marker is exact**: a folder carrying its own id follows any rename | `tagpup/services/folder_ids.py` | `tests/test_folder_ids_scenarios.py` |
+| **Nothing converts a library unasked.** Adopting a root is an explicit command, a dry run first, and never run by indexing, sync or the watcher | `tagpup/services/roots.py` | `tests/test_roots_adoption.py` |
 | **Date Taken, not file mtime**, orders and dates photos (mtime changes from metadata writes are accepted) | `tagpup/core/dates.py` | none specific |
 | **Truncated JPEGs are refused**, not read (#415, 2026-10-08) | `tagpup/files/images.py`, `tagpup/services/damaged_photos.py` | `tests/test_no_writes_to_damaged_photos.py` |
 

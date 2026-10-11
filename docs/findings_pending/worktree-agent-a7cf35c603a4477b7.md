@@ -1,0 +1,11 @@
+# Findings of a branch
+
+Provisional numbers `B-n`: `tools/add_findings.py --take` gives each row its number in
+docs/findings.md when the main session merges the branch, and removes this file.
+
+| # | Found | Finding | Status |
+|---|---|---|---|
+| B-1 | 2026-10-10 | low: folder markers deleted end to end (owner, 2026-10-10): `folder_marker`, `folder_ids` (service and store), `folder_follow`, sync's follow step, Verify's marker check and the dialog's marker line and progress, the `folder-ids` CLI group, the doctor's identity line and twin check, `journal.apply`'s `also` hook, `added_folders.follow` and `photos.evidence_under`. Findings 969, 970, 973 and 981 (and 1099, which said this branch would follow) are moot: their code is gone. | planned: the main session closes them at the merge |
+| B-2 | 2026-10-10 | wrong: migration 30 (dropping `folder_ids` and `library_identity`) must account for the one `mark_folders` change each live library still holds (counted 2026-10-10: photo_index 1, kr-track 1, renton_parkrun 1; each with its `folder_ids` rows in the journal). This branch kept `folder_ids` in `journal.KEYS`/`NAMED` and the path conversion in adoption and `store.roots.row_value`, so History still lists the change and `undo` still takes the rows back. Once the table is dropped an undo of that change would fail on a missing table: the migration should either list `folder_ids` in its `touches` (the schema-gap rule) or prune that change, and the KEYS entry and adoption/roots conversions then go with it. | open |
+| B-3 | 2026-10-10 | low: the journal's undo of a change named `relink_folders` or `follow_folder_markers` used to point the added folders back (`folder_follow.undone`); that hook is gone with the module. Counted 2026-10-10: no live library holds a change of either name (all three: 0), so nothing is lost; the operation names are not listed anywhere now. | left as is: 0 such changes in the three live libraries |
+| B-4 | 2026-10-10 | low: `tests/test_unused_folder_id_tables.py` seeds a library with rows in `folder_ids` and `library_identity` and one journaled `mark_folders` change and checks that it opens, syncs, verifies, is reported by the doctor and has that change listed and undone; with the tables dropped the doctor and Verify still work. It would fail on any code that reads those tables unguarded. | built |
