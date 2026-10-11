@@ -353,11 +353,11 @@ class TwoProcessesBringingALibraryAt26UpToDate(unittest.TestCase):
             self.assertEqual(0, each.returncode, err)
         self.assertTrue(os.path.exists(a_in) and os.path.exists(b_ready), "they overlapped")
         self.assertEqual("0", answers[1], "the CLI run, waiting at the lock, found 27 and the rest done and applied nothing")
-        self.assertEqual([(27,), (28,), (29,)], look(path, "SELECT version FROM schema_version WHERE version >= 27 ORDER BY version"))
-        self.assertEqual(migration_names.operations_after(26),
-                         [row[0] for row in look(path, "SELECT operation FROM changes WHERE operation LIKE 'migration 2%' "
-                                                       "AND operation >= 'migration 27' ORDER BY id")],
-                         "each recorded once")
+        self.assertEqual([(m.version,) for m in schema.MIGRATIONS if m.version >= 27],
+                         look(path, "SELECT version FROM schema_version WHERE version >= 27 ORDER BY version"))
+        expected = migration_names.operations_after(26)
+        self.assertEqual(expected, [row[0] for row in look(path, "SELECT operation FROM changes WHERE operation LIKE 'migration %' "
+                                                                 "ORDER BY id") if row[0] in expected], "each recorded once")
         self.assertEqual(schema.LATEST, look(path, "SELECT MAX(version) FROM schema_version")[0][0])
 
 

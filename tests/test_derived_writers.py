@@ -1,7 +1,7 @@
 """A writer of a photo's keywords, path or metadata, of a photo's row or of the tag tree, goes
 through tagpup.store.derived (docs/ARCHITECTURE.md, phase 9a).
 
-photo_tags, folders, photo_folder and photo_meta are derived from `photos.tags`, `photos.path`,
+photo_tags, folders and photo_folder are derived from `photos.tags`, `photos.path`,
 `photos.raw_metadata` and `tag_taxonomy`, and kept by the writes that change one of them, in the
 same transaction. A writer that forgot -- the bulk tag writes once did not tell the index what they
 wrote (CLAUDE.md) -- leaves the views describing what a photo used to hold. So this fails the build
@@ -142,7 +142,7 @@ class DerivedTablesAreKeptByTheirWriters(unittest.TestCase):
             missing.append("%s: %s" % (module, name))
         self.assertEqual([], missing, "\n\nthese write a photo's tags, path or raw_metadata, or insert or delete a "
                          "photo, and do not tell tagpup.store.derived (refresh_photos / record / prune), so photo_tags, "
-                         "folders, photo_folder and photo_meta keep describing what the photo used to hold:\n"
+                         "folders and photo_folder keep describing what the photo used to hold:\n"
                          + "\n".join(missing))
 
     def test_what_makes_up_for_a_writer_does_so(self):

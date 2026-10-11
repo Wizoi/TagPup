@@ -769,24 +769,9 @@ def _faces_detected(conn):
 
 
 def _folder_ids(conn):
-    """The ids folders carry (unused since 2026-10-10, dropped by migration 30; docs/ARCHITECTURE.md): `library_identity`,
-    at most one row, the library's own identifier, which opening a library never fills -- only the first explicit
-    `folder-ids mark --apply` stamps it, in the transaction that records the first ids, since an identifier handed
-    out in marker files cannot be taken back -- and `folder_ids`, one row for each folder the library has marked:
-    the id the folder's `.tagpup` marker holds for this library (a random UUID, the key), the folder as last seen
-    (the path as `photos.path` holds one, unique as paths are compared) and when it was marked. Folder_ids is
-    journaled (tagpup.store.journal.KEYS), keyed by a name that means the same row whenever it is used. Only adds
-    two tables, empty, so it needs no backup; folder_ids is not among the migration's `touches` because no change
-    of the journal can have recorded a row of a table that did not exist (the schema-gap rule reads `touches`).
-    """
-    conn.execute("CREATE TABLE IF NOT EXISTS library_identity ("
-                 " slot INTEGER PRIMARY KEY CHECK (slot = 1),"
-                 " id TEXT NOT NULL,"
-                 " stamped TEXT NOT NULL)")
-    conn.execute("CREATE TABLE IF NOT EXISTS folder_ids ("
-                 " id TEXT PRIMARY KEY NOT NULL,"
-                 " path TEXT NOT NULL UNIQUE COLLATE %s,"
-                 " marked TEXT NOT NULL)" % paths.COLLATE)
+    """The ids folders carried (`library_identity` and `folder_ids`, empty tables, unused since 2026-10-10): nothing is made
+    any more. A library that ran this migration when it made them holds them until migration 30 drops them; one that has
+    not run it yet never has them."""
 
 
 def _roots(conn):
@@ -804,11 +789,17 @@ def _roots(conn):
                  " added TEXT NOT NULL)")
 
 
+#: The trigger that takes a deleted photo's rows of the derived tables, whichever connection deletes it (migrations 19 and 30).
+DERIVED_GO_WITH_THEIR_PHOTO = ("CREATE TRIGGER derived_go_with_their_photo AFTER DELETE ON photos BEGIN"
+                               " DELETE FROM photo_tags WHERE photo_id = OLD.id;"
+                               " DELETE FROM photo_folder WHERE photo_id = OLD.id; END")
+
+
 def _derived_tables(conn):
     """The tables the library views stand on, derived from the photos (tagpup.store.derived;
     docs/ARCHITECTURE.md, phase 9a): `photo_tags` (a photo's keywords as tag-tree node ids),
     `folders` and `photo_folder` (the folder tree and the folder each photo is directly in, the
-    path in ROW form) and `photo_meta` (rating, camera, size and place from the raw metadata). Made
+    path in ROW form). (A fourth, `photo_meta`, was made here until migration 30 dropped it: nothing read it.) Made
     from the rows that are there by `derived.rebuild_all`, in this transaction, and then kept by the
     writes that keep photo_people. Nothing that was there changes, so it needs no backup: a failed
     check rolls the whole migration back, and the tables are rebuilt from the photos whenever they
@@ -833,14 +824,7 @@ def _derived_tables(conn):
                  " photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,"
                  " folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE)")
     conn.execute("CREATE INDEX idx_photo_folder_folder ON photo_folder(folder_id)")
-    conn.execute("CREATE TABLE photo_meta ("
-                 " photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,"
-                 " rating INTEGER, make TEXT, model TEXT, width INTEGER, height INTEGER,"
-                 " latitude REAL, longitude REAL)")
-    conn.execute("CREATE TRIGGER derived_go_with_their_photo AFTER DELETE ON photos BEGIN"
-                 " DELETE FROM photo_tags WHERE photo_id = OLD.id;"
-                 " DELETE FROM photo_folder WHERE photo_id = OLD.id;"
-                 " DELETE FROM photo_meta WHERE photo_id = OLD.id; END")
+    conn.execute(DERIVED_GO_WITH_THEIR_PHOTO)
     conn.execute("CREATE TRIGGER photo_tags_go_with_their_node AFTER DELETE ON tag_taxonomy"
                  " BEGIN DELETE FROM photo_tags WHERE tag_id = OLD.id; END")
     from tagpup.store import derived   # the store imports this module
@@ -944,16 +928,43 @@ def _search_index(conn):
 
 
 def _camera_words(conn):
-    """The camera and lens words a search matches (tagpup.store.search_index; docs/ARCHITECTURE.md, "Backlog: which photo
-    fields are searchable"): one contentless FTS5 table, `search_gear`, with its shadow tables and the trigger that takes a
-    deleted photo's row. Filled from `photo_meta`'s make and model alone -- 68,324 rows read from a table, not a photo's
-    metadata read from its JSON, which a migration on open must not do --; the lens, and anything photo_meta is out of step
-    on, come with `tools/doctor.py --rebuild-derived --apply`, which the doctor says is due. Nothing that was there
-    changes: derived, never journaled, no backup. A crash leaves the library at 26 and the next open runs it again."""
-    from tagpup.store import search_index   # the store imports this module
-    for statement in search_index.CREATE_GEAR:
-        conn.execute(statement)
-    search_index.rebuild_gear_from_meta(conn)
+    """The camera and lens words (`search_gear`, an FTS5 table): nothing is made any more. A search finds a camera in the
+    photos' metadata (tagpup.store.search_index.cameras_with). A library that ran this migration when it made the table holds
+    it until migration 30 drops it."""
+
+
+#: The tables migration 30 drops. The FTS5 table's shadow tables (search_gear_data, _idx, _docsize, _config) go with it.
+DROPPED = ("search_gear", "photo_meta", "folder_ids", "library_identity")
+
+
+def _drop_unused(conn):
+    """The tables nothing reads (docs/DATABASE.md; owner, 2026-10-10): `search_gear`, the FTS5 table of camera and lens words (a
+    search reads the photos' metadata now: search_index.cameras_with), `photo_meta` (a table of each photo's rating, camera,
+    size and place that nothing read), and `library_identity` and `folder_ids` (the ids folder markers carried, unused since
+    the markers were deleted). Not name_review_dismissals: the names-to-review list is still there.
+
+    Each live library holds ONE journaled change of `folder_ids` (`mark_folders`: its rows inserted by the only
+    `folder-ids mark --apply` that was run). Its rows could not be undone once the table is gone, so they are taken out of the
+    journal, and a change they leave empty with them; any other change is untouched, and still undoable (journal.schema_gap_blocker:
+    this migration is in ONLY_DROPS). Returns what it took, which the migration's own change records.
+
+    The trigger that took a photo's rows of the derived tables named photo_meta, so it is made again without it, and the
+    trigger of search_gear goes. One transaction (the runner's): a failure drops nothing."""
+    marked = [change_id for (change_id,) in conn.execute(
+        "SELECT DISTINCT change_id FROM change_rows WHERE table_name = 'folder_ids'")]
+    rows = conn.execute("DELETE FROM change_rows WHERE table_name = 'folder_ids'").rowcount
+    emptied = []
+    for change_id in marked:
+        if (not conn.execute("SELECT 1 FROM change_rows WHERE change_id = ? LIMIT 1", (change_id,)).fetchone()
+                and not conn.execute("SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone()):
+            conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
+            emptied.append(change_id)
+    conn.execute("DROP TRIGGER IF EXISTS search_gear_goes_with_its_photo")
+    conn.execute("DROP TRIGGER IF EXISTS derived_go_with_their_photo")
+    conn.execute(DERIVED_GO_WITH_THEIR_PHOTO)
+    for table in DROPPED:
+        conn.execute("DROP TABLE IF EXISTS %s" % table)
+    return {"journal rows taken out": rows, "changes taken out": len(emptied)}
 
 
 # ---- What a migration holds true before it commits ----------------------------------------
@@ -965,10 +976,9 @@ RUNNER_TABLES = ("schema_version", "changes", "change_rows")
 #: (tagpup.store.generations) and each photo's people, derived and rebuilt
 #: (journal.DERIVED, which a test holds to this); and the word index's FTS5 tables and the shadow tables FTS5 keeps
 #: for them (tagpup.store.search_index), which SQLite writes and on a virtual one of which no trigger can be made.
-UNWATCHED = ("generations", "photo_people", "photo_tags", "folders", "photo_folder", "photo_meta",
+UNWATCHED = ("generations", "photo_people", "photo_tags", "folders", "photo_folder",
              "search_words", "search_names", "search_words_data", "search_words_idx", "search_words_docsize",
-             "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config",
-             "search_gear", "search_gear_data", "search_gear_idx", "search_gear_docsize", "search_gear_config")
+             "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config")
 
 
 class CheckFailed(RuntimeError):
@@ -1179,15 +1189,25 @@ class SearchIndexAgrees(Check):
         return search_index.problems(conn)
 
 
-class GearAgrees(Check):
-    """The camera words (tagpup.store.search_index) have a row for every photo and none other, and a sample of photos' cameras
-    -- read from their metadata -- are found in their rows. The lens is not checked: this migration makes no lens words."""
-    name = "camera words agree with the photos"
+class UnusedTablesGone(Check):
+    """Migration 30: the tables it drops (and the FTS5 table's shadows) are gone, the trigger that took a photo's rows of
+    them is replaced by one that names none of them, and no recorded change names one of them: the journal's history is
+    what the library can still undo."""
+    name = "unused tables gone, and none named by the journal"
 
     def after(self, conn, migration, state):
-        from tagpup.store import search_index   # the store imports this module
-        return ["%d photo(s) have camera words that are not what their rows give" % len(wrong)
-                for wrong in [search_index.stale_gear(conn, lens=False)] if wrong]
+        problems = ["%s is still there" % table for table in _tables_now(conn)
+                    if table in DROPPED or table.startswith(DROPPED[0] + "_")]
+        if _count_named(conn, DROPPED):
+            problems.append("a recorded change still names a dropped table")
+        for (sql,) in conn.execute("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND sql IS NOT NULL"):
+            problems += ["a trigger still names %s" % table for table in DROPPED if table in sql]
+        return problems
+
+
+def _count_named(conn, tables):
+    return conn.execute("SELECT COUNT(*) FROM change_rows WHERE table_name IN (%s)"
+                        % ",".join("?" * len(tables)), tables).fetchone()[0]
 
 
 STANDARD = (ForeignKeys(), Integrity())
@@ -1496,9 +1516,9 @@ MIGRATIONS = (
               ("roots",),
               (RowsKept(),) + STANDARD),
     Migration(19, "the tables the library views stand on", _derived_tables, ADDITIVE,
-              "adds photo_tags, folders, photo_folder and photo_meta, derived from the photos' rows; nothing that "
+              "adds photo_tags, folders and photo_folder, derived from the photos' rows; nothing that "
               "was there changes",
-              ("photo_tags", "folders", "photo_folder", "photo_meta"),
+              ("photo_tags", "folders", "photo_folder"),
               (RowsKept(), DerivedAgree()) + STANDARD),
     Migration(20, "photos by when they were taken", _taken_indexes, ADDITIVE,
               "adds idx_photos_taken and idx_photos_year, indexes the library views page by; no row of any table changes, "
@@ -1532,16 +1552,13 @@ MIGRATIONS = (
               ("faces_detected",),
               (RowsKept(),) + STANDARD),
     Migration(26, "the ids folders carry", _folder_ids, ADDITIVE,
-              "adds library_identity and folder_ids, both empty: opening a library stamps nothing, and no folder is "
-              "marked until the owner runs folder-ids mark --apply",
-              ("library_identity",),
+              "makes nothing now (it made library_identity and folder_ids, both empty, which migration 30 drops)",
+              (),
               (RowsKept(),) + STANDARD),
     Migration(27, "photos by their camera and lens", _camera_words, ADDITIVE,
-              "adds the camera and lens words a search matches (search_gear and its FTS5 shadow tables) and the trigger "
-              "that takes a deleted photo's row, made from photo_meta's make and model; nothing that was there changes, "
-              "and the lens comes with the doctor's --rebuild-derived",
-              ("search_gear",),
-              (RowsKept(), GearAgrees()) + STANDARD),
+              "makes nothing now (it made the FTS5 table search_gear, which migration 30 drops)",
+              (),
+              (RowsKept(),) + STANDARD),
     Migration(28, "people read by id, and the names set aside", _person_indexes, ADDITIVE,
               "adds idx_faces_tag and idx_photo_people_tag, the indexes a person is read by id with, and "
               "name_review_dismissals, empty; no row of any table changes, and a change journaled before it can "
@@ -1554,7 +1571,18 @@ MIGRATIONS = (
               "changes, and a change journaled before it can still be undone",
               (),
               (RowsKept(),) + STANDARD),
+    Migration(30, "the tables nothing reads", _drop_unused, DESTRUCTIVE,
+              "drops search_gear (the camera words), photo_meta, folder_ids and library_identity, and takes the journal's "
+              "one marker change of folder_ids out of its history; one full backup first",
+              DROPPED,
+              (RowsKept("photos", "faces", "tag_taxonomy", "photo_people", "photo_tags", "folders", "photo_folder",
+                        "suggestions", "settings", "roots"), UnusedTablesGone()) + STANDARD),
 )
+
+#: The migrations that only DROP tables nothing journaled names, and the tables each drops: they change no row a recorded
+#: change holds, so (like an ADDITIVE one that touches none) they block no undo of a change made before them
+#: (journal.schema_gap_blocker). Holds the declaration to what the migration drops: tests/test_unused_tables.py.
+ONLY_DROPS = {30: DROPPED}
 
 #: The columns a migration adds to a table the journal keys that the journal derives
 #: (derived when it added them) -- {version: {table: columns}}. Such a migration changes nothing an
@@ -1724,6 +1752,7 @@ class _Run:
         self.backup = None
         self.backed_up = False
         self.unrecorded = []
+        self.note = None   # what the migration just run says it did, if it says (its return value)
 
     def migrate(self, migration):
         """Apply `migration` if the library has not had it. True when it was applied."""
@@ -1749,6 +1778,8 @@ class _Run:
                 summary["backup"] = self._backup(migration)
             checks, rows = self._apply(migration, journaled)
             summary["checks"] = checks
+            if self.note:
+                summary["took"] = self.note
             conn.execute("INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)",
                          (migration.version, migration.name, time.strftime("%Y-%m-%d %H:%M:%S")))
             self._record(journal, migration, summary, rows)
@@ -1782,7 +1813,8 @@ class _Run:
         watching = journaled or (migration.kind == ADDITIVE and not self.made)
         watch = _Watch(conn) if watching else None
         try:
-            migration.apply(conn)
+            done = migration.apply(conn)
+            self.note = done if isinstance(done, dict) else None   # a migration may say what it took (a dict of counts)
         except sqlite3.OperationalError as e:
             # A watched column dropped or renamed: the watch's triggers name it.
             if watch and "tagpup_watch_" in str(e):

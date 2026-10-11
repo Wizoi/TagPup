@@ -135,13 +135,6 @@ def empty_folders(conn):
     return derived.stale_folders(conn).strays if derived.present(conn) else []
 
 
-def photo_meta_out_of_date(conn):
-    """Photos whose rating, camera, size and place (`photo_meta`) are not what their raw metadata gives."""
-    if not derived.present(conn):
-        return _check("photos whose metadata rows are out of date", [])
-    return _check("photos whose metadata rows are out of date", derived.stale_meta(conn))
-
-
 def search_index_out_of_date(conn):
     """Photos whose rows of the word index (tagpup.store.search_index) are not what their rows give: a photo with no row,
     a row of no photo, and of a sample of SAMPLE photos those whose texts are not found in their rows. A writer that
@@ -399,7 +392,7 @@ RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excl
          people_out_of_date, orphan_nodes, crops_without_a_face, vectors_without_a_photo,
          people_without_a_photo, suggestions_without_a_photo, one_file_two_rows,
          rooted_rows_convert, native_rows_under_a_root, photo_tags_out_of_date, photo_folders_out_of_date,
-         folders_out_of_date, photo_meta_out_of_date, search_index_out_of_date, face_person_ids_out_of_step,
+         folders_out_of_date, search_index_out_of_date, face_person_ids_out_of_step,
          listed_person_ids_out_of_step)
 
 

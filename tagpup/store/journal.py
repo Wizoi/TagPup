@@ -82,17 +82,15 @@ KEYS = {
     "embeddings": ("photo_id", "model"),
     "suggestions": ("photo_id",),
     "settings": ("key",),
-    "folder_ids": ("id",),     # unused since 2026-10-10; the live libraries each hold one `mark_folders` change of it
 }
 
 #: Tables keyed by a name, not by an id SQLite hands out: a row put back under its name is
 #: the same thing again -- a setting is "faces.min_face_size" whichever row holds it -- so
 #: a key used again cannot mean another row (tests/test_journal_keys_and_cascades.py).
-NAMED = ("settings", "folder_ids")
+NAMED = ("settings",)
 
 #: Derived tables: never journaled, rebuilt from what a change touched (`_derive`).
-DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "photo_meta", "search_words", "search_names",
-           "search_gear")
+DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "search_words", "search_names")
 
 #: Derived columns of journaled tables, rebuilt from the row's other columns after each
 #: write (a photo's dates, from its metadata and path: store.photos.date_photos). An inserted photo is
@@ -133,12 +131,10 @@ CASCADES = {
     ("photos", "photo_people"): ("photo_id", REBUILT),
     ("photos", "photo_tags"): ("photo_id", REBUILT),
     ("photos", "photo_folder"): ("photo_id", REBUILT),
-    ("photos", "photo_meta"): ("photo_id", REBUILT),
     # The word index (tagpup.store.search_index): FTS5 tables whose rowid is the photo's id, taken by the trigger
     # search_goes_with_its_photo and made again by _derive's refresh of the photo.
     ("photos", "search_words"): ("rowid", REBUILT),
     ("photos", "search_names"): ("rowid", REBUILT),
-    ("photos", "search_gear"): ("rowid", REBUILT),
     ("tag_taxonomy", "photo_tags"): ("tag_id", REBUILT),
     ("tag_taxonomy", "tag_taxonomy"): ("parent_id", FORBIDDEN),
 }
@@ -995,11 +991,13 @@ def schema_gap_blocker(version, current):
     # Not DERIVED: every undo rebuilds the derived tables from the rows it wrote (_derive), so a
     # migration that makes or fills one changes nothing an older change's rows mean.
     journaled = set(KEYS)
+    # A migration that only drops tables nothing journaled names (schema.ONLY_DROPS) is held to the same: a table in KEYS that it
+    # dropped would leave the rows of a recorded change with nowhere to go.
     for number in range(version + 1, current + 1):
         migration = known.get(number)
         if migration is None:
             return "migration %d is not known" % number
-        if migration.kind != schema.ADDITIVE:
+        if migration.kind != schema.ADDITIVE and number not in schema.ONLY_DROPS:
             return "migration %d, %s, is %s" % (number, migration.name, migration.kind)
         # What the migration added was derived when it was added (a change older than it cannot hold the column), whatever
         # a later version made of it: tests hold the declaration to the columns the migration really adds.

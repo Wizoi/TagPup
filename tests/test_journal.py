@@ -424,11 +424,11 @@ class TheSchemaMovedOn(unittest.TestCase):
         self.assertIsNone(journal.schema_gap_blocker(19, 19))
 
     def test_a_migration_that_makes_the_derived_tables_blocks_no_undo(self):
-        """Migration 19 touches photo_tags, folders, photo_folder and photo_meta, all in journal.DERIVED:
+        """Migration 19 touches photo_tags, folders and photo_folder, all in journal.DERIVED:
         every undo rebuilds them from the rows it wrote, so a change made at 18 is undone at 19."""
         migration = {m.version: m for m in schema.MIGRATIONS}[19]
         self.assertEqual(schema.ADDITIVE, migration.kind)
-        self.assertLessEqual({"photo_tags", "folders", "photo_folder", "photo_meta"}, set(journal.DERIVED))
+        self.assertLessEqual({"photo_tags", "folders", "photo_folder"}, set(journal.DERIVED))
         self.assertLessEqual(set(migration.touches), set(journal.DERIVED))
         self.assertIsNone(journal.schema_gap_blocker(18, 19))
 

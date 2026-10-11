@@ -174,6 +174,8 @@ The migrations applied to this library, one row each, in order (`tagpup.store.sc
 
 **A library newer than the app is not opened.** `schema.ensure` refuses a library whose highest migration is above the app's `LATEST` (`schema.NewerLibrary`, whose text says which app to start), from migration 28 on: an older app that wrote it would store names without the ids a newer one reads, and the newer doctor would then overwrite them. Every entry point that writes answers with the sentence and writes nothing -- the server (409 under the library's address, the picker's Create 400), the CLI (`--db` commands but `history` and `snapshots`, exit 1), the MCP's writing tools, `tools/doctor.py --rebuild-derived`. The sentence names where the backups are. **Recovery still works** (`schema.reading_newer()`, the one owner): the CLI's `history` and `snapshots list/restore`, the doctor's report, the MCP's read tools and `/api/server` open it as it is, with a note. The guard first bites at the update AFTER the one that adds it: the app installed today opens a migrated library like any (its `_ensure` is `version >= LATEST: return`). **A process that already found the library current is refused too:** `ensure` remembers "current" by the main file's stat, which in WAL mode does not change when a newer app commits (the commit is in the -wal file while any connection holds a read mark), so it also reads the version again, read only, once `schema.RECHECK_SECONDS` (2 s) have passed. A long-lived server, MCP or watcher is refused (`NewerLibrary`, the 409) within that bound; inside it a hit is a stat. An app updated by the launchers or `install_app.py` never meets it, since the new version replaces the old before it opens the library; an old version that has the guard, started against a migrated library, is refused until the new one is started.
 
+**Migration 30** (destructive, one full backup first; owner, 2026-10-10): drops the four tables nothing reads -- `search_gear` (the camera and lens words, an FTS5 table, with its shadow tables and trigger), `photo_meta` (each photo's rating, camera, size and place: no reader), `folder_ids` and `library_identity` (the ids the folder markers carried) -- and takes the journal's one `mark_folders` change of `folder_ids` (each live library held one) out of its history with its rows, so no recorded change names a dropped table; every other change is untouched and still undoable (`schema.ONLY_DROPS`, `journal.schema_gap_blocker`). The trigger that took a deleted photo's derived rows is made again without `photo_meta`. A search finds a camera or lens in the photos' metadata (`search_index.cameras_with`). An app older than this migration refuses the migrated library (`NewerLibrary`, the newer-library guard above); the installed build already has the guard and its 2 s recheck. A server already serving when the library is migrated may fail one write that lands inside that window with `no such table: photo_meta` (rolled back, nothing written) before it refuses; the hand-over ends the old server before the new one migrates, and the 503 shows meanwhile. A snapshot of a library from before 30 is restored with this version and migrated up again on opening. The `.tagpup` marker files stay on disk. `name_review_dismissals` stays: the names-to-review list is still there.
+
 **Migration 29** (stage 2, part B; additive, triggers only, no row changes, no backup): `person_tag_not_deleted_while_named` aborts the DELETE of a `tag_taxonomy` node a face names (`faces.tag_id`, by `idx_faces_tag`), whichever connection deletes it, and `generation_faces_update` also fires on `tag_id`.
 
 Each migration declares its kind (ARCHITECTURE.md, phase 7.5) and runs in one transaction with the checks it names, rolled back when one fails (`schema.CheckFailed`). An additive one takes no backup and may change no row that was there; a data-changing one records every row it changes in the journal, as a change named `migration N: name`; a destructive one -- dropping a column or a table, rebuilding a table, losing information -- takes one full backup first. Every run is a row of `changes`, whatever its kind.
@@ -333,21 +335,7 @@ Which folder each photo is directly in (`tagpup/store/derived.py`, migration 19)
 | `photo_id` | INTEGER | PRIMARY KEY, FOREIGN KEY | The photo, `photos(id)`, ON DELETE CASCADE. |
 | `folder_id` | INTEGER | NOT NULL, FOREIGN KEY, INDEXED | The folder it is directly in, `folders(id)`. |
 
-### 24. `photo_meta` Table
-What a photo's metadata says of the photo itself (`tagpup/store/derived.py`, `tagpup/core/photo_meta.py`, migration 19): one row for every photo, NULL for what it does not say, derived from `photos.raw_metadata` and rebuilt whenever it is written (never edited). Counted on photo_index's 68,466 rows (2026-10-02): `rating` is `XMP:Rating`, else `EXIF:Rating`, else the bare name, a whole number from -1 (rejected) to 5 and 0 when the file says unrated; `make` and `model` are `EXIF:Make` / `XMP:Make` and `EXIF:Model` / `XMP:Model`, trimmed; `latitude` and `longitude` are `Composite:GPSLatitude` and `Composite:GPSLongitude`, the signed decimal degrees (the EXIF pair has no sign, so it is not read), both or neither, in range, and not the pair 0, 0 that a camera without a fix writes. **`width` and `height` are NULL in every row**: the indexer does not ask ExifTool for `ImageWidth`, `ImageHeight`, `ExifImageWidth` or `Orientation` (`fields.METADATA_FIELDS`), so no row holds one. The extraction reads them where a row has them -- the picture's own size, else the size EXIF declares, as shown (width and height swapped for Orientation 5 to 8) -- and they fill once the indexer asks; asking changes what every read records, and is the owner's to decide. No index yet: a filter on a rating or a camera scans this table (about 3 MB), which 9e adds an index for if measured.
-
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `photo_id` | INTEGER | PRIMARY KEY, FOREIGN KEY | The photo, `photos(id)`, ON DELETE CASCADE. |
-| `rating` | INTEGER | | -1 rejected, 0 unrated, 1 to 5 stars; NULL when the metadata holds none. |
-| `make` | TEXT | | The camera's make. |
-| `model` | TEXT | | The camera's model. |
-| `width` | INTEGER | | Pixels across as shown; NULL until the indexer reads the size. |
-| `height` | INTEGER | | Pixels down as shown; NULL until the indexer reads the size. |
-| `latitude` | REAL | | Signed decimal degrees, north positive. |
-| `longitude` | REAL | | Signed decimal degrees, east positive. |
-
-### 25. `search_words` Table
+### 24. `search_words` Table
 The words a search's words are matched in (`tagpup/store/search_index.py`, migration 24; docs/ARCHITECTURE.md, phase 9e-1): an FTS5 virtual table, `tokenize = 'unicode61 remove_diacritics 2'`, prefixes of 2 and 3 characters indexed, CONTENTLESS (`content = ''`, `contentless_delete = 1`: the text is not stored, a row is replaced by INSERT OR REPLACE and taken by its rowid). One row for every photo, its **rowid the photo's id**. Derived, never journaled, kept by the store's writes in their transactions (tagpup.store.derived for the photo's keywords, path, metadata and captions; people.rebuild for its people) and taken with its photo by the trigger `search_goes_with_its_photo`. FTS5 keeps it in four shadow tables, `search_words_data`, `search_words_idx`, `search_words_docsize` and `search_words_config`, which nothing but SQLite reads or writes. Read only through `MATCH`.
 
 | Column | Type | Constraints | Description |
@@ -356,7 +344,7 @@ The words a search's words are matched in (`tagpup/store/search_index.py`, migra
 | `captions` | TEXT | FTS5 | Each caption and title of `photos.captions`, one a line. |
 | `people` | TEXT | FTS5 | The names `photo_people` lists for the photo (keywords and faces, by the leaf rule), one a line. |
 
-### 26. `search_names` Table
+### 25. `search_names` Table
 The file name and the folders of each photo, for a search's words found inside a name (`tagpup/store/search_index.py`, migration 24): an FTS5 virtual table, `tokenize = 'trigram remove_diacritics 1'` (any three characters: "0412" in "20190412_1430.jpg"), CONTENTLESS as `search_words` is, its rowid the photo's id, kept and taken with it. Shadow tables `search_names_data`, `search_names_idx`, `search_names_docsize`, `search_names_config`.
 
 | Column | Type | Constraints | Description |
@@ -364,17 +352,7 @@ The file name and the folders of each photo, for a search's words found inside a
 | `name` | TEXT | FTS5 | The file name (`IMG_0412.jpg`). |
 | `folders` | TEXT | FTS5 | Of a root-relative row every folder below the root (`@pictures/2024/Coast` holds `2024/Coast`: the root's name is never a word); of a native row the one folder it is directly in. |
 
-### 27. `search_gear` Table
-The camera and the lens of each photo, for a search's words (`tagpup/store/search_index.py`, migration 27; docs/ARCHITECTURE.md, "Backlog: which photo fields are searchable"): an FTS5 virtual table, `tokenize = 'unicode61 remove_diacritics 2'`, prefixes of 2 and 3 indexed, CONTENTLESS as `search_words` is, its rowid the photo's id, a row for every photo (empty text for a photo whose metadata names no camera: a scan, a screenshot; 3,456 of photo_index's 68,324 photos have neither make nor model, counted 2026-10-09), kept by `derived` in the same transaction as the photo's other derived rows and taken with it by the trigger `search_gear_goes_with_its_photo`. Shadow tables `search_gear_data`, `search_gear_idx`, `search_gear_docsize`, `search_gear_config`. Derived, never journaled (`journal.DERIVED`).
-
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `camera` | TEXT | FTS5 | `photo_meta.camera_name` of the make and model: the model alone when it holds a whole word of the make, without case (`Canon EOS R6m2`; `KODAK CX4310 DIGITAL CAMERA` of make `EASTMAN KODAK COMPANY`), else the make and the model (`Google Pixel 8 Pro`). This is the one name of a camera: Image Details, the search and Shift Date Taken's list of cameras (`fields.camera_of`) use it; 13,542 of the 62,877 photos holding both have a model that lacks its make. |
-| `lens` | TEXT | FTS5 | The lens (`EXIF:LensModel`, `XMP:LensModel`, a text `Composite:LensID`, with `EXIF:LensMake` before a name that lacks it). **No row of photo_index held a lens field** (0 of 68,324, counted 2026-10-09) before the indexer was made to ask for one (`fields.METADATA_FIELDS`); the column fills for photos read from then on, and for those read before only when sync reads them again (the owner reads the rest by hand; ARCHITECTURE.md, "Camera and lens words"). Also indexed without a pointless `.0` (`24.0-70.0 mm`, a body's placeholder for a lens, is found by `24-70`); a library gets these words when its rows are read again or by `tools/doctor.py --rebuild-derived`. |
-
-Each column holds its text as spelled and, when a letter is followed by a digit, once more with a blank between them (`EF24-70mm` also as `EF 24-70mm`), so that `24-70` finds the lens. Not columns of `photo_meta`: no view filters on them. Migration 27 makes the camera from `photo_meta`'s make and model (no photo's metadata is read); the lens, and anything `photo_meta` is out of step on, come with `tools/doctor.py --rebuild-derived --apply` (a dry run says what is due; the rebuild is one transaction, so an interrupted one changes nothing). The library's own copy of the check is `search_index.stale_gear`.
-
-### 28. `faces_detected` Table
+### 26. `faces_detected` Table
 The photos whose faces were detected (`tagpup.store.faces_detected`, migration 25; findings #773): one row for each photo a face detector ran on, faces found or not. A photo in which the index found no face had nothing in the library, so Suggest could not tell it from one never looked at, and detected it again on the graphics card each time (10,732 of photo_index's 68,324 photos have no face row, counted 2026-10-04). Written by the indexer (`faces.record_batch`) and by Suggest (`faces.record_detected`) for every photo they detect -- not for a detection that failed (`tagpup.ml.faces.NotDetected`); read by Suggest before it detects, under the detector it would run (other face settings detect again). A photo marked as having faces still to detect (`faces_pending`) has its row taken away. Photos indexed before migration 25 have no row and are detected once more, by the next Suggest that looks at them: nothing in the library proves the index detected a photo's faces (`index --skip-faces` makes vectors without, and Suggest makes vectors too). No foreign key and no trigger, as `faces_pending`: a row whose photo is gone is read as none, so deleting a photo takes nothing the journal must account for. Not journaled, as indexing is not.
 
 | Column | Type | Constraints | Description |
@@ -386,25 +364,7 @@ The photos whose faces were detected (`tagpup.store.faces_detected`, migration 2
 | `found` | INTEGER | NOT NULL | How many faces it found. |
 | `at` | TEXT | NOT NULL | Local time it was recorded, `YYYY-MM-DD HH:MM:SS`. |
 
-### 29. `library_identity` Table
-**Unused, dropped by migration 30** (owner, 2026-10-10: the folder markers are deleted; nothing reads or writes this table, and a library that still has its row opens, syncs and verifies as before). What it was: the library's own identifier (migration 26; findings #924, #933): at most one row, a random UUID, which the marker files (`.tagpup`) in the library's folders carry beside each folder's id so that a folder in several libraries holds one line for each. **Opening a library never fills it, and neither does indexing, sync or the watcher**: only the first explicit `folder-ids mark --apply` that records an id stamps it, in the same transaction, since an identifier handed out in files cannot be taken back. A snapshot restored keeps it (it is that library); a library file copied for a trial carries the same one, which `folder-ids mark` refuses and `tools/doctor.py` names. Not journaled: stamping is not a change an undo takes back.
-
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `slot` | INTEGER | PRIMARY KEY, CHECK (`slot = 1`) | Always 1: the table holds one row at most. |
-| `id` | TEXT | NOT NULL | The identifier, a lowercase UUID. |
-| `stamped` | TEXT | NOT NULL | Local time it was stamped, `YYYY-MM-DD HH:MM:SS`. |
-
-### 30. `folder_ids` Table
-**Unused, dropped by migration 30** (owner, 2026-10-10; nothing reads or writes it; the `.tagpup` files stay on disk and nothing reads them; the journal still lists and undoes the one `mark_folders` change each live library holds, which is why `folder_ids` stays in `journal.KEYS`). What it was: the folders the library had marked (migration 26): one row for each folder whose `.tagpup` marker holds an id for this library. Empty until the owner runs `folder-ids mark --apply`. Journaled (`tagpup.store.journal.KEYS`; a change inserts rows, `follow_folder_markers` moves them), keyed by the id, which is a name that means the same row whenever it is used. It is the key folder tags come to hang on: the derived `folders` table is rebuilt from the photos and its integer ids change with them. A row whose folder is gone, and a marker elsewhere under a folder the library walks that carries its id, is a renamed or moved folder: the next sync points the photos' rows, this row, the root and ignored-folder settings and the folders added at the new folder.
-
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `id` | TEXT | PRIMARY KEY, NOT NULL | This library's id for the folder: a random lowercase UUID, the one in the folder's marker beside `library_identity.id`. |
-| `path` | TEXT | NOT NULL, UNIQUE, compared as paths are (`NOCASE` on Windows) | The folder as last seen, as `photos.path` holds a path: native (`paths.stored`), or `@<root>/...` in a library with a root (converted by the journal and by `roots adopt`). |
-| `marked` | TEXT | NOT NULL | Local time the id was recorded, `YYYY-MM-DD HH:MM:SS`. |
-
-### 31. `name_review_dismissals` Table
+### 27. `name_review_dismissals` Table
 The names the owner set aside from the list of names to review (migration 28; ARCHITECTURE.md, "People by id, stage 2", "Names to review", #985): a name on a face or in a photo's people that no person tag has. Written by `tagpup.store.name_review` (`dismiss`, `forget`) for the owner's **Set aside** and **Show again** in TagTuner's names-to-review dialog; empty until the owner sets a name aside. `name_key` is `vocabulary.key` of the name (all its spellings are one entry), `rows_seen` the faces and listed people that held the name when it was set aside; a name stays hidden until it holds MORE rows than that (a name that gains rows is new work), and the row is removed when the name is settled or shown again. Not derived: it is the owner's decision. Not journaled: it is a preference, not a change of any face or photo (the choices that change faces -- make a person, link, unname -- are journaled changes of the faces, `journal.PERSON_MADE`, `PERSON_LINKED`, `NAME_UNNAMED`).
 
 | Column | Type | Constraints | Description |
@@ -489,17 +449,6 @@ erDiagram
         INTEGER folder_id FK
     }
 
-    photo_meta {
-        INTEGER photo_id PK
-        INTEGER rating
-        TEXT make
-        TEXT model
-        INTEGER width
-        INTEGER height
-        REAL latitude
-        REAL longitude
-    }
-
     suggestions {
         INTEGER photo_id PK
         TEXT tags
@@ -544,7 +493,6 @@ erDiagram
     photos ||--o| photo_folder : "is in"
     folders ||--o{ photo_folder : "holds"
     folders ||--o{ folders : "parent of"
-    photos ||--o| photo_meta : "says"
     photos ||--o| suggestions : "offered"
     faces ||--o| face_crops : "cropped as"
     tag_taxonomy ||--o{ tag_taxonomy : "parent of"

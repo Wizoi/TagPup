@@ -1,6 +1,6 @@
 """The derived tables the library views stand on (tagpup.store.derived; docs/ARCHITECTURE.md,
 phase 9a): photo_tags (keywords as tag-tree node ids), folders and photo_folder (the folder tree),
-photo_meta (rating, camera, place), made from the photos by rebuild_all and by migration 19.
+made from the photos by rebuild_all and by migration 19.
 
 Rows are made as the indexer makes them (tests/photo_rows.py: what a read gives, recorded by
 store.photos.record_indexed), never through the module under test. Fictional names only: the
@@ -160,7 +160,7 @@ class TheKeywordsOfAPhoto(ALibrary):
         self.rebuilt()
         self.conn.execute("DELETE FROM photos WHERE id = ?", (one,))
         self.conn.commit()
-        for table in ("photo_tags", "photo_folder", "photo_meta"):
+        for table in ("photo_tags", "photo_folder"):
             self.assertEqual(0, self.rows("SELECT COUNT(*) FROM %s" % table)[0][0], table)
 
 
@@ -309,28 +309,6 @@ class TheFolderTree(ALibrary):
         self.assertEqual(([], [], 0, []), derived.stale_folders(self.conn))
 
 
-class WhatAPhotoSaysOfItself(ALibrary):
-    def test_a_row_for_every_photo_with_what_the_metadata_says(self):
-        rated = self.photo("2024", "a.jpg", **{"XMP:Rating": 4, "EXIF:Make": "Harbourlight", "EXIF:Model": "HL 400",
-                                               "Composite:GPSLatitude": -33.5, "Composite:GPSLongitude": 151.25})
-        bare = self.photo("2024", "b.jpg")
-        self.rebuilt()
-        self.assertEqual([(4, "Harbourlight", "HL 400", None, None, -33.5, 151.25)],
-                         self.rows("SELECT rating, make, model, width, height, latitude, longitude FROM photo_meta"
-                                   " WHERE photo_id = ?", rated))
-        self.assertEqual([(None,) * 7],
-                         self.rows("SELECT rating, make, model, width, height, latitude, longitude FROM photo_meta"
-                                   " WHERE photo_id = ?", bare))
-        self.assertEqual(2, self.rows("SELECT COUNT(*) FROM photo_meta")[0][0])
-
-    def test_a_row_never_read_or_damaged_says_nothing(self):
-        path = os.path.join(self.pictures, "2024", "unread.jpg")
-        self.conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata) VALUES (?, '[]', '[]', '{{x')", (path,))
-        self.rebuilt()
-        self.assertEqual([(None,) * 7], self.rows("SELECT rating, make, model, width, height, latitude, longitude"
-                                                  " FROM photo_meta"))
-
-
 class WhatRebuildingDoes(ALibrary):
     def test_it_is_the_same_whenever_it_is_done_and_says_what_it_wrote(self):
         self.tree("Trips/Coast")
@@ -342,7 +320,6 @@ class WhatRebuildingDoes(ALibrary):
         self.assertEqual(2, first["photos"])
         self.assertEqual(2, first["tag_rows"])
         self.assertEqual(2, first["in_a_folder"])
-        self.assertEqual(2, first["meta_rows"])
         again = derived.rebuild_all(self.conn)
         self.conn.commit()
         self.assertEqual(first, again)
@@ -355,18 +332,16 @@ class WhatRebuildingDoes(ALibrary):
         self.rebuilt()
         self.assertEqual([], derived.problems(self.conn))
         self.conn.execute("DELETE FROM photo_tags")
-        self.conn.execute("UPDATE photo_meta SET rating = 5")
         self.conn.execute("UPDATE folders SET parent_id = NULL")
         self.conn.execute("INSERT INTO photo_folder (photo_id, folder_id) VALUES (777, 1)")
         self.conn.commit()
         self.assertEqual([one], derived.stale_tags(self.conn))
-        self.assertEqual([one], derived.stale_meta(self.conn))
         photos_wrong, folders_wrong, missing, strays = derived.stale_folders(self.conn)
         self.assertEqual([777], photos_wrong)
         self.assertTrue(folders_wrong)
-        self.assertEqual(3, len(derived.problems(self.conn)))
+        self.assertEqual(2, len(derived.problems(self.conn)))
         before, written, after = derived.repair(self.path)
-        self.assertEqual(3, len(before))
+        self.assertEqual(2, len(before))
         self.assertEqual(1, written["tag_rows"])
         self.assertEqual([], after)
         self.assertEqual([], derived.problems(self.conn))
@@ -427,7 +402,6 @@ class TheMigration(unittest.TestCase):
         conn = db.connect(db.readonly_uri(path), uri=True)
         try:
             self.assertEqual([], derived.problems(conn))
-            self.assertEqual(total, conn.execute("SELECT COUNT(*) FROM photo_meta").fetchone()[0])
             self.assertEqual(total, conn.execute("SELECT COUNT(*) FROM photo_folder").fetchone()[0])
             nodes = {tag for (tag,) in conn.execute("SELECT tag FROM tag_taxonomy")}
             self.assertEqual(sum(1 for tags in lists for tag in set(tags) if tag in nodes),
@@ -455,7 +429,7 @@ class TheMigration(unittest.TestCase):
                 schema.ensure(path)
         self.assertEqual([(18,)], self.look(path, "SELECT MAX(version) FROM schema_version"))
         names = {name for (name,) in self.look(path, "SELECT name FROM sqlite_master")}
-        self.assertFalse(names & {"photo_tags", "folders", "photo_folder", "photo_meta", "derived_go_with_their_photo",
+        self.assertFalse(names & {"photo_tags", "folders", "photo_folder", "derived_go_with_their_photo",
                                   "photo_tags_go_with_their_node", "idx_photo_tags_tag"}, "all or nothing")
         schema._current.clear()
         self.assertEqual(migration_names.after(18), schema.ensure(path))
@@ -488,7 +462,7 @@ class TheMigration(unittest.TestCase):
         schema._current.clear()
         self.assertEqual(migration_names.after(18), schema.ensure(path))
         self.assertEqual(self.look(path, "SELECT COUNT(*) FROM photos")[0][0],
-                         self.look(path, "SELECT COUNT(*) FROM photo_meta")[0][0])
+                         self.look(path, "SELECT COUNT(*) FROM photo_folder")[0][0])
 
     def test_two_openers_apply_it_once(self):
         _home, path = self.library_at(18)
@@ -513,7 +487,7 @@ class TheMigration(unittest.TestCase):
         try:
             self.assertFalse(derived.present(conn))
             self.assertEqual(0, derived.refresh_photos(conn, [1, 2, 3]))
-            self.assertEqual(0, derived.record(conn, 1, "x", [], {}))
+            self.assertEqual(0, derived.record(conn, 1, "x", []))
             self.assertEqual((0, 0), derived.rebuild_folders(conn))
             self.assertIsNone(derived.tree_before(conn))
             self.assertEqual(0, derived.follow_tree(conn, None))
