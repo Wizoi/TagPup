@@ -13,6 +13,7 @@ layers, revisited"). A model is now one object, built once by the runtime and sh
 handing it on.
 """
 from tagpup.ml import free_device_memory, gpu, refuse_in_tests
+import contextlib
 import logging
 import os
 import threading
@@ -134,6 +135,20 @@ class ClipModel:
                 logger.error(f"Failed to load CLIP model: {e}", exc_info=True)
                 raise e
 
+    @contextlib.contextmanager
+    def _running(self):
+        """The model's lock, held with the model loaded: the weights, the preprocessing and the tokenizer are read
+        inside it. `unload` takes the lock to drop all three, so a read made after `_init_model` returned and
+        before the lock was taken saw None (a text embedded while the idle release ran raised "'NoneType' object is
+        not callable"); the model is loaded again, outside the lock, when that happened."""
+        for _attempt in range(3):
+            self._init_model()
+            with self.model_lock:
+                if self.model is not None:
+                    yield
+                    return
+        raise RuntimeError("The CLIP model was let go as often as it was loaded; try again.")
+
     def embed_image(self, file_path, seen=None):
         """Embed one photo as it is now. Nothing is kept: see PhotoEmbeddings.
 
@@ -156,7 +171,6 @@ class ClipModel:
 
     def embed_picture(self, img):
         """Embed a decoded picture: an RGB Pillow image, upright."""
-        self._init_model()
         # Pad to square to preserve full frame if configured and within aspect ratio limit
         if self.preserve_full_frame:
             width, height = img.size
@@ -164,12 +178,11 @@ class ClipModel:
             if aspect <= self.max_aspect_ratio:
                 img = images.pad_to_square(img)
 
-        image_input = self.preprocess(img).unsqueeze(0).to(self.device)
-        if self.device == "cuda":
-            image_input = image_input.half()
-
-        with self.model_lock:
-            with torch.no_grad():
+        with self._running():
+            image_input = self.preprocess(img).unsqueeze(0).to(self.device)
+            if self.device == "cuda":
+                image_input = image_input.half()
+            with torch.inference_mode():
                 image_features = self.model.encode_image(image_input)
                 # L2 normalize the features
                 image_features /= image_features.norm(dim=-1, keepdim=True)
@@ -177,11 +190,10 @@ class ClipModel:
 
     def embed_text(self, text):
         """Embed a text query for semantic search."""
-        self._init_model()
         try:
-            text_input = self.tokenizer([text]).to(self.device)
-            with self.model_lock:
-                with torch.no_grad():
+            with self._running():
+                text_input = self.tokenizer([text]).to(self.device)
+                with torch.inference_mode():
                     text_features = self.model.encode_text(text_input)
                     text_features /= text_features.norm(dim=-1, keepdim=True)
                     return text_features[0].cpu().numpy().tolist()

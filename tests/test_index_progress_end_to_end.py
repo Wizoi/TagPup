@@ -1,0 +1,86 @@
+"""The server's progress bar, end to end: the real `tagpup_cli.py index` in a process, read by
+tagpup.services.indexing.index_folder as the server reads it.
+
+The progress text is scraped from the CLI's stdout (summarize_indexer_line), and every
+test of the reader fed it a line a person had typed; a change to what the CLI prints (a tqdm
+version, a console line) would leave a bar stuck at 0% with all of them green. Here the CLI is
+run for three small generated photos in a home of its own, its models stood in for by a
+sitecustomize the child imports (the weights refuse under test; the protocol -- arguments,
+environment, exit code, stdout -- is the real one).
+"""
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import own_home  # noqa: E402
+
+from PIL import Image  # noqa: E402
+
+from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import indexing  # noqa: E402
+from tagpup.store import db  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EXIFTOOL = own_home.installed_exiftool()
+
+#: What the child runs before the CLI does: the models answer, nothing loads.
+SITECUSTOMIZE = '''
+import sys
+sys.path.insert(0, %(root)r)
+from unittest import mock
+from tagpup.ml import clip, faces
+mock.patch.object(clip.ClipModel, "_init_model").start()
+mock.patch.object(clip.ClipModel, "embed_picture", return_value=[0.1] * clip.output_dim(%(model)r)).start()
+mock.patch.object(faces.FaceModel, "_init_models").start()
+mock.patch.object(faces.FaceModel, "detect_and_embed_faces", return_value=[]).start()
+'''
+
+
+@unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
+class TheBarReachesTheEnd(unittest.TestCase):
+    def test_the_scraped_percent_reaches_100_and_the_final_message_is_the_cli_runs(self):
+        from tagpup.ml.clip import output_dim
+        from tagpup.services import settings
+        model = settings.DEFAULTS["model.name"]
+        if not output_dim(model):
+            self.skipTest("the model's output size is unknown here")
+        home = own_home.for_test(self, "index_progress_")
+        shim = os.path.join(home.root, "shim")
+        os.makedirs(shim)
+        with open(os.path.join(shim, "sitecustomize.py"), "w", encoding="utf-8") as handle:
+            handle.write(SITECUSTOMIZE % {"root": ROOT, "model": model})
+        folder = os.path.join(home.root, "Regatta")
+        os.makedirs(folder)
+        for name in ("one.jpg", "two.jpg", "three.jpg"):
+            Image.new("RGB", (64, 64), "navy").save(os.path.join(folder, name), "JPEG")
+        library = Library(home.library("harbour.db"))
+
+        heard = []
+        saved = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = shim
+        try:
+            result = indexing.index_folder(library, folder, ROOT,
+                                           report=lambda message=None, percent=None: heard.append((message, percent)))
+        finally:
+            if saved is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = saved
+
+        self.assertTrue(result.ok, (result.errors, heard))
+        percents = [percent for _message, percent in heard if percent is not None]
+        # Each bar the CLI draws is read as "label: N% (done/total)", and the last one stands at 100 of 90.
+        self.assertIn(90, percents, heard)
+        self.assertTrue(any("Generating embeddings: 100% (3/3)" == message for message, _p in heard), heard)
+        self.assertEqual(100, result.details["percent"])
+        self.assertIn("Folder indexed.", result.details["message"])
+        conn = db.connect(library.path)
+        try:
+            self.assertEqual(3, conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0])
+        finally:
+            conn.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

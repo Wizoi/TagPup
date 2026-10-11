@@ -8,7 +8,7 @@ from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin, shares
 from tagpup.services import file_changes, file_only, libraries, thumbnails
 from tagpup.services import roots as roots_service
-from tagpup.store import db, embeddings, faces, photos, taxonomy
+from tagpup.store import db, embeddings, faces, generations, photos, taxonomy
 from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,23 @@ def taken_order(record):
 
 
 @roots_service.canonical_args("folder")
+def scan_stamp(library):
+    """What the library's photos were at this moment, to be taken BEFORE a scan and kept with it
+    (tagpup.web.tagpup_routes.FolderCache): the photos counter that the triggers move for a write from any process --
+    this server, a CLI `sync --apply`, an MCP undo, a snapshot restore -- so a scan kept past one is read again. None
+    when the library cannot be read just now: a scan is then kept as it was, and a scan of an unreadable library fails
+    by itself."""
+    try:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            return generations.values(conn, ("photos",))
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("Could not read the library's generations for a folder scan: %s", e)
+        return None
+
+
 def scan_folder(library, folder, exiftool_path):
     """The photos under `folder`, at any depth, as page records keyed by paths.key:
     opening a folder in TagPup.
