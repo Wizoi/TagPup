@@ -39,7 +39,6 @@ function entry(overrides = {}) {
 
 function listing(roots, extra = {}) {
   return { library: LIBRARY, map: "C:/TagPup/machine_roots.json", problem: null, busy: [], poll_ms: 10,
-           adopt_hint: 'TagPup CLI.cmd --db <library> roots adopt --name pictures --address "..." --location "..."',
            roots, ...extra };
 }
 
@@ -176,12 +175,11 @@ describe("the Roots dialog", () => {
       "Last checked 2026-10-02 10:00:00, a sample of 2,000 rows: 1,990 match, 2 changed since they were indexed, 0 missing, 5 never read by the index, 3 could not be read.");
   });
 
-  test("a library with no roots says so, and shows the command", async (t) => {
+  test("a library with no roots says so", async (t) => {
     const ctx = await tuner(t, { roots: [] });
     const dialog = await openFromGear(ctx);
     assert.equal(text(dialog.querySelector(".roots-empty")),
-      "This library has not adopted a root yet; nothing to change here.");
-    assert.match(text(dialog.querySelector(".roots-command")), /roots adopt/);
+      "This library has no roots; nothing to change here.");
     assert.equal(dialog.querySelectorAll(".roots-root").length, 0);
   });
 

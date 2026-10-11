@@ -56,11 +56,6 @@ BEHIND = ("This library is older than this version of TagPup: open it with TagPu
 SEES_ONLY_ITS_OWN = ("TagTuner sees only its own runs and a Roots verify: before moving a root, stop Suggest in "
                      "TagPup, any index you started from the command line, and a sync.")
 
-#: How to adopt a root, which is all a library with none can do (the CLI).
-ADOPT_HINT = ('TagPup CLI.cmd --db <library> roots adopt --name pictures --address "\\\\server\\share\\Pictures" '
-              '--location "D:\\where\\the\\photos\\are"   (a dry run; add --apply to convert)')
-
-
 def _library_roots(library):
     try:
         return {entry["name"]: entry for entry in store_roots.listing(library.path)}
@@ -114,12 +109,12 @@ def sharing(library, name, others):
 def overview(library, machine, others=()):
     """Each root of the library with where this machine keeps it: {"roots": [{"name", "address",
     "added", "places", "active", "previous", "writes_to", "writes_to_place", "mapped", "rows",
-    "last_verify", "shared_with"}], "map", "adopt_hint", "problem"}. `writes_to_place` is the folder files are written to (the page
+    "last_verify", "shared_with"}], "map", "problem"}. `writes_to_place` is the folder files are written to (the page
     compares it with `active` as paths; the server owns which it is). `shared_with` is the names of the libraries among
     `others` that hold a root of that name (the map is one for them all). `problem` is the sentence
     when the map cannot be read; the roots are then listed without places. Reads only."""
     found = _library_roots(library)
-    answer = {"library": library.name, "map": machine.path(), "roots": [], "adopt_hint": ADOPT_HINT, "problem": None}
+    answer = {"library": library.name, "map": machine.path(), "roots": [], "problem": None}
     try:
         placed = machine.roots()
     except ValueError as problem:

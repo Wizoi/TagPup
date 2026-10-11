@@ -142,11 +142,10 @@ CASCADES = {
 #: What the name of the journal's record of a migration begins with ("migration 8: ...").
 MIGRATION = "migration "
 
-#: What the name of the change that adopts a root begins with (tagpup.store.adoption): it holds
-#: no rows, and its undo converts the library's paths back.
+#: What the names of the changes the removed commands `roots adopt` and `roots repair-address` recorded
+#: begin with. They hold no rows and are still listed in History; their undo went with the commands
+#: (DECISIONS, 2026-10-11), so `refusal` says so.
 ADOPTION = "roots adopt"
-
-#: The change that gives a root's address back its two leading backslashes (#914): no rows either.
 ADDRESS_REPAIR = "roots repair-address"
 
 #: The steps of an apply and an undo, in order; `_reached` is told of each.
@@ -261,9 +260,6 @@ class Rehearsal:
     derived_stale: int = 0
     #: [row, why] of each skippable edit applying would leave out.
     skipped: List[List[str]] = field(default_factory=list)
-    #: What the undo does that its rows do not say: the undo of an adoption converts paths in the
-    #: library's tables and in what later changes recorded.
-    notes: List[str] = field(default_factory=list)
 
     def as_dict(self):
         return asdict(self)
@@ -1037,12 +1033,10 @@ def refusal(conn, change_id):
         if blocking is not None:
             return ["change %d was made at schema %d and the library is at %d: its rows may not mean"
                     " what they did (%s)" % (change_id, version, current, blocking)]
-    if _operation.startswith(ADOPTION):
-        from tagpup.store import adoption   # adoption imports this module
-        return adoption.undo_refusals(conn, change_id)
-    if _operation.startswith(ADDRESS_REPAIR):
-        from tagpup.store import adoption
-        return adoption.address_undo_refusals(conn, change_id)
+    if _operation.startswith((ADOPTION, ADDRESS_REPAIR)):
+        return ["change %d (%s) converted the library's paths or a root's address by a command that has been "
+                "removed, and its undo with it: the copy of the library taken before it is the way back"
+                % (change_id, _operation)]
     return ["change %d (%s), applied after it, changed the same rows: undo it first" % (other, name)
             for other, name in _newer_overlapping(conn, change_id)]
 
@@ -1057,29 +1051,6 @@ def refusals(db_path, change_ids):
         return {change_id: refusal(conn, change_id) for change_id in change_ids}
     finally:
         conn.close()
-
-
-class _Undone(list):
-    """The rows an undo wrote, and `converted`: how many paths the undo of an adoption
-    converted back, which are rows of tables the journal does not key, and what it says of
-    them (`notes`)."""
-    converted = 0
-    notes = ()
-
-
-def _adoption_note(conn, change_id, converted):
-    name = json.loads(conn.execute("SELECT summary FROM changes WHERE id = ?", (change_id,)).fetchone()[0]
-                      or "{}").get("root", "")
-    recorded = converted.get("recorded values", 0)
-    tables = sum(n for table, n in converted.items() if table != "recorded values")
-    remaining = [each for each, _address in store_roots._rows(conn)]
-    keeps = ("the library keeps %s, whose rows are not touched" % ", ".join("root " + each for each in remaining)
-             if remaining else "the library holds no root")
-    return ["Undoing the adoption of root %s returns %d path(s) in the library's tables, and %d path(s) recorded in "
-            "later changes' values, from %s's row form to the native path this machine's map gives them, in one "
-            "step, so those changes can still be undone afterwards. No row moves to another root, and a value that "
-            "is not a path of %s (a title, an address, another root's row) is left exactly as it is; when it is "
-            "done %s." % (name, tables, recorded, name, name, keeps)]
 
 
 def _undo_in(conn, change_id):
@@ -1101,17 +1072,6 @@ def _undo_rows(conn, change_id):
     reasons = refusal(conn, change_id)
     if reasons:
         raise Refusal(reasons)
-    converted, notes = 0, ()
-    if conn.execute("SELECT 1 FROM changes WHERE id = ? AND substr(operation, 1, ?) = ?",
-                    (change_id, len(ADOPTION), ADOPTION)).fetchone():
-        from tagpup.store import adoption   # adoption imports this module
-        counted = adoption.undo_in(conn, change_id)
-        converted = sum(counted.values())
-        notes = _adoption_note(conn, change_id, counted)
-    if conn.execute("SELECT 1 FROM changes WHERE id = ? AND substr(operation, 1, ?) = ?",
-                    (change_id, len(ADDRESS_REPAIR), ADDRESS_REPAIR)).fetchone():
-        from tagpup.store import adoption
-        converted = adoption.undo_address_repair(conn, change_id)
     changes = _load(conn, change_id)
     reasons = _not_as_left(conn, change_id, changes)
     inverse = [_inverse(change) for change in reversed(changes)]
@@ -1127,10 +1087,7 @@ def _undo_rows(conn, change_id):
     except sqlite3.IntegrityError as e:
         raise _integrity(e) from e
     conn.execute("UPDATE changes SET status = 'derived_pending', undone = ? WHERE id = ?", (_now(), change_id))
-    undone = _Undone(changes)
-    undone.converted = converted
-    undone.notes = notes
-    return undone
+    return changes
 
 
 def undo(db_path, change_id):
@@ -1150,8 +1107,8 @@ def undo(db_path, change_id):
                 raise
             _reached("undo committed")
             settled = _settle_change(conn, change_id, changes)
-            logger.info("%s: change %d undone, %d row(s)", db_path, change_id, len(changes) + changes.converted)
-            return Undone(change_id, len(changes) + changes.converted, settled)
+            logger.info("%s: change %d undone, %d row(s)", db_path, change_id, len(changes))
+            return Undone(change_id, len(changes), settled)
         finally:
             conn.close()
 
@@ -1266,8 +1223,7 @@ def rehearse_undo(db_path, change_id):
                 stale = _derive(conn, changes)
                 before = _snapshot(conn, changes)
                 try:
-                    undone = _undo_in(conn, change_id)
-                    converted = undone.converted
+                    _undo_in(conn, change_id)
                 except Refusal as e:
                     return Rehearsal(refused=str(e))
                 _derive(conn, changes)
@@ -1277,8 +1233,6 @@ def rehearse_undo(db_path, change_id):
                     _derive(conn, changes)
 
                 rehearsal = _rehearsed(conn, before, changes, again, len(changes), stale)
-                rehearsal.rows += converted
-                rehearsal.notes = list(undone.notes)
                 return rehearsal
             finally:
                 conn.rollback()

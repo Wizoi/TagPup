@@ -497,9 +497,8 @@ class TheJournalsWrites(WithALibrary):
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
-class TheRootsAdoption(unittest.TestCase):
-    """An adopted library's folders are those of an unconverted twin, by from_row; its undo makes
-    them native again. (store/adoption.py rebuilds them in its own transaction.)"""
+class ARootedLibrarysFolders(unittest.TestCase):
+    """A library held under a root has the folders of an unconverted twin, by from_row."""
 
     def setUp(self):
         import roots_library as rl
@@ -528,13 +527,12 @@ class TheRootsAdoption(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_the_adopted_tree_is_the_twins_and_its_undo_makes_it_native_again(self):
-        from tagpup.services import journal as journal_service
+    def test_the_rooted_tree_is_the_twins(self):
         twin_tree, twin_held = self.folders(self.twin)
         self.assertEqual(twin_tree, self.folders(self.adopted)[0], "unadopted, alike")
         result = self.adopted.adopt()
         self.assertTrue(result.ok, result.message())
-        self.assertGreater(result.details["rehearsal"]["tables"]["photos"]["convert"], 0)
+        self.assertGreater(result.changed, 0)
         tree, held = self.folders(self.adopted)
         self.assertEqual(twin_held, held, "each photo is in the same folder, by from_row")
         root = self.rl.NAME
@@ -545,28 +543,6 @@ class TheRootsAdoption(unittest.TestCase):
                          "every other folder under the same parent")
         rows = self.adopted.rows("SELECT path FROM folders WHERE path LIKE '@%' ORDER BY path")
         self.assertTrue(rows and all(path.startswith("@" + root) for (path,) in rows))
-        undone = journal_service.undo(self.adopted.library, result.details["change"], apply=True)
-        self.assertIsNone(undone.refused, undone.refused)
-        after = self.folders(self.adopted)
-        self.assertEqual((twin_tree, twin_held), after, "native again, as the twin")
-        self.assertEqual([], self.adopted.rows("SELECT path FROM folders WHERE path LIKE '@%'"))
-
-    def test_a_crash_after_the_folders_are_rebuilt_leaves_the_library_as_it_was(self):
-        from unittest import mock
-        from tagpup.store import adoption
-        before = self.adopted.dump()
-
-        class Crash(BaseException):
-            pass
-
-        def reached(step):
-            if step == "folders rebuilt":
-                raise Crash(step)
-
-        with mock.patch.object(adoption, "_reached", reached):
-            with self.assertRaises(Crash):
-                adoption.adopt(self.adopted.db_path, self.rl.NAME, self.rl.ADDRESS, [self.adopted.pictures])
-        self.assertEqual(before, self.adopted.dump(), "one transaction: nothing of it was kept")
 
 
 class OneWriterAtATime(WithALibrary):

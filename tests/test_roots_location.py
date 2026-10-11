@@ -400,11 +400,10 @@ class ChangingTheLocation(RootsCase):
         with self.assertRaises(NotFound):
             roots_location.change_location(self.library, "scans", self.copy, self.machine)
 
-    def test_a_library_that_has_not_adopted_a_root_answers_cleanly(self):
+    def test_a_library_with_no_roots_answers_cleanly(self):
         plain = rl.Side(self.home, "plain", real=1, bulk=0, outside=0)
         found = roots_location.overview(plain.library, self.machine)
         self.assertEqual([], found["roots"])
-        self.assertIn("roots adopt", found["adopt_hint"])
         with self.assertRaises(NotFound):
             roots_location.change_location(plain.library, "pictures", self.copy, self.machine)
 

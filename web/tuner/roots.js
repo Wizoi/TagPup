@@ -438,9 +438,7 @@ function renderRoots(data) {
         show(body, [
             ...problem,
             buildElement('p', { className: 'roots-empty',
-                text: 'This library has not adopted a root yet; nothing to change here.' }),
-            buildElement('p', { text: 'To adopt one, run this (a dry run first; add --apply to convert):' }),
-            buildElement('code', { className: 'roots-command', text: data.adopt_hint }),
+                text: 'This library has no roots; nothing to change here.' }),
         ]);
         return;
     }
