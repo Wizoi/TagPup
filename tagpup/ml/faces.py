@@ -112,6 +112,9 @@ class FaceModel:
     def detect_and_embed_faces(self, img_path):
         """Detect all faces in an image and generate 512-dimensional embeddings for each."""
         self._init_models()
+        # The models as they are now: an unload (the idle release) nulls the attributes, and this call finishes
+        # with the ones it started with.
+        mtcnn, resnet = self.mtcnn, self.resnet
 
         if not os.path.exists(img_path):
             return NotDetected()
@@ -122,7 +125,7 @@ class FaceModel:
             width, height = img.size
 
             # Detect bounding boxes and probability scores
-            boxes, probs = self.mtcnn.detect(img)
+            boxes, probs = mtcnn.detect(img)
 
             if boxes is None or len(boxes) == 0:
                 return []
@@ -167,8 +170,8 @@ class FaceModel:
                     batch_tensors = batch_tensors.half()
 
                 # Generate 512-dimensional embeddings in a single forward pass
-                with torch.no_grad():
-                    emb_tensors = self.resnet(batch_tensors)
+                with torch.inference_mode():
+                    emb_tensors = resnet(batch_tensors)
                     emb_tensors /= emb_tensors.norm(dim=-1, keepdim=True)
                     embeddings = emb_tensors.cpu().numpy().tolist()
 

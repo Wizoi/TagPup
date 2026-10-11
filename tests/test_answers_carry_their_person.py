@@ -174,7 +174,7 @@ class TheAnswers(Library):
         self.assertEqual(["Sam", "Wren"], sorted(details["people"]), "the photo's list of names is as it was")
 
     def test_the_face_panel_names_a_face_and_what_it_suggests(self):
-        panel = face_service.panel(self.library, self.path)
+        panel = face_service.panel(self.library, self.path, lambda: identify.named_faces(self.library)[1])
         faces = {each["id"]: each for each in panel["faces"]}
         self.assertIsNone(faces[self.sam_face]["person"])
         self.assertEqual(self.person(WREN), faces[self.wren_face]["person"])

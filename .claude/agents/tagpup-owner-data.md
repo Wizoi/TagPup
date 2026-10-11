@@ -26,13 +26,13 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 - State on 2026-10-11 (counted): the three live libraries are at schema 30; migration 31 (drops `name_review_dismissals` and `damaged_files`, empty) waits for the owner's next start.
 
 ## The contract other domains rely on, and must not bypass
-1. `db.connect/begin/write/write_with_connection/writing/lock_for/backup/readonly_uri`: WAL, a 30 s busy timeout, one writer per file in a process, a lock error retried. Nobody else calls `sqlite3.connect`, writes SQL outside `tagpup/store`, or holds `db.lock_for` across a model call, a file write or a share read.
+1. `db.connect/begin/write/write_with_connection/lock_for/backup/readonly_uri`: WAL, a 30 s busy timeout, one writer per file in a process, a lock error retried. Nobody else calls `sqlite3.connect`, writes SQL outside `tagpup/store`, or holds `db.lock_for` across a model call, a file write or a share read.
 2. `schema.ensure(db_path)` brings a library to LATEST under the write lock, each migration in its own transaction with its checks, or raises. It raises `NewerLibrary` for a library newer than the code, also in a long-lived process (the version is read again every `RECHECK_SECONDS`). A look uses `schema.reading_newer()` / `newer_problem` and never migrates or stamps. A request for a library this process is migrating is answered 503 at once (`schema.migrating`).
 3. `journal.apply / rehearse / rehearse_undo / undo / record / record_faces`: one transaction, applied and undone only where rows are still what the plan read; refusals name keys, never values. `journal.KEYS / CASCADES / DERIVED` are the one statement of which tables a change may name, what a delete takes with it and what is rebuilt.
 4. `file_journal`: a photo file is planned, then `writing`, then `done` in the transaction that records its row; `unfinished` finds what a crash left.
 5. `derived.refresh_photos / record / prune / follow_tree / follow_nodes / rebuild_all` and `people.rebuild`: after any of them, in the writing transaction, the derived tables describe the photos; the caller commits. `tools/doctor.py --rebuild-derived` rebuilds the same rows in the same order.
 6. `snapshots.take / listed / restore` (three daily, one weekly, one monthly; restore snapshots first). `services.settings.of / change / stamp` (a change is journaled; a locked group needs acknowledgement).
-7. `store.roots` (`roots_for / to_row / from_row / sql_equals / sql_under`): with roots a path column holds `@root/relative`, converted only at the store boundary. Do not reach `store.roots._rows / _forget / _of_root` (`tagpup/store/checks.py` still does: a missing public accessor, do not add callers).
+7. `store.roots` (`roots_for / to_row / from_row / sql_equals / sql_under`): with roots a path column holds `@root/relative`, converted only at the store boundary. Do not reach `store.roots._rows / _forget / _of_root` (`logical(conn)` is the public read of a library's roots).
 
 ## Invariants and their guards
 | Invariant | Guard |
@@ -60,7 +60,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 7. What does an older, already-installed app do with the file after this runs? Can anything here make a migrated library look current to a running old process?
 8. Can opening, reading, `doctor`, an MCP read or a dry run reach `schema.ensure`'s write path?
 9. Does it add a "library before migration N" probe, or a silent zero for a missing table? Prefer refuse-or-migrate.
-10. A new table or column: is it in every list (`journal.KEYS / DERIVED / CASCADES`, `schema.UNWATCHED`, `derived.TABLES`, `checks`) and does a test hold the lists to each other? Is it the fifth statement of "which tables are derived"? Say which single place owns it.
+10. A new table or column: is it in every list (`journal.KEYS / CASCADES`, `checks`; a derived table in `derived.ALL`, from which `journal.DERIVED` and `schema.UNWATCHED` are made) and does a test hold the lists to each other? Is it a second statement of "which tables are derived"? `derived.ALL` owns it.
 11. Killed between two statements, which state does the next open finish (`derived_pending`, `writing`)? Two servers, or a server and a CLI, on one folder?
 12. Paths stored and compared in row form via `store.roots` and `core.paths`: correct for a library with and without roots?
 13. What does a snapshot, restore or `before-*` backup now contain and cost (the largest library is ~2.6 GB per copy)?

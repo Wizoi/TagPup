@@ -126,7 +126,7 @@ selects or creates a library runs with a `TAGPUP_HOME` of its own.
 **Never convert between a person's name and their tag by hand.** Identity is a leaf
 (`Rowan Thackeray`); the tag is a path (`People/Rowan Thackeray`). Use `leafOf`,
 `rootOf`, `samePerson`, `photoAlreadyHas` in `web/common/vocabulary.js`. In Python,
-`tagpup.core.vocabulary` takes a tag apart and `taxonomy.find_person_path()` finds where
+`tagpup.core.vocabulary` takes a tag apart and `taxonomy.person_paths()` finds where
 a name is filed. `tests/frontend/tag-vocabulary.test.mjs` and `tests/test_vocabulary.py`
 enforce it.
 

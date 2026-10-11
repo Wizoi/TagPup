@@ -33,7 +33,7 @@ import threading
 import time
 
 from tagpup.core import paths
-from tagpup.store import db
+from tagpup.store import db, derived, search_index
 
 logger = logging.getLogger(__name__)
 
@@ -980,12 +980,10 @@ def _drop_dismissals_and_damaged(conn):
 RUNNER_TABLES = ("schema_version", "changes", "change_rows")
 
 #: Tables any migration may change and nothing records: the counters its triggers move
-#: (tagpup.store.generations) and each photo's people, derived and rebuilt
-#: (journal.DERIVED, which a test holds to this); and the word index's FTS5 tables and the shadow tables FTS5 keeps
-#: for them (tagpup.store.search_index), which SQLite writes and on a virtual one of which no trigger can be made.
-UNWATCHED = ("generations", "photo_people", "photo_tags", "folders", "photo_folder",
-             "search_words", "search_names", "search_words_data", "search_words_idx", "search_words_docsize",
-             "search_words_config", "search_names_data", "search_names_idx", "search_names_docsize", "search_names_config")
+#: (tagpup.store.generations); every derived table (derived.ALL: each photo's people, the folders, the word index); and the
+#: shadow tables FTS5 keeps for the word index (search_index.SHADOWS), which SQLite writes and on a virtual one of which no
+#: trigger can be made.
+UNWATCHED = ("generations",) + derived.ALL + search_index.SHADOWS
 
 
 class CheckFailed(RuntimeError):

@@ -4,10 +4,9 @@
  *
  * One dialog for both pages: it starts the job (the plan is read, nothing is written), shows the question the plan
  * makes -- "Name N faces in M photos (X by their tag, Y by looking like the person's confirmed faces)? Z are left for
- * you." -- and only the answer Yes writes. A second box, off, also groups the rest of the faces, and its text says that
- * it works on the whole library and re-derives automatic names. With a folder open, a first step asks how much to look at
+ * you." -- and only the answer Yes writes. With a folder open, a first step asks how much to look at
  * (docs/findings.md, #994): only that folder and its subfolders, the default, or the whole library with its count; the question
- * says which, and the grouping is not offered for a folder. The server is scripted: these tests are about what the person
+ * says which. The server is scripted: these tests are about what the person
  * sees and what the page sends.
  */
 import { test, describe, afterEach } from "node:test";
@@ -25,7 +24,7 @@ const PLAN = { faces: 10477, by_tag: 5093, by_comparison: 5384, photos: 9624, le
 function status(state, extra = {}) {
   return { job: 7, library: LIBRARY, state, phase: state, stage: "reading", label: null, percent: null, done: 0, total: 1,
            started: 1, finished: null, elapsed: 3, cancelling: false, can_cancel: false, message: null, plan: null,
-           group: false, applied: null, grouped: null, in_folder: null, folder: false, only_folder: false, ask_seconds: null, ...extra };
+           applied: null, in_folder: null, folder: false, only_folder: false, ask_seconds: null, ...extra };
 }
 
 const ASKING = status("asking", { plan: PLAN, ask_seconds: 900, can_cancel: true });
@@ -118,21 +117,6 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.match(ctx.text(".name-faces-scope"), /whole library, not only the open folder/);
       assert.equal(ctx.text(".name-faces-question"), questionText(PLAN, "the whole library"), "no folder is open: it is the library's");
       assert.ok(ctx.shown("Yes") && ctx.shown("No"));
-      assert.equal(ctx.modal().querySelector("#name-faces-group").checked, false, "grouping is off until it is ticked");
-    });
-
-    test("the grouping box says it works on the whole library and re-derives the automatic names", async (t) => {
-      const ctx = await openFrom(appName, t);
-      await ctx.open();
-      const text = ctx.text(".name-faces-group");
-      assert.match(text, /every face in the library/);
-      assert.match(text, /re-derives the automatic names/);
-      assert.doesNotMatch(text, /take away/);
-      assert.match(text, /its photo's own tags confirm is kept/);
-      assert.match(text, /a name you gave by hand/);
-      assert.match(text, /needs no graphics card/);
-      assert.match(text, /History cannot undo it/);
-      assert.match(text, /History can no longer be counted on to undo the change that writes those names either/);
     });
 
     test("a page opened while the job works shows its progress at once, and says what is refused meanwhile", async (t) => {
@@ -149,36 +133,19 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.ok(!ctx.modal() || ctx.modal().classList.contains("hidden"));
     });
 
-    test("the question says History undoes the change, until the grouping is ticked", async (t) => {
+    test("the question says History undoes the change", async (t) => {
       const ctx = await openFrom(appName, t);
       await ctx.open();
-      assert.equal(ctx.text(".name-faces-again"), "Yes writes them as one change that History can undo.");
-      const box = ctx.modal().querySelector("#name-faces-group");
-      box.checked = true;
-      box.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
-      assert.match(ctx.text(".name-faces-again"), /^With the grouping ticked, History can no longer be counted on to undo this change once grouping has run/);
-      box.checked = false;
-      box.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
       assert.equal(ctx.text(".name-faces-again"), "Yes writes them as one change that History can undo.");
     });
 
-    test("Yes sends the answer once, without the grouping unless it is ticked", async (t) => {
+    test("Yes sends the answer once", async (t) => {
       const ctx = await openFrom(appName, t);
       await ctx.open();
       await ctx.press("Yes");
-      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 7, group: false }]);
+      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 7 }]);
       assert.match(ctx.text(".name-faces-step"), /Writing/);
       assert.ok(ctx.shown("Cancel"));
-    });
-
-    test("with the grouping ticked, Yes asks for it", async (t) => {
-      const ctx = await openFrom(appName, t);
-      await ctx.open();
-      const box = ctx.modal().querySelector("#name-faces-group");
-      box.checked = true;
-      box.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
-      await ctx.press("Yes");
-      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 7, group: true }]);
     });
 
     test("rapid clicks on Yes send one answer", async (t) => {
@@ -192,16 +159,12 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.equal(ctx.posts("/api/name-faces/confirm").length, 1);
     });
 
-    test("with nothing to name, Yes waits for the grouping to be ticked", async (t) => {
+    test("with nothing to name, Yes is not offered to press", async (t) => {
       const empty = status("asking", { plan: { ...PLAN, faces: 0, photos: 0, by_tag: 0, by_comparison: 0 }, ask_seconds: 900 });
       const ctx = await openFrom(appName, t, { start: { success: true, status: empty } });
       await ctx.open();
       const yes = [...ctx.modal().querySelectorAll("button")].find((b) => b.textContent === "Yes");
       assert.equal(yes.disabled, true);
-      const box = ctx.modal().querySelector("#name-faces-group");
-      box.checked = true;
-      box.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
-      assert.equal(yes.disabled, false);
     });
 
     test("a library applied before says so, and Yes is the second time", async (t) => {
@@ -323,7 +286,6 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.match(whole.textContent, /^The whole library \(2,422 faces still unnamed, 1,640 named\)/);
       assert.equal(ctx.modal().querySelector("#name-faces-only-folder").checked, true, "the folder is the default");
       assert.equal(ctx.modal().querySelector("#name-faces-whole-library").checked, false);
-      assert.match(ctx.text(".name-faces-body"), /Grouping the rest of the faces works on the whole library and is only offered for it/);
       assert.ok(ctx.shown("Read the plan") && !ctx.shown("Yes"));
     });
 
@@ -345,17 +307,14 @@ for (const appName of ["tagpup", "tagtuner"]) {
       await ctx.press("Read the plan");
       assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: FOLDER, only_folder: false }]);
       assert.equal(ctx.text(".name-faces-question"), questionText(PLAN, "the whole library"));
-      assert.ok(ctx.modal().querySelector("#name-faces-group"), "the grouping is offered for the library");
     });
 
-    test("the grouping is not offered for a folder, and the dialog says why", async (t) => {
+    test("Yes for a folder answers the plan that is shown", async (t) => {
       const ctx = await openWithFolder(t, { start: { success: true, status: ONLY } });
       await ctx.open();
       await ctx.press("Read the plan");
-      assert.equal(ctx.modal().querySelector("#name-faces-group"), null);
-      assert.match(ctx.text(".name-faces-no-group"), /not offered for one folder: it works on every face in the library and cannot be limited to a folder/);
       await ctx.press("Yes");
-      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 7, group: false }]);
+      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 7 }]);
     });
 
     test("a rapid double click on Read the plan starts once", async (t) => {
@@ -393,7 +352,7 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.doesNotMatch(ctx.text(".name-faces-question"), /"Run"/, "this page's folder is not put over the other plan");
       assert.match(ctx.text(".name-faces-status-line"), /ANOTHER folder/);
       await ctx.press("Yes");
-      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 329, group: false }], "Yes answers the plan that is shown");
+      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 329 }], "Yes answers the plan that is shown");
     });
 
     test("the server's refusal of the scope is said", async (t) => {

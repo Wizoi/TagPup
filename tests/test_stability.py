@@ -1060,7 +1060,7 @@ class TestPhotoActions(unittest.TestCase):
         self.assertEqual(faces_count, 0)
 
         # Verify the folder cache's entry is evicted
-        self.assertNotIn(photo_key, self.lib.folders().get(folder_key))
+        self.assertNotIn(photo_key, self.lib.folders().peek(folder_key))
 
 if __name__ == "__main__":
     unittest.main()

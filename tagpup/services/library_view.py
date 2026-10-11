@@ -1,4 +1,4 @@
-"""The library as the views see it: which photos a source holds, a page of them, and the navigator's counts
+"""The library as the views see it: which photos a source holds, the cards of a list of ids, and the navigator's counts
 (docs/ARCHITECTURE.md, phase 9a; the SQL is tagpup.store.library_view).
 
 A SOURCE says which photos: `all`; a `folder` (by its path, never an id) and, when asked, its subfolders; a
@@ -6,20 +6,17 @@ A SOURCE says which photos: `all`; a `folder` (by its path, never an id) and, wh
 (the leaf name, as photo_people holds it: identity by id comes later); a `year`; `year_other`, the photos of a year
 whose date names no month of it; a `month` ("2024-06"); `any_of`, a list of those (at most MAX_MEMBERS): the
 union of the rows selected in the navigator (phase 9, #672); or a `search` (phase 9e): {"all_of", "any_of", "none_of",
-"words"} (search_of). `view` answers an ORDERED page of photo ids with the
-TOTAL and the cards of the page; `cards` turns any list of ids into cards.
+"words"} (search_of). `ids` answers the whole ORDERED list of a source's photo ids with the
+TOTAL; `cards` turns any list of ids into cards.
 
 * **Order**: by Date Taken (`photos.taken`, ExifTool's text, which sorts as time does) and then id; photos with
   no date after them, by id -- or, asked (`order`, store.ORDERS), newest first (the undated still after the dated,
   by id from the highest), by file name either way (ties by id), or by caption either way (ties by id; photos with no
-  caption after the captioned, by id in the order's direction, as the undated are). Never by file time. A page is
-  `limit` photos (at most MAX_LIMIT) after a KEYSET
-  token (`after`, from the page before: opaque; a forged or corrupt one is refused, never trusted), never an
-  OFFSET: a photo added, deleted or re-dated between two pages neither repeats nor skips another beyond what
-  that change itself explains, and a page deep in a 20,000-photo source costs what the first does.
+  caption after the captioned, by id in the order's direction, as the undated are). Never by file time. The page
+  holds the list and asks for the cards of the ids near its window.
 * **A card** is small: id, file name, native path, taken, whether the photo is recorded damaged, and the
   thumbnail's URL by id (tagpup.services.thumbnails). One batch read of the columns it needs: no
-  raw_metadata, no BLOB, no query for each photo. `view` looks at no disk. `cards` may (`check_disk`, which the
+  raw_metadata, no BLOB, no query for each photo. `cards` looks at no disk unless it is asked to; it may (`check_disk`, which the
   page's route asks): one stat per card, bounded for a network share, adds `stale` -- "changed" when the file's
   size and time no longer describe the row, "missing" when the file is gone -- and nothing to a card whose file
   is as the row says, is on a share that did not answer, cannot be read, or whose row was never stamped.
@@ -30,8 +27,6 @@ TOTAL and the cards of the page; `cards` turns any list of ids into cards.
   sentence the web layer's gate answers first; a request that cannot mean anything is `Refused`, with why. Reads
   only, on a read-only connection: nothing here migrates or writes a library.
 """
-import base64
-import binascii
 import json
 import os
 import re
@@ -61,17 +56,9 @@ STAT_BUDGET_SECONDS = 1.5
 CHANGED = "changed"
 MISSING = "missing"
 
-#: Photos in a page when none is asked for, and the most a page holds.
-DEFAULT_LIMIT = 200
-MAX_LIMIT = 500
-
 #: The most ids `ids` answers for one source, and the most cards `cards_of` answers for one ask.
 MAX_IDS = 200_000
 MAX_CARDS = 200
-
-#: The longest page token read: a token is a few dozen characters, a few hundred in an order by name or caption (a key of
-#: 260 characters, each up to twelve in JSON when it is not ASCII); a very large one is refused before it is decoded.
-MAX_TOKEN = 5000
 
 #: The most sources a union holds: the navigator's rows a person selected, compressed (a folder with every folder under it
 #: is one). A union of more is refused with a sentence; its address would be longer than the server reads.
@@ -298,91 +285,11 @@ def order_of(text):
     return text
 
 
-def page_size(limit):
-    """How many photos a page holds for the `limit` asked (None: DEFAULT_LIMIT): at most MAX_LIMIT. Refused for
-    one that is not a number or is not above zero."""
-    if limit is None or limit == "":
-        return DEFAULT_LIMIT
-    try:
-        wanted = int(limit)
-    except (TypeError, ValueError):
-        raise Refused("limit must be a whole number from 1 to %d." % MAX_LIMIT) from None
-    if wanted < 1:
-        raise Refused("limit must be a whole number from 1 to %d." % MAX_LIMIT)
-    return min(wanted, MAX_LIMIT)
-
-
-def encode(cursor, order=store.TAKEN):
-    """The token that continues after `cursor` (store.Cursor) in `order`: opaque to a page. By Date Taken oldest first
-    it is the (phase, taken, id) it always was; in another order the order goes first, so a token is never read in an
-    order it was not made for."""
-    parts = [cursor.phase, cursor.taken, cursor.id]
-    if order != store.TAKEN:
-        parts.insert(0, order)
-    raw = json.dumps(parts, separators=(",", ":")).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-
-def decode(token, order=store.TAKEN):
-    """The store.Cursor a token says, None for no token. Refused for one that is not what `encode` makes for `order` --
-    too long, not base64, not JSON, the wrong shape, another order's: it is read and checked, never trusted."""
-    if token is None or token == "":
-        return None
-    if not isinstance(token, str) or len(token) > MAX_TOKEN:
-        raise Refused("That page token is not one this server made.")
-    try:
-        found = json.loads(base64.b64decode(token + "=" * (-len(token) % 4), altchars=b"-_", validate=True).decode("utf-8"))
-    except (binascii.Error, ValueError, UnicodeDecodeError):
-        raise Refused("That page token is not one this server made.") from None
-    if order != store.TAKEN:
-        if not (isinstance(found, list) and len(found) == 4 and found[0] == order):
-            raise Refused("That page token is not one this server made for this order.")
-        found = found[1:]
-    if not (isinstance(found, list) and len(found) == 3):
-        raise Refused("That page token is not one this server made.")
-    phase, taken, photo_id = found
-    if isinstance(taken, str):
-        try:
-            taken.encode("utf-8")
-        except UnicodeEncodeError:
-            # JSON may spell a lone surrogate, which SQLite cannot bind: a forged token, refused, never a 500 (#723).
-            raise Refused("That page token is not one this server made.") from None
-    longest = {store.TAKEN: 64, store.TAKEN_DESC: 64, store.CAPTION: store.CAPTION_KEY,
-               store.CAPTION_DESC: store.CAPTION_KEY}.get(order, 260)
-    ok = (phase in (0, 1) and type(phase) is int and type(photo_id) is int and 0 <= photo_id < 2 ** 62
-          and (isinstance(taken, str) and 0 < len(taken) <= longest if phase == 0 else taken is None))
-    if order in (store.NAME, store.NAME_DESC) and phase != 0:
-        ok = False   # every photo has a name: there is no second phase
-    if not ok:
-        raise Refused("That page token is not one this server made.")
-    return store.Cursor(phase, taken, photo_id)
-
-
-# ---- A page ---------------------------------------------------------------------------------------
-
-def view(library, kind, value=None, recursive=False, after=None, limit=None, order=None):
-    """A page of the photos of a source: {"source": {kind, value, recursive}, "order", "total", "ids", "next" (a token
-    or None), "limit", "cards"}. The total is of the whole source, not of the page. A source that holds nothing
-    -- a folder with no photo, a keyword no node has, a person nobody is -- is an empty page, not an error."""
-    source = source_of(library, kind, value, recursive)
-    order = order_of(order)
-    cursor = decode(after, order)
-    size = page_size(limit)
-    conn = _open(library)
-    try:
-        rows, more, total = store.view(conn, source, cursor, size, order)
-        shown = _cards(conn, [photo_id for photo_id, _taken in rows])
-    finally:
-        conn.close()
-    return {"source": described(source), "order": order,
-            "total": total, "ids": [photo_id for photo_id, _taken in rows],
-            "next": encode(store.next_cursor(rows[-1]), order) if more and rows else None,
-            "limit": size, "cards": shown}
-
+# ---- The ids ---------------------------------------------------------------------------------------
 
 def ids(library, kind, value=None, recursive=False, cap=None, order=None):
-    """{"source", "order", "total", "ids", "complete"}: the whole ordered id list of a source, in the order `view` pages it,
-    for a page that jumps to the middle of it. At most `cap` ids (MAX_IDS); `total` is the source's, `complete` false
+    """{"source", "order", "total", "ids", "complete"}: the whole ordered id list of a source, for a page that jumps to the
+    middle of it. At most `cap` ids (MAX_IDS); `total` is the source's, `complete` false
     when the list was cut. One read of ids alone: no card, no BLOB."""
     source = source_of(library, kind, value, recursive)
     order = order_of(order)

@@ -1,8 +1,8 @@
 """A name filed under two people paths is resolved to neither (docs/findings.md, #27).
 
-find_person_path returned the first path it met in a set, so a face of a person filed
-twice was suggested under one path on one run and the other on the next. It now
-refuses the name as find_by_leaf does, and the suggester offers no path for it.
+A lookup of a person's path returned the first path it met in a set, so a face of a person filed
+twice was suggested under one path on one run and the other on the next. The suggester asks
+person_paths and offers no path for a name with two.
 """
 import os
 import sys
@@ -48,11 +48,12 @@ class OneFace:
 
 
 class FindingAPerson(unittest.TestCase):
-    def test_a_name_filed_twice_has_no_path(self):
-        self.assertIsNone(taxonomy(TWICE).find_person_path("Rowan Thackeray"))
+    def test_a_name_filed_twice_has_both_paths(self):
+        self.assertEqual(["People/Harbour/Rowan Thackeray", "People/School/Rowan Thackeray"],
+                         taxonomy(TWICE).person_paths("Rowan Thackeray"))
 
     def test_a_name_filed_once_has_its_path(self):
-        self.assertEqual("People/Imogen Vale", taxonomy(TWICE).find_person_path("imogen vale"))
+        self.assertEqual(["People/Imogen Vale"], taxonomy(TWICE).person_paths("imogen vale"))
 
     def test_a_name_filed_twice_is_not_filed_a_third_time(self):
         tree = taxonomy(TWICE)

@@ -1,7 +1,7 @@
 """docs/findings.md, #994: "Only this folder" in the job behind the button "Name faces from tags".
 
 The plan is limited to the folder the page has open and its subfolders, and so is the apply, which writes exactly the plan the owner
-said Yes to under the same guards. Grouping re-derives the whole library's automatic names, so a folder's job refuses it. Run on
+said Yes to under the same guards. Run on
 small libraries made as the indexer makes them (tests/test_faces_from_tags.py's Case), the job's thread joined: no port, no sleep.
 """
 import os
@@ -102,25 +102,6 @@ class ThePlanAndTheApply(InFolders):
         wait(job)
         naming_faces.forget(self.library)
         self.assertTrue(naming_faces.status(self.library, job.handle)["only_folder"])
-
-
-class Grouping(InFolders):
-    def test_a_folder_job_does_not_group_and_says_why(self):
-        job = self.start()
-        with mock.patch.object(naming_faces.identities, "resolve", side_effect=AssertionError("grouped")):
-            with self.assertRaises(Refused) as raised:
-                naming_faces.confirm(self.library, job.handle, group=True)
-        self.assertEqual(naming_faces.GROUP_SAYS, str(raised.exception))
-        self.assertEqual(naming_faces.ASKING, job.status()["state"], "the question is still open")
-        self.assertEqual({None}, set(self.names("Run/a1.jpg").values()))
-
-    def test_the_whole_library_job_still_groups(self):
-        job = naming_faces.start(self.library)
-        wait(job)
-        with mock.patch.object(naming_faces.identities, "resolve", return_value={}) as resolve:
-            naming_faces.confirm(self.library, job.handle, group=True)
-            wait(job)
-        self.assertEqual(1, resolve.call_count)
 
 
 class WhatIsRefused(InFolders):

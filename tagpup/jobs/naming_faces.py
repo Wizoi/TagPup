@@ -13,24 +13,16 @@ was asked, and the page asks how it is getting on. Nothing is run on the owner's
    (faces_from_tags.faces_from_tags, `planned=`): one journaled change of the library, which History undoes. It is
    all or nothing: a face named or ruled out since the plan was read refuses the whole change and nothing is written. A second
    apply of a library needs the question (#840): the question says "applied before", and the Yes is that.
-3. **Group** (if the owner ticked it; off by default; never for a folder). tagpup.services.identities.resolve: the faces of the whole library
-   are grouped by who they look like and each group is named from its photos' tags. It re-derives every automatic name in the
-   library, keeps the names given by hand, and is not journaled, so History cannot take it back. It uses no model and no
-   graphics card.
 
 **Only this folder (#994).** `start(only_folder=True)` limits the plan, and so the apply, to the photos under the folder the page
 has open and its subfolders (tagpup.services.folder_scope): the plan is the whole-library plan restricted to those photos, the
 people's decided faces are still the library's, and the plan the owner said Yes to is exactly what is applied, with the guards
-unchanged. The scope is fixed at the start and shown in the question. Grouping (`identities.resolve`) re-derives the automatic
-names of the WHOLE library and cannot be limited, so a folder-scoped job refuses it (GROUP_SAYS) and the dialog does not offer
-it. A plan already waiting in the library for another scope is not handed back as if it were this one: the click is answered
+unchanged. The scope is fixed at the start and shown in the question. A plan already waiting in the library for another scope is not handed back as if it were this one: the click is answered
 `AlreadyWorking` with that plan's status, which says its own scope.
 
 **What Cancel does.** In the plan: stops it, nothing changed. In the question: No, nothing changed. At the write of step 2:
 the write is one SQLite transaction and cannot be stopped once begun; Cancel asked before it stops the job with nothing
-written, asked during it lets the write finish (all of it) and skips step 3, and the status says which. In step 3: stops it
-before the names are written (resolve announces "saving" and writes in one commit; a Cancel before the announcement writes
-nothing, after it the commit finishes). So Cancel never leaves a half change.
+written, asked during it lets the write finish (all of it). So Cancel never leaves a half change.
 
 **One at a time.** A library has at most one of these jobs, and none while it is indexed, synced, being worked on by Suggest,
 verified or edited in bulk, or while its faces are being clustered (the flag TagTuner's writes honour); the claim is
@@ -39,8 +31,7 @@ that the Activity page lists with counts, never a name. The faces are held again
 assignments and TagPup's face writes are refused (`hold`) while names are being given.
 
 **A restart.** The thread dies with its process: the job is gone from memory, its run is `running` and the next claim marks it
-`abandoned`. The change of step 2 either committed or did not (one transaction; the journal settles what was committed); step 3
-either wrote its names (one commit) or none. The status of a job this process no longer knows says so, from the run.
+`abandoned`. The change of step 2 either committed or did not (one transaction; the journal settles what was committed). The status of a job this process no longer knows says so, from the run.
 
 The job holds its Library, not the page's: the page may switch library or be closed and the job goes on.
 """
@@ -53,20 +44,19 @@ from tagpup.core import paths, runs
 from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.services import batches
 from tagpup.services import faces as face_service
-from tagpup.services import faces_from_tags, folder_scope, identities, search
+from tagpup.services import faces_from_tags, folder_scope
 from tagpup.services import roots as roots_service
 from tagpup.services import job_runs as runs_service
-from tagpup.services import journal as journal_service
 
 logger = logging.getLogger(__name__)
 
 #: The job's name in `job_runs`.
 JOB = "name faces"
 
-PLANNING, ASKING, APPLYING, GROUPING = "planning", "asking", "applying", "grouping"
+PLANNING, ASKING, APPLYING = "planning", "asking", "applying"
 DONE, CANCELLED, FAILED, EXPIRED, ABANDONED = "done", "cancelled", "failed", "expired", "abandoned"
 #: The states in which a thread works.
-WORKING = (PLANNING, APPLYING, GROUPING)
+WORKING = (PLANNING, APPLYING)
 
 #: How long a plan waits for its answer, in seconds. Older, the faces are likely not what it read: ask again.
 ASK_SECONDS = 15 * 60
@@ -74,29 +64,18 @@ ASK_SECONDS = 15 * 60
 #: Jobs remembered in this process for each library (the latest).
 KEPT = 5
 
-#: What each step says it is doing, and what share of its phase it is (planning: reading to deciding; grouping: reading to
-#: saving). Only roughly right: the bar has to keep moving forward at a believable rate, not predict the end. From
-#: photo_index, 2026-10-07: the plan is mostly comparing faces; grouping is mostly one call of DBSCAN.
+#: What each step of the plan says it is doing, and what share of its phase it is (reading to deciding). Only roughly right:
+#: the bar has to keep moving forward at a believable rate, not predict the end. From photo_index, 2026-10-07: the plan is mostly
+#: comparing faces.
 STAGES = {
     "reading": ("Reading the photos' tags and faces", 0.0, 0.08),
     "checking": ("Checking the photos with one face and one person", 0.08, 0.17),
     "comparing": ("Comparing faces with the confirmed faces of the people", 0.25, 0.65),
     "deciding": ("Deciding which faces to name", 0.90, 0.10),
 }
-#: Grouping, measured on a copy of photo_index (225,000 faces, 2026-10-07; 53 min in all): reading 2 s, DBSCAN 220 s, voting 2 s,
-#: propagating 112 s, matching the rest 2,807 s (89%), writing 19 s.
-GROUPING_STAGES = {
-    "reading": ("Reading every face of the library", 0.0, 0.005),
-    "grouping": ("Grouping the faces by who they look like (this step shows no progress inside; a few minutes)", 0.005, 0.07),
-    "voting": ("Naming the groups from their photos' tags", 0.075, 0.005),
-    "propagating": ("Placing the faces of photos with several people", 0.08, 0.035),
-    "matching": ("Checking the faces still unnamed against the named (most of the time)", 0.115, 0.875),
-    "saving": ("Writing the names", 0.99, 0.01),
-}
-
 #: What the status says of a restart, and of a plan that was not answered.
 RESTARTED = ("TagPup was closed before this finished. A change of the names is either written whole (History lists it, with "
-             "Undo) or not at all; grouping either wrote its names or wrote none.")
+             "Undo) or not at all.")
 EXPIRED_SAYS = "The plan was not answered in %d minutes and was let go: the faces may have changed. Nothing was changed." % (
     ASK_SECONDS // 60)
 REFUSED_SAYS = ("Something changed while the question was open (a name given, or a person's tag taken off, in TagTuner or "
@@ -107,20 +86,14 @@ APPLIED_MEANWHILE = ("The names were written by another run since this plan was 
 AGAIN_SAYS = ("Names were given from tags in this library before, and not undone. Those faces are references now, so this run can "
               "name faces that look like them: each run can name more, and a person's references can drift one step at a time. "
               "Identify Faces is where a drifted name is taken back. Yes does it again.")
-UNDO_LOST = ("Grouping rewrote names of faces that change wrote, so History can no longer be counted on to undo it "
-             "(and it cannot undo grouping).")
 NO_FACES = "This library holds no faces yet: index photos first. Nothing was changed."
 NO_FACES_HERE = "This folder holds no faces yet: index its photos first. Nothing was changed."
-#: Why a job for one folder does not group (the dialog says it beside the box that is not offered).
-GROUP_SAYS = ("Grouping re-derives the automatic names of every face in the library and cannot be limited to a folder: it is not "
-              "done for a folder. Choose the whole library for it.")
-
 _jobs = {}            # {library.key: {handle: Job}}
 _lock = threading.Lock()
 
 
 class Stopped(Exception):
-    """Raised from the progress hook of a plan or of grouping, to stop it before it has written anything."""
+    """Raised from the progress hook of a plan, to stop it before it has written anything."""
 
 
 class AlreadyWorking(Conflict):
@@ -163,10 +136,8 @@ class Job:
         self.planned = None
         self.earlier = False
         self.plan = None
-        self.group = False
-        #: What was written: the change and the faces of step 2, the faces step 3 left named that were not.
+        #: What was written: the change and the faces of step 2.
         self.applied = None
-        self.grouped = None
         #: The open folder's named and unnamed faces before and after, if the page named a folder.
         self.in_folder = None
         self.library_before = None
@@ -180,34 +151,32 @@ class Job:
 
     def _percent(self):
         """How far the phase has got, 0 to 100; None for a step with no count (the write of the names)."""
-        stages = STAGES if self.phase == PLANNING else GROUPING_STAGES if self.phase == GROUPING else {}
-        if self.stage not in stages:
+        if self.phase != PLANNING or self.stage not in STAGES:
             return None
-        _label, start, width = stages[self.stage]
+        _label, start, width = STAGES[self.stage]
         within = max(0.0, min(1.0, self.done / self.total)) if self.total else 0.0
         return int(round((start + width * within) * 100))
 
     def status(self):
         """For the page: {job, state, phase, stage, label, percent, done, total, elapsed, cancelling, can_cancel, message,
-        plan, group, applied, grouped, in_folder, folder, only_folder, library, started, finished}. `folder`: a folder was
+        plan, applied, in_folder, folder, only_folder, library, started, finished}. `folder`: a folder was
         named; `only_folder`: the job is limited to it. An in-memory read; nothing is
         asked of the library. Counts only, never a name or a path."""
         with self.lock:
             self._expire()
             working = self.state in WORKING
-            labels = STAGES if self.phase == PLANNING else GROUPING_STAGES
             if self.phase == APPLYING:
                 label = "Writing the names of the faces (one change, which History can undo)"
             else:
-                label = labels.get(self.stage, (self.stage,))[0]
+                label = STAGES.get(self.stage, (self.stage,))[0]
             return {"job": self.handle, "library": self.library.name, "state": self.state, "phase": self.phase,
                     "stage": self.stage, "label": label if working else None, "percent": self._percent() if working else None,
                     "done": self.done, "total": self.total, "started": self.started, "finished": self.finished,
                     "elapsed": round((self.finished or time.time()) - self.started),
                     "cancelling": working and self.cancel.is_set(),
                     "can_cancel": self.state == ASKING or (working and not self.writing),
-                    "message": self.message, "plan": self.plan, "group": self.group, "applied": self.applied,
-                    "grouped": self.grouped, "in_folder": self.in_folder, "folder": self.folder is not None,
+                    "message": self.message, "plan": self.plan, "applied": self.applied,
+                    "in_folder": self.in_folder, "folder": self.folder is not None,
                     "only_folder": self.only_folder, "ask_seconds": ASK_SECONDS if self.state == ASKING else None}
 
     def counts(self, what):
@@ -219,21 +188,16 @@ class Job:
             found.update(faces=self.plan["faces"], photos=self.plan["photos"], left=self.plan["left"])
         if self.applied:
             found.update(written=self.applied["changed"], change=self.applied["change"] or 0)
-        if self.grouped:
-            found.update(grouped_people=self.grouped["people"], grouped_named_more=self.grouped["named_more"])
         return found
 
     # ---- the steps ----------------------------------------------------------------------------
 
     def _step(self, stage, done=0, total=1):
-        """The hook of a plan and of grouping: where it has got, and the place to stop. The last stage of grouping is the
-        write: stopped before it is announced, not after."""
+        """The hook of a plan: where it has got, and the place to stop."""
         if self.cancel.is_set():
             raise Stopped()
         with self.lock:
             self.stage, self.done, self.total = stage, done, total
-            if self.phase == GROUPING and stage == "saving":
-                self.writing = True
 
     def _end_run(self, what, failed=False, note=None):
         try:
@@ -304,8 +268,8 @@ class Job:
                          % type(problem).__name__, what, failed=True)
 
     def run_apply(self):
-        """Phase 2's and 3's thread: the change of the names, then, if asked, grouping. `hold` keeps writes of faces out."""
-        what = "name faces from tags" + (" and group the rest" if self.group else "")
+        """Phase 2's thread: the change of the names. `hold` keeps writes of faces out."""
+        what = "name faces from tags"
         try:
             with runs.running(runs.job_tag(self.library.name, self.run_id)), self.hold():
                 written = 0
@@ -326,14 +290,7 @@ class Job:
                     with self.lock:
                         self.applied = {"changed": written, "change": result.details.get("change")}
                     self._record(what)
-                if self.group:
-                    if self.cancel.is_set():
-                        return self._finish(CANCELLED, self._said_written("Grouping was not run."), what)
-                    self._group(what)
-                else:
-                    self._after(what)
-        except Stopped:
-            self._finish(CANCELLED, self._said_written("Grouping was stopped before it wrote any name."), what)
+                self._after(what)
         except BaseException as problem:
             logger.exception("Name faces from tags in %s failed", self.library.name)
             self._finish(FAILED, "It could not go on (%s); the server's log says why. %s" % (
@@ -346,52 +303,15 @@ class Job:
                     % (_plural(self.applied["changed"], "face name was", "face names were"), then)).strip()
         return ("Nothing was changed. " + then).strip()
 
-    def _group(self, what):
-        with self.lock:
-            self.phase, self.stage, self.done, self.total, self.writing = GROUPING, "reading", 0, 1, False
-        before = face_service.named_counts(self.library)
-        index = search.PhotoIndex(self.library.path, model=None)      # no model: grouping reads the faces' own vectors
-        try:
-            if not index.load():
-                raise OSError("the library could not be opened")
-            people = identities.resolve(index, on_step=self._step)
-        finally:
-            index.close()
-        after = face_service.named_counts(self.library)
-        with self.lock:
-            self.grouped = {"people": len(people), "named_more": after["named"] - before["named"],
-                            "named": after["named"]}
-        self._after(what)
-
-    def _undo_still_works(self):
-        """Would History still undo the change that wrote the names, now that grouping ran? Grouping keeps a name its
-        photo's tags confirm (#855), so it often rewrites none of them; the rehearsal says. Unable to tell, no."""
-        try:
-            return not journal_service.undo(self.library, self.applied["change"], apply=False).refused
-        except Exception:
-            logger.exception("Could not rehearse the undo of the names written in %s", self.library.name)
-            return False
-
     def _after(self, what):
         """The job is over: what the open folder holds now, and the sentence."""
         if self.in_folder is not None and self.in_folder.get("before") is not None:
             self.in_folder["after"] = self._library_folder()
         parts = []
         where = " in the open folder" if self.only_folder else ""
-        if self.applied and self.grouped and not self._undo_still_works():
-            parts.append("%s given from the photos' tags (one change in History). %s"
-                         % (_plural(self.applied["changed"], "face name"), UNDO_LOST))
-        elif self.applied:
-            parts.append("%s given from the photos' tags%s (one change in History, which Undo takes back%s)."
-                         % (_plural(self.applied["changed"], "face name"), where,
-                            "; History cannot undo grouping" if self.grouped else ""))
-        if self.grouped:
-            delta = self.grouped["named_more"]
-            parts.append("Grouping re-derived the library's automatic names (%s): %s." % (
-                _plural(self.grouped["people"], "person", "people"),
-                ("%s more named faces than before it ran" % _number(delta)) if delta > 0 else
-                ("%s fewer named faces than before it ran" % _number(-delta)) if delta < 0 else
-                "the same number of named faces as before it ran"))
+        if self.applied:
+            parts.append("%s given from the photos' tags%s (one change in History, which Undo takes back)."
+                         % (_plural(self.applied["changed"], "face name"), where))
         if not parts:
             parts.append("Nothing needed naming.")
         self._finish(DONE, " ".join(parts), what)
@@ -422,7 +342,7 @@ def other_work(library):
 def _refuse_if_working(library):
     job = _working(library)
     if job is not None:
-        what = {PLANNING: "is reading its plan", APPLYING: "is writing the names", GROUPING: "is grouping the faces"}[job.state]
+        what = {PLANNING: "is reading its plan", APPLYING: "is writing the names"}[job.state]
         raise AlreadyWorking("Name faces from tags already %s in %s. Wait for it to finish, or cancel it."
                              % (what, library.name), job.status())
 
@@ -468,7 +388,7 @@ def start(library, folder=None, hold=None, busy=None, only_folder=False):
     library that this module cannot see (indexing, Suggest, a sync, a Verify, the flag).
 
     A job already waiting for its answer in the library is returned as it is (the click came again, or from another page);
-    Conflict, nothing begun, when one is planning, writing or grouping, or when the library is busy (here or in another
+    Conflict, nothing begun, when one is planning or writing, or when the library is busy (here or in another
     process: the claim in the library says so before anything is read)."""
     if folder is not None:
         folder = paths.stored(roots_service.canonical(library, folder))
@@ -535,9 +455,8 @@ def _unregister(library, job):
             del held[job.handle]
 
 
-def confirm(library, handle, group=False, busy=None):
-    """The answer Yes to the plan of job `handle`: write its names and, if `group`, group the rest of the faces, on a thread
-    of its own. Returns the Job. NotFound for a job this process does not know (a restart took it); Conflict when the job is
+def confirm(library, handle, busy=None):
+    """The answer Yes to the plan of job `handle`: write its names, on a thread of its own. Returns the Job. NotFound for a job this process does not know (a restart took it); Conflict when the job is
     not waiting for an answer, another is working, or the library is busy; Refused when the plan was let go (EXPIRED_SAYS)
     or there is nothing to do."""
     with _lock:
@@ -550,12 +469,9 @@ def confirm(library, handle, group=False, busy=None):
         raise Refused(EXPIRED_SAYS)
     if status["state"] != ASKING:
         raise Conflict("This plan is not waiting for an answer (it is %s)." % status["state"])
-    if group and job.only_folder:
-        raise Refused(GROUP_SAYS)
-    if not job.plan["faces"] and not group:
-        raise Refused("There is nothing to write: no face %scan be named from its tag.%s"
-                      % ("in this folder " if job.only_folder else "",
-                         "" if job.only_folder else " Tick the grouping to try the rest."))
+    if not job.plan["faces"]:
+        raise Refused("There is nothing to write: no face %scan be named from its tag."
+                      % ("in this folder " if job.only_folder else ""))
     _refuse_if_busy(library, busy)
     claim = _claim(library)
     try:
@@ -563,10 +479,9 @@ def confirm(library, handle, group=False, busy=None):
             _refuse_if_working(library)
             if job.state != ASKING:
                 raise Conflict("This plan is not waiting for an answer (it is %s)." % job.state)
-            job.state = job.phase = APPLYING if job.plan["faces"] else GROUPING
-            job.group, job.run_id = bool(group), claim.run_id
-            job.stage, job.done, job.total, job.message = "writing" if job.state == APPLYING else "reading", 0, 1, None
-            job.writing = job.state == APPLYING
+            job.state = job.phase = APPLYING
+            job.run_id = claim.run_id
+            job.stage, job.done, job.total, job.message, job.writing = "writing", 0, 1, None, True
         job._record("name faces from tags")
         job.thread = threading.Thread(target=job.run_apply, name="NameFaces", daemon=True)
         job.thread.start()
@@ -633,12 +548,12 @@ def stored_status(library, handle):
             "phase": None, "stage": None, "label": None, "percent": None, "done": 0, "total": 0, "started": None,
             "finished": None, "elapsed": None, "cancelling": False, "can_cancel": False,
             "message": RESTARTED if state == ABANDONED else counts.get("what"),
-            "plan": None, "group": False, "applied": None, "grouped": None, "in_folder": None, "folder": False,
+            "plan": None, "applied": None, "in_folder": None, "folder": False,
             "only_folder": bool(counts.get("in_a_folder")), "ask_seconds": None}
 
 
 def current(library):
-    """The job a page opening the library should pick up: one planning, waiting for its answer, writing or grouping in this
+    """The job a page opening the library should pick up: one planning, waiting for its answer or writing in this
     process, else None."""
     with _lock:
         found = _working(library) or _waiting(library)
@@ -664,11 +579,10 @@ def scope(library, folder):
 
 
 def writing(library):
-    """Is a job of this library writing names now -- giving them from the tags, or grouping? What the library's other writers
-    of faces, tags and rows wait for (tagpup.web.tuner_routes.clustering_refusal): the plan was read, and grouping commits a
-    name for every face it read at its start, so a name given meanwhile would be overwritten or cleared without a word."""
+    """Is a job of this library writing names now? What the library's other writers of faces, tags and rows wait for
+    (tagpup.web.tuner_routes.clustering_refusal): the plan was read, so a name given meanwhile would make it stale."""
     with _lock:
-        return any(job.state in (APPLYING, GROUPING) for job in _held(library).values())
+        return any(job.state == APPLYING for job in _held(library).values())
 
 
 def running(library=None):

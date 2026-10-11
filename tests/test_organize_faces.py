@@ -330,5 +330,56 @@ class NamingFromABox(Case):
         json.dumps(answer)
 
 
+class TheStripSuggestsWhatTheBoxesListFirst(Case):
+    """#828: two matchers answered "who does it look like" in one app. The strip's suggestion is the first of
+    `/api/face-matches`, the shared matrix, kept at the same threshold."""
+
+    def strip(self, photo):
+        answer = self.client.get("/library/api/photo-faces", query_string={"path": photo}).get_json()
+        return {each["id"]: each for each in answer["faces"]}
+
+    def boxes(self, face):
+        return self.client.get("/library/api/face-matches", query_string={"id": face}).get_json()
+
+    def test_a_named_face_on_the_same_photo_is_a_candidate_for_both_alike(self):
+        elsewhere = self.photo("regatta_030.jpg")
+        self.face(elsewhere, degrees=0, name=WREN, name_source="manual")
+        photo = self.photo("regatta_031.jpg")
+        self.face(photo, degrees=25, name=ODA, name_source="manual")
+        unnamed = self.face(photo, box=(30, 5, 50, 25), degrees=20)
+        listed = self.boxes(unnamed)
+        shown = self.strip(photo)[unnamed]
+        self.assertEqual(ODA, listed[0]["name"])
+        self.assertEqual(listed[0]["name"], shown["suggestion"])
+        self.assertAlmostEqual(listed[0]["similarity"], shown["similarity"], places=3)
+
+    def test_a_face_below_the_offer_gets_none_and_an_excluded_or_vectorless_face_gets_none(self):
+        elsewhere = self.photo("regatta_032.jpg")
+        self.face(elsewhere, degrees=0, name=WREN, name_source="manual")
+        photo = self.photo("regatta_033.jpg")
+        far = self.face(photo, degrees=80)
+        out = self.face(photo, box=(30, 5, 50, 25), degrees=10, excluded=1)
+        blank = self.face(photo, box=(60, 5, 80, 25), embedding=None)
+        near = self.face(photo, box=(90, 5, 110, 25), degrees=10)
+        shown = self.strip(photo)
+        self.assertIsNone(shown[far]["suggestion"])
+        self.assertIsNone(shown[out]["suggestion"])
+        self.assertIsNone(shown[blank]["suggestion"])
+        self.assertEqual(WREN, shown[near]["suggestion"])
+        self.assertEqual(self.boxes(near)[0]["name"], shown[near]["suggestion"])
+
+    def test_a_face_named_since_the_last_look_is_a_candidate_at_the_next(self):
+        elsewhere = self.photo("regatta_034.jpg")
+        self.face(elsewhere, degrees=0, name=WREN, name_source="manual")
+        photo = self.photo("regatta_035.jpg")
+        unnamed = self.face(photo, degrees=40)
+        self.assertEqual(WREN, self.strip(photo)[unnamed]["suggestion"])
+        later = self.photo("regatta_036.jpg")
+        self.face(later, degrees=40, name=ODA, name_source="manual")
+        shown = self.strip(photo)[unnamed]
+        self.assertEqual(ODA, shown["suggestion"], "the shared matrix was read again once a face was named")
+        self.assertEqual(self.boxes(unnamed)[0]["name"], shown["suggestion"])
+
+
 if __name__ == "__main__":
     unittest.main()

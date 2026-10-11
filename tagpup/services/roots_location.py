@@ -162,7 +162,7 @@ def _overlap(library_names, name, current, candidate, machine):
 
 
 def change_location(library, name, location, machine, apply=False, override=False, expected=None, busy=None,
-                    now=time.time, budget=roots_verify.SAMPLE_BUDGET, seconds=None, others=()):
+                    now=time.time, seconds=None, others=()):
     """Move root `name` to `location` on this machine. A dry run unless `apply`: details["verify"] says what a sample of
     the place holds, details["would_refuse"] why it would be refused. `override` accepts a poor
     result. `expected` is the place the caller saw the root at: the map having moved since
@@ -205,7 +205,7 @@ def change_location(library, name, location, machine, apply=False, override=Fals
         result.refuse("Not changed. " + reached["message"])
         return result
     try:
-        checked = roots_verify.verify(library, name, location, machine, budget=budget, seconds=seconds)
+        checked = roots_verify.verify(library, name, location, machine, seconds=seconds)
     except (NotFound, ValueError) as problem:
         result.refuse(str(problem))
         return result

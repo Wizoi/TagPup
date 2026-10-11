@@ -8,7 +8,8 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, click, flush } from "./harness.mjs";
+import { readFileSync } from "node:fs";
+import { closeAllApps, click, flush, pageExports } from "./harness.mjs";
 import { loadViewPage, pageErrors, speedUp } from "./view-page.mjs";
 
 afterEach(() => {
@@ -17,6 +18,10 @@ afterEach(() => {
 });
 
 const YEAR = new Date().getFullYear();
+
+/** Pairs of sources and whether the page keeps one chip for them: tests/fixtures/chip_keys.json, which the server is held to as
+ * well (tests/test_chip_keys_follow_the_server.py: what the page calls one chip the server reads as the same photos). */
+const CHIP_KEYS = JSON.parse(readFileSync(new URL("../fixtures/chip_keys.json", import.meta.url), "utf-8"));
 
 /** The navigator's keywords, as GET /api/library/navigator?section=keywords answers: a People branch with two people in it. */
 const KEYWORDS = () => [
@@ -81,6 +86,16 @@ async function type(ctx, list, text) {
   box.dispatchEvent(new ctx.window.Event("input"));
   await ctx.settle(40);
 }
+
+describe("one chip for one source (the page's key against the server's reading)", () => {
+  test("memberKey calls a pair one chip exactly where tests/fixtures/chip_keys.json says", async (t) => {
+    const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}` });
+    const { memberKey } = pageExports(ctx.window, "web/tagpup/search-model.js");
+    for (const each of CHIP_KEYS.pairs) {
+      assert.equal(memberKey(each.a) === memberKey(each.b), each.same_chip, each.name);
+    }
+  });
+});
 
 describe("words, Enter, and the address", () => {
   test("Enter searches the words: one POST, the address holds it, the header names it; Back and Forward restore the box", async (t) => {

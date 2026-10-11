@@ -229,25 +229,6 @@ class TheShapeOfASearch(Library):
 
 
 class TheOrders(Library):
-    def test_every_order_pages_by_its_keyset_as_its_list(self):
-        searches = (search(any_of=[member("person", WREN), member("folder", self.misc)], none_of=[member("keyword", "Trips/Lakes")]),
-                    search(none_of=[member("month", "2021-07")]),
-                    search(all_of=[member("any_of", [member("year", "2021"), member("folder", self.misc)]), member("keyword", "Activity")]))
-        for order in store.ORDERS:
-            for value in searches:
-                with self.subTest(order=order, value=value):
-                    listed = self.found(value, order)
-                    token, paged = None, []
-                    while True:
-                        page = library_view.view(self.vl.library, "search", value, False, token, 2, order)
-                        paged += page["ids"]
-                        self.assertEqual(listed["total"], page["total"])
-                        token = page["next"]
-                        if token is None:
-                            break
-                    self.assertEqual(listed["ids"], paged)
-                    self.assertEqual(listed["total"], len(paged))
-
     def test_the_order_is_the_sources_order(self):
         value = search(none_of=[member("folder", self.misc)])
         for order in store.ORDERS:

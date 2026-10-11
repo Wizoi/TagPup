@@ -54,12 +54,12 @@ class Disk(unittest.TestCase):
         os.remove(self.vl.path_of(self.gone))
         for card in library_view.cards(self.vl.library, [self.same, self.gone]):
             self.assertNotIn("stale", card)
-        for card in library_view.view(self.vl.library, "all")["cards"]:
+        for card in library_view.cards(self.vl.library, library_view.ids(self.vl.library, "all")["ids"]):
             self.assertNotIn("stale", card)
 
-    def test_view_looks_at_no_file(self):
+    def test_cards_without_the_disk_look_look_at_no_file(self):
         with mock.patch.object(shares, "stamp_of", side_effect=AssertionError("a stat")):
-            self.assertEqual(3, len(library_view.view(self.vl.library, "all")["cards"]))
+            self.assertEqual(3, len(library_view.cards(self.vl.library, library_view.ids(self.vl.library, "all")["ids"])))
 
     def test_a_row_nobody_stamped_is_not_called_changed_but_is_called_missing_when_its_file_is_gone(self):
         read = self.vl.unread("Coast", "never read.jpg")

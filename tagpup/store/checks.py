@@ -332,7 +332,7 @@ def rooted_rows_convert(conn):
     if not _table(conn, "roots"):
         # Behind migration 18: nothing can be rooted, and a row that says so is not a root's.
         return _check("rooted rows that do not convert back", [])
-    held = {name for name, _address in store_roots._rows(conn)}
+    held = set(store_roots.logical(conn))
     roots, _why = _roots_or_why(conn)
     broken = []
     for table, row_id, value in _path_rows(conn):
@@ -359,7 +359,7 @@ def native_rows_under_a_root(conn):
     adoption converts every row under the root, and every write after it converts its own; one
     here was written between (docs/ARCHITECTURE.md, "Roots and machines"). A photo is named by
     its id."""
-    if not _table(conn, "roots") or not store_roots._rows(conn):
+    if not _table(conn, "roots") or not store_roots.logical(conn):
         return _check("native rows under a root", [])
     roots, _why = _roots_or_why(conn)
     if roots is None:
@@ -376,7 +376,7 @@ def unrooted_by_folder(conn):
     biggest first (paths.outside_roots). Reported, not broken: a folder outside the roots can be
     opened and tagged and uses the library (docs/ARCHITECTURE.md). A library with no roots has
     every photo native, and says nothing."""
-    if not _table(conn, "roots") or not store_roots._rows(conn):
+    if not _table(conn, "roots") or not store_roots.logical(conn):
         return []
     roots, _why = _roots_or_why(conn)
     if roots is None:

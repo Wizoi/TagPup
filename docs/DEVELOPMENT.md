@@ -175,7 +175,7 @@ which is what the faces table, the suggester and `photo.people` speak in, and th
 is a path (`People/Hazel Brookmire`), which is what the keywords must hold and what the
 server matches on, exactly. Use `leafOf`, `rootOf`, `samePerson` and `photoAlreadyHas`
 in `web/common/vocabulary.js`, `ancestorsOf` and `preferPathed` in `web/tagpup/main.js`,
-and `taxonomy.find_person_path()` in Python.
+and `taxonomy.person_paths()` in Python.
 
 Every bug in this area was a site doing the conversion itself, and none of them looked
 related: clicking a recognised face added the person a second time in the bare form;
