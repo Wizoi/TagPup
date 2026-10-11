@@ -82,6 +82,7 @@ history section named. The rules these produce are in [INVARIANTS.md](INVARIANTS
 | 2026-10-10 | Camera search table (`search_gear`) and `photo_meta` are dropped with migration 30; a camera search scans the stored metadata. |
 | 2026-10-10 | The big photo_index library is archived out of `data/` (snapshot first; kept as a scale-test copy). |
 | 2026-10-10 | Machinery with zero live use is deletion-first, each deletion its own small branch, taken in the domain registers' order (untracked reports/One-off register - *.md): `relink-folders`, `reread-fields`, `dedupe-spelled-rows`, `backfill_document_ids`, journal prune, name-only face replay, `legacy_counters`, `faces_pending`. The supervisor class, the Activity file-access probes, the resumable bulk-edit job, roots adoption/Verify, damaged-photo handling and the legacy read-only CLI commands wait for the owner's yes, one at a time. |
+| 2026-10-11 | The supervisor (the always-on process, `tagpup.supervisor`, its Startup shortcut script and tests) is deleted: it ran once (2026-09-26 to 10-02); launches and installs hand a server over themselves (`tagpup.launcher`). The Activity page no longer shows a supervisor card. |
 
 To find the rest, search [findings.md](findings.md) and `docs/history/findings_closed_*.md` for `decided` and
 `(owner`; a row marked so is a decision, with the commit that built it.

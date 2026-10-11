@@ -41,7 +41,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Roots (where a library's folders are, per machine) | `tagpup/services/roots*.py`, `tagpup/store/adoption.py`, `tagpup/config.py` | `tests/test_roots*.py` |
 | The library views (grid, navigator, search) | `tagpup/services/library_view.py`, `tagpup/store/library_view.py`, `web/tagpup/` | `tests/test_library_view.py`, `tests/frontend/` |
 | A page's request, its DOM output | `web/common/api.js`, `web/common/dom.js` | `tests/frontend/` |
-| Updating a running server | `tagpup/launcher.py`, `tagpup/supervisor.py`, `tagpup/web/lifecycle.py` | `tests/test_launcher_hands_over.py`, `tests/test_supervisor.py` |
+| Updating a running server | `tagpup/launcher.py`, `tagpup/web/lifecycle.py` | `tests/test_launcher_hands_over.py`, `tests/test_install_hands_over.py` |
 | Which files are checked by every guard | `tests/shipped_sources.py` | |
 
 ## Why change
@@ -102,15 +102,14 @@ Imports only go down:
 | core | `tagpup.core` | Pure rules: path identity (and a root's row form, `paths.to_row` / `from_row`), a library's name and the files that belong to it (`Library`), the tag vocabulary (leaf, root, person), people derivation, suggestion scoring, clustering decisions; and `core.machine`, the one place the store asks for the machine's map of the roots | nothing but `core` |
 | config | `tagpup.config` | `TAGPUP_HOME` and where the libraries are (its `data/`), which ExifTool the machine has, where this machine keeps each root (`machine_roots.json`, read, and written only when an adoption finds the root missing from it; it registers its reader with `tagpup.core.machine` when imported, and `core.machine` imports it itself when asked with none registered, so no entry point has to remember to), and nothing of an old `config.ini`, which no code reads (phase 7.6). A library's settings are its own (`tagpup.services.settings`). Never written by the app (#100) | `core` (to spell and check a root's locations) |
 | logs | `tagpup.logs` | Each program's log file in `data/logs/`, each line carrying the runs under way (`tagpup.core.runs`), and reading them back, bounded, for the Activity page. Set up by entry points | `core`, `config` |
-| supervisor | `tagpup.supervisor` | The always-on process (phase 8): runs the web server as its child, restarts it, moves it onto a newer installed version once drained, one per home; and the names it shares with the server (the token, `data/server.json`, the exit code for ports another holds), which `tagpup.web` reads | `core`, `config`, `logs` |
-| launcher | `tagpup.launcher` | Replacing a running server with the version being launched, without the always-on process (#726): each server's record of where it answers -- its ports, version, and a token, the launcher's authority to drain it -- in the user's own folder (`%LOCALAPPDATA%\TagPup\servers`); and `make_way`, a launcher's: ask the version, drain another, end it once drained or hung, serve; and `hand_over`, an install's: the same `make_way`, opening no page, then the installed version started on the old one's ports (#795) | `core`, `config`, `logs`, `supervisor` |
+| launcher | `tagpup.launcher` | Replacing a running server with the version being launched (#726): each server's record of where it answers -- its ports, version, and a token, the launcher's authority to drain it -- in the user's own folder (`%LOCALAPPDATA%\TagPup\servers`); and `make_way`, a launcher's: ask the version, drain another, end it once drained or hung, serve; and `hand_over`, an install's: the same `make_way`, opening no page, then the installed version started on the old one's ports (#795); and the few small helpers they share with the installer and the server (json records written whole, `read_current`, `console_python`, the exit code for ports another holds) | `core`, `config`, `logs` |
 | store | `tagpup.store` | The library database: connections and locks, schema and migrations, generations, one repository per table, caches keyed by generation, backups | `core` |
 | files | `tagpup.files` | The photo files: ExifTool sessions, reading metadata, writing keyword, caption and orientation fields, identities, opening images (upright or as stored), crops and thumbnails | `core` |
 | ml | `tagpup.ml` | Models: CLIP embeddings, face detection and embeddings, the vector index; and the graphics card, one process at a time (`tagpup.ml.gpu`) | `core`, `files` |
 | services | `tagpup.services` | One function per user action. The only code that writes. Returns a `Result` | all of the above |
 | jobs | `tagpup.jobs` | Background work: queue, status, cancel, persistence, worker processes for GPU work | `core`, `services` |
 | runtime | `tagpup.runtime` | The composition root: turns the settings an entry point read into the process's long-lived objects -- CLIP and the face models, the per-library job runners -- builds each once, warms the models on a thread, and hands them down as arguments | every layer above but the entry points |
-| entry points | `tagpup.web`, `tagpup.cli`, `tagpup.mcp`, `scripts/`, `tools/` | HTTP, the command line, the MCP server Claude works through, maintenance and development tools. Each reads the settings, builds one `Runtime`, and passes it on | `config`, `logs`, `runtime`, `services`, `jobs` (and `core` for formatting); `tagpup.web` also `supervisor` and `launcher`, for the names they share |
+| entry points | `tagpup.web`, `tagpup.cli`, `tagpup.mcp`, `scripts/`, `tools/` | HTTP, the command line, the MCP server Claude works through, maintenance and development tools. Each reads the settings, builds one `Runtime`, and passes it on | `config`, `logs`, `runtime`, `services`, `jobs` (and `core` for formatting); `tagpup.web` also `launcher`, for the names it shares |
 
 Guard tests, each of which fails the build. The ones marked *exists* are in place; the rest arrive with their phase.
 
@@ -165,7 +164,7 @@ nothing of Flask's), and each mixed module splits along the layers (phase 5.5).
 ## Package layout
 
 ```
-tagpup/                config (where the libraries are), logs, runtime (composition root), supervisor, launcher
+tagpup/                config (where the libraries are), logs, runtime (composition root), launcher
   core/                pure rules: paths, vocabulary, validation, clustering, dates, fields, renaming, library,
                        machine, result, per_library, processes, byte_lock, idle, runs, gpu_turns, photo_meta
   store/               the only SQL. db (connections, locks), schema (migrations), one module per table or
@@ -220,10 +219,10 @@ programs only. A moved module takes every importer with it and leaves nothing at
   `TAGPUP_HOME` naming the folder that holds `data/` (the libraries, with their backups and locks). Editing
   the working tree changes nothing they run. Each launcher installs a newer clean commit, then replaces a
   server of another version (`tagpup.launcher.hand_over`: drain, wait for work in progress, end, serve);
-  `install_app.py --apply` does the same with no window. An optional always-on process
-  (`tagpup.supervisor`, from the Startup folder) runs the server as a child and moves it onto newer versions.
+  `install_app.py --apply` does the same with no window. (An always-on supervisor process ran
+  once, 2026-09-26 to 10-02, and was deleted 2026-10-11.)
 - **Logs** go to `data/logs/`, one rotating file per program, each line carrying the runs under way.
-- The full text of the old Runtime section (the card's rules, the hand-over, the always-on process) is in
+- The full text of the old Runtime section (the card's rules, the hand-over, the supervisor) is in
   [history/ARCHITECTURE_phases.md](history/ARCHITECTURE_phases.md), "Runtime".
 
 ## Data model on one page
