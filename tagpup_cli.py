@@ -81,11 +81,9 @@ from tagpup.core.result import NotFound
 from tagpup.services import maintenance
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services.search import PhotoIndex, stored_mismatch
-from tagpup.services.suggester import TagSuggester
 from tagpup.store.locks import PathLocker
 from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
-from tagpup.core import suggesting
 from tagpup.files import images as image_files
 from tagpup.core import library as libraries
 from tagpup.core.library import Library
@@ -645,124 +643,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         console.print("\n[bold]Root categories detected in library:[/bold]")
         for root, count in sorted(roots.items(), key=lambda x: -x[1]):
             console.print(f"  • {root}: {count} path(s)")
-
-@cli.command()
-@click.argument("directory", type=click.Path(exists=True, file_okay=False))
-@click.option("--k", default=15, help="Number of nearest neighbors to consider.")
-@click.option("--min-sim", default=0.35, type=float, help="Cosine similarity cutoff.")
-@click.option("--add", "add_folder", is_flag=True,
-              help="Add the folder to the library first when it does not hold it: each photo gets its row, as "
-                   "TagPup's Add does. Without it, a folder the library does not hold is refused.")
-@click.pass_context
-def suggest(ctx, directory: str, k: int, min_sim: float, add_folder: bool = False):
-    """Show the tags TagPup would suggest for the photos of a folder. Nothing is written."""
-    runtime = get_runtime()
-
-    # Load Index & Taxonomy
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-    library = Library(db_path)
-    # Suggest records faces and vectors for every photo it looks at, each on its row: only
-    # in the folders the library holds (tagpup.services.libraries.not_in).
-    settings = runtime.settings(library)
-    refusal = library_actions.not_in(library, directory, settings.ignored)
-    if refusal and not add_folder:
-        console.print(f"[bold red]Error:[/bold red] {refusal} (--add adds it; `index` adds and reads it)")
-        ctx.exit(1)
-    if refusal:
-        library_actions.record_added(library, [directory])
-        console.print(f"Added the folder to {library.name}; `index` reads its photos into it.")
-    model_name = settings.embedder["model_name"]
-
-    photo_index = library_index(runtime, db_path)
-    if not photo_index.load():
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
-        return
-    
-    try:
-        # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
-        mismatch = stored_mismatch(photo_index, model_name)
-        if mismatch:
-            console.print(f"[bold red]Error:[/bold red] Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Please run 'index' first to rebuild the index using the new model.")
-            return
-
-        taxonomy = TagTaxonomy(db_path)
-        taxonomy.load()
-
-        # The library's words and the tree's, but no one's name (tagpup.core.suggesting).
-        candidate_tags = suggesting.zero_shot_words(settings.candidate_words, taxonomy.paths, taxonomy.people_roots())
-
-        embeddings = runtime.embeddings(library, photo_index)
-        suggester = TagSuggester(photo_index, taxonomy, embedder=runtime.clip(library, settings),
-                                 candidate_tags=candidate_tags, faces=runtime.faces(library, settings))
-
-        # Scan untagged photos
-        console.print(f"[bold cyan]Scanning directory for untagged photos:[/bold cyan] {directory}")
-        all_images = scan_for_images(directory)
-        console.print(f"Found {len(all_images)} image(s) total.")
-
-        if not all_images:
-            console.print("[yellow]No supported images found. Exiting.[/yellow]")
-            return
-
-        # Batch read metadata for all untagged images
-        console.print(f"[bold cyan]Reading metadata for {len(all_images)} image(s)...[/bold cyan]")
-        exiftool_path = runtimes.exiftool(library, settings)
-        extractor = MetadataExtractor(exiftool_path=exiftool_path)
-        
-        batch_size = 500
-        metadata_map = {}
-        from tqdm import tqdm
-        for i in tqdm(range(0, len(all_images), batch_size), desc="Reading metadata"):
-            batch = all_images[i:i+batch_size]
-            batch_meta = extractor.batch_read(batch, people=store_taxonomy.people_vocabulary(db_path))
-            for meta in batch_meta:
-                metadata_map[meta["path"]] = meta
-
-        # Process each untagged image
-        console.print("[bold cyan]Generating suggestions...[/bold cyan]")
-        suggestions_output = []
-        
-        for path in tqdm(all_images, desc="Generating suggestions"):
-            try:
-                emb = embeddings.of(path)
-                meta = metadata_map.get(path)
-                sugg = suggester.suggest_for_photo(path, emb, k=k, min_sim=min_sim, target_metadata=meta)
-                suggestions_output.append(sugg)
-            except Exception as e:
-                logger.error(f"Error processing {path}: {e}")
-
-        # Apply folder consensus post-processing to boost/decay scores
-        console.print("[bold cyan]Applying event-level folder consensus...[/bold cyan]")
-        suggestions_output = suggester.apply_folder_consensus(suggestions_output)
-
-        # A preview: what TagPup would suggest. Nothing is written (a folder's suggestions are made
-        # and applied in TagPup's pages, whose Suggest keeps them in the library).
-        if suggestions_output:
-            table = Table(title="Generated Tag Suggestions Summary")
-            table.add_column("Photo File", style="green")
-            table.add_column("Top Suggested Tags (Confidence)", style="magenta")
-            table.add_column("Nearest Neighbors (Similarity)", style="cyan")
-
-            for sugg in suggestions_output:
-                # Top 5 tags; '*' marks a tag that is a new recommendation.
-                tags = sugg.get("suggested_tags", [])
-                tags_str = ", ".join([f"{t['tag']}{'*' if t.get('is_new_recommendation') else ''} ({t['score']:.2f})" for t in tags[:5]])
-                if len(tags) > 5:
-                    tags_str += f" (+{len(tags) - 5} more)"
-                if not tags:
-                    tags_str = "[yellow]No tags suggested[/yellow]"
-
-                neighbors = sugg.get("nearest_neighbors", [])
-                neighbors_str = ", ".join([f"{os.path.basename(n['path'])} ({n['similarity']:.2f})" for n in neighbors[:2]])
-                if not neighbors:
-                    neighbors_str = "[yellow]None[/yellow]"
-
-                table.add_row(os.path.basename(sugg["path"]), tags_str, neighbors_str)
-            console.print(table)
-    finally:
-        photo_index.close()
 
 @cli.command()
 @click.argument("query")

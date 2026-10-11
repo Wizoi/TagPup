@@ -162,22 +162,5 @@ class TestFunctionalCLI(unittest.TestCase):
         self.assertIn("Search Results", result.output)
         self.assertIn("Nature, Forest", result.output)
 
-        # --- 5. SUGGEST COMMAND ---
-        # Create an untagged target folder for suggestions
-        target_dir = os.path.join(self.workspace_path, "target")
-        os.makedirs(target_dir, exist_ok=True)
-        target_photo = os.path.join(target_dir, "new_photo.jpg")
-        create_dummy_jpeg(target_photo)
-
-        # A folder the library does not hold is added only when asked (--add).
-        result = runner.invoke(cli, ["suggest", target_dir])
-        self.assertEqual(1, result.exit_code, result.output)
-        self.assertIn("is not in", result.output)
-        result = runner.invoke(cli, ["suggest", target_dir, "--add"])
-        self.assertEqual(result.exit_code, 0, f"suggest command failed: {result.output}")
-        self.assertIn("new_photo.jpg", result.output)
-        # A preview: nothing is written beside the library.
-        self.assertEqual([], [name for name in os.listdir(self.workspace_path) if name.endswith(".json")])
-
 if __name__ == "__main__":
     unittest.main()
