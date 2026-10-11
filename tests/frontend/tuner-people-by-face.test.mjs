@@ -10,11 +10,11 @@ import { loadApp, FakeServer, flush, closeAllApps } from "./harness.mjs";
 afterEach(() => closeAllApps());
 
 const PEOPLE = [
-  { name: "Wren Halloway", count: 8 },
-  { name: "Ines Okafor", count: 3 },
-  { name: "Bao Lindqvist", count: 5 },
+  { name: "Wren Halloway", count: 8, person_id: 11 },
+  { name: "Ines Okafor", count: 3, person_id: 12 },
+  { name: "Bao Lindqvist", count: 5, person_id: 13 },
 ];
-const FACES = { "Wren Halloway": 101, "Bao Lindqvist": 303 }; // Ines has no readable face
+const FACES = { "id:11": 101, "id:13": 303 }; // Ines has no readable face; the server keys a person by the id of their node alone
 
 const base = (faces = FACES, people = PEOPLE) => new FakeServer()
   .on("/api/databases", { databases: ["kr-track"], selected: "kr-track" })
@@ -68,7 +68,7 @@ describe("by name", () => {
     items(ctx)[1].click();
     await flush(ctx.window, 6);
     assert.ok(items(ctx)[1].classList.contains("active"));
-    assert.ok(server.urls().some((u) => u.includes("/api/person-faces?name=")));
+    assert.ok(server.urls().some((u) => u.includes("/api/person-faces?person_id=13")));
   });
 });
 
@@ -110,6 +110,18 @@ describe("by face", () => {
     const { ctx } = await open(t, { server: base({}), view: "face" });
     assert.equal(ctx.document.querySelectorAll("#photo-list img").length, 0);
     assert.equal(items(ctx).length, 3);
+  });
+
+  test("a row with no id is nobody's face, even when the answer holds its name", async (t) => {
+    const server = base({ "Loki": 777, "id:11": 101 }, [
+      { name: "Loki", count: 1, person_id: null },
+      { name: "Wren Halloway", count: 8, person_id: 11 },
+    ]);
+    const { ctx } = await open(t, { server, view: "face" });
+    const loki = items(ctx).find((li) => li.personName === "Loki");
+    assert.equal(loki.querySelector("img"), null);
+    assert.equal(items(ctx).find((li) => li.personName === "Wren Halloway").querySelector("img").getAttribute("src"),
+      "/kr-track/api/face-crop?id=101");
   });
 
   test("a failed ask for the faces still lists the people", async (t) => {

@@ -215,7 +215,7 @@ export function updatePeopleDatalist() {
     // what you get when that was lost.
     //
     // One entry per PERSON, not per leaf: a tag the people records know is that person's id, so two people called Sam are two
-    // entries; a bare name one person has is that person; a text no record knows is its leaf.
+    // entries; a bare name one person has is that person; a text no record knows is its own path (the leaf is never identity).
     const byPerson = new Map();
     Array.from(peopleSet).forEach(tag => {
         const leaf = leafOf(tag).toLowerCase();
@@ -223,7 +223,7 @@ export function updatePeopleDatalist() {
         const known = state.people.ofText(tag);
         // A bare name two people have is no one of them: their own entries stand for them.
         if (!known && !tag.includes('/') && state.people.shared(leaf)) return;
-        const key = known ? `id:${known.id}` : `leaf:${leaf}`;
+        const key = known ? `id:${known.id}` : `tag:${tag.trim().toLowerCase()}`;
         byPerson.set(key, preferPathed(byPerson.get(key), tag));
     });
 

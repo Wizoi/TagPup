@@ -21,6 +21,7 @@ from tagpup.services import faces  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
+from tagpup.store import taxonomy  # noqa: E402
 
 
 def at(degrees):
@@ -139,14 +140,23 @@ class WhenTheFacesChange(Case):
 
 
 class TheRoute(unittest.TestCase):
-    def test_it_answers_name_to_face_and_nothing_for_an_empty_library(self):
+    def test_it_answers_id_to_face_and_nothing_for_an_empty_library(self):
         import web_client
         app, home = web_client.app_for(self, "tuner")
         client = app.test_client()
         self.assertEqual(client.get("/library/api/people-faces").get_json(), {})
-        face = db.write_with_connection(home.library("library.db"), lambda conn: add_face(
-            conn, "a.jpg", name="Wren Halloway", name_source="manual", embedding=at(0).tobytes()))
-        self.assertEqual(client.get("/library/api/people-faces").get_json(), {"Wren Halloway": face})
+
+        def seed(conn):
+            with store_people.tree_edit(conn):
+                taxonomy.add_path(conn, "People", root_has_face=1)
+                taxonomy.add_path(conn, "People/Wren Halloway")
+            node = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = 'People/Wren Halloway'").fetchone()[0]
+            named = add_face(conn, "a.jpg", name="Wren Halloway", name_source="manual", embedding=at(0).tobytes())
+            # An automatic guess from before ids: a name and no id. It is nobody's, under no key.
+            add_face(conn, "b.jpg", name="Loki", name_source="auto", embedding=at(5).tobytes(), tag_id=None)
+            return node, named
+        node, face = db.write_with_connection(home.library("library.db"), seed)
+        self.assertEqual(client.get("/library/api/people-faces").get_json(), {"id:%d" % node: face})
 
 
 if __name__ == "__main__":

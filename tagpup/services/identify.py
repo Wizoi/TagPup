@@ -230,22 +230,12 @@ def face_samples(decided, named, limit=SAMPLE_FACES):
 
 
 def for_pages(library, by_person):
-    """`by_person` ({person: value}, representative_faces' or face_samples') as the pages read it: keyed by the person's NAME,
-    as it always was, for a person no one else is called like (or no node is), and by `id:<id>` for every person with a node. A
-    name two people have is under each id only: a name alone cannot say which. Read now from the tree."""
+    """`by_person` ({person: value}, representative_faces' or face_samples') as the pages read it: keyed `id:<id>` by the id of
+    the person's node, and only so (owner, 2026-10-10: the leaf is never identity). A name with no person node is nobody's and is
+    left out, as is a person the tree no longer files. Read now from the tree."""
     everyone = people_service.directory(library)
-    keyed = {}
-    for person, value in by_person.items():
-        if isinstance(person, int):
-            found = everyone.of_id(person)
-            if found is None:
-                continue
-            keyed["id:%d" % person] = value
-            if everyone.of_name(found["name"]) is not None:
-                keyed[found["name"]] = value
-        else:
-            keyed[person] = value
-    return keyed
+    return {"id:%d" % person: value for person, value in by_person.items()
+            if isinstance(person, int) and everyone.of_id(person) is not None}
 
 
 # ---- The photos, and one photo ----------------------------------------------------------

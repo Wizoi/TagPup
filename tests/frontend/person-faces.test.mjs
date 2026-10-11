@@ -15,7 +15,10 @@ import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApp
 import { REPO_ROOT } from "./harness.mjs";
 
 const JANE = "Jane Doe";
-const SAMPLES = { [JANE]: [11, 12, 13, 14], "Rowan Thackeray": [21] };
+// The people as the server sends them, and the samples keyed by the id of their node alone.
+const JANE_P = { id: 5, name: JANE, tag: "People/Jane Doe" };
+const ROWAN_P = { id: 6, name: "Rowan Thackeray", tag: "People/Rowan Thackeray" };
+const SAMPLES = { "id:5": [11, 12, 13, 14], "id:6": [21] };
 
 afterEach(() => closeAllApps());
 
@@ -33,7 +36,7 @@ function serverWith(faces, samples) {
 }
 
 const SUGGESTED = {
-  faces: [{ id: 3, box: [0, 0, 9, 9], area: 81, name: null, suggestion: JANE, similarity: 0.82, excluded: false }],
+  faces: [{ id: 3, box: [0, 0, 9, 9], area: 81, name: null, suggestion: JANE, suggestion_person: JANE_P, similarity: 0.82, excluded: false }],
   total: 1, unmatched: 1,
 };
 
@@ -136,8 +139,20 @@ describe("the popup of a suggested person's faces", () => {
     assert.equal(ctx.samplesAsked(), 1);
   });
 
+  test("a suggested name no person has gets no popup, and a name in the answer is nobody's faces", async (t) => {
+    const ctx = await openPhoto(t, {
+      faces: { faces: [{ id: 3, box: [0, 0, 9, 9], area: 81, name: null, suggestion: JANE, suggestion_person: null,
+                        similarity: 0.82, excluded: false }], total: 1, unmatched: 1 },
+      samples: { ...SAMPLES, [JANE]: [11, 12] },
+    });
+    ctx.fire(ctx.card(), "mouseenter");
+    await ctx.wait(RESTS);
+    assert.equal(ctx.shown(), false);
+    assert.equal(ctx.samplesAsked(), 0);
+  });
+
   test("a person with no face named says so", async (t) => {
-    const ctx = await openPhoto(t, { samples: { "Rowan Thackeray": [21] } });
+    const ctx = await openPhoto(t, { samples: { "id:6": [21] } });
     ctx.fire(ctx.card(), "mouseenter");
     await ctx.wait(RESTS);
     assert.equal(ctx.shown(), true);
@@ -168,8 +183,8 @@ describe("the popup of a suggested person's faces", () => {
     const slow = new Promise((resolve) => { release = resolve; });
     const server = serverWith({
       faces: [
-        { id: 3, box: [0, 0, 9, 9], area: 81, name: null, suggestion: JANE, similarity: 0.82, excluded: false },
-        { id: 4, box: [0, 0, 9, 9], area: 81, name: null, suggestion: "Rowan Thackeray", similarity: 0.8, excluded: false },
+        { id: 3, box: [0, 0, 9, 9], area: 81, name: null, suggestion: JANE, suggestion_person: JANE_P, similarity: 0.82, excluded: false },
+        { id: 4, box: [0, 0, 9, 9], area: 81, name: null, suggestion: ROWAN_P.name, suggestion_person: ROWAN_P, similarity: 0.8, excluded: false },
       ],
       total: 2, unmatched: 2,
     }, SAMPLES);
@@ -217,9 +232,10 @@ describe("the popup of a suggested person's faces", () => {
   test("a name is text, whatever it holds", async (t) => {
     const evil = "<b id=pwned>Jane";
     const ctx = await openPhoto(t, {
-      faces: { faces: [{ id: 3, box: [0, 0, 9, 9], area: 81, name: null, suggestion: evil, similarity: 0.8, excluded: false }],
+      faces: { faces: [{ id: 3, box: [0, 0, 9, 9], area: 81, name: null, suggestion: evil,
+                        suggestion_person: { id: 9, name: evil, tag: `People/${evil}` }, similarity: 0.8, excluded: false }],
                total: 1, unmatched: 1 },
-      samples: { [evil]: [11] },
+      samples: { "id:9": [11] },
     });
     ctx.fire(ctx.card(), "mouseenter");
     await ctx.wait(RESTS);
@@ -253,7 +269,7 @@ describe("TagTuner's lists of who a face resembles", () => {
       .on("/api/people-with-counts", [])
       .on("/api/people", [])
       .on("/api/photo-details", { tags: [], people: [], size: [100, 100] })
-      .on("/api/face-matches", [{ name: JANE, similarity: 0.91, band: "likely" }])
+      .on("/api/face-matches", [{ name: JANE, person: JANE_P, similarity: 0.91, band: "likely" }])
       .first("/api/people-face-samples", SAMPLES);
     const { window, document } = await loadApp("tagtuner", {
       t, server, url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent("Unknown Faces")}`,

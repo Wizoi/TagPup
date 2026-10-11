@@ -362,7 +362,7 @@ export function renderSuggestionsPanel(photoPath) {
             chip.title = `Click to add ${shown} to this photo.`;
             if (isPerson) {
                 chip.tabIndex = 0;      // focusable, so the keyboard sees their faces as well
-                attachPersonFaces(chip, item.person && item.person.id !== null && item.person.id !== undefined ? item.person : name);
+                attachPersonFaces(chip, item.person);
             }
             chip.addEventListener('click', () => applySuggestedTagDirect(name, isPerson, photoPath));
             container.appendChild(chip);
