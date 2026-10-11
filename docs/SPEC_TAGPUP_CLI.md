@@ -216,20 +216,7 @@ Scans and indexes a photo library recursively: one or more directories, in one r
   - `--skip-faces`: Skip MTCNN face detection and FaceNet embedding extraction during indexing.
   - `--no-subfolders`: Only the photos directly in each DIRECTORY (`images.photos_in`): what sync queues for a folder the library holds, whose subfolders may be folders to review or ignored.
 
-#### 2. `remove`
-Deletes a photo or folder's indexed vector and metadata from the database.
-- **Usage**: `run.bat [global-options] remove`
-- **Options**:
-  - `--path TEXT`: Remove a specific image path from the index.
-  - `--folder TEXT`: Remove all indexed images under this directory recursively.
-
-#### 3. `index-faces`
-Manually scans photos and indexes face embeddings into the database.
-- **Usage**: `run.bat [global-options] index-faces <DIRECTORY>`
-- **Options**:
-  - `--force`: Force re-detection of faces on already processed images.
-
-#### 4. `cluster-faces`
+#### 2. `cluster-faces`
 Runs self-tuning identity resolution to cluster face embeddings and assign names.
 - **Usage**: `run.bat [global-options] cluster-faces`
 - **Options**:

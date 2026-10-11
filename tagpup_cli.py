@@ -80,7 +80,6 @@ from tagpup.services import maintenance
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services.search import PhotoIndex, stored_mismatch
 from tagpup.store.locks import PathLocker
-from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.files import images as image_files
 from tagpup.core import library as libraries
@@ -1273,121 +1272,6 @@ def snapshots_restore(ctx, name, apply_):
     console.print("Restored %s from %s. The library as it was is %s: `snapshots restore %s --apply` puts it back."
                   % (library.name, name, result.details["before_restore"], result.details["before_restore"]),
                   markup=False)
-
-
-@cli.command("remove")
-@click.option("--path", default=None, help="Remove a specific image path from the index.")
-@click.option("--folder", default=None, help="Remove all indexed images under this directory.")
-@click.pass_context
-def remove(ctx, path, folder):
-    """Remove a specific photo or an entire folder of photos from the index."""
-    if not path and not folder:
-        console.print("[bold red]Error:[/bold red] You must specify either --path or --folder to remove items.")
-        return
-
-    runtime = get_runtime()
-
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-
-    photo_index = library_index(runtime, db_path)
-    if not photo_index.load():
-        console.print("[bold red]Error:[/bold red] No photo index found.")
-        return
-
-    try:
-        to_remove = set()
-        records = photo_index.records() if (path or folder) else []
-        if path:
-            for meta in records:
-                if paths.same(meta["path"], path):
-                    to_remove.add(meta["path"])
-
-        if folder:
-            # is_under, not startswith: removing C:\Photos must not take C:\Photos2.
-            for meta in records:
-                if paths.is_under(meta["path"], folder):
-                    to_remove.add(meta["path"])
-
-        if not to_remove:
-            console.print("[yellow]No matching photos found in the index to remove.[/yellow]")
-            return
-
-        console.print(f"[bold yellow]Found {len(to_remove)} photo(s) to remove from the index.[/bold yellow]")
-        for p in sorted(list(to_remove)):
-            console.print(f"  • {p}")
-
-        confirm = input("Type 'YES' to confirm deletion: ").strip()
-        if confirm != "YES":
-            console.print("Aborted. No changes were made.")
-            return
-
-        photo_index.remove_paths(to_remove)
-        console.print("[bold green]Successfully removed the photos from the index.[/bold green]")
-    finally:
-        photo_index.close()
-
-
-@cli.command("index-faces")
-@click.argument("directory", type=click.Path(exists=True, file_okay=False))
-@click.option("--force", is_flag=True, help="Force re-detection of faces on already processed images.")
-@click.pass_context
-def index_faces(ctx, directory: str, force: bool):
-    """Scan photos and extract/index face embeddings into the database."""
-    runtime = get_runtime()
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-
-    photo_index = library_index(runtime, db_path)
-    if not photo_index.load():
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
-        return
-
-    try:
-        # Find all files in the directory that are already indexed in photos
-        console.print(f"[bold cyan]Scanning directory for photos to index faces:[/bold cyan] {directory}")
-        all_images = scan_for_images(directory)
-        # Compared by key, and each photo carried forward under its row's spelling so
-        # the faces recorded for it name the same path its photos row does.
-        indexed_paths = {paths.key(meta["path"]): meta["path"] for meta in photo_index.records()}
-
-        target_images = [indexed_paths[paths.key(img)] for img in all_images
-                         if paths.key(img) in indexed_paths]
-        console.print(f"Found {len(target_images)} photo(s) in directory that are in the photo index.")
-
-        if not target_images:
-            console.print("[yellow]No indexed photos found to extract faces from.[/yellow]")
-            return
-
-        # Determine which images need processing
-        to_process = []
-        if force:
-            to_process = target_images
-        else:
-            # Query paths that already have face records in the faces table
-            already_processed = {paths.key(p) for p in store_faces.photos_with_faces(photo_index.conn)}
-            to_process = [img for img in target_images if paths.key(img) not in already_processed]
-
-        if not to_process:
-            console.print("[bold green]All faces are already indexed![/bold green]")
-            return
-
-        console.print(f"Extracting face embeddings for [bold yellow]{len(to_process)}[/bold yellow] photo(s)...")
-        processor = runtime.faces(Library(db_path))
-        
-        from tqdm import tqdm
-        count_faces = 0
-        for path in tqdm(to_process, desc="Detecting and embedding faces"):
-            faces = processor.detect_and_embed_faces(path)
-            face_records.replace_detected(photo_index.conn, path, faces,
-                                          detector=face_records.detector_of(processor))
-            count_faces += len(faces)
-
-        console.print(f"[bold green]Successfully indexed {count_faces} faces across {len(to_process)} photos.[/bold green]")
-    finally:
-        photo_index.close()
 
 
 @cli.command("cluster-faces")

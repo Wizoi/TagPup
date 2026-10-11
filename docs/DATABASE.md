@@ -508,7 +508,6 @@ The following diagram illustrates how different application workflows (CLI comma
 flowchart TD
     subgraph CLI Commands [TagpupCLI Tool]
         A["python tagpup_cli.py index"]
-        B["python tagpup_cli.py index-faces"]
         C["python tagpup_cli.py cluster-faces"]
     end
 
@@ -527,18 +526,14 @@ flowchart TD
     A -->|1. Scan filesystem & compute visual embeddings| T3
     A -->|2. Save primary metadata| T1
     
-    %% CLI Face Extraction Interactions
-    B -->|3. Read parent photo paths| T1
-    B -->|4. Detect faces & write face details, crops, confidence| T2
-    
     %% CLI Identity Clustering Interactions
-    C -->|5. Read face embeddings & compute DBSCAN clusters| T2
-    C -->|6. Resolve identities & write name assignments| T2
-    C -->|7. Rebuild the people of the photos whose faces were named| T1
+    C -->|3. Read face embeddings & compute DBSCAN clusters| T2
+    C -->|4. Resolve identities & write name assignments| T2
+    C -->|5. Rebuild the people of the photos whose faces were named| T1
 
     %% Server & Web UI Interactions
-    D <-->|8. Read metadata, images, and diagnostics| T1 & T2
-    E <-->|9. Fetch details & post match/unmatch updates| D
+    D <-->|6. Read metadata, images, and diagnostics| T1 & T2
+    E <-->|7. Fetch details & post match/unmatch updates| D
 ```
 
 ---

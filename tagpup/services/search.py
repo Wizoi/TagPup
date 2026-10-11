@@ -12,11 +12,10 @@ import logging
 import os
 import sqlite3
 import threading
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from tagpup.core.library import Library
 from tagpup.files.identity import read_document_id
 from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import db, generations, schema
@@ -219,7 +218,7 @@ class PhotoIndex:
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
             schema.ensure(self.db_path)
-            # Reloads (after remove_paths, build_or_update) reuse the connection. Each
+            # Reloads (after build_or_update) reuse the connection. Each
             # used to open a new one and drop the old one unclosed, and on Windows an
             # unclosed handle keeps the database file locked. Foreign keys on: deleting
             # a photo's row takes its faces with it.
@@ -318,29 +317,6 @@ class PhotoIndex:
         nearest = self.index.search(query_vector, k)
         found = {record["id"]: record for record in self.records([photo_id for _sim, photo_id in nearest])}
         return [(sim, found[photo_id]) for sim, photo_id in nearest if photo_id in found]
-
-    def remove_paths(self, paths_to_remove: Set[str]):
-        """Remove specific paths from the SQLite database and reload."""
-        if self.conn is None or not paths_to_remove:
-            return
-        try:
-            store_photos.remove(self.conn, paths_to_remove)
-            self.conn.commit()
-            self._forget_thumbnails()
-            self.load()
-        except Exception as e:
-            index_log.error(f"Error deleting paths from SQLite: {e}")
-            self.conn.rollback()
-            raise e
-
-    def _forget_thumbnails(self):
-        """The photos just removed leave nothing in the thumbnail cache (tagpup.services.thumbnails.sweep).
-        The rows are gone and committed; a cache that cannot be swept holds files nothing will serve."""
-        try:
-            from tagpup.services import thumbnails   # imported when used
-            thumbnails.sweep(Library(self.db_path))
-        except Exception as why:
-            index_log.warning("Could not clear the thumbnails of the photos removed: %s", why)
 
     def clear_clip_embeddings(self):
         """Set all embedding values in photos table to NULL and commit, then clear in-memory FAISS index."""

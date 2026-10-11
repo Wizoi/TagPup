@@ -48,7 +48,7 @@ MAY_IMPORT = {
 #: only go down, and the test says when it has (lower the number here). A new program, or a new import, fails.
 PROGRAMS_MAY_NOT_IMPORT = {"store", "files", "ml"}
 PROGRAMS_TODAY = {
-    "tagpup_cli.py": 7,
+    "tagpup_cli.py": 6,
     "scripts/measure_suggest_folder.py": 2,
     "scripts/prepare_test_environment.py": 7,
     "scripts/sandbox.py": 2,

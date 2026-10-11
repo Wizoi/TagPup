@@ -3,8 +3,7 @@
 A folder typed as D:/Photos walked to "D:/Photos\\a.jpg" -- both separators in one
 row -- and a relative folder walked to relative rows. The index command looked up
 what it had already indexed by the raw string, so the same photos scanned under
-another spelling were embedded again and given a second row. And --folder filters
-used startswith, so C:\\Photos matched every photo in C:\\Photos2.
+another spelling were embedded again and given a second row.
 """
 import gc
 import os
@@ -82,8 +81,7 @@ class CliDatabaseCase(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("TAGPUP_DB_PATH", None)
-        # PhotoIndex.remove_paths reloads, and load() opens a connection over the one
-        # it had without closing it; collecting the orphan releases the file.
+        # collecting any orphaned connection releases the file.
         gc.collect()
         self.tmp.cleanup()
 
@@ -165,31 +163,6 @@ class TestIndexLocksBesideTheLibrary(CliDatabaseCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(os.path.isdir(os.path.join(self.tmp.name, "locks")),
                         "the locks were not taken beside the library")
-
-
-class TestFolderFilterIsAFolderNotAPrefix(CliDatabaseCase):
-    def setUp(self):
-        super().setUp()
-        self.inside = os.path.join(self.tmp.name, "Photos", "inside.jpg")
-        self.sibling = os.path.join(self.tmp.name, "Photos2", "sibling.jpg")
-        make_jpeg(self.inside)
-        make_jpeg(self.sibling)
-        self.seed([(self.inside, self.inside), (self.sibling, self.sibling)])
-        self.folder = os.path.join(self.tmp.name, "Photos")
-
-    def test_remove_folder_leaves_the_sibling_folder_alone(self):
-        result = self.run_cli(["remove", "--folder", self.folder], input="YES\n")
-        self.assertEqual(result.exit_code, 0, result.output)
-        rows = self.photo_rows()
-        self.assertEqual([paths.key(r) for r in rows], [paths.key(self.sibling)])
-
-    def test_remove_path_matches_another_spelling_of_it(self):
-        typed = self.inside.replace(os.sep, "/")
-        if paths.CASE_INSENSITIVE:
-            typed = typed.upper()
-        result = self.run_cli(["remove", "--path", typed], input="YES\n")
-        self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual([paths.key(r) for r in self.photo_rows()], [paths.key(self.sibling)])
 
 
 if __name__ == "__main__":
