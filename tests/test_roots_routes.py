@@ -86,13 +86,12 @@ class TheList(RootsRoutes):
         self.assertIsNone(root["last_verify"])
         self.assertEqual([], found["busy"])
 
-    def test_a_library_with_no_roots_answers_cleanly_with_the_command_to_run(self):
+    def test_a_library_with_no_roots_answers_cleanly(self):
         plain = rl.Side(self.home, "plain", real=1, bulk=0, outside=0)
         reply = self.client.get("/plain/api/roots")
         self.assertEqual(200, reply.status_code)
         found = reply.get_json()
         self.assertEqual([], found["roots"])
-        self.assertIn("roots adopt", found["adopt_hint"])
         for path, body in (("/api/roots/verify", {"root": "pictures"}),
                            ("/api/roots/change-location", {"root": "pictures", "location": self.copy}),
                            ("/api/roots/change-back", {"root": "pictures"})):

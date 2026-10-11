@@ -65,7 +65,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 10. Walks: one `images.photo_entries` walk, no junctions, stamps from the directory listing (`images.stamps_under`), no per-file `stat` over a share?
 11. Does anything touch a photo file outside `file_changes`? If so, name it among the exceptions with its reason.
 12. Does a read connection stay open while files are read (it pins the WAL)? Is a per-item query hoisted?
-13. Does indexing, sync or adoption run on its own, unasked, on the owner's data? The owner's decision is no.
+13. Does indexing or sync run on its own, unasked, on the owner's data? The owner's decision is no.
 14. Does the app's own write loop back into a sync that re-reads files? Is "one walk, no read" still true?
 15. What does it delete? A new mechanism, flag or script must remove as many concepts as it adds.
 

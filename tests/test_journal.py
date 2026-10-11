@@ -508,32 +508,6 @@ class TheSchemaMovedOn(unittest.TestCase):
         self.assertIn("made at schema 7 and the library is at %d" % schema.LATEST, said[0])
         self.assertIn("migration 8", said[0])
 
-    def test_an_adoption_stays_undoable_after_a_later_additive_migration(self):
-        import roots_library as rl
-        from tagpup.core import paths
-        home = own_home.for_test(self)
-        side = rl.Side(home, "adopted", real=1, bulk=2, outside=0)
-        adopted = side.adopt()
-        self.assertTrue(adopted.ok, adopted.message())
-
-        def make(conn):
-            conn.execute("CREATE TABLE IF NOT EXISTS later_things (id INTEGER PRIMARY KEY)")
-
-        fake = schema.Migration(schema.LATEST + 1, "a later table", make, schema.ADDITIVE, "adds a table",
-                                ("later_things",), (schema.RowsKept(),) + schema.STANDARD)
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS + (fake,)), \
-                mock.patch.object(schema, "LATEST", schema.LATEST + 1):
-            schema._current.clear()
-            self.assertEqual(["a later table"], schema.ensure(side.db_path))
-            conn = db.connect(db.readonly_uri(side.db_path), uri=True)
-            try:
-                self.assertEqual([], journal.refusal(conn, adopted.details["change"]))
-            finally:
-                conn.close()
-            undone = journal.undo(side.db_path, adopted.details["change"])
-            self.assertGreater(undone.rows, 0)
-        self.assertEqual([], [p for p in side.raw_paths() if p.startswith(paths.ROOT_MARK)])
-
     def test_a_migration_is_never_undone_whatever_the_gap(self):
         from test_migrations import at_version
         from tagpup.services import journal as journal_service

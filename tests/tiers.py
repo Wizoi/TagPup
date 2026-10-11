@@ -61,7 +61,6 @@ SCENARIO = frozenset({
     "test_migration_28_and_the_newer_library",
     # Roots: the folders a library holds, through a whole scenario.
     "test_roots_scenarios",
-    "test_roots_adoption",
     "test_roots_location",
     "test_roots_ingress",
     "test_roots_store",

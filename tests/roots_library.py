@@ -23,12 +23,16 @@ import photo_rows  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
 from tagpup import config  # noqa: E402
+from tagpup.core import machine as core_machine  # noqa: E402
+from tagpup.core import paths, validation  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.core.result import Result  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
-from tagpup.store import added_folders, damaged_files, db, suggestions  # noqa: E402
+from tagpup.store import added_folders, damaged_files, db, derived, journal, suggestions  # noqa: E402
+from tagpup.store import roots as store_roots  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 
@@ -70,6 +74,70 @@ def make_jpeg(path, shade=(90, 110, 130)):
     from PIL import Image
     os.makedirs(os.path.dirname(path), exist_ok=True)
     Image.new("RGB", (16, 12), shade).save(path, "JPEG")
+
+
+def convert_to_root(db_path, location, name=NAME, address=ADDRESS):
+    """Leave the library as the conversion that has run on the three live libraries left it
+    (`roots adopt`, removed 2026-10-11): root `name` recorded, the map placing it at `location`,
+    every path under it held as the root's row -- photos, the paths in raw_metadata and in
+    suggestions.raw, change_files, added_folders, damaged_files and the two folder settings --
+    the folder tree rebuilt, and the change History lists. A test fixture, since nothing in the
+    program converts a library any more; a Result whose `changed` is the paths converted."""
+    machine().add(name, location)
+    result = Result()
+    with db.lock_for(db_path):
+        conn = db.connect(db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            store_roots._forget(conn)
+            logical = dict(store_roots._rows(conn))
+            existing = core_machine.roots_of(logical) if logical else core_machine.IDENTITY
+            places = {each: list(found) for each, found in existing.locations.items()}
+            places[name] = [location]
+            logical[name] = address
+            roots = paths.Roots.of(logical, places, existing.map_file)
+
+            def row_of(value):
+                if not value or value.startswith(paths.ROOT_MARK) or not paths.is_native_absolute(value):
+                    return value
+                found = roots.locate(value)
+                if found is None or found[0] != name:
+                    return value
+                row = paths.to_row(value, roots)
+                result.changed += 1
+                return row
+
+            for photo_id, path, raw in conn.execute("SELECT id, path, raw_metadata FROM photos").fetchall():
+                conn.execute("UPDATE photos SET path = ?, raw_metadata = ? WHERE id = ?", (
+                    row_of(path), store_roots.raw_to_row(raw, roots) if raw else raw, photo_id))
+            for photo_id, raw in conn.execute("SELECT photo_id, raw FROM suggestions").fetchall():
+                if raw:
+                    conn.execute("UPDATE suggestions SET raw = ? WHERE photo_id = ?",
+                                 (store_roots.suggested_to_row(raw, roots), photo_id))
+            for table, key, columns in (("change_files", "id", ("path", "new_path")),
+                                        ("added_folders", "path", ("path",)), ("damaged_files", "path", ("path",))):
+                for found in conn.execute("SELECT %s, %s FROM %s" % (key, ", ".join(columns), table)).fetchall():
+                    new = {column: row_of(value) for column, value in zip(columns, found[1:]) if value}
+                    new = {column: value for column, value in new.items() if value != dict(zip(columns, found[1:]))[column]}
+                    if new:
+                        conn.execute("UPDATE %s SET %s WHERE %s = ?" % (
+                            table, ", ".join("%s = ?" % column for column in new), key),
+                            list(new.values()) + [found[0]])
+            for key in store_roots.FOLDER_SETTINGS:
+                row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+                if row and row[0]:
+                    lines = [row_of(validation.trim(line)) or line
+                             for line in str(row[0]).split(validation.FOLDER_SEPARATOR)]
+                    conn.execute("UPDATE settings SET value = ? WHERE key = ?",
+                                 (validation.FOLDER_SEPARATOR.join(lines), key))
+            store_roots.insert(conn, name, address)
+            derived.rebuild_folders(conn)
+            journal.record(conn, "roots adopt: %s" % name, [], {"root": name})
+            conn.commit()
+            store_roots._forget(conn)
+        finally:
+            conn.close()
+    return result
 
 
 class Side:
@@ -139,8 +207,9 @@ class Side:
 
     # ---- Adopting ----------------------------------------------------------------------------
 
-    def adopt(self, apply=True, location=None):
-        return roots_service.adopt(self.library, NAME, ADDRESS, location or self.pictures, machine(), apply=apply)
+    def adopt(self, location=None, name=NAME, address=ADDRESS):
+        """`convert_to_root` for this side's library, at its Pictures folder unless told."""
+        return convert_to_root(self.db_path, location or self.pictures, name, address)
 
     # ---- Reading ------------------------------------------------------------------------------
 

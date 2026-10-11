@@ -1,28 +1,12 @@
-"""A library's roots: listing them, and the explicit command that adopts one
+"""A library's roots: listing them, checking them, and placing them in a sandbox
 (docs/ARCHITECTURE.md, "Roots and machines").
 
 A library holds a photo's path as a root's name and the path under it, so that the library
 does not say where a machine keeps its photos; each machine says where it keeps each root
-(machine_roots.json, tagpup.config). Opening a library never converts it. `adopt` does, when
-the owner says so, and is a dry run unless told to apply:
-
-- The dry run counts, for each table, the rows it would convert, the rows under no root
-  (grouped by folder: they keep their native path and are never guessed at), the rows
-  whose conversion raises or would not convert back, the settings it would rewrite, and why
-  it would be refused. Nothing is written, nothing migrated.
-- `apply` writes the machine's map if it lacks the root (atomically, one editor at a time,
-  only then), then, in one transaction under the library's write lock, takes a new backup of
-  the library, converts every table (and re-roots the rows of an outer root that lie under a
-  root nested inside it),
-  re-verifies before it commits (row counts equal, every rooted row converts back, the map
-  places the root where the rows were converted by), and records one journaled change --
-  `roots adopt: <name>` -- that History lists and `undo` reverses, converting back by the
-  machine's map.
-
-It refuses, and writes nothing to the library: a root of that name already, a location that is
-not there or that no row lies under, a location the map places the root elsewhere than, a
-conversion that is not reversible for some row, two rows that would become one, another
-process holding the library's write lock, an unfinished change of photo files.
+(machine_roots.json, tagpup.config). The conversion that put a library's paths under a root
+(`roots adopt`) and the repair of a root's address (`roots repair-address`) are gone: all three
+live libraries had been adopted (DECISIONS, 2026-10-11). A change of where a machine keeps a
+root is the map's alone (tagpup.services.roots_location).
 
 The machine's map is the entry point's to hand in (`Machine`): this layer does not import
 tagpup.config.
@@ -35,8 +19,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from tagpup.core import paths
-from tagpup.core.result import NotFound, Refused, Result
-from tagpup.store import adoption, db, schema
+from tagpup.core.result import NotFound, Refused
+from tagpup.store import db, roots_check, schema
 from tagpup.store import roots as store_roots
 
 
@@ -208,115 +192,6 @@ def _there(library):
     return True
 
 
-def _places(name, location, machine, result):
-    """(the places this machine keeps `name` at, whether the map lacks it) -- or None, with
-    the result refused, when what the owner named cannot be."""
-    try:
-        placed = machine.roots()
-    except ValueError as problem:
-        result.refuse(str(problem))
-        return None
-    if not paths.is_native_absolute(location):
-        result.refuse("The location %r is not an absolute folder on this machine." % location)
-        return None
-    if name in placed:
-        if not any(paths.key(location) == paths.key(place) for place in placed[name]):
-            result.refuse("The map (%s) already places %s at %s, not at %s: it is not changed here. Name that place, "
-                          "or edit the file to list the new one beside it." % (
-                              machine.path(), name, ", ".join(placed[name]), location))
-            return None
-        return list(placed[name]), False
-    return [location], True
-
-
-def adopt(library, name, address, location, machine, apply=False):
-    """Adopt root `name` -- `address` the share's own address, `location` where this machine
-    keeps it -- for the library, converting its paths. A dry run unless `apply`
-    (details["rehearsal"]); applied, `changed` is the rows converted, details["change"] the
-    journal's change (undoable) and details["backup"] the copy taken first. Refused (a Result
-    with `refused`), with nothing written to the library, for any reason in the module's
-    description."""
-    result = Result(details={"dry_run": not apply})
-    try:
-        name = paths.root_name(name)
-    except paths.RootsError as problem:
-        result.refuse(str(problem))
-        return result
-    try:
-        _there(library)
-    except NotFound as problem:
-        result.refuse(str(problem))
-        return result
-    found = _places(name, location, machine, result)
-    if found is None:
-        return result
-    places, map_lacks = found
-    try:
-        report = adoption.rehearse(library.path, name, address or "", places)
-    except (adoption.Refused, paths.RootsError, ValueError) as problem:
-        result.refuse(str(problem))
-        return result
-    result.details["rehearsal"] = report
-    result.details["map"] = {"file": machine.path(), "would_write": map_lacks}
-    result.attempted = report["tables"].get("photos", {}).get("rows", 0)
-    if report["refused"]:
-        result.refuse("; ".join(report["refused"]))
-        return result
-    if not apply:
-        return result
-    return _apply(library, name, address or "", location, places, map_lacks, machine, result)
-
-
-def repair_addresses(library, apply=False):
-    """Give each root whose stored address lost a leading backslash (a share's address
-    written with one, #914) its two, as one journaled change `undo` reverses. A dry run unless
-    `apply`: details["repairs"] is [{"name", "was", "now"}] either way, `changed` the roots
-    written. Refused, nothing written, when the repaired addresses would nest or another process
-    holds the write lock. Needs no backup: it changes one text column and the journal holds the
-    way back. A run in another process that holds the library's roots (an index, a sync, in any app)
-    stops with RootsChanged when it commits, so it is to be run with TagPup and TagTuner stopped."""
-    result = Result(details={"dry_run": not apply})
-    try:
-        _there(library)
-    except NotFound as problem:
-        result.refuse(str(problem))
-        return result
-    todo = adoption.address_repairs(library.path)
-    result.attempted = len(todo)
-    result.details["repairs"] = [{"name": name, "was": was, "now": now} for name, was, now in todo]
-    if not apply or not todo:
-        return result
-    try:
-        done = adoption.repair_addresses(library.path)
-    except (adoption.Refused, paths.RootsError, ValueError) as problem:
-        result.refuse("Nothing was written: %s" % problem)
-        return result
-    result.changed = len(done)
-    result.details["repairs"] = [{"name": name, "was": was, "now": now} for name, was, now in done]
-    return result
-
-
-def _apply(library, name, address, location, places, map_lacks, machine, result):
-    if map_lacks:
-        try:
-            result.details["map"]["written"] = bool(machine.add(name, location))
-        except ValueError as problem:
-            result.refuse("Nothing was written to the library: the machine's map could not be written: %s" % problem)
-            return result
-    try:
-        report = adoption.adopt(library.path, name, address, places)
-    except (adoption.Refused, paths.RootsError, ValueError) as problem:
-        result.refuse("Nothing was written to the library: %s%s" % (
-            problem, " (The machine's map now lists the root; that is harmless to a library without it.)"
-            if result.details["map"].get("written") else ""))
-        return result
-    result.details["adopted"] = report
-    result.details["backup"] = report["backup"]
-    result.details["change"] = report["change"]
-    result.changed = sum(counts["convert"] for counts in report["tables"].values())
-    return result
-
-
 def check(library):
     """What is wrong with the library's roots, as counts: [] when nothing, else a sentence for
     each -- first, when this machine's map cannot place a root, that, naming the file and the
@@ -327,7 +202,7 @@ def check(library):
         if not store_roots.has_table(conn):
             return []
         try:
-            return adoption.verify(conn, store_roots.roots_for(conn))
+            return roots_check.verify(conn, store_roots.roots_for(conn))
         except ValueError as problem:   # paths.RootsError, config.MachineMapError
             return [str(problem)]
     finally:
