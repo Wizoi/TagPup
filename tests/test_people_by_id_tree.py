@@ -345,13 +345,6 @@ class Operations(TwoSams, unittest.TestCase):
         self.assertIsNone(tagging.refuse_under_people(self.library, ["Places/Seattle", SAM_T]))
         self.assertIsNone(tagging.refuse_under_people(self.library, ["Sam/Swim"]))
 
-    def test_rule_a_is_never_applied_to_what_a_file_holds(self):
-        """The indexer makes the nodes a file's keywords name, a child of a person included."""
-        tree = taxonomy.TagTaxonomy(self.path)
-        tree.load()
-        tree.add_tag(SAM_T + "/Swim Team")
-        tree.save()
-        self.assertIsNotNone(self.node(SAM_T + "/Swim Team"))
 
 
 def _conn(path):

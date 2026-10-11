@@ -92,13 +92,9 @@ def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
                 return found.id, False
         elif known.why_not(path) in (None, "several"):
             return None, False   # a person's name: their keyword, not a tag of its own
-    spelled, parts = "", vocabulary.segments(path)
-    for level, part in enumerate(parts):
-        hit = tree.find(spelled + vocabulary.SEPARATOR + part if spelled else part)
-        if hit is None:
-            break
-        spelled = tree.tags[hit]
-    else:
+    spelled, level, hit = _walk(tree, path)
+    parts = vocabulary.segments(path)
+    if hit is not None:
         if person and bare:
             has_face, grown = conn.execute(
                 "SELECT has_face, EXISTS (SELECT 1 FROM tag_taxonomy WHERE parent_id = ?) FROM tag_taxonomy WHERE id = ?",
@@ -111,6 +107,10 @@ def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
                 return hit, True
         return hit, False
     new = unicodedata.normalize("NFC", vocabulary.SEPARATOR.join(([spelled] if spelled else []) + parts[level:]))   # one form
+    try:
+        refuse_child_of_person(conn, new)
+    except person_ids.PersonHasNoChildren:
+        return None, False   # a person that faces or photos use is not turned into a group by a file (rule a): no node
     with contextlib.nullcontext() if edited else people.tree_edit(conn):
         if not tree_has_nodes(conn):   # a tree with no node says People is the face root (people_roots): its first node keeps that
             add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT, root_has_face=1)
@@ -119,6 +119,33 @@ def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
         found = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (each,)).fetchone()
         tree.add(found[0], each)
     return node_id, True
+
+
+def _walk(tree, path):
+    """(the tree's spelling of the levels of `path` that exist, the index of the first that does not, the id of the node `path`
+    is or None) -- the levels matched as derived.Tree matches a keyword."""
+    spelled, parts = "", vocabulary.segments(path)
+    for level, part in enumerate(parts):
+        hit = tree.find(spelled + vocabulary.SEPARATOR + part if spelled else part)
+        if hit is None:
+            return spelled, level, None
+        spelled = tree.tags[hit]
+    return spelled, len(parts), tree.find(spelled)
+
+
+def under_a_used_person(conn, tree, text):
+    """Would a node for the keyword `text` go under a person that faces or photos use (so ensure_node leaves it without one)?
+    Reads only. `tree` is the derived.Tree."""
+    path = vocabulary.normalize(text)
+    spelled, level, hit = _walk(tree, path)
+    if hit is not None or not path:
+        return False
+    try:
+        refuse_child_of_person(conn, unicodedata.normalize(
+            "NFC", vocabulary.SEPARATOR.join(([spelled] if spelled else []) + vocabulary.segments(path)[level:])))
+    except person_ids.PersonHasNoChildren:
+        return True
+    return False
 
 
 def add_node(conn, path, root_has_face=0):
@@ -634,16 +661,11 @@ class TagTaxonomy:
         self.db_path = db_path
         # Store full paths of known hierarchical tags, e.g., {"Family/Immediate/Jane Doe", "Activity/Botanical Garden"}
         self.paths: Set[str] = set()
-        # What the database held when this was loaded or last saved. save_to_db adds
-        # only paths beyond these: everything else is either still there or was
-        # deleted or renamed by someone else since, and must stay that way.
-        self._in_db: Set[str] = set()
 
     def load(self):
         """Read the library's tree. A library that does not exist has none: opening it
         would create it."""
         self.paths = set()
-        self._in_db = set()
         if not os.path.exists(self.db_path):
             return
         try:
@@ -652,34 +674,8 @@ class TagTaxonomy:
                 self.paths = set(tags(conn))
             finally:
                 conn.close()
-            self._in_db = set(self.paths)
         except Exception as e:
             logger.error(f"Error loading taxonomy from DB: {e}")
-
-    def save(self):
-        """Add the paths this has gained to the library's tree (save_to_db)."""
-        self.save_to_db()
-
-    def save_to_db(self):
-        """Sync self.paths with the database tag_taxonomy table."""
-        if not os.path.exists(self.db_path):
-            return
-        try:
-            seed(self.db_path)
-            conn = db.connect(self.db_path, timeout=10.0)
-            
-            # Insert the paths added since this was loaded, and their ancestors. Not
-            # the whole set: a long-running indexer holds what it loaded, and a tag
-            # deleted or renamed in the app meanwhile came back on its next save.
-            added = self.paths - self._in_db
-            with people.tree_edit(conn):
-                for path in sorted(added):
-                    add_path(conn, path)
-            conn.commit()
-            conn.close()
-            self._in_db |= added
-        except Exception as e:
-            logger.error(f"Error syncing taxonomy paths to DB: {e}")
 
     @staticmethod
     def normalize_tag(tag: str) -> str:

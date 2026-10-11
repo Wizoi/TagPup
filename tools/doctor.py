@@ -85,6 +85,7 @@ def report(db_path, show=0, out=print):
         empty = checks.empty_folders(conn)
         nameless = checks.names_without_a_person(conn)
         at_the_top = checks.people_at_the_top(conn)
+        under_a_person = checks.keywords_under_a_person(conn)
         sharing = checks.people_sharing_a_leaf(conn)
         words = search_index.present(conn)
     finally:
@@ -124,10 +125,15 @@ def report(db_path, show=0, out=print):
             out("    %6d  %s%s" % (count, folder, "" if there else "  (folder gone)"))
     distinct, uses, photos, ranked = unnamed
     if distinct:
-        out("photo tags with no tree node: %d keyword(s), %d use(s) on %d photo(s) (reported, not broken: indexing "
-            "never adds to the tree; a node made for one gives its photos their rows)" % (distinct, uses, photos))
+        out("photo tags with no tree node: %d keyword(s), %d use(s) on %d photo(s) (reported, not broken: the index "
+            "makes a node for a keyword it reads, but a read from before that, a batch of more than %d new nodes, or a change of "
+            "a file by sync leaves some without; `tagpup_cli.py tree-fill` makes them, and is safe to repeat)"
+            % (distinct, uses, photos, derived.MAX_NEW_NODES_PER_BATCH))
         for tag, count in ranked[:show]:
             out("    %6d  %s" % (count, tag))
+    if under_a_person:
+        out("file keywords under a person: %d (reported, not broken: a node for one would turn a person that faces or photos "
+            "use into a group, so it has none)" % under_a_person)
     if empty:
         out("folders holding no photo: %d (left by a delete that did not come through TagPup; reported, not broken: "
             "--rebuild-derived --apply takes them)" % len(empty))
@@ -140,7 +146,7 @@ def report(db_path, show=0, out=print):
         if found:
             out("names with %s: %d, on %d row(s) of faces and photos' people (reported, not broken: they have no "
                 "person id, and none is guessed%s)" % (label, len(found), sum(found.values()),
-                                                      "; `tagpup_cli.py tree-fill` gives them nodes" if found is nameless.none else ""))
+                                                      "; `tagpup_cli.py tree-fill` gives them nodes, except a name that a tag with tags under it already is" if found is nameless.none else ""))
             for name, count in sorted(found.items(), key=lambda pair: (-pair[1], pair[0]))[:show]:
                 out("    %6d  %s" % (count, name))
     if sharing:

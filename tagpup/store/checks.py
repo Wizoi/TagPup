@@ -9,7 +9,7 @@ import collections
 import os
 
 from tagpup.core import paths, vocabulary
-from tagpup.store import derived, generations, people, person_ids, schema, search_index, taxonomy
+from tagpup.store import derived, generations, people, person_ids, schema, search_index, taxonomy, tree_scan
 from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
@@ -192,6 +192,15 @@ def people_sharing_a_leaf(conn):
     for _node_id, tag, name in person_ids.read(conn).listing:
         sharing.setdefault(vocabulary.key(name), []).append(tag)
     return {leaf: sorted(tags) for leaf, tags in sharing.items() if len(tags) > 1}
+
+
+def keywords_under_a_person(conn):
+    """How many distinct keywords the photos hold that would go under a person faces or photos use, so are left without a node
+    (a node would turn the person into a group, rule a). Reported, not broken: the keyword is the file's, the person the
+    owner's. Reads every photo's keywords, as `tags_without_a_node` does."""
+    if not derived.present(conn):
+        return 0
+    return len(tree_scan.keywords(conn, derived.Tree.read(conn), person_ids.read(conn)).under)
 
 
 def people_at_the_top(conn):

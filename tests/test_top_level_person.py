@@ -85,6 +85,17 @@ class TopLevelPerson(unittest.TestCase, people_by_id.TwoSams):
         self.assertEqual([SOLO], filed[vocabulary.key(SOLO)])
         self.assertEqual(SOLO, taxonomy.people_paths(self.path)[vocabulary.key(SOLO)])
 
+    def test_the_navigator_files_them_at_the_top_level_and_not_as_unfiled(self):
+        from tagpup.services import library_view
+        def add(conn):
+            photo_rows.add_read(conn, self.other, {"XMP:Subject": [SOLO]})
+            people.rebuild(conn)
+        people_by_id.write(self.path, add)
+        found = library_view.navigator(self.library, "people")
+        self.assertEqual(0, found["unfiled"])
+        self.assertIn(("Top level", 1), [(group["tag"], group["count"]) for group in found["groups"]])
+        self.assertEqual("Top level", [each for each in found["people"] if each["name"] == SOLO][0]["group"])
+
     def test_faces_can_name_them(self):
         def name(conn):
             return faces.name(conn, [self.faces[0]], self.solo_id)

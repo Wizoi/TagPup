@@ -239,7 +239,10 @@ are the key and `name` a cache of the node's leaf. **Every tag has an id** (owne
 first seen with no node is given one by `taxonomy.ensure_node` -- a name a node directly under the tree's root marked as a
 person, a keyword its own path -- so no row holds a name and no id except a name two people have or a group has (the doctor
 counts them). A person is a face node with no node under it, wherever it sits (a top-level one is filed by its own tag until
-the owner merges it into a branch); a branch is a group, never a person.
+the owner merges it into a branch); a branch is a group, never a person. A batch of reads makes its nodes in one tree edit
+and none when it would make more than 500 (`derived.MAX_NEW_NODES_PER_BATCH`): a folder from another program with thousands
+of keywords would make thousands of tags to merge or delete by hand, each embedded by Suggest; `tree-fill` makes them on
+request. The navigator files a top-level person under "Top level".
 A folder is the derived `folders` row (rebuilt, its integer ids change). The `folder_ids` and `library_identity`
 tables the folder markers wrote were dropped by migration 30 (owner, 2026-10-10: the marker code is deleted; the
 `.tagpup` files stay on disk and nothing reads them).

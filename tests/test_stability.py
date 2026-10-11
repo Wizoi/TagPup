@@ -24,6 +24,7 @@ from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library as PathLibrary  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
+from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
 
 
@@ -224,7 +225,7 @@ class TestStability(unittest.TestCase):
         taxonomy = TagTaxonomy(self.TEST_DB_PATH)
         taxonomy.load()
         taxonomy.add_tags(["Alice"])
-        taxonomy.save()
+        tagpup_db.write_with_connection(self.TEST_DB_PATH, lambda conn: store_taxonomy.add_node(conn, "Alice"))
         
         # Run clustering
         identities.resolve(photo_index, max_iterations=1)
@@ -315,7 +316,7 @@ class TestStability(unittest.TestCase):
         taxonomy = TagTaxonomy(self.TEST_DB_PATH)
         taxonomy.load()
         taxonomy.add_tags(["Alice"])
-        taxonomy.save()
+        tagpup_db.write_with_connection(self.TEST_DB_PATH, lambda conn: store_taxonomy.add_node(conn, "Alice"))
         
         # Run clustering
         identities.resolve(photo_index, max_iterations=1)

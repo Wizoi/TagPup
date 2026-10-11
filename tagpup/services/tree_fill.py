@@ -8,13 +8,19 @@ is (photo_index: 201 of them, 888 uses on 722 photos) and names faces and listed
 above it), a name a node directly under the tree's root marked as a person. The owner then merges them into the right branch in
 the tag view of the library, with the tag merge, which moves faces and photo lists by id.
 
-Left as they are, and counted: a name two people have, a name a group has, and a bare keyword that is a person's name (their
-keyword, not a tag of its own). Run twice, the second finds nothing to make.
+Left as they are, and counted: a name two people have, a name a group has, a bare keyword that is a person's name (their
+keyword, not a tag of its own), and a keyword under a person that faces or photos use (a node would turn the person into a
+group). Run twice, the second finds nothing to make. `skip_roots` leaves out the keywords of a root the owner removed on purpose
+(photo_index: 197 of its 200 keywords share one root the tree does not have).
 
 Not journaled: the tag tree is not (`undo` cannot take it back); the command line takes a backup first. A rehearsal (no
 `apply`) runs the same work in the library's write lock and rolls it back, so its counts are what an apply would change.
 """
+
 from tagpup.store import db, derived, people, person_ids, taxonomy, tree_scan
+
+#: How many keywords sharing one root the tree lacks (and at least half of all) the command says so prominently for.
+SHARED_ROOT_MIN = 10
 
 class _Rehearsed(Exception):
     """Ends the transaction of a rehearsal, which is rolled back with the report."""
@@ -24,10 +30,11 @@ class _Rehearsed(Exception):
         self.report = report
 
 
-def _run(conn):
+def _run(conn, skip_roots=()):
     """The work, in the caller's transaction: its report."""
     tree, known = derived.Tree.read(conn), person_ids.read(conn)
-    keywords, uses, photos, kept = tree_scan.keywords(conn, tree, known)
+    scan = tree_scan.keywords(conn, tree, known, skip_roots)
+    keywords, uses, photos, kept = scan.found, scan.uses, scan.photos, scan.left
     names, name_rows, name_left = tree_scan.names(conn, known)
     before = tree_scan.numbers(conn)
     made_by_names = 0
@@ -44,7 +51,9 @@ def _run(conn):
     rebuilt = people.rebuild(conn, loose) if loose and (names or keywords) else 0
     after = tree_scan.numbers(conn)
     return {
-        "keywords": {"without_a_node": len(keywords), "uses": uses, "photos": photos, "left_a_persons_name": len(kept)},
+        "keywords": {"without_a_node": len(keywords), "uses": uses, "photos": photos, "left_a_persons_name": len(kept),
+                     "left_under_a_person": len(scan.under), "skipped_by_root": scan.skipped,
+                     "largest_missing_root": max((count for _name, count in scan.roots.values()), default=0)},
         "names": {"without_a_node": len(names), "faces": name_rows["faces"], "listed": name_rows["photo_people"],
                   "left_several_people": name_left["several"], "left_a_group": name_left["branch"],
                   "left_one_person_unlinked": name_left["one"]},
@@ -53,19 +62,20 @@ def _run(conn):
         "linked": {"faces": after["faces"] - before["faces"], "listed_people": after["listed"] - before["listed"]},
         "keyword_rows_added": after["keyword_rows"] - before["keyword_rows"],
         "photos_listed_again": rebuilt,
-        "reveal": {"keywords": sorted(keywords.values()), "names": sorted(names.values())},
+        "reveal": {"keywords": sorted(keywords.values()), "names": sorted(names.values()),
+                   "missing_roots": sorted(scan.roots.values(), key=lambda pair: (-pair[1], pair[0]))},
     }
 
 
-def run(library, apply=False):
+def run(library, apply=False, skip_roots=()):
     """The report of making the nodes for the library's keywords and names: with `apply`, made, in one transaction (the caller
     has taken a backup); without, rehearsed in the same work and rolled back. Raises what the database raises: nothing is
     half made."""
     if apply:
-        return db.write_with_connection(library.path, _run, label="tree-fill")
+        return db.write_with_connection(library.path, lambda conn: _run(conn, skip_roots), label="tree-fill")
 
     def rehearse(conn):
-        raise _Rehearsed(_run(conn))
+        raise _Rehearsed(_run(conn, skip_roots))
     try:
         db.write_with_connection(library.path, rehearse, label="tree-fill rehearsal")
     except _Rehearsed as done:

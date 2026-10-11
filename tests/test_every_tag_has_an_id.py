@@ -10,13 +10,16 @@ import os
 import sys
 import unicodedata
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+import doctor  # noqa: E402
 import people_by_id  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup.services import tags as tag_service  # noqa: E402
-from tagpup.store import faces, taxonomy  # noqa: E402
+from tagpup.store import db, derived, faces, person_ids, taxonomy  # noqa: E402
 
 NEW = "Trips/Harbour Walk/Pier"
 ZED = "Zed Quill"
@@ -177,6 +180,69 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
         self.assertEqual(first.details["id"], second.details["id"])
         self.assertEqual(1, self.count(ZED))
         self.assertEqual(first.details["id"], self.face(self.faces[0])[0])
+
+    # ---- a file never turns a person into a group
+
+    def used_sam(self):
+        """Sam of the Thackerays: a photo carries them and a face is named so."""
+        node = self.node(people_by_id.SAM_T)
+        people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], node))
+        return node
+
+    def test_a_keyword_under_a_person_faces_or_photos_use_gets_no_node_and_they_stay_a_person(self):
+        node = self.used_sam()
+        listed, before = self.listed(self.photo), self.tags()
+        self.read_photo([people_by_id.SAM_T + "/Swim Team"])
+        self.assertEqual(before, self.tags())
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        try:
+            self.assertEqual(node, person_ids.resolve(conn, node).id)
+        finally:
+            conn.close()
+        self.assertEqual(listed, self.listed(self.photo))
+        self.assertEqual(node, self.face(self.faces[0])[0])
+
+    def test_the_doctor_counts_such_keywords(self):
+        self.used_sam()
+        self.read_photo([people_by_id.SAM_T + "/Swim Team"])
+        lines = []
+        doctor.report(self.path, out=lines.append)
+        self.assertTrue([line for line in lines if line.startswith("file keywords under a person: 1 ")], lines)
+
+    def test_a_keyword_under_a_person_nothing_uses_is_made(self):
+        self.read_photo([people_by_id.WREN + "/Extra"])
+        self.assertEqual(1, self.count(people_by_id.WREN + "/Extra"))
+
+    # ---- a batch makes its nodes in one tree edit
+
+    def test_a_batch_makes_all_its_nodes_in_one_tree_edit(self):
+        lists = [["Trips/A%d" % n, "Trips/B%d" % n, "Activity/C%d" % n] for n in range(20)]
+        with mock.patch.object(person_ids, "follow_tree", wraps=person_ids.follow_tree) as followed:
+            made = people_by_id.write(self.path, lambda conn: derived.make_nodes(conn, lists, derived.Batch(conn)))
+        self.assertEqual(60 + 2, made)
+        self.assertEqual(1, followed.call_count, "one scan of the library for the batch, not one for each node")
+
+    def test_two_spellings_of_a_keyword_in_one_batch_are_one_node(self):
+        made = people_by_id.write(self.path, lambda conn: derived.make_nodes(conn, [["Trips/Coast"], ["trips/COAST"]], derived.Batch(conn)))
+        self.assertEqual(2, made)
+        self.assertEqual(1, self.count("Trips/Coast"))
+
+    def test_a_batch_that_would_make_more_than_the_cap_makes_none_and_counts_them(self):
+        self.assertEqual(500, derived.MAX_NEW_NODES_PER_BATCH)
+        lists = [["Zz%d/x" % n] for n in range(260)]   # 520 levels
+        before, flagged = self.tags(), []
+
+        def work(conn):
+            batch = derived.Batch(conn)
+            made = derived.make_nodes(conn, lists, batch)
+            flagged.append(batch.flagged)
+            return made
+        with mock.patch.object(person_ids, "follow_tree", wraps=person_ids.follow_tree) as followed:
+            made = people_by_id.write(self.path, work)
+        self.assertEqual((0, [520], 0), (made, flagged, followed.call_count))
+        self.assertEqual(before, self.tags())
+        exactly = [["Yy%d/x" % n] for n in range(250)]   # 500 levels: made
+        self.assertEqual(500, people_by_id.write(self.path, lambda conn: derived.make_nodes(conn, exactly, derived.Batch(conn))))
 
     def test_ensure_node_run_twice_is_one_node(self):
         def twice(conn):

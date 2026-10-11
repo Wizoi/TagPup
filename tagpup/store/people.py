@@ -92,8 +92,23 @@ def _made(conn, changes, loose):
     one: the person called the name if the tree has them now (a vocabulary read before the tree grew), else a node made for the
     name (taxonomy.ensure_node, which links the faces that hold it). A name two people have, or a group's, stays a name."""
     from tagpup.store import taxonomy   # taxonomy imports this module
-    names = {vocabulary.key(name): name
-             for _photo, listed in changes for tag_id, name, _source in listed if tag_id is None and name}
+    # A keyword that is a PATH names its leaf as a person when it sits under a face root, node or none: when the keyword was
+    # given no node (a person it would sit under is used, or the batch had too many new nodes) the leaf is not a name to make a
+    # person of at the top of the tree.
+    pathed = {}
+    wanting = [photo_id for photo_id, listed in changes if any(tag_id is None and name for tag_id, name, _source in listed)]
+    for start in range(0, len(wanting), 500):
+        chunk = wanting[start:start + 500]
+        for photo_id, tags_json in conn.execute(
+                "SELECT id, tags FROM photos WHERE id IN (%s)" % ",".join("?" * len(chunk)), chunk):
+            pathed[photo_id] = {vocabulary.key(vocabulary.leaf_of(tag)) for tag in derived.keywords_of(tags_json)
+                                if vocabulary.SEPARATOR in vocabulary.normalize(tag)}
+
+    def by_a_path(photo_id, name, source):
+        return source == "keyword" and vocabulary.key(name) in pathed.get(photo_id, ())
+
+    names = {vocabulary.key(name): name for photo_id, listed in changes for tag_id, name, source in listed
+             if tag_id is None and name and not by_a_path(photo_id, name, source)}
     names.update({vocabulary.key(name): name for _face, name in loose})
     tree, given = derived.Tree.read(conn), {}
     for key, name in names.items():
@@ -104,7 +119,7 @@ def _made(conn, changes, loose):
         return changes
     named = {node_id: tag for node_id, tag in tree.tags.items()}
     return [(photo_id, [(given[vocabulary.key(name)][0], vocabulary.leaf_of(named[given[vocabulary.key(name)][0]]), source)
-                        if tag_id is None and name and vocabulary.key(name) in given
+                        if tag_id is None and name and vocabulary.key(name) in given and not by_a_path(photo_id, name, source)
                         and (source == "keyword" or given[vocabulary.key(name)][1]) else (tag_id, name, source)
                         for tag_id, name, source in listed]) for photo_id, listed in changes]
 

@@ -135,23 +135,6 @@ class TheIndexRecordsAPhoto(WithALibrary):
         self.assertEqual(["Trips/Coast/Harbour"], self.tags_of(one))
         self.agrees()
 
-    def test_the_trees_save_after_an_index_run_gives_every_photo_its_rows(self):
-        """The indexer records the photos, which makes the nodes of their keywords, then saves the tree with the tags it met
-        (TagTaxonomy.save_to_db): nothing is made twice and the rows stay."""
-        from tagpup.store.taxonomy import TagTaxonomy
-        for number in range(6):
-            self.read("2024", "p%d.jpg" % number, ["Trips/Coast", "Activity/Sailing"] if number % 2 else ["Pets/Dog"])
-        self.conn.commit()
-        self.assertEqual(9, self.rows("SELECT COUNT(*) FROM photo_tags")[0][0], "each read made its keywords' nodes")
-        nodes = self.rows("SELECT COUNT(*) FROM tag_taxonomy")
-        tree = TagTaxonomy(self.path)
-        tree.load()
-        tree.add_tags(["Trips/Coast", "Activity/Sailing", "Pets/Dog"])
-        tree.save()
-        self.assertEqual(9, self.rows("SELECT COUNT(*) FROM photo_tags")[0][0])
-        self.assertEqual(nodes, self.rows("SELECT COUNT(*) FROM tag_taxonomy"))
-        self.agrees()
-
     def test_a_batch_reads_the_tree_inside_its_transaction_so_a_tree_edited_meanwhile_is_the_one_used(self):
         self.tree("Trips/Coast")
         batch = derived.Batch(self.conn)   # made before the write; nothing read yet

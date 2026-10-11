@@ -168,6 +168,45 @@ class Legacy(unittest.TestCase, people_by_id.TwoSams):
         tree_fill.run(self.library, apply=True)
         self.assertEqual([], people_by_id.look(other, "SELECT tag FROM tag_taxonomy WHERE lower(tag) = lower(?)", (PIER,)))
 
+    # ---- a root the tree lacks, and a person a file's keyword would cover
+
+    def test_skip_root_leaves_that_roots_keywords_out(self):
+        report = tree_fill.run(self.library, apply=True, skip_roots=("TRIPS",))
+        self.assertEqual(1, report["keywords"]["skipped_by_root"])
+        self.assertEqual(0, self.count(PIER))
+        self.assertEqual(1, self.count("Places/Caf" + ACCENT))
+        again = tree_fill.run(self.library)
+        self.assertEqual(1, again["keywords"]["without_a_node"], "the skipped keyword is still to be made, when asked")
+
+    def many_under_one_root(self):
+        def read(conn):
+            photo_rows.add_read(conn, self.third.replace("003", "009"), {"XMP:Subject": ["Gone/Kw%d" % n for n in range(12)]})
+            for n in range(12):
+                conn.execute("DELETE FROM tag_taxonomy WHERE tag = ?", ("Gone/Kw%d" % n,))
+            conn.execute("DELETE FROM tag_taxonomy WHERE tag = 'Gone'")
+        people_by_id.write(self.path, read)
+
+    def test_a_root_most_keywords_share_that_the_tree_lacks_is_said_prominently_and_named_only_with_reveal(self):
+        self.many_under_one_root()
+        said = self.cli()
+        self.assertIn("12 keyword(s) share one root that is not in the tag tree", said)
+        self.assertIn("--skip-root", said)
+        self.assertNotIn("Gone", said)
+        self.assertIn("root not in the tree: Gone (12 keyword(s))", self.cli("--reveal"))
+        skipped = self.cli("--skip-root", "gone")
+        self.assertNotIn("share one root", skipped)
+        self.assertIn("12 keyword(s) under a --skip-root", skipped)
+
+    def test_a_keyword_under_a_person_that_is_used_is_left_and_counted(self):
+        node = self.node(people_by_id.SAM_T)
+        people_by_id.write(self.path, lambda conn: photo_rows.add_read(
+            conn, self.third.replace("003", "008"), {"XMP:Subject": [people_by_id.SAM_T + "/Swim Team"]}))
+        report = tree_fill.run(self.library, apply=True)
+        self.assertEqual(1, report["keywords"]["left_under_a_person"])
+        self.assertEqual(0, self.count(people_by_id.SAM_T + "/Swim Team"))
+        self.assertIsNotNone(node)
+        self.assertIn("under a person", self.cli())
+
     # ---- what the owner is told after
 
     def test_the_doctor_counts_the_people_at_the_top_and_names_them_only_when_asked(self):
@@ -190,7 +229,8 @@ class Legacy(unittest.TestCase, people_by_id.TwoSams):
     def test_the_doctor_points_a_name_with_no_node_at_the_command(self):
         lines = []
         doctor.report(self.path, out=lines.append)
-        self.assertTrue([line for line in lines if line.startswith("names with no person node") and "tree-fill" in line], lines)
+        self.assertTrue([line for line in lines if line.startswith("names with no person node") and "tree-fill" in line
+                         and "except a name that a tag with tags under it already is" in line], lines)
 
     # ---- the command
 

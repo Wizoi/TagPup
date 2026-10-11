@@ -293,6 +293,11 @@ class PhotoIndex:
             # the store rebuilds each photo's people from it and the photo's faces.
             known = store_taxonomy.read_people_vocabulary(self.conn)
             batch = store_derived.Batch(self.conn)   # the tree and the folders, once for the batch
+            # The nodes of the keywords the batch's files hold and the tree lacks, made together (one scan of the library for
+            # the batch, not one for each node); the people they make are in the vocabulary read after.
+            if store_derived.make_nodes(self.conn, [meta.get("tags", []) for meta in metas], batch):
+                known = store_taxonomy.read_people_vocabulary(self.conn)
+            batch.prepared = True
             for meta, emb in zip(metas, embeddings):
                 store_photos.record_indexed(self.conn, meta["path"], {
                     "mtime": meta.get("mtime", 0.0),

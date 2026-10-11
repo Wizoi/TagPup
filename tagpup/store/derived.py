@@ -158,6 +158,9 @@ class Batch:
         self.conn = conn
         self._tree = None
         self.folders = {}
+        #: The batch's keywords were all given to make_nodes at once (so a read does not make its own); and how many nodes
+        #: that left unmade for being too many.
+        self.prepared, self.flagged = False, 0
         #: {person: the unit vectors of their decided faces, or None}: what a run of writes naming faces
         #: from their photos' tags has read of each person, once (tagpup.store.face_tags, #841).
         self.decided = {}
@@ -257,21 +260,45 @@ def refresh_photos(conn, photo_ids, batch=None):
     return changed
 
 
-def make_nodes(conn, tags, batch=None):
-    """Give each keyword of a read that has no node its node (taxonomy.ensure_node: the keyword's own path, every missing
-    level of it), so that every keyword a file holds has an id. Run before the photo's people are rebuilt: a keyword under a
-    face root makes a person, and the faces and listed people that name them are linked in the same transaction. The caller
-    commits. Returns how many nodes were made, the levels above a keyword too."""
+#: The most nodes one batch of reads may make from the keywords it meets. A batch that would make more makes NONE and counts them
+#: (`Batch.flagged`): a folder from another program with thousands of distinct keywords is the owner's to look at, since each
+#: node is a tag to merge or delete by hand and Suggest embeds every one of them. `tree-fill` makes them when the owner asks.
+MAX_NEW_NODES_PER_BATCH = 500
+
+
+def make_nodes(conn, tag_lists, batch=None):
+    """Give each keyword of a batch of reads (a list of keyword lists; one list for one photo) that has no node its node
+    (taxonomy.ensure_node: the keyword's own path, every missing level of it), so that every keyword a file holds has an id.
+    All of the batch's nodes are made in ONE tree_edit, which scans the photos' keywords once for the batch and not once for each
+    node; and a batch that would make more than MAX_NEW_NODES_PER_BATCH makes none. Run before the photos' people are rebuilt: a
+    keyword under a face root makes a person, linked in the same transaction. A keyword that would go under a person faces or
+    photos use is left without a node. The caller commits. Returns how many nodes were made, the levels above a keyword too."""
     if not present(conn):
         return 0
-    from tagpup.store import taxonomy   # taxonomy imports this module
+    from tagpup.store import people, taxonomy   # taxonomy imports this module
     batch = batch or Batch(conn)
-    before, found = len(batch.tree.tags), set()
-    for text in tags if isinstance(tags, (list, tuple)) else ():
-        if isinstance(text, str) and text not in found and batch.tree.find(text) is None:
-            found.add(text)
-            taxonomy.ensure_node(conn, text, tree=batch.tree)
-    return len(batch.tree.tags) - before
+    tree, wanted, levels = batch.tree, {}, set()
+    for tags in tag_lists:
+        for text in tags if isinstance(tags, (list, tuple)) else ():
+            if not isinstance(text, str) or tree.find(text) is not None or keyword(text) in wanted:
+                continue
+            path = vocabulary.normalize(text)
+            if not path:
+                continue
+            wanted[keyword(text)] = text
+            for level in vocabulary.lineage(path):
+                if tree.find(level) is None:
+                    levels.add(keyword(level))
+    if not wanted:
+        return 0
+    if len(levels) > MAX_NEW_NODES_PER_BATCH:
+        batch.flagged += len(levels)
+        return 0
+    before = len(tree.tags)
+    with people.tree_edit(conn):
+        for text in wanted.values():
+            taxonomy.ensure_node(conn, text, tree=tree, edited=True)
+    return len(tree.tags) - before
 
 
 def record(conn, photo_id, path, tags, batch=None):
