@@ -22,7 +22,7 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import shares  # noqa: E402
-from tagpup.services import activity, bulk_edit, file_changes, libraries, selection  # noqa: E402
+from tagpup.services import activity, batches, bulk_edit, file_changes, libraries, selection  # noqa: E402
 from tagpup.store import job_runs  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
@@ -184,7 +184,7 @@ class TheLimit(Bulk):
     """5,000 photos at a time: the 5,000th is written, the 5,001st refuses the whole request before a file is read."""
 
     def test_the_limit_is_five_thousand_and_the_folder_views_is_the_same(self):
-        self.assertEqual((5000, 5000), (selection.MAX_SELECTED, tagpup_routes.BULK_LIMIT))
+        self.assertEqual((5000, 5000), (selection.MAX_SELECTED, batches.MAX_BATCH))
 
     def test_exactly_the_limit_is_written_and_one_more_is_refused_with_the_sentence(self):
         with mock.patch.object(selection, "MAX_SELECTED", 50):
@@ -215,29 +215,10 @@ class TheLimit(Bulk):
 
 
 class OneAtATime(Bulk):
-    def test_a_second_edit_while_one_is_written_is_a_409_and_a_third_after_it_ends_is_fine(self):
-        gate = Gate(2)
-        self.files.on_write = gate
-        self.addCleanup(gate.release.set)
-        first = []
-        thread = threading.Thread(target=lambda: first.append(self.post(
-            {"op": "tags", "selection": ALL, "params": {"add": ["Trips/Coast"]}}, client=self.app.test_client()).status_code))
-        thread.start()
-        self.assertTrue(gate.reached.wait(30))
-        self.assertEqual(1, bulk_edit.running(self.library))
-        refused = self.tags_edit(add=["Trips/Lakes"], expect=409)
-        self.assertEqual("A bulk edit is already running in library. Wait for it to finish.", refused["error"])
-        gate.release.set()
-        thread.join(60)
-        self.assertEqual([200], first)
-        self.assertEqual(0, bulk_edit.running(self.library))
-        self.tags_edit(add=["Trips/Lakes"])
-        self.assertEqual(self.PHOTOS, len([photo_id for photo_id in self.ids if "Trips/Lakes" in self.tags(photo_id)]))
-
     def test_an_edit_that_fails_leaves_the_library_free_for_the_next(self):
         self.files.cannot_start = FileNotFoundError("ExifTool is not where the library says it is")
         self.tags_edit(add=["Trips/Coast"], expect=500)
-        self.assertEqual(0, bulk_edit.running(self.library))
+        self.assertEqual(0, batches.running_here())
         self.files.cannot_start = None
         self.tags_edit(add=["Trips/Coast"])
 
@@ -255,7 +236,7 @@ class Interrupted(Bulk):
         edit = bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]})
         with self.assertRaises(Crash):
             bulk_edit.run(self.library, edit, self.ids, "exiftool")
-        self.assertEqual(0, bulk_edit.running(self.library), "the library is free to be edited again")
+        self.assertEqual(0, batches.running_here(), "the line is free for the next batch")
         done = [photo_id for photo_id in self.ids if "Trips/Coast" in self.tags(photo_id)]
         self.assertEqual(29, len(done), "the files written before it are written")
         change = self.changes("bulk tags%")
@@ -405,10 +386,9 @@ class ADeadExifTool(Bulk):
     """ExifTool that stalls costs one deadline for the whole edit, not one for each photo (tests/test_bulk_edits_stalled_exiftool.py
     holds the rest)."""
 
-    def test_the_session_is_one_with_the_deadline_of_the_edit(self):
+    def test_the_edit_is_one_session_for_the_60_photos(self):
         self.tags_edit(add=["Trips/Coast"])
-        sessions = [each for each in self.files.sessions if "timeout" in each]
-        self.assertEqual([bulk_edit.COMMAND_TIMEOUT], [each["timeout"] for each in sessions], "one session for the 60 photos")
+        self.assertEqual(1, len(self.files.sessions))
 
 
 class People(Bulk):

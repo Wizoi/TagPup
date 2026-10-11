@@ -522,5 +522,6 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
         return _keywords_plan(vocabulary.resolve_people(new_tags, people))
 
     operation = "rename tag" if new else "remove tag"
+    # The tag tree's rewrite has no cap (owner, 2026-10-11): it has progress, and Cancel, as every batch.
     return file_changes.write_fields(library, operation, exiftool_path, [path for path, _t, _r in rows],
-                                     KEYWORD_READ, plan_one, summary={"photos": len(rows)})
+                                     KEYWORD_READ, plan_one, summary={"photos": len(rows)}, uncapped=True)

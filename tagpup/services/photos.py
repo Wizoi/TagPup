@@ -355,6 +355,9 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     present = [p for p in photo_paths if os.path.exists(p)]
     captions = names.read_for_renaming(exiftool_path, present)
     kept = preserve_names(library, [p for p in present if p in captions], exiftool_path, split=(held, loose))
+    if kept.refused:
+        result.refuse(kept.refused)
+        return result
     if kept.errors:
         # Nothing is renamed, as when this write raised: a photo renamed without the
         # name it had is found again only by its identity.

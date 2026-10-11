@@ -37,7 +37,7 @@ import time
 
 from tagpup.core import runs
 from tagpup.core.result import Conflict, NotFound, Refused, Result
-from tagpup.services import bulk_edit, face_assignment, face_people, file_changes
+from tagpup.services import batches, face_assignment, face_people, file_changes
 from tagpup.services import job_runs as runs_service
 
 logger = logging.getLogger(__name__)
@@ -49,8 +49,6 @@ RUNNING, DONE, CANCELLED, FAILED, ABANDONED = "running", "done", "cancelled", "f
 
 #: Errors kept with a sentence, for the page; the rest are counted.
 MOST_ERRORS = 50
-#: The longest the job waits between steps for a write that wants the lock, in seconds.
-MOST_WAIT = 5.0
 KEPT = 10
 
 _jobs = {}            # {library.key: {handle: Job}}
@@ -226,10 +224,7 @@ class Job:
                     runs_service.progress(self.library, self.run_id, self.counts())
                 except Exception as problem:
                     logger.warning("Could not record the progress of assignment %s: %s", self.handle, problem)
-            spent = 0.0
-            while file_changes.waiting() and spent < MOST_WAIT and not self.cancel.is_set():
-                time.sleep(0.01)
-                spent += 0.01
+            file_changes.wait_for_waiters(self.cancel)
         self._end(DONE)
 
 
@@ -248,7 +243,7 @@ def _claim(library):
     if not claim:
         if claim.why == "behind":
             raise Conflict("%s has not been brought up to date yet: open it in TagPup once and try again." % library.name)
-        where = "in this TagPup" if bulk_edit.is_this_process(claim.holder) else "in another TagPup process"
+        where = "in this TagPup" if batches.is_this_process(claim.holder) else "in another TagPup process"
         raise Conflict("Faces are already being assigned in %s, %s. Wait for it to finish." % (library.name, where))
     return claim
 
@@ -339,7 +334,7 @@ def status(library, handle):
     shown = state.get("state", ABANDONED)
     if shown == RUNNING:
         run = runs_service.get(library, state.get("run_id", handle))
-        shown = RUNNING if run is not None and bulk_edit.process_alive(run.owner) else ABANDONED
+        shown = RUNNING if run is not None and batches.process_alive(run.owner) else ABANDONED
     done = int(state.get("done", 0))
     return {"job": handle, "op": plan["op"], "state": shown, "total": plan["faces"],
             "done": sum(len(step) for step in plan["steps"][:done]), "steps": len(plan["steps"]), "steps_done": done,

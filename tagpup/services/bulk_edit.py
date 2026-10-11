@@ -1,6 +1,6 @@
 """One bulk edit of a library view's selection: read and checked up front, then written in one request (docs/ARCHITECTURE.md).
 
-An EDIT is what is done to every photo of a selection (at most selection.MAX_SELECTED, 5,000):
+An EDIT is what is done to every photo of a selection (at most batches.MAX_BATCH, 5,000):
 
 * `tags`: add some tags and take some off, `{"add": [...], "remove": [...]}`;
 * `people`: add and take off people, `{"add": [...], "remove": [...], "add_ids": [...], "remove_ids": [...]}`: a person_id is the
@@ -26,24 +26,23 @@ written, so a process that dies part-way leaves the files done and the rest plan
 settles (file_changes.settle); History lists what was written. Nothing is resumed: an edit made again changes nothing a photo
 already holds, and a delete asks its question afresh.
 
-**One at a time** in a library, in this process: a second request is a Conflict naming the first (the lock of changes of photo
-files would only make it wait, minutes). Another process's writes meet the stamp check: a file changed between the read and the
-write is a conflict, not overwritten.
+**One at a time** in this process, whichever library: a second edit waits its turn (tagpup.services.batches: at most eight wait, one
+more is a Conflict saying how many are ahead), and the lock of changes of photo files is let go between chunks. Another process's
+writes meet the stamp check: a file changed between the read and the write is a conflict, not overwritten.
 
 What `run` reports is what CHANGED (a file written and read back), not what was attempted.
 """
 import logging
 import os
-import threading
 from dataclasses import dataclass, field
 
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
-from tagpup.files import exiftool_session, recycle_bin, shares
-from tagpup.services import file_changes, libraries, library_view, tagging
+from tagpup.files import recycle_bin, shares
+from tagpup.services import batches, file_changes, libraries, library_view, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
-from tagpup.store import file_journal, taxonomy
+from tagpup.store import taxonomy
 from tagpup.store import library_view as store
 
 logger = logging.getLogger(__name__)
@@ -53,11 +52,6 @@ OPS = (TAGS, PEOPLE, DELETE)
 
 #: The most tags, or people, one edit adds, and the same of what it takes off.
 MOST_NAMED = 200
-
-#: How long one ExifTool command may take, in seconds (the session's own default). One command reads up to 200 photos, scanning
-#: each to its end; a share that went away mid-run costs this once: the session then stays dead (ChunkSession) and every file
-#: after is an error at once.
-COMMAND_TIMEOUT = exiftool_session.DEFAULT_TIMEOUT
 
 #: The longest a photo's name or a reason is kept, in characters.
 MOST_TEXT = 200
@@ -194,56 +188,15 @@ class Outcome:
                            for photo_id, name, why in self.errors[:MOST_ERRORS]]}
 
 
-class ChunkSession:
-    """The ExifTool session of one edit, which stays dead once a command has timed out: pyexiftool starts its process again on
-    the next command, and that command would wait its own deadline for a share that is not coming back. Every command after a
-    timeout answers the same ExifToolTimeout at once, so the files after it are errors in the time it takes to say so."""
-
-    def __init__(self, session):
-        self._session = session
-        self._dead = None
-
-    def __getattr__(self, name):
-        wanted = getattr(self._session, name)
-        if not callable(wanted):
-            return wanted
-
-        def command(*args, **kwargs):
-            if self._dead is not None:
-                raise self._dead
-            try:
-                return wanted(*args, **kwargs)
-            except exiftool_session.ExifToolTimeout as stalled:
-                self._dead = stalled
-                raise
-        return command
-
-
-_running = set()      # {library.key}: the libraries with an edit under way in this process
-_guard = threading.Lock()
-
-
-def running(library=None):
-    """How many edits are under way in this process (the library's, or every one's)."""
-    with _guard:
-        return int(library.key in _running) if library is not None else len(_running)
-
-
 def run(library, edit, ids, exiftool_path):
-    """Do `edit` to the photos `ids` (resolved, in order, at most selection.MAX_SELECTED) and say what became of each (Outcome).
-    Conflict, nothing done, when an edit is under way in the library. An exception that escapes is not one photo's -- ExifTool
-    that cannot start, a library that cannot be read; the photos written before it keep the edit, in the journal."""
+    """Do `edit` to the photos `ids` (resolved, in order, at most batches.MAX_BATCH) and say what became of each (Outcome). It waits
+    its turn behind the batches ahead of it (batches.claim; Conflict, nothing done, when too many wait). An exception that escapes
+    is not one photo's -- ExifTool that cannot start, a library that cannot be read; the photos written before it keep the edit,
+    in the journal."""
     if not ids:
         raise Refused("The selection holds no photos.")
-    with _guard:
-        if library.key in _running:
-            raise Conflict("A bulk edit is already running in %s. Wait for it to finish." % library.name)
-        _running.add(library.key)
-    try:
+    with batches.claim(library, OPERATIONS[edit.op], len(ids)):
         return _write(library, edit, list(ids), exiftool_path)
-    finally:
-        with _guard:
-            _running.discard(library.key)
 
 
 def _write(library, edit, ids, exiftool_path):
@@ -261,15 +214,10 @@ def _write(library, edit, ids, exiftool_path):
         return _delete(library, edit, present, out)
     by_key = {paths.key(path): photo_id for photo_id, path in present}
     chosen = [path for _photo_id, path in present]
-    # The edit's own ExifTool session, with a deadline of its own and started before the lock is asked for. All of it then runs
-    # under the one lock: the files are read, checked for being gone, planned and written without another change of photo files
-    # between (the route of the folder view does the same around a bulk write).
-    with exiftool_session.ExifToolSession(executable=exiftool_path, timeout=COMMAND_TIMEOUT) as session:
-        et = ChunkSession(session)
-        with file_changes.exclusively():
-            result = tagging.change_tags(
-                library, chosen, edit.add, edit.remove, exiftool_path, operation=OPERATIONS[edit.op], stop_at_first_error=False,
-                persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None, et=et)
+    # Read, planned and written by file_changes.write_fields: one change, a chunk at a time, others let in between the chunks.
+    result = tagging.change_tags(
+        library, chosen, edit.add, edit.remove, exiftool_path, operation=OPERATIONS[edit.op], stop_at_first_error=False,
+        persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None)
     _count(out, result, present, by_key)
     return out
 
@@ -319,7 +267,12 @@ def _delete(library, edit, present, out):
         there = [(photo_id, path) for photo_id, path in present if os.path.isfile(path)]
         out.skipped_missing += len(present) - len(there)
         refused = _cannot_keep(there)
-        for photo_id, path in there:
+        batch = batches.current()
+        for n, (photo_id, path) in enumerate(there):
+            if n and n % batches.CHUNK == 0 and not file_changes.between_chunks(batch):
+                out.errors.extend((left_id, os.path.basename(left)[:MOST_TEXT], "stopped as asked: not deleted")
+                                  for left_id, left in there[n:])
+                break
             name = os.path.basename(path)[:MOST_TEXT]
             if photo_id in refused:
                 out.errors.append((photo_id, name, refused[photo_id][:MOST_TEXT]))
@@ -372,16 +325,3 @@ def _count(out, result, present, by_key):
             photo_id = by_key.get(paths.key(what))
             out.errors.append((photo_id, os.path.basename(what)[:MOST_TEXT], str(why)[:MOST_TEXT]))
     out.unchanged = max(0, len(present) - out.changed - gone - damaged - (len(out.errors) - away))
-
-
-# ---- Whose run is it ---------------------------------------------------------------------------
-
-def is_this_process(owner):
-    """Is `owner` ('host:pid:start', as a run names its process) this process?"""
-    return owner == file_journal.owner()
-
-
-def process_alive(owner):
-    """Is the process that owned a run -- 'host:pid:start' -- still going, and not this one? A run of this process that nothing
-    in this process runs is a run that was lost (a test of a restart; a thread that died)."""
-    return bool(owner) and owner != file_journal.owner() and file_journal.owner_alive(owner)

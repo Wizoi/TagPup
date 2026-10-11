@@ -20,7 +20,7 @@ import os
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import Refused
 from tagpup.files import recycle_bin
-from tagpup.services import library_view
+from tagpup.services import batches, library_view
 from tagpup.store import library_view as store
 from tagpup.store import person_ids
 from tagpup.store import selection_folders as store_folders
@@ -28,8 +28,8 @@ from tagpup.store import selection_folders as store_folders
 #: The most ids a selection lists (`ids`, or `excluded`).
 MAX_LISTED = 20_000
 
-#: The most photos a selection holds, however it is named: what one bulk edit writes in one request (owner, 2026-10-11).
-MAX_SELECTED = 5_000
+#: The most photos a selection holds, however it is named: what one batch writes (batches.MAX_BATCH; owner, 2026-10-11).
+MAX_SELECTED = batches.MAX_BATCH
 
 #: The most tags, and the most people, a tally lists; the rest are counted in `more`.
 MAX_TALLIED = 500

@@ -144,7 +144,7 @@ class WhatIsRefused(InFolders):
 
     def test_another_process_holding_the_job_refuses_a_folder_job_too(self):
         self.assertTrue(runs_service.claim(self.library, naming_faces.JOB, self.library.name, 1.0))
-        with mock.patch.object(naming_faces.bulk_edit, "is_this_process", return_value=False):
+        with mock.patch.object(naming_faces.batches, "is_this_process", return_value=False):
             with self.assertRaises(Conflict):
                 naming_faces.start(self.library, self.run, only_folder=True)
         self.assertEqual({None}, set(self.names("Run/a1.jpg").values()))

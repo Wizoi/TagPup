@@ -525,17 +525,17 @@ class WhatMustFinishFirst(Case789):
         self.assertIn("no graphics card", str(raised.exception))
         self.assertEqual([], self.runs())
 
-    def test_a_bulk_edit_in_this_process_refuses_it(self):
+    def test_a_photo_batch_in_this_process_refuses_it(self):
         self.seed()
-        with mock.patch.object(naming_faces.bulk_edit, "running", return_value=1):
+        with mock.patch.object(naming_faces.batches, "running_here", return_value=1):
             with self.assertRaises(Conflict) as raised:
                 naming_faces.start(self.library)
-        self.assertIn("bulk edit", str(raised.exception))
+        self.assertIn("photo batch", str(raised.exception))
 
     def test_another_process_holding_the_job_refuses_it(self):
         self.seed()
         self.assertTrue(runs_service.claim(self.library, naming_faces.JOB, self.library.name, 1.0))
-        with mock.patch.object(naming_faces.bulk_edit, "is_this_process", return_value=False):
+        with mock.patch.object(naming_faces.batches, "is_this_process", return_value=False):
             with self.assertRaises(Conflict) as raised:
                 naming_faces.start(self.library)
         self.assertIn("another TagPup process", str(raised.exception))
@@ -562,7 +562,7 @@ class AfterARestart(Case789):
             job = naming_faces.start(self.library)
             self.assertTrue(reached.wait(30))
             naming_faces.forget(self.library)          # the process that held it is gone
-            with mock.patch.object(naming_faces.bulk_edit, "process_alive", return_value=False):
+            with mock.patch.object(naming_faces.batches, "process_alive", return_value=False):
                 found = naming_faces.status(self.library, job.handle)
             gate.set()
             job.thread.join(60)

@@ -163,7 +163,8 @@ def write_tags(library, changes, writer, operation, persons=None, stop_at_first_
         chunk = dict(items[start:start + CHUNK])
         with exiftool_session.ExifToolSession(executable=writer.exiftool_path, timeout=TIMEOUT) as session:
             with file_changes.exclusively():
-                done = tagging.change_each(library, chunk, writer.exiftool_path, operation, persons=persons, et=session,
+                done = tagging.change_each(library, chunk, writer.exiftool_path, operation, persons=persons,
+                                           et=exiftool_session.StaysDead(session),
                                            stop_at_first_error=stop_at_first_error)
                 if writer.told:
                     writer.told(done)

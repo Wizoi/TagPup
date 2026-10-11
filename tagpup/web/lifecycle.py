@@ -14,7 +14,9 @@ moves it onto the new version only once the drain says it is done:
 - Otherwise the server stops taking new work: each new request is answered 503 with
   Retry-After, which the pages wait out and send again (web/common/api.js). The
   background tasks are stopped, and the requests already in flight -- a journaled write
-  among them -- are let finish.
+  among them -- are let finish. A batch of photo files (tagpup.services.batches) is asked to
+  stop: it ends after its chunk, what it wrote applied and in History, and is started again
+  by the person; one that waited is never begun.
 - When nothing is in flight and nothing runs, it is drained, and the launcher stops it.
   When the deadline passes first, it takes work again, and says what it waited for.
 
@@ -39,6 +41,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces as naming_faces_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup import launcher
+from tagpup.services import batches
 from tagpup.services import libraries as library_actions
 from tagpup.web import responses, security
 
@@ -112,6 +115,7 @@ def long_work():
     assigning = face_assignment_jobs.running()
     if assigning:
         found.append("%d assignment(s) of faces" % assigning)
+    found.extend(batches.sentences())
     bringing = library_actions.bringing_up_to_date()
     if bringing:
         found.append("bringing %d library(ies) up to date" % bringing)   # the startup migrations (#664)
@@ -233,7 +237,8 @@ class Lifecycle:
                 since = None if self._last_request is None else self._clock() - self._last_request
                 if quiet and since is not None and since < quiet:
                     return {"drained": False, "waiting_for": ["a request %ds ago" % since]}
-                busy = self.busy()
+                # A batch is asked to stop once the server is closed (_drain_until), not waited for.
+                busy = [what for what in self.busy() if batches.WORD not in what]
                 if busy:
                     logger.info("An update waits: %s under way.", ", ".join(busy))
                     return {"drained": False, "waiting_for": busy}
@@ -251,6 +256,8 @@ class Lifecycle:
 
     def _drain_until(self, deadline, seconds, in_flight):
         logger.info("Draining for an update: taking no new work; %d request(s) in flight.", in_flight)
+        if batches.stop_all():
+            logger.info("Asked the batches of photo files to stop at their chunk.")
         if self._background is not None:
             self._background.stop(timeout=max(0.0, deadline - self._clock()))
         while True:
@@ -258,7 +265,9 @@ class Lifecycle:
                 if not self._closed:
                     # Taken back while it waited (a resume, or left drained too long).
                     return {"drained": False, "waiting_for": ["taken back"]}
-                waiting = (["%d request(s)" % self._in_flight] if self._in_flight else []) + self.busy()
+                # A batch is a request in flight too: it is named once, with its photos.
+                requests = self._in_flight - batches.running_here()
+                waiting = (["%d request(s)" % requests] if requests > 0 else []) + self.busy()
                 if not waiting:
                     self._drained_at = self._clock()
                     logger.info("Drained: nothing in flight, nothing running.")

@@ -10,7 +10,10 @@ raw, downloaded) show background work. What it asks:
   runs now -- each library's index queue and Suggest runs, the recurring jobs running in
   any process (their `running` rows), the folder watcher's sync, and whether the server
   takes work or waits to move onto a new version. Cheap: memory, and one small read of
-  each library's `job_runs`.
+  each library's `job_runs`. Each library also lists its batches of photo files, running or
+  waiting (tagpup.services.batches), with the counts of their files.
+- GET /api/activity/batches: those batches alone, of every library; POST
+  /api/activity/batches/cancel stops one of this process's at its chunk, or never starts it.
 - GET /api/activity/jobs: each recurring job, why it is scheduled, and for each library
   its last runs, what each changed as counts and why a failed one failed, and when it is
   due; POST /api/activity/jobs/run runs one now, on the recurring jobs' runner.
@@ -40,7 +43,7 @@ from tagpup.core import paths, runs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import recurring
 from tagpup.jobs import suggestions as suggestion_jobs
-from tagpup.services import activity
+from tagpup.services import activity, batches
 from tagpup.services import indexing
 from tagpup.services import job_runs
 from tagpup.web import responses, security
@@ -228,7 +231,7 @@ def now():
             logger.warning("Could not read the running jobs of %s: %s", library.name, e)
         found.append({"name": library.name, "indexing": indexed,
                       "suggesting": [run for run in suggesting if run["library"].lower() == library.name.lower()],
-                      "jobs": running})
+                      "jobs": running, "batches": batches.listing(library)})
     watcher = _task(WATCHER)
     watching = watcher.status() if watcher is not None and hasattr(watcher, "status") else None
     status = _lifecycle().status()
@@ -237,6 +240,28 @@ def now():
                     "watching": bool(watching and watching["running"]),
                     "server": {"version": status["version"], "taking_work": status["taking_work"],
                                "requests": status["requests"], "busy": status["busy"]}})
+
+
+@routes.get("/api/activity/batches")
+def batches_now():
+    """The batches of photo files running or waiting in every library, whichever process runs them."""
+    return jsonify({"batches": [row for library in _libraries() for row in batches.listing(library)]})
+
+
+@routes.post("/api/activity/batches/cancel")
+def cancel_batch():
+    """Stop a batch of this process, by the `ticket` /api/activity/batches gives it: a running one ends after its chunk with what
+    it wrote applied (History can undo it), a waiting one never starts."""
+    body = request.get_json(silent=True) or {}
+    library = _library_named(body.get("library"))
+    if library is None:
+        return responses.error(404, "There is no library called %s" % (body.get("library"),))
+    ticket = body.get("ticket")
+    if type(ticket) is not int:
+        return responses.error(400, "ticket must be a whole number")
+    if not batches.cancel(library, ticket):
+        return responses.error(404, "This server has no such batch (it may have finished, or another program runs it)")
+    return jsonify({"success": True})
 
 
 # ---- The recurring jobs ------------------------------------------------------------------
