@@ -331,8 +331,6 @@ class MigrationTwentyFour(unittest.TestCase):
                          "every row of every table that was there is unchanged")
         migration = [m for m in schema.MIGRATIONS if m.version == 24][0]
         self.assertEqual((schema.ADDITIVE, search_index.TABLES), (migration.kind, migration.touches))
-        self.assertLessEqual(set(search_index.TABLES + search_index.SHADOWS), set(schema.UNWATCHED),
-                             "a later migration's watch makes no trigger on them")
         self.assertEqual(look(self.path, "SELECT COUNT(*) FROM photos"), look(self.path, "SELECT COUNT(*) FROM search_words"))
         conn = db.connect(self.path)
         try:

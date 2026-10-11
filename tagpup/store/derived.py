@@ -53,6 +53,12 @@ from tagpup.store import roots as store_roots
 
 TABLES = ("photo_tags", "folders", "photo_folder")
 
+#: The one statement of which tables are derived -- made from what the library holds, never journaled, rebuilt after a
+#: change: the three above, each photo's people (store.people) and the word index (search_index.TABLES). The journal's
+#: DERIVED and the schema's UNWATCHED are made from it, and the cascades the journal calls REBUILT name only these
+#: (tests/test_journal_keys_and_cascades.py).
+ALL = ("photo_people",) + TABLES + search_index.TABLES
+
 #: How many photos one read or write handles at a time.
 CHUNK = 500
 

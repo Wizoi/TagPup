@@ -90,7 +90,7 @@ KEYS = {
 NAMED = ("settings",)
 
 #: Derived tables: never journaled, rebuilt from what a change touched (`_derive`).
-DERIVED = ("photo_people", "photo_tags", "folders", "photo_folder", "search_words", "search_names")
+DERIVED = derived.ALL
 
 #: Derived columns of journaled tables, rebuilt from the row's other columns after each
 #: write (a photo's dates, from its metadata and path: store.photos.date_photos). An inserted photo is

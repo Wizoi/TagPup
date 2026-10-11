@@ -447,9 +447,6 @@ class TheClassification(unittest.TestCase):
     def test_the_versions_run_one_to_the_latest(self):
         self.assertEqual(list(range(1, schema.LATEST + 1)), [m.version for m in schema.MIGRATIONS])
 
-    def test_nothing_the_journal_rebuilds_is_watched(self):
-        self.assertLessEqual(set(journal.DERIVED), set(schema.UNWATCHED))
-
 
 # ---- A library at every older version ------------------------------------------------------
 

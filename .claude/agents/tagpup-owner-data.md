@@ -60,7 +60,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 7. What does an older, already-installed app do with the file after this runs? Can anything here make a migrated library look current to a running old process?
 8. Can opening, reading, `doctor`, an MCP read or a dry run reach `schema.ensure`'s write path?
 9. Does it add a "library before migration N" probe, or a silent zero for a missing table? Prefer refuse-or-migrate.
-10. A new table or column: is it in every list (`journal.KEYS / DERIVED / CASCADES`, `schema.UNWATCHED`, `derived.TABLES`, `checks`) and does a test hold the lists to each other? Is it the fifth statement of "which tables are derived"? Say which single place owns it.
+10. A new table or column: is it in every list (`journal.KEYS / CASCADES`, `checks`; a derived table in `derived.ALL`, from which `journal.DERIVED` and `schema.UNWATCHED` are made) and does a test hold the lists to each other? Is it a second statement of "which tables are derived"? `derived.ALL` owns it.
 11. Killed between two statements, which state does the next open finish (`derived_pending`, `writing`)? Two servers, or a server and a CLI, on one folder?
 12. Paths stored and compared in row form via `store.roots` and `core.paths`: correct for a library with and without roots?
 13. What does a snapshot, restore or `before-*` backup now contain and cost (the largest library is ~2.6 GB per copy)?
