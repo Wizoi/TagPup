@@ -290,6 +290,7 @@ class Lifecycle:
         return was_closed
 
     def _reopen(self):
+        batches.reopen()
         self._closed = False
         self._drained_at = None
         self._changed.notify_all()

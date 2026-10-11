@@ -16,7 +16,7 @@ import web_client  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import vocabulary  # noqa: E402
-from tagpup.services import selection  # noqa: E402
+from tagpup.services import batches, selection  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
@@ -145,7 +145,7 @@ class Counting(Tally):
         self.assertNotIn("People/Wren Halloway", tags)
 
     def test_a_selection_above_what_a_job_takes_may_still_be_tallied(self):
-        with mock.patch.object(selection, "MAX_SELECTED", 2):
+        with mock.patch.object(batches, "MAX_BATCH", 2):
             self.assertEqual(5, self.tally({"source": {"kind": "all"}})["total"])
 
 

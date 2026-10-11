@@ -19,7 +19,7 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import recycle_bin  # noqa: E402
-from tagpup.services import batches, selection  # noqa: E402
+from tagpup.services import batches  # noqa: E402
 
 REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
 ALL = {"source": {"kind": "all"}}
@@ -188,7 +188,7 @@ class Deleting(Delete):
             with self.subTest(params=params):
                 self.assertIn("error", self.start({"ids": self.coast[:1]}, params, expect=400))
         self.assertEqual(self.coast[:1], self.held(self.coast[:1]))
-        with mock.patch.object(selection, "MAX_SELECTED", 10):
+        with mock.patch.object(batches, "MAX_BATCH", 10):
             refused = self.start(ALL, {"token": "0" * 64}, expect=400)
         self.assertIn("Select up to 10 photos at a time", refused["error"])
         self.assertEqual([], self.sent)
@@ -251,7 +251,7 @@ class Asking(Delete):
                          sorted(paths.key(path) for path in asked))
 
     def test_over_the_bulk_cap_this_pc_only_and_nonsense(self):
-        with mock.patch.object(selection, "MAX_SELECTED", 10):
+        with mock.patch.object(batches, "MAX_BATCH", 10):
             self.assertIn("Select up to 10 photos at a time", self.check(ALL, expect=400)["error"])
         self.check({"ids": self.coast[:1]}, expect=403, environ_overrides=REMOTE)
         for body in (None, {"ids": "x"}, {"source": {"kind": "nope"}}):

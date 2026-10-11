@@ -88,6 +88,7 @@ class Chunks(T.Bulk):
         self.assertEqual(25, undone.changed, "what the stopped batch wrote can be undone")
 
     def test_a_stop_asked_while_the_files_are_read_writes_and_plans_nothing(self):
+        self.addCleanup(batches.reopen)
         self.files.on_read = lambda *_: batches.stop_all()     # the edit's own claim is in line while it reads
         done = self.tags_edit(add=["Trips/Coast"])
         self.assertEqual((0, self.PHOTOS, 0), (done["changed"], done["error_count"], self.files.writes))
@@ -203,9 +204,10 @@ class Cap(T.Bulk):
             ok = self.tags_edit(add=["Trips/Coast"], selection_body={"ids": self.ids[:30]})
             self.assertEqual(30, ok["changed"])
             reads = self.files.read_calls
-            refused = self.tags_edit(add=["Trips/Lakes"], selection_body={"ids": self.ids[:31]})
-        self.assertEqual((0, 31), (refused["changed"], refused["error_count"]))
-        self.assertIn("Select up to 30 photos at a time (31 were named)", refused["errors"][0]["why"])
+            edit = bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Lakes"]})
+            refused = bulk_edit.run(self.library, edit, self.ids[:31], "exiftool")      # past the selection's own check
+        self.assertEqual((0, 31), (refused.changed, len(refused.errors)))
+        self.assertIn("Select up to 30 photos at a time (31 were named)", refused.errors[0][2])
         self.assertEqual(reads, self.files.read_calls)
 
     def test_the_tag_trees_rewrites_have_no_cap(self):
@@ -262,6 +264,7 @@ class HandOver(T.Bulk):
             threading.Event().wait(0.02)           # a slow ExifTool: a chunk of 25 takes half a second
         self.files.on_write = slow
         self.addCleanup(gate.release.set)
+        self.addCleanup(batches.reopen)
         edit = bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]})
         writing, outcome = in_thread(lambda: bulk_edit.run(self.library, edit, self.ids, "exiftool"))
         self.assertTrue(gate.reached.wait(30))
@@ -298,6 +301,19 @@ class HandOver(T.Bulk):
         release.set()
         holder.join(30)
         self.assertEqual([False], stopped)
+
+
+class AfterTheServerClosed(T.Bulk):
+    def test_a_batch_that_claims_after_the_drain_asked_is_stopped_before_it_begins_and_a_resume_lets_them_in(self):
+        self.addCleanup(batches.reopen)
+        moving = lifecycle.Lifecycle()
+        self.assertEqual({"drained": True}, moving.drain(seconds=5))
+        with self.assertRaises(Refused):
+            with batches.claim(self.library, "bulk tags", self.PHOTOS):
+                self.fail("it began")
+        moving.resume()
+        with batches.claim(self.library, "bulk tags", self.PHOTOS):
+            pass
 
 
 class TheClaimIsNeeded(T.Bulk):

@@ -172,7 +172,7 @@ def rename(library, node_id, new_name, exiftool_path):
 
     Refused when the new path is a node already: this does not make two nodes one. A
     photo that could not be rewritten keeps the old tag; the Result fails for it, and the
-    tree keeps the new name.
+    tree keeps the old name until the rename is made again (_retag).
 
     details: `photos_affected`, `photos_rewritten`, `faces_renamed`.
     """
@@ -204,7 +204,8 @@ def rename(library, node_id, new_name, exiftool_path):
     # node (a group's faces are those of everyone under it; their path changed), and for a person, those that now carry the
     # new name.
     under = [each["id"] for each in taxonomy.branch(library.path, old)] if node["has_face"] else []
-    _rename_in_place(library, old, new, exiftool_path, result)
+    if not _rename_in_place(library, old, new, exiftool_path, result):
+        return result
     leaf = len(under) == 1
     result.details["faces_renamed"] = _faces_of(library, under, named=vocabulary.leaf_of(new) if leaf else None)
     _tree_changed(library)
@@ -324,16 +325,21 @@ def rename_person(library, person, new_name, exiftool_path):
         return result
     alone = _alone(library, found)   # before the tree moves: a bare keyword spelled so is theirs only if nobody else is called so
     try:
-        # The node first, with its faces' cache in the same transaction; then the photo files.
-        _rename_in_place(library, found.tag, new_tag, exiftool_path, result)
+        # The photo files first, then the node with its faces' cache in one transaction (_retag): a rename stopped half way
+        # leaves the tree as it was.
+        if not _rename_in_place(library, found.tag, new_tag, exiftool_path, result):
+            return result
         result.details["faces_renamed"] = _faces_of(library, [found.id], named=new_name)   # counted after the write
         # A photo naming them by the bare name carries no tag of the tree's, and was not rewritten above; with the tree
         # moved, the bare name named nobody (#87). Only a name nobody else has is theirs.
         bare = list(photos.carrying(library.path, found.name)) if alone else []
         if bare:
-            rewritten, unwritten = _rewrite(library, bare, found.name, new_name, exiftool_path)
+            rewritten, unwritten, stopped = _rewrite(library, bare, found.name, new_name, exiftool_path)
             _count(result, len(bare), rewritten, add_up=True)
-            if unwritten:
+            if stopped:
+                result.refuse("%s The person is renamed in the tree; make the same edit again to rewrite the photos that name "
+                              "them by their bare name." % stopped)
+            elif unwritten:
                 result.fail(found.name, "%d of %d photo(s) naming '%s' could not be rewritten."
                             % (unwritten, len(bare), found.name))
     except Exception as e:
@@ -399,33 +405,42 @@ def _refuse_under_person(library, tag, result):
     return False
 
 
-def _retag(library, old, new, carrying, exiftool_path, result, always_move=False, add_up=False, force=False):
+def _retag(library, old, new, carrying, exiftool_path, result, always_move=False, add_up=False, force=False, rename=False):
     """Take the tag `old` off the photos in `carrying` -- replaced by `new`, if given --
     and then out of its place in the tree: its branch moved under `new`, joining the
-    nodes there, or taken out.
+    nodes there, or taken out. The ONE place that orders a tag-tree edit against its photo files, for a delete, a merge, a
+    rename and a person's rename (`rename`: `new` is a free place, so no node is made there and the branch keeps its ids).
 
     The tree changes only once every photo is rewritten: a photo that still carries the
     tag is still described by it. Without photos, a delete takes the branch out, unless
     `always_move` (a rename: the branch goes to its new place anyway). Fails the Result
-    for photos not rewritten. Returns whether the tree was changed.
+    for photos not rewritten; a batch that was stopped (Cancel, an update) or refused leaves the tree as it was and the
+    Result refused, with the sentence naming its change: the files already written hold `new`, and making the same edit
+    again rewrites the rest (a photo is rewritten once: one that holds `new` no longer carries `old`) and then moves the
+    tree. Returns whether the tree was changed.
     """
     rewritten = unwritten = 0
+    stopped = None
     if new and (carrying or always_move):
         # Every refusal of the tree edit comes BEFORE the first file is written: a photo rewritten to a tag the tree then
         # refuses (a person onto something that is no person) is a file and an index that disagree with the tree.
-        why = _tree_refusal(library, old, new, make_target=bool(carrying))
+        why = _tree_refusal(library, old, new, make_target=bool(carrying) and not rename)
         if why is not None:
             result.refuse(str(why))
             result.details["faces_named"] = getattr(why, "faces", 0)
             return False
     if carrying:
-        if new:
+        if new and not rename:
             db.write_with_connection(library.path, lambda conn: taxonomy.add_node(conn, new),
                                      label="tag tree: add %s" % new)
             # The writes resolve names against the tree, which now has the target.
             taxonomy.forget_people_paths(library.path)
-        rewritten, unwritten = _rewrite(library, carrying, old, new, exiftool_path)
+        rewritten, unwritten, stopped = _rewrite(library, carrying, old, new, exiftool_path)
     _count(result, len(carrying), rewritten, add_up)
+    if stopped:
+        result.refuse("%s '%s' stays in the tag tree until every photo is rewritten: make the same edit again to finish the rest."
+                      % (stopped, old))
+        return False
     if unwritten:
         result.fail(old, "%d of %d photo(s) could not be rewritten, so '%s' was kept; they "
                          "still carry it." % (unwritten, len(carrying), old))
@@ -470,26 +485,15 @@ def _tree_refusal(library, old, new, make_target):
 
 
 def _rename_in_place(library, old, new, exiftool_path, result, add_up=False):
-    """Move the branch `old` to the free place `new` in the tree, then rewrite the photos
-    carrying it. A photo that could not be rewritten keeps the old tag, and the Result
-    fails for it; the tree keeps the new name."""
-    db.write_with_connection(library.path, lambda conn: taxonomy.move_branch(conn, old, new),
-                             label="tag tree: rename %s" % old)
-    # The tree has the new name now. The writes below resolve people against it, and with
-    # the cache still holding the old tree a photo that also carries the bare name had the
-    # old path written straight back.
-    taxonomy.forget_people_paths(library.path)
+    """Rewrite the photos carrying the branch `old`, then move it to the free place `new` in the tree (_retag, which orders
+    the two). A photo that could not be rewritten keeps the old tag, and the Result fails for it; the tree keeps the old
+    name too, until the edit is made again. Returns whether the tree was moved."""
     carrying = list(photos.carrying(library.path, old))
-    rewritten, unwritten = _rewrite(library, carrying, old, new, exiftool_path) if carrying else (0, 0)
-    result.changed = 1
-    _count(result, len(carrying), rewritten, add_up)
-    if unwritten:
-        result.fail(old, "%d of %d photo(s) could not be rewritten and still carry '%s'."
-                    % (unwritten, len(carrying), old))
+    return _retag(library, old, new, carrying, exiftool_path, result, always_move=True, add_up=add_up, rename=True)
 
 
 def _rewrite(library, carrying, old, new, exiftool_path):
-    """(rewritten, not rewritten) of the photos in `carrying` (tagging.replace_tag).
+    """(rewritten, not rewritten, why it was stopped or None) of the photos in `carrying` (tagging.replace_tag).
 
     The photos come from the index, and the rewrite reads each file first: a photo whose
     file no longer carries the tag is skipped, and its row made to say so. That photo is
@@ -498,7 +502,7 @@ def _rewrite(library, carrying, old, new, exiftool_path):
     error, or a photo whose row could not be read -- may still carry it.
     """
     outcome = tagging.replace_tag(library, carrying, old, new, exiftool_path)
-    return outcome.changed, len(carrying) - outcome.changed - len(outcome.skipped)
+    return outcome.changed, len(carrying) - outcome.changed - len(outcome.skipped), outcome.refused
 
 
 def _count(result, affected, rewritten, add_up):

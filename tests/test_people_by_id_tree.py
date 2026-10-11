@@ -124,24 +124,23 @@ class Operations(TwoSams, unittest.TestCase):
         self.assertEqual("Max", look(self.path, "SELECT name FROM tag_taxonomy WHERE id = ?", (max_pet,))[0][0])
 
     def test_interrupted_between_the_tree_and_the_files_the_database_is_whole(self):
-        """The photos' files are rewritten after the tree: a photo that could not be is reported, the tree and the faces have the
-        new name, and running the rename again changes nothing it should not (it finds the node already renamed)."""
+        """The photos' files are rewritten BEFORE the tree (tags._retag): a photo that could not be is reported, the tree and the
+        faces keep the old name, and running the rename again, the file writable, rewrites the rest and moves the tree."""
         carrying = os.path.join(os.path.dirname(self.path), "Pictures", "regatta_003.jpg")
         write(self.path, lambda conn: __import__("photo_rows").add_read(conn, carrying, {"XMP:Subject": [SAM_I]}))
         self.unwritable.add(carrying)
         result = self.rename(self.sam_i, "Samuel")
         self.assertFalse(result.ok)
         self.assertIn("could not be rewritten", result.message())
-        self.assertEqual(self.sam_i, self.node("Family/Ingersoll/Samuel"))
-        self.assertEqual([(self.sam_i, "Samuel")], [self.face(self.faces[1])[:2]])
+        self.assertEqual(self.sam_i, self.node(SAM_I), "the node is where it was")
+        self.assertIsNone(self.node("Family/Ingersoll/Samuel"))
+        self.assertEqual([(self.sam_i, "Sam")], [self.face(self.faces[1])[:2]])
         in_step = lambda: [person_ids.out_of_step(_conn(self.path), table).rows for table in person_ids.TABLES]  # noqa: E731
         self.assertEqual([0, 0], in_step(), "no face has a name no node has")
-        # The photo still holds the old path (a stale keyword, finding "stale keyword of a renamed shared leaf"): no node has
-        # the path, so the index lists it as the name its keyword spells, by the rule that settles every name with no id
-        # (the leaf's one person, if the leaf is one person's now) -- until its file is rewritten, which the journal resumes.
-        self.assertEqual(1, look(self.path, "SELECT COUNT(*) FROM tag_taxonomy WHERE name = 'Samuel'")[0][0])
-        self.assertEqual(0, look(self.path, "SELECT COUNT(*) FROM tag_taxonomy WHERE tag = ?", (SAM_I,))[0][0])
-        self.assertEqual([("Sam", "keyword")], [row[1:] for row in self.listed(carrying)], "the name its keyword spells")
+        self.unwritable.discard(carrying)
+        self.assertTrue(self.rename(self.sam_i, "Samuel").ok, "made again, the rest is rewritten and the tree moves")
+        self.assertEqual(self.sam_i, self.node("Family/Ingersoll/Samuel"))
+        self.assertEqual([(self.sam_i, "Samuel")], [self.face(self.faces[1])[:2]])
 
     def test_a_read_that_fails_in_the_middle_of_the_edit_leaves_the_tree_as_it_was(self):
         real = person_ids.People.read.__func__

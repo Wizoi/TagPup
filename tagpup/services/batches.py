@@ -56,6 +56,7 @@ class Batch:
 
 
 _tickets = itertools.count(1)
+_closing = False      # the server is moving to a new version: a batch that claims now is stopped before it begins
 _line = []            # the batches of this process, the running one first
 _turn = threading.Condition()
 _held = threading.local()
@@ -82,6 +83,8 @@ def claim(library, operation, photos, wait=True):
             raise Conflict("%d photo batches are ahead of this one (one running, %d waiting). Try again when one has finished."
                            % (len(_line), len(_line) - 1))
         _line.append(batch)
+        if _closing:
+            batch.stop.set()
         try:
             while _line[0] is not batch and not batch.stop.is_set():
                 _turn.wait(1.0)
@@ -119,8 +122,17 @@ def cancel(library, ticket):
 
 
 def stop_all():
-    """Ask every batch of this process to stop, at its chunk: a hand-over to a new version."""
+    """Ask every batch of this process to stop, at its chunk, and stop any that claims until `reopen`: a hand-over to a new
+    version."""
+    global _closing
+    _closing = True
     return _stop(lambda batch: True)
+
+
+def reopen():
+    """The server takes work again (a drain given up): batches begin as usual."""
+    global _closing
+    _closing = False
 
 
 def sentences():

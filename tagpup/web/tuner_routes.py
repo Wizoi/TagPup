@@ -265,10 +265,10 @@ def tags_merge():
     except Exception as e:
         logger.error("Error merging tag %r: %s", body.get("from"), e)
         _refuse(500, str(e))
+    if body.get("apply"):
+        tagpup_routes.forget_scans(library)     # also when refused: a batch stopped half way wrote files
     if result.refused:
         _refuse(400, result.refused)
-    if body.get("apply"):
-        tagpup_routes.forget_scans(library)
     reply = dict(result.details)
     if not result.ok:
         reply["error"] = result.message()
@@ -291,9 +291,9 @@ def person_rename():
     except Exception as e:
         logger.error("Error renaming a person: %s", e)
         abort(500, description="Internal error: %s" % e)
+    tagpup_routes.forget_scans(library)
     if result.refused:
         _refuse(400, result.refused)
-    tagpup_routes.forget_scans(library)
     reply = {"success": True, "photos_affected": result.details["photos_affected"],
              "photos_rewritten": result.details["photos_rewritten"]}
     if not result.ok:

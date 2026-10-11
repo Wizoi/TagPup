@@ -1,5 +1,5 @@
 """An edit of a selection of photos by id, written in one request (POST /api/library/bulk-edit, tagpup.services.bulk_edit;
-docs/ARCHITECTURE.md). The selection's limit is 5,000 photos (tagpup.services.selection.MAX_SELECTED).
+docs/ARCHITECTURE.md). The selection's limit is 5,000 photos (tagpup.services.batches.MAX_BATCH).
 
 ExifTool is a table of files (tests/fake_exiftool.py), the photos are real small JPEGs and rows as the indexer records them, the
 tag tree and the journal are real. A write is paused in the middle by an event the fake sets and waits on, in a thread of the
@@ -22,7 +22,7 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import shares  # noqa: E402
-from tagpup.services import activity, batches, bulk_edit, file_changes, libraries, selection  # noqa: E402
+from tagpup.services import activity, batches, bulk_edit, file_changes, libraries  # noqa: E402
 from tagpup.store import job_runs  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
@@ -183,11 +183,11 @@ class Tags(Bulk):
 class TheLimit(Bulk):
     """5,000 photos at a time: the 5,000th is written, the 5,001st refuses the whole request before a file is read."""
 
-    def test_the_limit_is_five_thousand_and_the_folder_views_is_the_same(self):
-        self.assertEqual((5000, 5000), (selection.MAX_SELECTED, batches.MAX_BATCH))
+    def test_the_limit_is_five_thousand(self):
+        self.assertEqual(5000, batches.MAX_BATCH)
 
     def test_exactly_the_limit_is_written_and_one_more_is_refused_with_the_sentence(self):
-        with mock.patch.object(selection, "MAX_SELECTED", 50):
+        with mock.patch.object(batches, "MAX_BATCH", 50):
             done = self.tags_edit(add=["Trips/Coast"], selection_body={"ids": self.ids[:50]})
             self.assertEqual(50, done["changed"])
             refused = self.tags_edit(add=["Trips/Lakes"], selection_body={"ids": self.ids[:51]}, expect=400)
@@ -196,20 +196,20 @@ class TheLimit(Bulk):
         self.assertEqual(50, self.files.writes, "the refused request read and wrote nothing")
 
     def test_a_source_is_counted_once_the_excluded_are_out(self):
-        with mock.patch.object(selection, "MAX_SELECTED", 50):
+        with mock.patch.object(batches, "MAX_BATCH", 50):
             done = self.tags_edit(add=["Trips/Coast"], selection_body={"source": {"kind": "all"}, "excluded": self.ids[:10]})
             self.assertEqual((50, 10), (done["changed"], done["excluded"]), "60 less 10 is 50: within the limit")
             refused = self.tags_edit(add=["Trips/Lakes"], selection_body={"source": {"kind": "all"}, "excluded": self.ids[:9]}, expect=400)
         self.assertEqual("Select up to 50 photos at a time (51 are selected).", refused["error"])
 
     def test_the_question_before_a_delete_is_limited_the_same(self):
-        with mock.patch.object(selection, "MAX_SELECTED", 10):
+        with mock.patch.object(batches, "MAX_BATCH", 10):
             reply = self.client.post("/library/api/library/selection/delete-check", json={"selection": ALL})
         self.assertEqual(400, reply.status_code)
         self.assertIn("Select up to 10 photos at a time", reply.get_json()["error"])
 
     def test_a_tally_is_not_limited(self):
-        with mock.patch.object(selection, "MAX_SELECTED", 10):
+        with mock.patch.object(batches, "MAX_BATCH", 10):
             reply = self.client.post("/library/api/library/selection/tally", json={"selection": ALL})
         self.assertEqual((200, self.PHOTOS), (reply.status_code, reply.get_json()["total"]))
 

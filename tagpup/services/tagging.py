@@ -513,6 +513,9 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
     """
     rows = photos.read_tags(library.path, photo_paths)
     people = taxonomy.people_paths(library.path)
+    if new:
+        # The tree moves after the files: a bare name resolves to where its person's tag is going, not back to where it was.
+        people = {name: vocabulary.retag([tag], old, new)[0][0] for name, tag in people.items()}
 
     def plan_one(path, held):
         new_tags, changed = vocabulary.retag(_tags_held(held), old, new)

@@ -10,7 +10,7 @@ A selection is one of two shapes, sent by a page that never holds 68,000 ids to 
   (at most MAX_LISTED; ids not in the source are no matter). The ids are those of `/api/library/ids` for the same
   source, in the same order, read here, on the server, in one transaction: the page sends the source, not its list.
 
-A selection holds at most MAX_SELECTED photos; a larger one is Refused, with how many it was. Reads only, on a read-only
+A selection holds at most batches.MAX_BATCH photos; a larger one is Refused, with how many it was. Reads only, on a read-only
 connection; a root this machine does not place raises paths.RootsError (the web layer's gate answers that first).
 """
 import collections
@@ -27,9 +27,6 @@ from tagpup.store import selection_folders as store_folders
 
 #: The most ids a selection lists (`ids`, or `excluded`).
 MAX_LISTED = 20_000
-
-#: The most photos a selection holds, however it is named: what one batch writes (batches.MAX_BATCH; owner, 2026-10-11).
-MAX_SELECTED = batches.MAX_BATCH
 
 #: The most tags, and the most people, a tally lists; the rest are counted in `more`.
 MAX_TALLIED = 500
@@ -154,7 +151,7 @@ def where_deleted(library, selection):
     Windows now, #703, #706: nothing is to be asked then)}; the reasons as recycle_bin says them ("on a network share").
     Asked once a folder, never once a photo (a Select all of photo_index is 2,672 folders, about 2 s); a UNC path and a mapped
     drive are told by their spelling and the drive's type, without reading the share. Refused, as `resolve` refuses it, over
-    MAX_SELECTED."""
+    batches.MAX_BATCH."""
     resolved = resolve(library, selection)
     conn = library_view.opened(library)
     try:
@@ -197,13 +194,13 @@ def _too_long(library, photo_ids, binless, named):
 
 
 def _refuse_if_large(count):
-    if count > MAX_SELECTED:
-        raise Refused("Select up to %s photos at a time (%s are selected)." % ("{:,}".format(MAX_SELECTED), "{:,}".format(count)))
+    if count > batches.MAX_BATCH:
+        raise Refused("Select up to %s photos at a time (%s are selected)." % ("{:,}".format(batches.MAX_BATCH), "{:,}".format(count)))
 
 
 def resolve(library, selection):
     """The photos `selection` holds, as Resolved: those that exist now, in order -- an ids selection in the order named, a
-    source in `/api/library/ids`'s order -- each once, at most MAX_SELECTED once the excluded are out (else Refused). The photo that exists is decided
+    source in `/api/library/ids`'s order -- each once, at most batches.MAX_BATCH once the excluded are out (else Refused). The photo that exists is decided
     here, by the library's own rows; a source is read in one transaction, so a library changing meanwhile gives a list that
     was true at one moment."""
     conn = library_view.opened(library)
@@ -214,7 +211,7 @@ def resolve(library, selection):
             ids = [photo_id for photo_id in selection.ids if photo_id in there]
             return Resolved(ids, len(selection.ids), len(selection.ids) - len(ids), 0)
         # The limit is of the photos left once the excluded are out ("everything but these 63,500" is 4,500 photos).
-        found, total = store.source_ids(conn, selection.source, MAX_SELECTED + len(selection.excluded))
+        found, total = store.source_ids(conn, selection.source, batches.MAX_BATCH + len(selection.excluded))
     finally:
         conn.close()
     left_out = set(selection.excluded)

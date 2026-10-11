@@ -23,7 +23,7 @@ import { state } from './state.js';
 
 /** A bulk write over more photos than this names itself and asks first (selection.js). */
 export const BULK_CONFIRM_ABOVE = 200;
-/** The most photos one bulk write may name: the server refuses more (tagpup.web.tagpup_routes.BULK_LIMIT, tagpup.services.selection.MAX_SELECTED). */
+/** The most photos one bulk write may name: the server refuses more (tagpup.services.batches.MAX_BATCH). */
 export const BULK_LIMIT = 5000;
 /** The most ids, or excluded ids, a request may list (tagpup.services.selection.MAX_LISTED). */
 export const LIST_LIMIT = 20000;

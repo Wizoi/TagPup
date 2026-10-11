@@ -274,6 +274,7 @@ photos (`batches.MAX_BATCH`) unless it is the tag tree's rewrite (rename, delete
 files a chunk: between chunks a writer that waits for the lock of changes of photo files is let in, and a batch asked to stop (Cancel
 on the Activity page, or an update's hand-over) withdraws the files it did not reach and applies what it wrote, undoable. A caller that
 already holds the lock (Smart Rename, the Organize page's bulk tags) takes its claim before the lock and does not yield it.
+A tag or person rename (no cap) rewrites every photo first and moves the tree after (`tags._retag`, the one place that orders them): a batch stopped half way leaves the tree as it was, says so with its change, and making the same edit again finishes the rest.
 `batches.listing` and `/api/activity/now` / `/api/activity/batches` show the batches running (read from the journal, so another
 process's too) and waiting. `tests/test_batches_go_through_the_model.py` names every route that reaches `write_fields`.
 
