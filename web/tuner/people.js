@@ -123,8 +123,8 @@ function choosePeopleView(view) {
 function personFaceCard(person, li) {
     const crop = document.createElement('div');
     crop.className = 'person-face-crop';
-    // A person with a node is asked for by their id (two people called alike are two); a name only when the server keyed it.
-    const faceId = (person.person_id != null && state.personFaces[`id:${person.person_id}`]) || state.personFaces[person.name];
+    // A person is asked for by the id of their node (two people called alike are two); a row with none is nobody's face.
+    const faceId = person.person_id != null && state.personFaces[`id:${person.person_id}`];
     if (faceId) {
         const img = document.createElement('img');
         img.alt = '';

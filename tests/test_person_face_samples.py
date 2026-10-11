@@ -20,6 +20,7 @@ from tagpup.jobs import identify as identify_jobs  # noqa: E402
 from tagpup.services import faces  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
+from tagpup.store import taxonomy  # noqa: E402
 
 WREN = "Wren Halloway"
 INES = "Ines Okafor"
@@ -131,9 +132,18 @@ class TheRoute(unittest.TestCase):
                 app, home = web_client.app_for(self, kind)
                 client = app.test_client()
                 self.assertEqual({}, client.get("/library/api/people-face-samples").get_json())
-                face = db.write_with_connection(home.library("library.db"), lambda conn: add_face(
-                    conn, "a.jpg", name=WREN, name_source="manual", embedding=at(0).tobytes()))
-                self.assertEqual({WREN: [face]}, client.get("/library/api/people-face-samples").get_json())
+
+                def seed(conn):
+                    with store_people.tree_edit(conn):
+                        taxonomy.add_path(conn, "People", root_has_face=1)
+                        taxonomy.add_path(conn, "People/" + WREN)
+                    node = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", ("People/" + WREN,)).fetchone()[0]
+                    named = add_face(conn, "a.jpg", name=WREN, name_source="manual", embedding=at(0).tobytes())
+                    add_face(conn, "b.jpg", name="Loki", name_source="auto", embedding=at(5).tobytes(), tag_id=None)
+                    return node, named
+                node, face = db.write_with_connection(home.library("library.db"), seed)
+                # By the id of the node alone; a name with no node is under no key.
+                self.assertEqual({"id:%d" % node: [face]}, client.get("/library/api/people-face-samples").get_json())
 
     def test_the_crops_are_served_by_the_face_crop_route_of_each_app(self):
         # The popup's crops are /api/face-crop?id=, which both apps already serve.

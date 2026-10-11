@@ -1,7 +1,7 @@
 // The Identify grid: building it, and its tabs.
 import { api } from './common/api.js';
 import { attachPersonFaces } from './common/person-faces.js';
-import { compareTagNames, personLabel } from './common/vocabulary.js';
+import { compareTagNames } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     inputReassignName, matchingFacesGrid, matchingPersonCount, modeSelect, tabLowConf,
@@ -309,7 +309,7 @@ export function renderPersonFaces(faces) {
                     // A name two people have is asked about, never guessed; declined, nothing is done.
                     if (!found) return;
                     const who = found.person || found.name;
-                    const name = found.person ? personLabel(found.person) : found.name;
+                    const name = found.person ? found.person.name : found.name;
                     if (!found.person && !found.exists) {
                         if (!confirm(`"${name}" is not currently in the database. Do you want to create a new person tag and assign this cluster to it?`)) {
                             return;

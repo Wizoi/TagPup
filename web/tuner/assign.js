@@ -2,7 +2,7 @@
 // undo, rename.
 import { api } from './common/api.js';
 import { choicesOf, loadRules } from './common/validate.js';
-import { nameProblem, personFields, personLabel } from './common/vocabulary.js';
+import { nameProblem, personFields } from './common/vocabulary.js';
 import { state } from './state.js';
 import {
     btnExcludeSelected, btnReassignSelected, btnRenamePerson, btnRestoreSelected,
@@ -751,7 +751,7 @@ ${summary}${note}`)) {
                         return;
                     }
                 } else {
-                    if (!confirm(`Are you sure you want to assign the ${ids.length} selected face(s) to "${found.person ? personLabel(found.person) : found.name}"?`)) {
+                    if (!confirm(`Are you sure you want to assign the ${ids.length} selected face(s) to "${found.person ? found.person.name : found.name}"?`)) {
                         return;
                     }
                 }
@@ -765,7 +765,7 @@ ${summary}${note}`)) {
             if (!state.activePersonName) return;
             const row = (state.allPeopleWithCounts || []).find(each => state.activePersonId !== null
                 ? each.person_id === state.activePersonId : each.name === state.activePersonName);
-            const shownAs = row && row.person ? personLabel(row.person) : state.activePersonName;
+            const shownAs = row && row.person ? row.person.name : state.activePersonName;
             const newName = prompt(`Rename person "${shownAs}" to:`, state.activePersonName);
             if (newName === null) return;
             const trimmed = newName.trim();

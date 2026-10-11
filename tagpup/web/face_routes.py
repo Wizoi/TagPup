@@ -95,10 +95,9 @@ def face_matches():
 
 @routes.get("/api/people-faces")
 def people_faces():
-    """{name: face id}: the face most like each person, for the people list shown by face
-    (tagpup.services.identify.representative_faces), keyed by the person's name when nobody else is called alike and by
-    `id:<id>` for every person with a node (identify.for_pages). A person with no readable face is
-    absent; the crop is /api/face-crop?id=."""
+    """{`id:<id>`: face id}: the face most like each person, for the people list shown by face
+    (tagpup.services.identify.representative_faces), keyed by the id of the person's node alone (identify.for_pages). A person
+    with no readable face is absent; the crop is /api/face-crop?id=."""
     library = state.require()
     if not library_there(library):
         return jsonify({})
@@ -107,7 +106,7 @@ def people_faces():
 
 @routes.get("/api/people-face-samples")
 def people_face_samples():
-    """{name: [face id]}: up to four faces of each person, for the hover that shows who a
+    """{`id:<id>`: [face id]}: up to four faces of each person, for the hover that shows who a
     suggested name is (tagpup.services.identify.face_samples): the faces a person decided
     first, the one most like the person's first. A person with no readable face is absent;
     the crops are /api/face-crop?id=. One answer for everyone, cached against the decided

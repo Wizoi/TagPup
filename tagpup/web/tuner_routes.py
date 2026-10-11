@@ -357,6 +357,12 @@ def faces_excluded():
 
 # ---- Identify Faces ---------------------------------------------------------------------------
 
+def _grid_key():
+    """What a request calls the grid it asks for or the progress of: the id of the person's node when the page has it, else the
+    name (a bucket, or an old page)."""
+    return request.args.get("person_id") or request.args.get("name")
+
+
 @routes.get("/api/unmatched-faces/people")
 def unmatched_faces_people():
     library = state.require()
@@ -375,10 +381,10 @@ def unmatched_faces_person_matches():
         abort(400, description="Missing 'name' parameter")
     if not _library_there(library):
         return jsonify({"faces": [], "total_count": 0, "has_more": False})
-    asked = request.args.get("person_id") or request.args.get("name")
+    asked = _grid_key()
     try:
-        # A read: the person by their id, a name one person has as that person, a name two people have as all of them (the
-        # union, as the name always showed; nothing is created or linked), a name no node is as the name.
+        # A read: the person by their id, a name one person has as that person (an old page; typed or external), a name two
+        # people have refused naming their paths, a name no node is as the name (an unresolved keyword's grid).
         person = people_service.for_reading(library, person)
     except NotFound as missing:
         abort(404, description=str(missing))
@@ -394,10 +400,10 @@ def unmatched_faces_build_status():
     deliberately not cached: it is polled while another thread does the slow work, and
     it touches no database at all."""
     library = state.require()
-    name = request.args.get("person_id") or request.args.get("name")
-    if not name:
+    key = _grid_key()
+    if not key:
         abort(400, description="Missing 'name' parameter")
-    return jsonify(identify_progress.of(library).of(name))
+    return jsonify(identify_progress.of(library).of(key))
 
 
 # ---- Faces: the writes -------------------------------------------------------------------------

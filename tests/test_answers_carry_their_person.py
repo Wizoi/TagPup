@@ -87,11 +87,18 @@ class TheDirectory(Library):
         self.assertEqual("Wren", found.of_name("Wren")["name"])
         self.assertNotIn("Changed", [each["name"] for each in found.records()])
 
-    def test_annotate_gives_each_row_its_person_and_changes_nothing_else(self):
-        rows = [{"name": "Wren", "count": 3}, {"name": "Sam", "count": 1}, {"name": "Unknown Faces", "count": 9}]
+    def test_annotate_gives_each_row_its_person_by_id_and_changes_nothing_else(self):
+        rows = [{"name": "Wren", "count": 3, "person_id": self.wren}, {"name": "Sam", "count": 1, "person_id": self.sam_i},
+                {"name": "Unknown Faces", "count": 9}, {"name": "Gone", "count": 1, "person_id": 99999}]
         self.read().annotate(rows)
-        self.assertEqual([("Wren", 3, self.person(WREN)), ("Sam", 1, None), ("Unknown Faces", 9, None)],
+        self.assertEqual([("Wren", 3, self.person(WREN)), ("Sam", 1, self.person(SAM_I)), ("Unknown Faces", 9, None),
+                          ("Gone", 1, None)],
                          [(each["name"], each["count"], each["person"]) for each in rows])
+
+    def test_a_row_with_a_name_and_no_id_is_nobody_even_when_one_person_has_the_name(self):
+        rows = [{"name": "Wren", "count": 3, "person_id": None}, {"name": "Wren", "count": 1}]
+        self.read().annotate(rows)
+        self.assertEqual([None, None], [each["person"] for each in rows])
 
     def test_a_library_with_no_tree_has_no_one(self):
         other = ViewLibrary(self, "bare")

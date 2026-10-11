@@ -87,7 +87,7 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
       return { success: true, excluded: 1, untag: Object.assign({}, ...names.map(untag)) };
     })
     .first("/api/face-matches", () => structuredClone(matches))
-    .first("/api/people-face-samples", { "Hazel Brookmire": [11, 12], "Anh Tran": [21] });
+    .first("/api/people-face-samples", { "id:21": [11, 12], "id:22": [21] });   // keyed by the id of the person's node alone
   if (extra) extra(server);
   server.shown = shown;
   return server;
@@ -278,7 +278,12 @@ describe("the panel of a face", () => {
   });
 
   test("shows the person's faces on hover, from the one component both pages use", async (t) => {
-    const ctx = await openPhoto(t);
+    const ctx = await openPhoto(t, {
+      matches: [
+        { name: "Hazel Brookmire", person: { id: 21, name: "Hazel Brookmire", tag: "People/Hazel Brookmire" }, similarity: 0.91, band: "likely" },
+        { name: "Anh Tran", person: { id: 22, name: "Anh Tran", tag: "People/Anh Tran" }, similarity: 0.72, band: "possible" },
+      ],
+    });
     ctx.show();
     click(ctx.window, ctx.boxes()[1]);
     await flush(ctx.window, 4);

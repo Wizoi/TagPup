@@ -230,22 +230,12 @@ def face_samples(decided, named, limit=SAMPLE_FACES):
 
 
 def for_pages(library, by_person):
-    """`by_person` ({person: value}, representative_faces' or face_samples') as the pages read it: keyed by the person's NAME,
-    as it always was, for a person no one else is called like (or no node is), and by `id:<id>` for every person with a node. A
-    name two people have is under each id only: a name alone cannot say which. Read now from the tree."""
+    """`by_person` ({person: value}, representative_faces' or face_samples') as the pages read it: keyed `id:<id>` by the id of
+    the person's node, and only so (owner, 2026-10-10: the leaf is never identity). A name with no person node is nobody's and is
+    left out, as is a person the tree no longer files. Read now from the tree."""
     everyone = people_service.directory(library)
-    keyed = {}
-    for person, value in by_person.items():
-        if isinstance(person, int):
-            found = everyone.of_id(person)
-            if found is None:
-                continue
-            keyed["id:%d" % person] = value
-            if everyone.of_name(found["name"]) is not None:
-                keyed[found["name"]] = value
-        else:
-            keyed[person] = value
-    return keyed
+    return {"id:%d" % person: value for person, value in by_person.items()
+            if isinstance(person, int) and everyone.of_id(person) is not None}
 
 
 # ---- The photos, and one photo ----------------------------------------------------------
@@ -328,7 +318,7 @@ def photo_details(library, photo_path, named):
         # Excluded: the page counts a photo's unmatched faces from these, and an excluded
         # face is not one, as the list's counts say (docs/findings.md, #642, #655).
         found.append({"id": fid, "box": box, "name": fname,
-                      "person": everyone.of_row(carried.id, fname) if carried else None,
+                      "person": everyone.of_id(carried.id) if carried else None,
                       "max_similarity": max_sim, "excluded": bool(excluded)})
 
     return {
@@ -383,7 +373,7 @@ def face_matches(library, face_id, named):
         name = found.name
         top_matches.append({
             "name": name,
-            "person": everyone.of_row(found.id, name),
+            "person": everyone.of_id(found.id),
             "similarity": float(similarities[idx]),
             "band": face_rules.band(float(similarities[idx])),
         })

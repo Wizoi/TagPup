@@ -5,7 +5,7 @@ import { buildElement, replaceContent } from './common/dom.js';
 import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
 import { attachPersonFaces } from './common/person-faces.js';
 import { baseName, isUnc, pathKey, samePath } from './common/paths.js';
-import { personLabel, personLabelOf, personTitleOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
+import { personLabelOf, personTitleOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
 import { state } from './state.js';
@@ -110,7 +110,7 @@ export function renderPhotoFaces(photoPath) {
                 const suggestionPerson = face.suggestion_person && face.suggestion_person.id !== null
                     && face.suggestion_person.id !== undefined ? face.suggestion_person : null;
                 const suggestedWho = suggestionPerson || face.suggestion;
-                const suggestedLabel = suggestionPerson ? personLabel(suggestionPerson) : face.suggestion;
+                const suggestedLabel = suggestionPerson ? suggestionPerson.name : face.suggestion;
                 const facePerson = face.person && face.person.id !== null && face.person.id !== undefined ? face.person : null;
                 const label = document.createElement('span');
                 label.className = 'face-card-label';

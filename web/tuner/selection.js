@@ -192,7 +192,7 @@ export function showFaceDetails(faceId) {
                     itemDiv.appendChild(simSpan);
                     // A suggested person too: focusable, so the keyboard sees their faces as well.
                     itemDiv.tabIndex = 0;
-                    attachPersonFaces(itemDiv, item.person || item.name);
+                    attachPersonFaces(itemDiv, item.person);
                     matchingDetailDiagnostics.appendChild(itemDiv);
                 });
             }

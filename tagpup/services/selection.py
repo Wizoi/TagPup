@@ -106,7 +106,7 @@ def tally(library, selection):
     return {"total": found["total"],
             "tags": [{"tag": tag, "count": count} for tag, count in tags[0]], "more_tags": tags[1],
             "people": [{"name": person.name, "count": count, "has_node": person not in nameless,
-                        "person": everyone.of_row(person.id, person.name), "person_id": person.id}
+                        "person": everyone.of_id(person.id), "person_id": person.id}
                        for person, count in people[0]],
             "more_people": people[1],
             "folders": folders}

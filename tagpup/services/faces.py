@@ -630,10 +630,10 @@ def panel(library, photo_path):
         found.append({
             "id": face_id, "box": box,
             "area": (box[2] - box[0]) * (box[3] - box[1]) if len(box) >= 4 else 0,
-            "name": name, "person": everyone.of_row(carried.id, name) if carried else None, "prob": prob,
+            "name": name, "person": everyone.of_id(carried.id) if carried else None, "prob": prob,
             "excluded": bool(excluded), "excluded_reason": reason,
             "suggestion": suggestion if name is None else None,
-            "suggestion_person": everyone.of_row(suggested.id, suggestion) if name is None and suggested else None,
+            "suggestion_person": everyone.of_id(suggested.id) if name is None and suggested else None,
             "similarity": similarity if name is None else None,
         })
     found.sort(key=lambda f: (f["name"] is None, -(f["similarity"] or 0.0), -f["area"]))
