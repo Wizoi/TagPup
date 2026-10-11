@@ -1,8 +1,8 @@
 """The tables the library views stand on, derived from the photos (docs/ARCHITECTURE.md, phase 9a).
 
 Keywords are JSON in `photos.tags`, a folder is the front of `photos.path`, and a photo's rating,
-camera and place are inside `photos.raw_metadata`: "everything under Trips/", "the photos of this
-folder" and "five stars" each read every row. Four tables hold them as rows a query can seek,
+camera and place are inside `photos.raw_metadata`: "everything under Trips/" and "the photos of this
+folder" each read every row. Three tables hold them as rows a query can seek,
 made from the photos, never written by anything else, never journaled (journal.DERIVED):
 
 * `photo_tags(photo_id, tag_id)`: a photo's keywords, each as the id of the tag-tree node it names
@@ -23,9 +23,9 @@ made from the photos, never written by anything else, never journaled (journal.D
   case where the filesystem is. `from_row` makes it native on the way out (`folder_tree`).
   A folder's id is kept while the folder is, and is not kept across the roots' adoption (the paths
   change spelling): a page names a folder by its path.
-* `photo_meta(photo_id, rating, make, model, width, height, latitude, longitude)`: what the
-  metadata says of the photo (tagpup.core.photo_meta), one row for every photo, NULL for what it
-  does not say.
+A fourth, `photo_meta` (rating, camera, size and place from the raw metadata), was written here until migration 30 dropped
+it: nothing read it. The camera a photo names is read from its metadata when it is shown or searched
+(tagpup.core.photo_meta.gear; the search's cache is tagpup.store.search_index.cameras_with).
 
 Written by `rebuild_all` (migration 19, the doctor's repair) and by the writers of the photos'
 keywords, path, metadata and captions in the SAME transaction as the write (`refresh_photos`, `record`), and
@@ -36,10 +36,7 @@ takes them. tests/test_derived_writers.py fails the build on a writer of a photo
 metadata that does not go through here.
 
 The word index a search's words are matched in (tagpup.store.search_index, migration 24) is kept from here too: every
-photo refreshed here has its rows of it made again, whatever of its rows changed (a caption is in no table of these four).
-So are the camera and lens words (`search_gear`, migration 27), the one table made from a photo's raw metadata that is
-not one of the four: written from the same read of it (`photo_meta.gear`) by `_put` and `rebuild_all`, which is why a
-library's lens words come with `tools/doctor.py --rebuild-derived --apply` and not with the migration.
+photo refreshed here has its rows of it made again, whatever of its rows changed (a caption is in no table of these three).
 
 The caller commits. Every function does nothing, and says 0, on a library that has not had
 migration 19 yet: the migrations before it write photos too.
@@ -48,18 +45,18 @@ import collections
 import json
 import re
 
-from tagpup.core import paths, photo_meta, vocabulary
+from tagpup.core import paths, vocabulary
 from tagpup.store import db, search_index
 from tagpup.store import roots as store_roots
 
-TABLES = ("photo_tags", "folders", "photo_folder", "photo_meta")
+TABLES = ("photo_tags", "folders", "photo_folder")
 
 #: How many photos one read or write handles at a time.
 CHUNK = 500
 
 
 def present(conn):
-    """Has the library on `conn` the four tables (migration 19)? Remembered once true."""
+    """Has the library on `conn` the three tables (migration 19)? Remembered once true."""
     if getattr(conn, "derived_ready", False):
         return True
     found = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (%s)"
@@ -132,10 +129,9 @@ def keywords_of(tags_json):
 
 # ---- One photo's rows ------------------------------------------------------------------------
 
-def _state(path, keywords, raw, tree):
-    """(node ids, folder or None, Meta, Gear) of a photo: the things its rows say. `raw` is the dict its raw_metadata
-    column holds (photo_meta.load)."""
-    return tree.ids(keywords), paths.row_parent(path), photo_meta.extract(raw), photo_meta.gear(raw)
+def _state(path, keywords, tree):
+    """(node ids, folder or None) of a photo: the things its rows say."""
+    return tree.ids(keywords), paths.row_parent(path)
 
 
 def _fold(folder):
@@ -190,18 +186,15 @@ def _put(conn, states, batch, gone=()):
     only what differs, and take the rows of each id in `gone` (photos with none). Returns how many
     photos' rows changed. Folders a photo left are pruned."""
     ids = list(states)
-    held_tags, held_folder, held_meta = collections.defaultdict(set), {}, {}
+    held_tags, held_folder = collections.defaultdict(set), {}
     if ids:
         for photo_id, tag_id in conn.execute(
                 "SELECT photo_id, tag_id FROM photo_tags WHERE photo_id IN (%s)" % _marks(ids), ids):
             held_tags[photo_id].add(tag_id)
         held_folder = dict(conn.execute(
             "SELECT photo_id, folder_id FROM photo_folder WHERE photo_id IN (%s)" % _marks(ids), ids))
-        held_meta = {row[0]: row for row in conn.execute(
-            "SELECT photo_id, rating, make, model, width, height, latitude, longitude FROM photo_meta"
-            " WHERE photo_id IN (%s)" % _marks(ids), ids)}
     drop, add, left, changed = [], [], set(), set()
-    for photo_id, (tag_ids, folder, meta, _gear) in states.items():
+    for photo_id, (tag_ids, folder) in states.items():
         have = held_tags.get(photo_id, set())
         drop += [(photo_id, tag_id) for tag_id in have - tag_ids]
         add += [(photo_id, tag_id) for tag_id in tag_ids - have]
@@ -217,32 +210,25 @@ def _put(conn, states, batch, gone=()):
             else:
                 conn.execute("INSERT OR REPLACE INTO photo_folder (photo_id, folder_id) VALUES (?, ?)",
                              (photo_id, folder_id))
-        row = (photo_id,) + tuple(meta)
-        if held_meta.get(photo_id) != row:
-            changed.add(photo_id)
-            conn.execute("INSERT OR REPLACE INTO photo_meta"
-                         " (photo_id, rating, make, model, width, height, latitude, longitude)"
-                         " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", row)
     conn.executemany("DELETE FROM photo_tags WHERE photo_id = ? AND tag_id = ?", drop)
     conn.executemany("INSERT INTO photo_tags (photo_id, tag_id) VALUES (?, ?)", add)
     gone = list(gone)
     for start in range(0, len(gone), CHUNK):
         chunk = gone[start:start + CHUNK]
-        for table in ("photo_tags", "photo_folder", "photo_meta"):
+        for table in ("photo_tags", "photo_folder"):
             conn.execute("DELETE FROM %s WHERE photo_id IN (%s)" % (table, _marks(chunk)), chunk)
     pruned = prune(conn) if gone else prune(conn, left) if left else 0
     if pruned:
         batch.folders.clear()   # an id found before may be one pruned now
     # The word index, for every photo asked about: its captions and people are in no table of these, so what changed
-    # here says nothing of whether its words did. The camera and lens words too: a lens is in no column of photo_meta.
+    # here says nothing of whether its words did.
     search_index.refresh(conn, list(states) + list(gone))
-    search_index.write_gear(conn, {photo_id: state[3] for photo_id, state in states.items()}, gone)
     return len(changed) + len(gone)
 
 
 def refresh_photos(conn, photo_ids, batch=None):
-    """Make the rows of the photos `photo_ids` what their keywords, path and metadata say now:
-    called by every write of any of the three, in its transaction. An id with no photo has its rows
+    """Make the rows of the photos `photo_ids` what their keywords and path say now:
+    called by every write of either, in its transaction. An id with no photo has its rows
     taken. Returns how many photos' rows changed."""
     if not present(conn):
         return 0
@@ -254,23 +240,23 @@ def refresh_photos(conn, photo_ids, batch=None):
     for start in range(0, len(ids), CHUNK):
         chunk = ids[start:start + CHUNK]
         states = {}
-        for photo_id, path, tags_json, raw_json in conn.execute(
-                "SELECT id, path, tags, raw_metadata FROM photos WHERE id IN (%s)" % _marks(chunk), chunk):
-            states[photo_id] = _state(path, keywords_of(tags_json), photo_meta.load(raw_json), batch.tree)
+        for photo_id, path, tags_json in conn.execute(
+                "SELECT id, path, tags FROM photos WHERE id IN (%s)" % _marks(chunk), chunk):
+            states[photo_id] = _state(path, keywords_of(tags_json), batch.tree)
         changed += _put(conn, states, batch, [photo_id for photo_id in chunk if photo_id not in states])
     return changed
 
 
-def record(conn, photo_id, path, tags, raw_metadata, batch=None):
+def record(conn, photo_id, path, tags, batch=None):
     """refresh_photos for one photo whose row the caller has just written and holds: `path` as
-    stored (the row form), `tags` the list written and `raw_metadata` the dict -- what the index
-    records of a read, which has no need to read its own row back. Returns 0 or 1."""
+    stored (the row form) and `tags` the list written -- what the index records of a read, which
+    has no need to read its own row back. Returns 0 or 1."""
     if not present(conn):
         return 0
     batch = batch or Batch(conn)
     # What record_indexed wrote is what keywords_of reads back: tags that are None or not a list say nothing.
     keywords = [tag for tag in tags if isinstance(tag, str)] if isinstance(tags, (list, tuple)) else []
-    return _put(conn, {photo_id: _state(path, keywords, raw_metadata, batch.tree)}, batch)
+    return _put(conn, {photo_id: _state(path, keywords, batch.tree)}, batch)
 
 
 # ---- Folders no photo is in ------------------------------------------------------------------
@@ -405,61 +391,49 @@ def rebuild_folders(conn):
 
 
 def rebuild_all(conn):
-    """Make all four tables what the photos say, whole, in the caller's transaction: the
+    """Make all three tables what the photos say, whole, in the caller's transaction: the
     migration's and the repair's. Reads each photo once. Returns {photos, tag_rows, folders,
-    in_a_folder, meta_rows}."""
+    in_a_folder, word_rows}."""
     tree = Tree.read(conn)
-    placed, tag_rows, meta_rows, gears = {}, [], [], {}
+    placed, tag_rows = {}, []
     last = -1
-    search_index.clear_gear(conn)
     while True:
-        chunk = conn.execute("SELECT id, path, tags, raw_metadata FROM photos WHERE id > ? ORDER BY id LIMIT ?",
+        chunk = conn.execute("SELECT id, path, tags FROM photos WHERE id > ? ORDER BY id LIMIT ?",
                              (last, 2000)).fetchall()
         if not chunk:
             break
         last = chunk[-1][0]
-        for photo_id, path, tags_json, raw_json in chunk:
-            tag_ids, folder, meta, gear = _state(path, keywords_of(tags_json), photo_meta.load(raw_json), tree)
+        for photo_id, path, tags_json in chunk:
+            tag_ids, folder = _state(path, keywords_of(tags_json), tree)
             placed[photo_id] = folder
             tag_rows += [(photo_id, tag_id) for tag_id in tag_ids]
-            meta_rows.append((photo_id,) + tuple(meta))
-            gears[photo_id] = gear
-        search_index.write_gear(conn, gears)   # a chunk at a time: the metadata read is not kept
-        gears.clear()
     conn.execute("DELETE FROM photo_tags")
     conn.executemany("INSERT INTO photo_tags (photo_id, tag_id) VALUES (?, ?)", tag_rows)
-    conn.execute("DELETE FROM photo_meta")
-    conn.executemany("INSERT INTO photo_meta (photo_id, rating, make, model, width, height, latitude, longitude)"
-                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", meta_rows)
     folders, in_a_folder = _write_folders(conn, placed, _wanted(set(f for f in placed.values() if f is not None)))
     words = search_index.rebuild(conn)
-    search_index.optimize_gear(conn)
-    gear_rows = conn.execute("SELECT COUNT(*) FROM search_gear_docsize").fetchone()[0] if search_index.gear_present(conn) else 0
     return {"photos": len(placed), "tag_rows": len(tag_rows), "folders": folders, "in_a_folder": in_a_folder,
-            "meta_rows": len(meta_rows), "word_rows": words, "gear_rows": gear_rows}
+            "word_rows": words}
 
 
 def listing(conn, photo_ids, node_ids=()):
-    """The rows of the four tables for the photos `photo_ids`, and the (photo, node) rows of the
-    nodes `node_ids`, as lists to compare: ([(photo, node)], [(photo, folder path)], [meta rows]).
+    """The rows of the three tables for the photos `photo_ids`, and the (photo, node) rows of the
+    nodes `node_ids`, as lists to compare: ([(photo, node)], [(photo, folder path)]).
     The folder by its path, not its id: a folder pruned and made again is the same folder. What
     the journal's rehearsal compares before a change and after its undo. Reads only."""
     if not present(conn):
-        return [], [], []
-    tags, folders, meta = [], [], []
+        return [], []
+    tags, folders = [], []
     ids = sorted(set(photo_ids))
     for start in range(0, len(ids), CHUNK):
         chunk = ids[start:start + CHUNK]
         tags += conn.execute("SELECT photo_id, tag_id FROM photo_tags WHERE photo_id IN (%s)" % _marks(chunk), chunk)
         folders += conn.execute("SELECT pf.photo_id, f.path FROM photo_folder pf JOIN folders f ON f.id = pf.folder_id"
                                 " WHERE pf.photo_id IN (%s)" % _marks(chunk), chunk)
-        meta += conn.execute("SELECT photo_id, rating, make, model, width, height, latitude, longitude FROM photo_meta"
-                             " WHERE photo_id IN (%s)" % _marks(chunk), chunk)
     nodes = sorted(set(node_ids))
     for start in range(0, len(nodes), CHUNK):
         chunk = nodes[start:start + CHUNK]
         tags += conn.execute("SELECT photo_id, tag_id FROM photo_tags WHERE tag_id IN (%s)" % _marks(chunk), chunk)
-    return sorted(set(map(tuple, tags))), sorted(map(tuple, folders)), sorted(map(tuple, meta))
+    return sorted(set(map(tuple, tags))), sorted(map(tuple, folders))
 
 
 # ---- What a rule would say: the rows against the photos --------------------------------------
@@ -476,19 +450,6 @@ def stale_tags(conn):
     for photo_id, tags_json in conn.execute("SELECT id, tags FROM photos ORDER BY id"):
         seen.add(photo_id)
         if tree.ids(keywords_of(tags_json)) != held.get(photo_id, set()):
-            stale.append(photo_id)
-    return stale + sorted(set(held) - seen)
-
-
-def stale_meta(conn):
-    """The ids of the photos whose row in `photo_meta` is not what their raw metadata gives, or is
-    missing, and of the rows that are no photo's. Reads only."""
-    held = {row[0]: row[1:] for row in conn.execute(
-        "SELECT photo_id, rating, make, model, width, height, latitude, longitude FROM photo_meta")}
-    stale, seen = [], set()
-    for photo_id, raw_json in conn.execute("SELECT id, raw_metadata FROM photos ORDER BY id"):
-        seen.add(photo_id)
-        if held.get(photo_id) != tuple(photo_meta.from_json(raw_json)):
             stale.append(photo_id)
     return stale + sorted(set(held) - seen)
 
@@ -533,23 +494,21 @@ def stale_folders(conn):
 
 
 def problems(conn):
-    """What is wrong with the four tables, as sentences of counts, [] when nothing: what the
+    """What is wrong with the three tables, as sentences of counts, [] when nothing: what the
     migration checks before it commits. Reads only."""
     found = []
-    tags, meta = stale_tags(conn), stale_meta(conn)
+    tags = stale_tags(conn)
     photos, folders, missing, strays = stale_folders(conn)
     if tags:
         found.append("%d photo(s) have keyword rows that are not what their tags and the tree give" % len(tags))
     if photos or folders or missing or strays:
         found.append("the folders are not what the photos' paths give (%d photo(s), %d folder(s), %d missing, "
                      "%d holding no photo)" % (len(photos), len(folders), missing, len(strays)))
-    if meta:
-        found.append("%d photo(s) have metadata rows that are not what their raw metadata gives" % len(meta))
     return found + search_index.problems(conn)
 
 
 def repair(db_path):
-    """Make the four tables, and the word index, what the photos say, in one write under the library's write lock, and
+    """Make the three tables, and the word index, what the photos say, in one write under the library's write lock, and
     verify it. Returns (what was wrong before, as problems() says it, what rebuild_all wrote,
     what is wrong after: [] when it worked). Derived rows only: no photo, tag or file is touched,
     so no backup is taken."""

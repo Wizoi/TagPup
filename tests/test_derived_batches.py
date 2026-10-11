@@ -158,7 +158,6 @@ class ADamagedRead(WithABigTree):
             photos.record_indexed(conn, os.path.join(self.folder, "good.jpg"),
                                   {"tags": [TAGS[0]], "raw_metadata": {}}, batch=batch)
             conn.commit()
-            self.assertEqual(5, conn.execute("SELECT COUNT(*) FROM photo_meta").fetchone()[0])
             self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM photo_tags").fetchone()[0])
             self.assertEqual([], derived.problems(conn))
         finally:

@@ -14,7 +14,7 @@ broken (the tree is the owner's, and indexing never adds to it).
 
     .venv/Scripts/python.exe tools/doctor.py --db data/photo_index.db --rebuild-derived [--apply]
 
-makes the derived tables (photo_tags, folders, photo_folder, photo_meta) what the photos say, each
+makes the derived tables (photo_tags, folders, photo_folder) what the photos say, each
 photo's list of people (photo_people) what its keywords, faces and the tag tree make it -- a group tag is
 not a person (#986) -- and each face's and listed person's id (faces.tag_id, photo_people.tag_id) the node
 their name is: a dry run that says what is wrong, and with --apply a write under the library's write lock
@@ -224,10 +224,8 @@ def rebuild_derived(db_path, apply=False, out=print):
     if derived_problems:   # (read once, before the ids were put right: the people's lists are not these)
         _before, written, after_tables = derived.repair(db_path)
         after += after_tables
-        out("rebuilt from %d photo(s): %d keyword row(s), %d folder(s), %d photo(s) in one, %d metadata row(s), "
-            "%d word row(s), %d camera and lens row(s)"
-            % (written["photos"], written["tag_rows"], written["folders"], written["in_a_folder"], written["meta_rows"],
-               written["word_rows"], written["gear_rows"]))
+        out("rebuilt from %d photo(s): %d keyword row(s), %d folder(s), %d photo(s) in one, %d word row(s)"
+            % (written["photos"], written["tag_rows"], written["folders"], written["in_a_folder"], written["word_rows"]))
     for line in after:
         out("  still wrong: " + line)
     return 1 if after else 0
@@ -246,7 +244,7 @@ def main(argv=None):
     parser.add_argument("--db", required=True, help="the library's database file")
     parser.add_argument("--show", type=int, default=0, help="examples to list per rule (paths; default none)")
     parser.add_argument("--rebuild-derived", action="store_true",
-                        help="make photo_tags, folders, photo_folder, photo_meta and the person ids what the photos and"
+                        help="make photo_tags, folders, photo_folder and the person ids what the photos and"
                              " the names say (a dry run)")
     parser.add_argument("--apply", action="store_true", help="with --rebuild-derived: write it")
     args = parser.parse_args(argv)

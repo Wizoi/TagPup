@@ -1,5 +1,5 @@
 """The rules the derived tables are held to (tagpup.store.checks, tools/doctor.py, the MCP's checks):
-photo_tags, folders, photo_folder and photo_meta are what the photos and the tag tree give, or the
+photo_tags, folders and photo_folder are what the photos and the tag tree give, or the
 doctor says which photos are not. Each rule is a thing that goes wrong when a writer forgets
 (docs/ARCHITECTURE.md, phase 9a), and each has a repair, `tools/doctor.py --rebuild-derived --apply`,
 which makes the tables what the photos say and writes nothing else.
@@ -20,7 +20,7 @@ import photo_rows  # noqa: E402
 
 from tagpup.store import checks, db, derived, schema, taxonomy  # noqa: E402
 
-RULES = ("photo_tags_out_of_date", "photo_folders_out_of_date", "folders_out_of_date", "photo_meta_out_of_date")
+RULES = ("photo_tags_out_of_date", "photo_folders_out_of_date", "folders_out_of_date")
 
 
 class ALibraryAtRest(unittest.TestCase):
@@ -119,17 +119,6 @@ class TheRules(ALibraryAtRest):
         self.conn.commit()
         self.assertEqual([], checks.empty_folders(self.conn))
 
-    def test_a_writer_that_changed_a_photos_metadata_and_did_not_refresh(self):
-        self.conn.execute("UPDATE photos SET raw_metadata = ? WHERE id = ?", ('{"XMP:Rating": 5}', self.ids["c.jpg"]))
-        self.conn.commit()
-        self.assertEqual({"photos whose metadata rows are out of date": 1}, self.counts())
-        self.assertEqual([self.ids["c.jpg"]], self.rule("photo_meta_out_of_date").examples)
-
-    def test_a_row_of_metadata_that_is_not_what_the_photo_says(self):
-        self.conn.execute("UPDATE photo_meta SET rating = 1 WHERE photo_id = ?", (self.ids["a.jpg"],))
-        self.conn.commit()
-        self.assertEqual({"photos whose metadata rows are out of date": 1}, self.counts())
-
     def test_the_new_rules_wait_for_the_migration(self):
         from test_migrations import at_version
         older = self.home.library("older.db")
@@ -179,7 +168,6 @@ class KeywordsWithNoNode(ALibraryAtRest):
 class TheRepair(ALibraryAtRest):
     def break_everything(self):
         self.conn.execute("UPDATE photos SET tags = '[\"Trips/Lake\"]' WHERE id = ?", (self.ids["a.jpg"],))
-        self.conn.execute("UPDATE photos SET raw_metadata = '{\"XMP:Rating\": 5}' WHERE id = ?", (self.ids["c.jpg"],))
         self.conn.execute("UPDATE photos SET path = ? WHERE id = ?",
                           (os.path.join(self.pictures, "2026", "b.jpg"), self.ids["b.jpg"]))
         self.conn.execute("DELETE FROM photos WHERE id = ?", (self.ids["c.jpg"],))

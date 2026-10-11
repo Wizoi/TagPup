@@ -1,10 +1,8 @@
-"""tagpup.core.photo_meta: what a photo's raw metadata says about the photo -- rating, camera, size
-and place -- read one way, from rows made as the indexer makes them (tests/photo_rows.as_read: each
-field under its group's name and again bare), never from a shape typed here.
+"""tagpup.core.photo_meta: the camera and the lens a photo's raw metadata names, read one way, from rows made as the
+indexer makes them (tests/photo_rows.as_read: each field under its group's name and again bare), never from a shape typed
+here.
 
-The look at photo_index's 68,466 rows that decided the rules is in the module's docstring: no row
-holds a width, a height or an Orientation, so those are tested on records a library read with more
-fields would hold, and the rest on the spellings the library has.
+The look at photo_index's 68,466 rows that decided the rules is in the module's docstring.
 """
 import os
 import sys
@@ -20,58 +18,22 @@ from tagpup.core import paths, photo_meta  # noqa: E402
 PHOTO = os.path.join(os.path.sep, "photos", "2024", "IMG_0001.jpg")
 
 
-def meta_of(**fields):
-    """The Meta of the record an index read of a photo whose ExifTool answer was `fields`."""
-    return photo_meta.extract(photo_rows.as_read(PHOTO, fields)["raw_metadata"])
-
-
-class TheRating(unittest.TestCase):
-    def test_the_xmp_rating_is_read(self):
-        self.assertEqual(5, meta_of(**{"XMP:Rating": 5}).rating)
-
-    def test_xmp_comes_before_exif_and_exif_before_the_bare_name(self):
-        self.assertEqual(3, meta_of(**{"XMP:Rating": 3, "EXIF:Rating": 5}).rating)
-        self.assertEqual(4, meta_of(**{"EXIF:Rating": 4}).rating)
-        self.assertEqual(2, photo_meta.extract({"Rating": 2}).rating, "a row holding only the bare name")
-
-    def test_unrated_is_zero_and_rejected_is_minus_one(self):
-        self.assertEqual(0, meta_of(**{"XMP:Rating": 0}).rating)
-        self.assertEqual(-1, meta_of(**{"XMP:Rating": -1}).rating)
-
-    def test_a_photo_without_one_has_none(self):
-        self.assertIsNone(meta_of(**{"XMP:Subject": ["Trips/Coast"]}).rating)
-
-    def test_a_value_that_is_not_a_rating_is_passed_over_for_the_next_source(self):
-        self.assertEqual(4, meta_of(**{"XMP:Rating": 9, "EXIF:Rating": 4}).rating, "out of range")
-        self.assertEqual(4, meta_of(**{"XMP:Rating": "lots", "EXIF:Rating": 4}).rating, "not a number")
-        self.assertEqual(4, meta_of(**{"XMP:Rating": 3.5, "EXIF:Rating": 4}).rating, "not whole")
-        self.assertEqual(4, meta_of(**{"XMP:Rating": True, "EXIF:Rating": 4}).rating, "a yes is not a one")
-        self.assertIsNone(meta_of(**{"XMP:Rating": 9}).rating)
-
-    def test_a_number_written_as_text_or_a_whole_float_is_read(self):
-        self.assertEqual(5, meta_of(**{"XMP:Rating": "5"}).rating)
-        self.assertEqual(-1, meta_of(**{"XMP:Rating": "-1"}).rating)
-        self.assertEqual(3, meta_of(**{"XMP:Rating": 3.0}).rating)
-
-
 class TheCamera(unittest.TestCase):
     def test_make_and_model_are_read_trimmed(self):
-        found = meta_of(**{"EXIF:Make": "  Harbourlight ", "EXIF:Model": "HL 400\x00\x00"})
-        self.assertEqual(("Harbourlight", "HL 400"), (found.make, found.model))
+        self.assertEqual("Harbourlight HL 400", gear_of(**{"EXIF:Make": "  Harbourlight ", "EXIF:Model": "HL 400\x00\x00"}).camera)
 
     def test_exif_comes_before_xmp(self):
-        found = meta_of(**{"EXIF:Make": "Harbourlight", "XMP:Make": "Other", "XMP:Model": "Only XMP"})
-        self.assertEqual(("Harbourlight", "Only XMP"), (found.make, found.model))
+        found = gear_of(**{"EXIF:Make": "Harbourlight", "XMP:Make": "Other", "XMP:Model": "Only XMP"})
+        self.assertEqual("Harbourlight Only XMP", found.camera)
 
     def test_an_empty_make_is_passed_over(self):
-        found = meta_of(**{"EXIF:Make": "", "XMP:Make": "Harbourlight"})
-        self.assertEqual("Harbourlight", found.make)
-        self.assertIsNone(meta_of(**{"EXIF:Make": "  "}).make)
+        self.assertEqual("Harbourlight", gear_of(**{"EXIF:Make": "", "XMP:Make": "Harbourlight"}).camera)
+        self.assertIsNone(gear_of(**{"EXIF:Make": "  "}).camera)
 
     def test_a_make_that_is_not_text_is_left_out(self):
-        self.assertIsNone(meta_of(**{"EXIF:Make": 42}).make)
-        self.assertIsNone(photo_meta.extract({"Make": ["a", "b"]}).make, "two values are no make")
-        self.assertEqual("Harbourlight", photo_meta.extract({"Make": ["Harbourlight"]}).make)
+        self.assertIsNone(gear_of(**{"EXIF:Make": 42}).camera)
+        self.assertIsNone(photo_meta.gear({"Make": ["a", "b"]}).camera, "two values are no make")
+        self.assertEqual("Harbourlight", photo_meta.gear({"Make": ["Harbourlight"]}).camera)
 
 
 def gear_of(**fields):
@@ -180,114 +142,6 @@ class TheLens(unittest.TestCase):
 
     def test_unicode_is_kept(self):
         self.assertEqual("Objectif Élan 35mm", gear_of(**{"EXIF:LensModel": "Objectif Élan 35mm"}).lens)
-
-    def test_load_reads_a_column_and_says_nothing_of_a_damaged_one(self):
-        self.assertEqual({"Make": "A"}, photo_meta.load('{"Make": "A"}'))
-        self.assertEqual({}, photo_meta.load(None))
-        self.assertEqual({}, photo_meta.load("not json"))
-        self.assertEqual(photo_meta.EMPTY, photo_meta.from_json("not json"))
-
-
-class TheSize(unittest.TestCase):
-    """No row of photo_index holds a size (the fields are not asked for): these are the records a
-    library read with ImageWidth, ImageHeight, ExifImageWidth and Orientation would hold."""
-
-    def test_the_pictures_own_size_is_read(self):
-        found = meta_of(**{"File:ImageWidth": 4000, "File:ImageHeight": 3000})
-        self.assertEqual((4000, 3000), (found.width, found.height))
-
-    def test_the_size_the_exif_block_declares_is_the_next_source(self):
-        found = meta_of(**{"EXIF:ExifImageWidth": 1600, "EXIF:ExifImageHeight": 1200})
-        self.assertEqual((1600, 1200), (found.width, found.height))
-
-    def test_a_picture_stored_on_its_side_is_shown_the_other_way_round(self):
-        for turn in (5, 6, 7, 8, "6"):
-            found = meta_of(**{"File:ImageWidth": 4000, "File:ImageHeight": 3000, "EXIF:Orientation": turn})
-            self.assertEqual((3000, 4000), (found.width, found.height), turn)
-        for turn in (1, 2, 3, 4, 9, "x"):
-            found = meta_of(**{"File:ImageWidth": 4000, "File:ImageHeight": 3000, "EXIF:Orientation": turn})
-            self.assertEqual((4000, 3000), (found.width, found.height), turn)
-
-    def test_a_width_without_its_height_is_no_size(self):
-        found = meta_of(**{"File:ImageWidth": 4000, "EXIF:ExifImageHeight": 1200})
-        self.assertEqual((None, None), (found.width, found.height), "never one source's width with another's height")
-
-    def test_a_size_that_is_not_a_picture_is_left_out(self):
-        for width, height in ((0, 3000), (-4000, 3000), ("wide", 3000), (4000.5, 3000), (True, 3000)):
-            found = meta_of(**{"File:ImageWidth": width, "File:ImageHeight": height})
-            self.assertEqual((None, None), (found.width, found.height), (width, height))
-
-    def test_a_pair_that_is_not_one_is_passed_over_for_the_next(self):
-        found = meta_of(**{"File:ImageWidth": 0, "File:ImageHeight": 0,
-                           "EXIF:ExifImageWidth": 1600, "EXIF:ExifImageHeight": 1200})
-        self.assertEqual((1600, 1200), (found.width, found.height))
-
-
-class ThePlace(unittest.TestCase):
-    """As the library holds it: Composite:GPSLatitude and Composite:GPSLongitude, signed decimal
-    degrees, numbers (the empty text in 46 rows, a 0 in 190)."""
-
-    def test_the_signed_pair_is_read(self):
-        found = meta_of(**{"Composite:GPSLatitude": -33.8688, "Composite:GPSLongitude": 151.2093})
-        self.assertEqual((-33.8688, 151.2093), (found.latitude, found.longitude))
-        west = meta_of(**{"Composite:GPSLatitude": 48.85, "Composite:GPSLongitude": -122.4})
-        self.assertEqual((48.85, -122.4), (west.latitude, west.longitude))
-
-    def test_a_whole_degree_is_a_float(self):
-        found = meta_of(**{"Composite:GPSLatitude": 48, "Composite:GPSLongitude": -122})
-        self.assertEqual((48.0, -122.0), (found.latitude, found.longitude))
-        self.assertIsInstance(found.latitude, float)
-
-    def test_the_exif_pair_alone_is_not_read_because_it_has_no_sign(self):
-        found = meta_of(**{"EXIF:GPSLatitude": 48.85, "EXIF:GPSLongitude": 122.4})
-        self.assertEqual((None, None), (found.latitude, found.longitude))
-
-    def test_one_coordinate_alone_is_no_place(self):
-        """64 rows of photo_index hold a longitude and no latitude."""
-        for fields in ({"Composite:GPSLongitude": 151.2}, {"Composite:GPSLatitude": 12.5},
-                       {"Composite:GPSLatitude": "", "Composite:GPSLongitude": 151.2}):
-            found = meta_of(**fields)
-            self.assertEqual((None, None), (found.latitude, found.longitude), fields)
-
-    def test_the_pair_a_camera_without_a_fix_writes_is_no_place(self):
-        found = meta_of(**{"Composite:GPSLatitude": 0, "Composite:GPSLongitude": 0})
-        self.assertEqual((None, None), (found.latitude, found.longitude))
-
-    def test_a_zero_on_one_axis_is_a_place(self):
-        found = meta_of(**{"Composite:GPSLatitude": 0, "Composite:GPSLongitude": 36.8})
-        self.assertEqual((0.0, 36.8), (found.latitude, found.longitude))
-
-    def test_text_that_is_a_number_is_read_and_other_text_is_not(self):
-        found = meta_of(**{"Composite:GPSLatitude": "48.85", "Composite:GPSLongitude": "-122.4"})
-        self.assertEqual((48.85, -122.4), (found.latitude, found.longitude))
-        for bad in ("", "north", "nan", "inf", float("nan"), float("inf"), True, [1, 2]):
-            found = meta_of(**{"Composite:GPSLatitude": bad, "Composite:GPSLongitude": 10.0})
-            self.assertEqual((None, None), (found.latitude, found.longitude), bad)
-
-    def test_a_coordinate_out_of_range_is_no_place(self):
-        for latitude, longitude in ((91, 10), (-91, 10), (10, 181), (10, -181)):
-            found = meta_of(**{"Composite:GPSLatitude": latitude, "Composite:GPSLongitude": longitude})
-            self.assertEqual((None, None), (found.latitude, found.longitude), (latitude, longitude))
-
-
-class WhatIsNotThere(unittest.TestCase):
-    def test_a_photo_with_none_of_it_is_empty(self):
-        self.assertEqual(photo_meta.EMPTY, meta_of(**{"XMP:Subject": ["Trips/Coast"]}))
-        self.assertEqual(photo_meta.EMPTY, meta_of())
-
-    def test_a_row_never_read_or_damaged_is_empty(self):
-        for raw in ({}, None, [], "text", 7):
-            self.assertEqual(photo_meta.EMPTY, photo_meta.extract(raw), repr(raw))
-
-    def test_the_json_of_a_row_is_read_and_damaged_json_is_empty(self):
-        self.assertEqual(4, photo_meta.from_json('{"XMP:Rating": 4}').rating)
-        for text in (None, "", "{not json", "[1]", "null"):
-            self.assertEqual(photo_meta.EMPTY, photo_meta.from_json(text), repr(text))
-
-    def test_one_bad_value_does_not_cost_the_photo_the_others(self):
-        found = meta_of(**{"XMP:Rating": "lots", "EXIF:Make": "Harbourlight", "Composite:GPSLatitude": 200,
-                           "Composite:GPSLongitude": 10})
-        self.assertEqual((None, "Harbourlight", None, None), (found.rating, found.make, found.latitude, found.width))
 
 
 class TheFoldersOfRowForms(unittest.TestCase):

@@ -1,7 +1,7 @@
 """The derived tables follow every write (tagpup.store.derived; docs/ARCHITECTURE.md, phase 9a).
 
 A write that changes a photo's keywords, path or metadata, deletes a photo, or edits the tag tree,
-tells photo_tags, folders, photo_folder and photo_meta in the SAME transaction -- or the views read
+tells photo_tags, folders and photo_folder in the SAME transaction -- or the views read
 rows that describe what a photo used to hold, as the index's rows once did after a bulk tag write
 (CLAUDE.md). Each test makes a library the way the app does, writes through the production writer
 (the index's record_indexed, the tag, save, move, forget and remove writers, the journal, the tree's
@@ -64,10 +64,6 @@ class WithALibrary(unittest.TestCase):
     def folders(self):
         return sorted(path for (path,) in self.rows("SELECT path FROM folders"))
 
-    def meta_of(self, photo_id):
-        return self.rows("SELECT rating, make, model, latitude, longitude FROM photo_meta WHERE photo_id = ?",
-                         photo_id)[0]
-
     def agrees(self):
         """Every table is what a rebuild from the photos would make it."""
         self.assertEqual([], derived.problems(self.conn))
@@ -77,8 +73,7 @@ class WithALibrary(unittest.TestCase):
         return {"photo_tags": self.rows("SELECT * FROM photo_tags ORDER BY 1, 2"),
                 "folders": self.rows("SELECT parent_id IS NULL, path, name FROM folders ORDER BY path"),
                 "photo_folder": self.rows("SELECT pf.photo_id, f.path FROM photo_folder pf JOIN folders f"
-                                          " ON f.id = pf.folder_id ORDER BY 1"),
-                "photo_meta": self.rows("SELECT * FROM photo_meta ORDER BY 1")}
+                                          " ON f.id = pf.folder_id ORDER BY 1")}
 
 
 class TheIndexRecordsAPhoto(WithALibrary):
@@ -88,7 +83,6 @@ class TheIndexRecordsAPhoto(WithALibrary):
         one = self.read("2024", "a.jpg", ["Trips/Coast"], **{"XMP:Rating": 4})
         self.assertEqual(["Trips/Coast"], self.tags_of(one))
         self.assertEqual(self.where("2024", ""), self.folder_of(one) + os.sep)
-        self.assertEqual(4, self.meta_of(one)[0])
         other = db.connect(db.readonly_uri(self.path), uri=True)
         try:
             self.assertEqual(0, other.execute("SELECT COUNT(*) FROM photo_tags").fetchone()[0], "not before the commit")
@@ -128,8 +122,6 @@ class TheIndexRecordsAPhoto(WithALibrary):
         self.conn.commit()
         self.agrees()
         self.assertEqual(["Trips/Lake"], self.tags_of(one))
-        self.assertEqual(5, self.meta_of(one)[0])
-        self.assertEqual("Harbourlight", self.meta_of(one)[1])
         self.assertEqual(folder, self.rows("SELECT id FROM folders WHERE path = ?", os.path.dirname(self.where("2024", "a.jpg"))))
 
     def test_a_keyword_whose_node_is_made_after_the_photo_gets_its_row_when_the_node_is(self):
@@ -207,14 +199,13 @@ class OtherWritersOfAPhoto(WithALibrary):
         self.assertEqual([], self.tags_of(self.one))
         self.agrees()
 
-    def test_a_save_follows_its_keywords_and_its_metadata(self):
+    def test_a_save_follows_its_keywords(self):
         os.makedirs(os.path.dirname(self.photo))
         with open(self.photo, "wb") as handle:
             handle.write(b"not really a photo")   # a save stamps the row with its file's
         raw = photo_rows.as_read(self.photo, {"XMP:Subject": ["Trips/Lake"], "XMP:Rating": 3})["raw_metadata"]
         photos.record_saved(self.path, self.photo, ["Trips/Lake"], [], raw)
         self.assertEqual(["Trips/Lake"], self.tags_of(self.one))
-        self.assertEqual(3, self.meta_of(self.one)[0])
         self.agrees()
 
     def test_a_field_written_or_undone_follows(self):
@@ -224,7 +215,6 @@ class OtherWritersOfAPhoto(WithALibrary):
         db.write_with_connection(self.path, lambda conn: photos.follow_fields(
             conn, self.photo, {"XMP:Subject": ["Trips/Coast", "Activity/Sailing"], "XMP:Rating": 5}))
         self.assertEqual(["Activity/Sailing", "Trips/Coast"], self.tags_of(self.one))
-        self.assertEqual(5, self.meta_of(self.one)[0])
         self.agrees()
         db.write_with_connection(self.path, lambda conn: photos.follow_fields(
             conn, self.photo, {"XMP:Subject": ["Trips/Coast"], "XMP:Rating": None}))
@@ -236,7 +226,6 @@ class OtherWritersOfAPhoto(WithALibrary):
         self.conn.commit()
         self.assertEqual(os.path.dirname(path).lower(), self.folder_of(unread).lower())
         self.assertEqual([], self.tags_of(unread))
-        self.assertEqual((None,) * 5, self.meta_of(unread))
         self.agrees()
 
 
@@ -293,7 +282,7 @@ class APhotoDeleted(WithALibrary):
         self.conn.commit()
 
     def gone(self, name):
-        for table in ("photo_tags", "photo_folder", "photo_meta"):
+        for table in ("photo_tags", "photo_folder"):
             self.assertEqual(0, self.rows("SELECT COUNT(*) FROM %s WHERE photo_id = ?" % table, self.ids[name])[0][0], table)
 
     def test_forgetting_a_photo_takes_its_rows_and_the_folder_it_emptied(self):
@@ -479,7 +468,6 @@ class TheJournalsWrites(WithALibrary):
         row = dict(zip(("path", "tags", "raw_metadata"), self.rows("SELECT path, tags, raw_metadata FROM photos WHERE id = ?", self.a)[0]))
         applied = journal.apply(self.path, "delete", [journal.delete("photos", (self.a,), {"path": row["path"]})])
         self.assertEqual([], self.tags_of(self.a))
-        self.assertEqual(0, self.rows("SELECT COUNT(*) FROM photo_meta WHERE photo_id = ?", self.a)[0][0])
         self.agrees()
         journal.undo(self.path, applied.change_id)
         self.assertEqual(self.held, self.dump())
@@ -628,7 +616,7 @@ class OneWriterAtATime(WithALibrary):
         with mock.patch.object(derived, "_write_folders", side_effect=RuntimeError("the power went")):
             with self.assertRaises(RuntimeError):
                 db.write_with_connection(self.path, derived.rebuild_all)
-        self.assertEqual(held, self.dump(), "photo_tags and photo_meta were rewritten in the transaction that rolled back")
+        self.assertEqual(held, self.dump(), "photo_tags were rewritten in the transaction that rolled back")
 
     def test_the_repair_puts_right_what_a_writer_that_forgot_left(self):
         self.tree("Trips/Coast")
