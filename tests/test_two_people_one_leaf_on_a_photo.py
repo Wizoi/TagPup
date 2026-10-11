@@ -15,6 +15,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_faces_and_tags_in_step import InStep  # noqa: E402
+from face_rows import add_face  # noqa: E402
 
 from tagpup.services import inspect  # noqa: E402
 from tagpup.core.vocabulary import Ref  # noqa: E402
@@ -127,6 +128,28 @@ class TwoSamsOnAPhoto(InStep):
         self.assertEqual(self.sam_t, self.row(self.first)[3], "reading linked nobody")
         stale = self.tuner_client.get("/library/api/person-faces", query_string={"person_id": 99999})
         self.assertEqual(404, stale.status_code)
+
+    def test_an_old_page_with_only_a_name_one_person_has_still_works_and_a_loose_row_is_nobodys(self):
+        """An open page sends a name until it is reloaded: for a name one person has it works, as a read and a write. A face named
+        only 'Sam' with no id (an automatic guess from before ids) is in neither Sam's page, however it is asked for."""
+        def wren(conn):
+            with people.tree_edit(conn):
+                taxonomy.add_path(conn, "People", root_has_face=1)
+                taxonomy.add_path(conn, "People/Wren Halloway")
+            return add_face(conn, self.photo_path, box=(120, 10, 160, 60), name="Sam", name_source="auto", tag_id=None)
+        loose = db.write_with_connection(self.path, wren)
+        self.assertEqual((None, "Sam"), self.row(loose)[3:4] + self.row(loose)[0:1], "the guess has a name and no id")
+        node = self.node("People/Wren Halloway")
+        written = self.match(self.first, person_name="Wren Halloway")
+        self.assertEqual(200, written.status_code, written.get_json())
+        self.assertEqual(node, self.row(self.first)[3])
+        read = self.tuner_client.get("/library/api/person-faces", query_string={"name": "Wren Halloway", "limit": -1})
+        self.assertEqual([self.first], [face["id"] for face in read.get_json()["faces"]])
+        for sam in (self.sam_t, self.sam_i):
+            page = self.tuner_client.get("/library/api/person-faces", query_string={"person_id": sam, "limit": -1}).get_json()
+            self.assertNotIn(loose, [face["id"] for face in page["faces"]], "a name alone is nobody's face")
+        by_name = self.tuner_client.get("/library/api/person-faces", query_string={"name": "Sam", "limit": -1})
+        self.assertEqual(400, by_name.status_code, "and asking for the name is asked which one")
 
     def test_inspect_finds_the_photos_of_the_one_person_a_path_names_and_of_everyone_a_name_names(self):
         other = self.held("regatta_002.jpg")

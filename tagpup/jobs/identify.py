@@ -39,13 +39,14 @@ BUILD_STAGES = (
 class BuildProgress:
     """How far along each grid being built has got, so the screen can say so instead of
     sitting blank for a minute. Written by the request doing the work and read by a
-    status request on another thread. Keyed by person, because two people's grids can
-    be built at once."""
+    status request on another thread. Keyed by what the request called the grid -- the id of
+    the person's node (a page that has the person), a bucket's name, or the name an old page
+    or an unresolved name sends -- because two people's grids can be built at once."""
 
     def __init__(self):
-        self._by_name = {}
+        self._by_key = {}
 
-    def report(self, name, stage, fraction, message):
+    def report(self, key, stage, fraction, message):
         """`fraction` is progress within the stage, 0 to 1. The overall figure comes
         from the stage weights, so it only ever moves forward."""
         done = 0.0
@@ -54,8 +55,8 @@ class BuildProgress:
                 done += weight * max(0.0, min(1.0, fraction))
                 break
             done += weight
-        self._by_name[name] = {
-            "name": name,
+        self._by_key[key] = {
+            "name": key,
             "stage": stage,
             "message": message,
             "percent": int(round(done * 100)),
@@ -63,18 +64,18 @@ class BuildProgress:
             "updated": time.time(),
         }
 
-    def done(self, name):
+    def done(self, key):
         """However a build ended, nothing is being built for this person any more.
         Left behind, a stale entry would keep a progress bar on screen for good."""
-        self._by_name.pop(name, None)
+        self._by_key.pop(key, None)
 
     def building(self):
         """Is a grid being built now?"""
-        return bool(self._by_name)
+        return bool(self._by_key)
 
-    def of(self, name):
+    def of(self, key):
         """The progress the status route answers with: what was reported, or idle."""
-        return self._by_name.get(name) or {"name": name, "active": False, "percent": 0}
+        return self._by_key.get(key) or {"name": key, "active": False, "percent": 0}
 
 
 class GridCache:
