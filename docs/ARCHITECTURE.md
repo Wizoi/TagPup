@@ -34,10 +34,10 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Models built once, from a library's settings | `tagpup/runtime.py` | `tests/test_models_single_owner.py` |
 | A library's settings; where the libraries are | `tagpup/services/settings.py`; `tagpup/config.py` | `tests/test_config_single_owner.py` |
 | What may be set (one rule per kind of input) | `tagpup/core/validation.py`, `web/common/validate.js` | `tests/test_validation.py` |
-| Derived tables (`photo_tags`, `folders`, `photo_folder`, `photo_meta`, the search words) | `tagpup/store/derived.py`, `tagpup/store/search_index.py` | `tests/test_derived_writers.py` |
+| Derived tables (`photo_tags`, `folders`, `photo_folder`, the search words) | `tagpup/store/derived.py`, `tagpup/store/search_index.py` | `tests/test_derived_writers.py` |
 | Who is who (clustering, a face's name looking wrong) | `tagpup/core/clustering.py`, `tagpup/services/identities.py` | `tests/test_face_values_have_one_owner.py` |
 | Keeping a library in step with its folders | `tagpup/services/sync.py`, `tagpup/jobs/watching.py` | `tests/test_sync.py` |
-| A folder renamed outside the apps | `tagpup/services/sync.py` (pairs the files by name, size and modified time; a folder renamed and re-saved is reported missing and renamed back by hand) | `tests/test_sync.py`, `tests/test_unused_folder_id_tables.py` |
+| A folder renamed outside the apps | `tagpup/services/sync.py` (pairs the files by name, size and modified time; a folder renamed and re-saved is reported missing and renamed back by hand) | `tests/test_sync.py`, `tests/test_unused_tables.py` |
 | Roots (where a library's folders are, per machine) | `tagpup/services/roots*.py`, `tagpup/store/adoption.py`, `tagpup/config.py` | `tests/test_roots*.py` |
 | The library views (grid, navigator, search) | `tagpup/services/library_view.py`, `tagpup/store/library_view.py`, `web/tagpup/` | `tests/test_library_view.py`, `tests/frontend/` |
 | A page's request, its DOM output | `web/common/api.js`, `web/common/dom.js` | `tests/frontend/` |
@@ -126,7 +126,7 @@ Guard tests, each of which fails the build. The ones marked *exists* are in plac
 - ExifTool and `Image.open` only inside `tagpup.files`.
 - Entry points import services and jobs, never store, files or ml directly.
 - Every POST route returns a `Result`.
-- Derived tables written only by their rebuild functions. *Exists:* `tests/test_derived_writers.py`, for `photo_tags`, `folders`, `photo_folder` and `photo_meta`: a function that writes a photo's tags, path or metadata, or the tag tree, goes through `tagpup.store.derived`.
+- Derived tables written only by their rebuild functions. *Exists:* `tests/test_derived_writers.py`, for `photo_tags`, `folders` and `photo_folder`: a function that writes a photo's tags, path or metadata, or the tag tree, goes through `tagpup.store.derived`.
 - Pages: `/api/` URLs built only by `web/common/api.js`. Tags split only by the vocabulary helpers (*exists:* `tests/frontend/tag-vocabulary.test.mjs`).
 - What may be set: one rule for each kind of input, `tagpup.core.validation`, which the pages apply from `/api/rules` and keep no copy of. *Exists:* `tests/test_validation.py`, `tests/frontend/validation.test.mjs`.
 - Pages: nothing but a fixed string written into `innerHTML`, `outerHTML` or `insertAdjacentHTML`; elements are built from text by `web/common/dom.js`. *Exists:* `tests/frontend/dom-output.test.mjs`.
@@ -238,8 +238,8 @@ person is the id of a node in the tag tree** (`tag_taxonomy.id`): `faces.tag_id`
 are the key and `name` a cache of the node's leaf; a name with no id is an *unresolved name*, left as it is
 and listed for the owner (names to review). A person tag is a leaf; a branch is a group, never a person.
 A folder is the derived `folders` row (rebuilt, its integer ids change). The `folder_ids` and `library_identity`
-tables and the `.tagpup` files the folder markers wrote are unused (owner, 2026-10-10: the marker code is deleted; the
-tables are dropped by migration 30, the files stay on disk and nothing reads them).
+tables the folder markers wrote were dropped by migration 30 (owner, 2026-10-10: the marker code is deleted; the
+`.tagpup` files stay on disk and nothing reads them).
 
 **Roots.** `roots` (name, the share's address) is empty until the owner adopts a root. A library with roots
 holds a path under one as `@<root>/<relative>` (`paths.to_row`/`from_row`, converted at the database
@@ -250,7 +250,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 |---|---|---|
 | File copy (the file is the truth) | `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`) | only after a file is read or written: indexer, `refresh_rows`, `record_tags_in_index` (`store/photos.py`) |
 | Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders`, `name_review_dismissals`, `damaged_files` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
-| Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `photo_meta`, `search_words`/`search_names`/`search_gear` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `suggestions`, `faces_pending`, `faces_detected` | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py` |
+| Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `search_words`/`search_names` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `suggestions`, `faces_pending`, `faces_detected` | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py` |
 | Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs`, `sync_runs` | `store/schema.py`, `store/generations.py`, `store/job_runs.py`, `store/sync_runs.py` |
 | The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state) | `store/journal.py`, `store/file_journal.py` |
 
@@ -338,7 +338,7 @@ Every section of the former `ARCHITECTURE.md` is in `docs/history/`, unedited. C
 | Name faces from tags | [history/ARCHITECTURE_faces_and_naming.md](history/ARCHITECTURE_faces_and_naming.md) |
 | Backlog: face regions and the expensive results in the photo file | [history/ARCHITECTURE_faces_and_naming.md](history/ARCHITECTURE_faces_and_naming.md) |
 | The library view's selection details navigate, and a photo has a way back | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |
-| Camera and lens words | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |
+| Camera and lens words (the FTS5 table of them was dropped by migration 30; a camera is now found in the photos' metadata, `search_index.cameras_with`) | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |
 | Backlog: which photo fields are searchable | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |
 | The owner's decisions for the three big projects | [history/ARCHITECTURE_faces_and_naming.md](history/ARCHITECTURE_faces_and_naming.md) |
 | Phase 10: Family albums from many sources | [history/ARCHITECTURE_phases.md](history/ARCHITECTURE_phases.md) |
