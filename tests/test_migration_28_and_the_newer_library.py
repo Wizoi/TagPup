@@ -272,7 +272,7 @@ class EveryEntryPointSaysItInWords(unittest.TestCase):
     def test_the_cli_says_it_and_exits_1_for_any_command(self):
         before = fingerprint(self.path)
         from tagpup_cli import cli
-        for command in (["stats"], ["list-index"], ["sync"], ["undo", "1"]):
+        for command in (["sync"], ["undo", "1"]):
             with self.subTest(command=command[0]):
                 result = CliRunner().invoke(cli, ["--db", self.path] + command)
                 self.assertEqual(1, result.exit_code, result.output)
@@ -283,7 +283,7 @@ class EveryEntryPointSaysItInWords(unittest.TestCase):
     def test_the_cli_does_not_judge_a_library_that_is_not_there(self):
         from tagpup_cli import cli
         missing = os.path.join(os.path.dirname(self.path), "nobody.db")
-        result = CliRunner().invoke(cli, ["--db", missing, "stats"])
+        result = CliRunner().invoke(cli, ["--db", missing, "history"])
         self.assertNotIn("newer version", result.output)
 
     def test_the_mcp_refuses_to_name_it(self):
@@ -406,7 +406,7 @@ class RecoveryOfANewerLibrary(unittest.TestCase):
         self.assertEqual([], schema.ensure(self.path))
 
     def test_every_cli_writer_is_refused_with_the_backups_named(self):
-        for command in (["undo", "1", "--apply"], ["sync", "--apply"], ["stats"]):
+        for command in (["undo", "1", "--apply"], ["sync", "--apply"]):
             with self.subTest(command=command):
                 before = fingerprint(self.path)
                 result = self.cli(*command)

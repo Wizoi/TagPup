@@ -584,24 +584,6 @@ class TheCliLooksWithoutStamping(ALibrary):
         result = CliRunner().invoke(tagpup_cli.cli, ["--db", library.path] + list(args), catch_exceptions=False)
         return result
 
-    def test_stats_list_index_search_and_inspect_stamp_nothing(self):
-        library = self.library_in_use()
-        photo = os.path.join(self.home.root, "jetty.jpg")
-        from PIL import Image
-        Image.new("RGB", (8, 8)).save(photo, "JPEG")
-        clip = mock.Mock()
-        clip.embed_text.return_value = [0.0] * 512
-        extractor = mock.Mock()
-        extractor.return_value.batch_read.return_value = [{"path": photo, "tags": [], "people": [], "captions": []}]
-        with mock.patch("tagpup.runtime._build_clip", return_value=clip), \
-                mock.patch("tagpup_cli.MetadataExtractor", extractor):
-            for args in (["stats"], ["list-index"], ["search", "kayak"], ["inspect", photo]):
-                with self.subTest(command=args[0]):
-                    result = self.cli(library, *args)
-                    self.assertEqual(0, result.exit_code, result.output)
-                    self.assertEqual({}, settings_rows(library), "%s stamped the library" % args[0])
-                    self.assertEqual([], history(library))
-
     def test_a_reset_names_its_stamp_for_the_library_it_replaced(self):
         library = self.new_library()
         settings.change(library, {"candidates.tags": "Kayak, Lighthouse"})

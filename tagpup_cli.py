@@ -81,22 +81,18 @@ from tagpup.core.result import NotFound
 from tagpup.services import maintenance
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services.search import PhotoIndex, stored_mismatch
-from tagpup.services.suggester import TagSuggester
 from tagpup.store.locks import PathLocker
 from tagpup.store import faces as store_faces
 from tagpup.store import taxonomy as store_taxonomy
-from tagpup.core import suggesting
 from tagpup.files import images as image_files
 from tagpup.core import library as libraries
 from tagpup.core.library import Library
 
-def get_runtime(read_only=False):
+def get_runtime():
     """The models a command runs (tagpup.runtime), from the settings of the library it is
     given: each is built the first time the command asks for it, and loaded the first
-    time it is used. `read_only` for a command that only looks (stats, list-index,
-    search): it reads the library's settings without stamping one that holds none, as
-    the MCP server's inspections and the doctor do -- a look was a journaled change."""
-    return Runtime(read_only=read_only)
+    time it is used."""
+    return Runtime()
 
 def _stamp(path):
     """(mtime, size) of the file now, or None when it cannot be read."""
@@ -106,25 +102,9 @@ def _stamp(path):
         return None
     return (stat.st_mtime, stat.st_size)
 
-def library_index(runtime, db_path, read_only=False):
-    """The library's photos, with their vectors under its CLIP model. `read_only` for a
-    command that only looks: the library is not migrated (docs/findings.md, #243)."""
-    return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)), read_only=read_only)
-
-def say_if_behind(photo_index):
-    """Tell the person a library a look did not migrate is behind this version of TagPup."""
-    if photo_index.behind:
-        console.print(f"[yellow]This library has not had {len(photo_index.behind)} of this version's"
-                      " migrations; a look does not apply them. Indexing it, or opening it in TagPup,"
-                      " brings it up to date.[/yellow]")
-
-def say_not_loaded(photo_index, hint=""):
-    """A look could not load the library: it is too far behind this version to be read (say so; the note of
-    say_if_behind came just before), or it holds no index (docs/findings.md, #297)."""
-    if photo_index.behind:
-        console.print("[bold red]Error:[/bold red] This library cannot be read until it is brought up to date.")
-    else:
-        console.print("[bold red]Error:[/bold red] No photo index found." + hint)
+def library_index(runtime, db_path):
+    """The library's photos, with their vectors under its CLIP model."""
+    return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)))
 
 
 def get_exiftool_path(db_path, read_only=False) -> str:
@@ -645,246 +625,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         console.print("\n[bold]Root categories detected in library:[/bold]")
         for root, count in sorted(roots.items(), key=lambda x: -x[1]):
             console.print(f"  • {root}: {count} path(s)")
-
-@cli.command()
-@click.argument("directory", type=click.Path(exists=True, file_okay=False))
-@click.option("--k", default=15, help="Number of nearest neighbors to consider.")
-@click.option("--min-sim", default=0.35, type=float, help="Cosine similarity cutoff.")
-@click.option("--add", "add_folder", is_flag=True,
-              help="Add the folder to the library first when it does not hold it: each photo gets its row, as "
-                   "TagPup's Add does. Without it, a folder the library does not hold is refused.")
-@click.pass_context
-def suggest(ctx, directory: str, k: int, min_sim: float, add_folder: bool = False):
-    """Show the tags TagPup would suggest for the photos of a folder. Nothing is written."""
-    runtime = get_runtime()
-
-    # Load Index & Taxonomy
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-    library = Library(db_path)
-    # Suggest records faces and vectors for every photo it looks at, each on its row: only
-    # in the folders the library holds (tagpup.services.libraries.not_in).
-    settings = runtime.settings(library)
-    refusal = library_actions.not_in(library, directory, settings.ignored)
-    if refusal and not add_folder:
-        console.print(f"[bold red]Error:[/bold red] {refusal} (--add adds it; `index` adds and reads it)")
-        ctx.exit(1)
-    if refusal:
-        library_actions.record_added(library, [directory])
-        console.print(f"Added the folder to {library.name}; `index` reads its photos into it.")
-    model_name = settings.embedder["model_name"]
-
-    photo_index = library_index(runtime, db_path)
-    if not photo_index.load():
-        console.print("[bold red]Error:[/bold red] No photo index found. Please run 'index' first.")
-        return
-    
-    try:
-        # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
-        mismatch = stored_mismatch(photo_index, model_name)
-        if mismatch:
-            console.print(f"[bold red]Error:[/bold red] Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Please run 'index' first to rebuild the index using the new model.")
-            return
-
-        taxonomy = TagTaxonomy(db_path)
-        taxonomy.load()
-
-        # The library's words and the tree's, but no one's name (tagpup.core.suggesting).
-        candidate_tags = suggesting.zero_shot_words(settings.candidate_words, taxonomy.paths, taxonomy.people_roots())
-
-        embeddings = runtime.embeddings(library, photo_index)
-        suggester = TagSuggester(photo_index, taxonomy, embedder=runtime.clip(library, settings),
-                                 candidate_tags=candidate_tags, faces=runtime.faces(library, settings))
-
-        # Scan untagged photos
-        console.print(f"[bold cyan]Scanning directory for untagged photos:[/bold cyan] {directory}")
-        all_images = scan_for_images(directory)
-        console.print(f"Found {len(all_images)} image(s) total.")
-
-        if not all_images:
-            console.print("[yellow]No supported images found. Exiting.[/yellow]")
-            return
-
-        # Batch read metadata for all untagged images
-        console.print(f"[bold cyan]Reading metadata for {len(all_images)} image(s)...[/bold cyan]")
-        exiftool_path = runtimes.exiftool(library, settings)
-        extractor = MetadataExtractor(exiftool_path=exiftool_path)
-        
-        batch_size = 500
-        metadata_map = {}
-        from tqdm import tqdm
-        for i in tqdm(range(0, len(all_images), batch_size), desc="Reading metadata"):
-            batch = all_images[i:i+batch_size]
-            batch_meta = extractor.batch_read(batch, people=store_taxonomy.people_vocabulary(db_path))
-            for meta in batch_meta:
-                metadata_map[meta["path"]] = meta
-
-        # Process each untagged image
-        console.print("[bold cyan]Generating suggestions...[/bold cyan]")
-        suggestions_output = []
-        
-        for path in tqdm(all_images, desc="Generating suggestions"):
-            try:
-                emb = embeddings.of(path)
-                meta = metadata_map.get(path)
-                sugg = suggester.suggest_for_photo(path, emb, k=k, min_sim=min_sim, target_metadata=meta)
-                suggestions_output.append(sugg)
-            except Exception as e:
-                logger.error(f"Error processing {path}: {e}")
-
-        # Apply folder consensus post-processing to boost/decay scores
-        console.print("[bold cyan]Applying event-level folder consensus...[/bold cyan]")
-        suggestions_output = suggester.apply_folder_consensus(suggestions_output)
-
-        # A preview: what TagPup would suggest. Nothing is written (a folder's suggestions are made
-        # and applied in TagPup's pages, whose Suggest keeps them in the library).
-        if suggestions_output:
-            table = Table(title="Generated Tag Suggestions Summary")
-            table.add_column("Photo File", style="green")
-            table.add_column("Top Suggested Tags (Confidence)", style="magenta")
-            table.add_column("Nearest Neighbors (Similarity)", style="cyan")
-
-            for sugg in suggestions_output:
-                # Top 5 tags; '*' marks a tag that is a new recommendation.
-                tags = sugg.get("suggested_tags", [])
-                tags_str = ", ".join([f"{t['tag']}{'*' if t.get('is_new_recommendation') else ''} ({t['score']:.2f})" for t in tags[:5]])
-                if len(tags) > 5:
-                    tags_str += f" (+{len(tags) - 5} more)"
-                if not tags:
-                    tags_str = "[yellow]No tags suggested[/yellow]"
-
-                neighbors = sugg.get("nearest_neighbors", [])
-                neighbors_str = ", ".join([f"{os.path.basename(n['path'])} ({n['similarity']:.2f})" for n in neighbors[:2]])
-                if not neighbors:
-                    neighbors_str = "[yellow]None[/yellow]"
-
-                table.add_row(os.path.basename(sugg["path"]), tags_str, neighbors_str)
-            console.print(table)
-    finally:
-        photo_index.close()
-
-@cli.command()
-@click.argument("query")
-@click.option("--k", default=10, help="Number of results to return.")
-@click.pass_context
-def search(ctx, query: str, k: int):
-    """Semantic text search across indexed library."""
-    runtime = get_runtime(read_only=True)
-
-    # Load Index
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-    model_name = runtime.settings(Library(db_path)).embedder["model_name"]
-    photo_index = library_index(runtime, db_path, read_only=True)
-    loaded = photo_index.load()
-    say_if_behind(photo_index)
-    if not loaded:
-        say_not_loaded(photo_index, " Please run 'index' first.")
-        return
-        
-    try:
-        # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
-        mismatch = stored_mismatch(photo_index, model_name)
-        if mismatch:
-            console.print(f"[bold red]Error:[/bold red] Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Please run 'index' first to rebuild the index using the new model.")
-            return
-
-        # Embed text query
-        console.print(f"Embedding query: '[bold yellow]{query}[/bold yellow]'")
-        query_vector = runtime.clip(Library(db_path)).embed_text(query)
-
-        # Perform search
-        results = photo_index.search(query_vector, k=k)
-
-        if not results:
-            console.print("[yellow]No matches found.[/yellow]")
-            return
-
-        # Print results
-        table = Table(title=f"Search Results for '{query}'")
-        table.add_column("Similarity", justify="right", style="cyan")
-        table.add_column("Photo Path", style="green")
-        table.add_column("Existing Tags", style="magenta")
-
-        for sim, meta in results:
-            tags_str = ", ".join(meta.get("tags", []) + meta.get("people", []))
-            table.add_row(f"{sim:.3f}", meta["path"], tags_str)
-
-        console.print(table)
-    finally:
-        photo_index.close()
-
-@cli.command()
-@click.pass_context
-def stats(ctx):
-    """Index statistics (tag counts, people, coverage)."""
-    runtime = get_runtime(read_only=True)
-
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-
-    photo_index = library_index(runtime, db_path, read_only=True)
-    loaded = photo_index.load()
-    say_if_behind(photo_index)
-    if not loaded:
-        say_not_loaded(photo_index, " Please run 'index' first.")
-        return
-        
-    try:
-        taxonomy = TagTaxonomy(db_path)
-        taxonomy.load()
-
-        records = photo_index.records()
-        total_indexed = len(records)
-        
-        # Tag and people distribution
-        tag_counts = {}
-        people_counts = {}
-        
-        for meta in records:
-            for tag in meta.get("tags", []):
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
-            for person in meta.get("people", []):
-                people_counts[person] = people_counts.get(person, 0) + 1
-
-        console.print("\n[bold underline]Index Statistics[/bold underline]")
-        console.print(f"Total Indexed Photos: [bold green]{total_indexed}[/bold green]")
-        console.print(f"Unique Tags Found: {len(tag_counts)}")
-        console.print(f"Unique People Tagged: {len(people_counts)}")
-        console.print(f"Total Taxonomy Paths: {len(taxonomy.paths)}")
-
-        # Display Top Tags
-        if tag_counts:
-            top_tags_table = Table(title="Top 10 Tags")
-            top_tags_table.add_column("Tag", style="magenta")
-            top_tags_table.add_column("Count", justify="right", style="cyan")
-            for tag, count in sorted(tag_counts.items(), key=lambda x: -x[1])[:10]:
-                top_tags_table.add_row(tag, str(count))
-            console.print(top_tags_table)
-
-        # Display Top People
-        if people_counts:
-            top_people_table = Table(title="Top 10 People")
-            top_people_table.add_column("Person", style="green")
-            top_people_table.add_column("Count", justify="right", style="cyan")
-            for person, count in sorted(people_counts.items(), key=lambda x: -x[1])[:10]:
-                top_people_table.add_row(person, str(count))
-            console.print(top_people_table)
-
-        # Root Taxonomy Stats
-        roots = taxonomy.get_root_categories()
-        if roots:
-            roots_table = Table(title="Taxonomy Roots Coverage")
-            roots_table.add_column("Root Category", style="yellow")
-            roots_table.add_column("Path Count", justify="right", style="cyan")
-            for root, count in sorted(roots.items(), key=lambda x: -x[1]):
-                roots_table.add_row(root, str(count))
-            console.print(roots_table)
-    finally:
-        photo_index.close()
 
 @cli.command()
 @click.option("--apply", "apply_", is_flag=True, help="Back the library up, then compact it. Without it, only says how much would be freed.")
@@ -1688,88 +1428,6 @@ def snapshots_restore(ctx, name, apply_):
     console.print("Restored %s from %s. The library as it was is %s: `snapshots restore %s --apply` puts it back."
                   % (library.name, name, result.details["before_restore"], result.details["before_restore"]),
                   markup=False)
-
-
-@cli.command()
-@click.argument("photo_path", type=click.Path(exists=True, dir_okay=False))
-@click.pass_context
-def inspect(ctx, photo_path: str):
-    """Inspect metadata found in a single image (useful for debugging)."""
-    # Who the keywords name depends on the library's taxonomy.
-    db_path = get_db_path(ctx.obj.get("test", False), ctx.obj.get("db"))
-    exiftool_path = get_exiftool_path(db_path, read_only=True)
-
-    console.print(f"Inspecting file: [bold cyan]{photo_path}[/bold cyan]")
-    extractor = MetadataExtractor(exiftool_path=exiftool_path)
-    meta = extractor.batch_read([photo_path], people=store_taxonomy.people_vocabulary(db_path))[0]
-
-    console.print("\n[bold underline]Parsed Output[/bold underline]")
-    console.print(f"Path: {meta['path']}")
-    console.print(f"Tags: {meta['tags']}")
-    console.print(f"People: {meta['people']}")
-    console.print(f"Captions: {meta['captions']}")
-
-    # Raw metadata output
-    raw = meta.get("raw_metadata", {})
-    if raw:
-        table = Table(title="Raw Read Fields")
-        table.add_column("ExifTool Tag", style="yellow")
-        table.add_column("Value", style="green")
-        for k, v in sorted(raw.items()):
-            table.add_row(k, str(v))
-        console.print(table)
-    else:
-        console.print("[yellow]No raw metadata fields read by ExifTool.[/yellow]")
-
-@cli.command("list-index")
-@click.option("--folder", default=None, help="Filter results to paths under this directory.")
-@click.pass_context
-def list_index(ctx, folder):
-    """List all photos currently stored in the index, optionally filtered by folder."""
-    runtime = get_runtime(read_only=True)
-
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-
-    photo_index = library_index(runtime, db_path, read_only=True)
-    loaded = photo_index.load()
-    say_if_behind(photo_index)
-    if not loaded:
-        say_not_loaded(photo_index)
-        return
-        
-    try:
-        # Filter paths and gather metadata
-        # paths.is_under, not startswith: C:\Photos2 starts with C:\Photos.
-        matches = [meta for meta in photo_index.records()
-                   if not folder or paths.is_under(meta["path"], folder)]
-
-        if not matches:
-            console.print("[yellow]No matching photos found in the index.[/yellow]")
-            return
-
-        table = Table(title=f"Indexed Photos Summary ({len(matches)} matches)")
-        table.add_column("Photo File", style="green")
-        table.add_column("Tags", style="magenta")
-        table.add_column("People", style="cyan")
-        table.add_column("Caption", style="yellow")
-
-        for meta in sorted(matches, key=lambda x: x["path"]):
-            filename = os.path.basename(meta["path"])
-            tags_str = ", ".join(meta.get("tags", [])) or "-"
-            people_str = ", ".join(meta.get("people", [])) or "-"
-            
-            captions = meta.get("captions", [])
-            caption_str = captions[0] if captions else "-"
-            if len(caption_str) > 50:
-                caption_str = caption_str[:47] + "..."
-
-            table.add_row(filename, tags_str, people_str, caption_str)
-
-        console.print(table)
-    finally:
-        photo_index.close()
 
 
 @cli.command("remove")
