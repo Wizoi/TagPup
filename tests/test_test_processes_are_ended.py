@@ -1,10 +1,9 @@
 """A test that starts servers ends every process it started, and every one they started,
 however it ends (tests/own_home.py, end_processes; docs/findings.md, #727).
 
-tests/test_supervisor_hand_over.py failed part-way once and left four processes running
-for hours: its cleanup ended the supervisor and the server its records named at that
-moment, and a supervisor started to take over -- named by no record yet -- then started
-a server of its own.
+A hand-over test failed part-way once and left four processes running for hours: its
+cleanup ended the processes its records named at that moment, and a process started to
+take over -- named by no record yet -- then started a server of its own.
 """
 import os
 import subprocess
@@ -18,7 +17,7 @@ from tagpup import launcher  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 
 #: Starts a process of its own from the same folder and exits, leaving it running: what a
-#: supervisor handing over does.
+#: a process handing over does.
 STARTER = '''import os, sys
 sys.path.insert(0, %r)
 from tagpup.core import processes

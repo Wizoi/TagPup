@@ -171,7 +171,6 @@ class ASandboxServer(unittest.TestCase):
                 os.environ.pop(name, None)
             env = sandbox.environment(home.root, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1",
                                       TAGPUP_WEB_NO_WARMUP="1", TAGPUP_WEB_RELOADED="1")
-        env.pop("TAGPUP_SUPERVISOR_TOKEN", None)
         ports = [free_port(), free_port()]
         log = open(os.path.join(home.root, "server.log"), "wb")
         self.addCleanup(log.close)

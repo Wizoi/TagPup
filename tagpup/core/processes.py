@@ -118,7 +118,7 @@ def python_command_lines(timeout=30):
 def recorded_alive(record):
     """Is the process a record names -- {"pid", "started"}: its id and when it started
     (started()) -- still running? A record of an ended process whose id another now has is
-    not: Windows reuses an id soon. The one test of the supervisor's, the launcher's and the
+    not: Windows reuses an id soon. The one test of the launcher's and the
     tests' records."""
     if not isinstance(record, dict) or not record.get("pid"):
         return False

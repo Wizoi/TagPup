@@ -18,17 +18,16 @@ from flask import jsonify
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
-from tagpup import supervisor  # noqa: E402
+from tagpup.web import lifecycle as lifecycles  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
-from tagpup.web import lifecycle as lifecycles  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
 TOKEN = "a-token-of-the-supervisors"
-HEADERS = {supervisor.TOKEN_HEADER: TOKEN}
+HEADERS = {lifecycles.TOKEN_HEADER: TOKEN}
 
 
 class FakeBackground:
@@ -257,7 +256,7 @@ class AQuietMoment(Base):
 
 class OnlyTheSupervisor(Base):
     def test_may_drain_or_resume_the_server(self):
-        for headers in ({}, {supervisor.TOKEN_HEADER: "a guess"}):
+        for headers in ({}, {lifecycles.TOKEN_HEADER: "a guess"}):
             self.assertEqual(403, self.client().post("/api/server/drain", json={}, headers=headers).status_code)
             self.assertEqual(403, self.client().post("/api/server/resume", headers=headers).status_code)
         self.assertTrue(self.lifecycle.status()["taking_work"])
@@ -266,7 +265,7 @@ class OnlyTheSupervisor(Base):
         app = web.create_app("tagpup", startup=self.library)
         self.assertEqual(403, app.test_client().post("/api/server/drain", json={}, headers=HEADERS).status_code)
         self.assertEqual(403, app.test_client().post("/api/server/drain", json={},
-                                                     headers={supervisor.TOKEN_HEADER: ""}).status_code)
+                                                     headers={lifecycles.TOKEN_HEADER: ""}).status_code)
 
     def test_a_deadline_must_be_a_number_of_seconds(self):
         for seconds in (0, -1, "60", True, lifecycles.MAX_DRAIN_SECONDS + 1):

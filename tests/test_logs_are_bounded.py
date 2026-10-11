@@ -4,7 +4,7 @@ The always-on process runs for weeks. A log it appended to for ever would fill t
 and, read by the Activity page, take longer to read each time. Every log is written by a
 RotatingFileHandler made in one place, tagpup.logs.to_file -- 5 MB, five kept -- and
 the one file written otherwise, the server's console output (its stdout and stderr, a
-handle the supervisor hands the child), is rotated each time the server starts: the
+handle a launch or an install hands the child), is rotated each time the server starts: the
 server logs to its own file, so what reaches the console is only what escapes logging
 (a crash before logging is set up, an interpreter's fatal error).
 """
@@ -28,7 +28,6 @@ HANDLER_OWNER = os.path.join("tagpup", "logs.py")
 
 #: Files opened for appending in shipped code, and why each is bounded.
 APPENDED = {
-    os.path.join("tagpup", "supervisor.py"): "the server's console output, rotated at CONSOLE_LOG_MAX as each server starts",
     os.path.join("tagpup", "launcher.py"): "the output of a server an install started, rotated the same way as it starts",
 }
 
@@ -79,13 +78,6 @@ class EveryLogIsBounded(unittest.TestCase):
         self.assertEqual([1], appends('open(path, "a")\n'))
         self.assertEqual([1], appends('open(path, mode="ab")\n'))
         self.assertEqual([], appends('open(path, "rb")\n'))
-
-    def test_the_consoles_output_is_rotated_as_the_server_starts(self):
-        with open(os.path.join(ROOT, "tagpup", "supervisor.py"), encoding="utf-8") as handle:
-            source = handle.read()
-        start = source[source.index("    def start_child(self):"):source.index("    def stop_child(self):")]
-        self.assertLess(start.index("CONSOLE_LOG_MAX"), start.index('open(log_path, "ab")'),
-                        "the console's output is rotated before it is appended to")
 
 
 class ToFileRotates(unittest.TestCase):

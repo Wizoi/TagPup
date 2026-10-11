@@ -67,30 +67,10 @@ function indexingLines(library) {
 function serverLines(data) {
     const lines = [];
     const server = data.server || {};
-    const supervisor = data.supervisor;
     if (server.taking_work === false) {
         lines.push(buildElement('div', { className: 'activity' }, [
             badge('draining', 'busy'),
             buildElement('span', { className: 'detail', text: 'The server takes no new work while it moves onto a new version.' }),
-        ]));
-    }
-    if (supervisor && supervisor.state === 'moving') {
-        lines.push(buildElement('div', { className: 'activity' }, [
-            badge('update waiting', 'busy'),
-            buildElement('span', { className: 'detail',
-                                   text: `Moving ${supervisor.why || 'to a new version'} at the next quiet moment` }),
-        ]));
-    }
-    if (supervisor && supervisor.update_refused) {
-        lines.push(buildElement('div', { className: 'activity' }, [
-            badge('update refused', 'bad'),
-            buildElement('span', { className: 'detail', text: supervisor.update_refused.said || '' }),
-        ]));
-    }
-    if (supervisor && ['gave up', 'restarting', 'waiting for the ports'].includes(supervisor.state)) {
-        lines.push(buildElement('div', { className: 'activity' }, [
-            badge(supervisor.state, 'bad'),
-            buildElement('span', { className: 'detail', text: supervisor.why || '' }),
         ]));
     }
     if (data.syncing) {

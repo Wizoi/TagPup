@@ -438,7 +438,6 @@ class ForReal(unittest.TestCase):
         self.env = dict(os.environ, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1", TAGPUP_WEB_NO_WARMUP="1",
                         # The browser opens only on a first start: a test's never does.
                         TAGPUP_WEB_RELOADED="1")
-        self.env.pop("TAGPUP_SUPERVISOR_TOKEN", None)
 
     def install(self, name):
         import install_app

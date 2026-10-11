@@ -7,7 +7,6 @@ Every library is made in a home of the test's own; the runs, syncs and changes a
 seeded as the store records them (tagpup.store.job_runs, sync_runs; a journaled change of
 the settings), never through what is under test.
 """
-import json
 import logging
 import os
 import sys
@@ -176,17 +175,6 @@ class Now(Base):
                          indexing["running"]["logs"])
         self.assertIsNone(by_name["regatta"]["indexing"]["running"])
         self.assertTrue(found["server"]["taking_work"])
-
-    def test_the_supervisors_state_is_shown_without_its_token(self):
-        state = {"pid": 4242, "state": "running", "since": "2026-09-26 09:00:00", "version": "20260926-090000-abc1234",
-                 "server_token": "a-secret", "update_refused": None, "crashes": 1}
-        with open(os.path.join(self.home.data, "supervisor.json"), "w", encoding="utf-8") as handle:
-            json.dump(state, handle)
-        found = self.get("/api/activity/now")["supervisor"]
-        self.assertEqual("running", found["state"])
-        self.assertEqual(1, found["crashes"])
-        self.assertNotIn("server_token", found)
-        self.assertNotIn("a-secret", json.dumps(self.get("/api/activity/server")))
 
     def test_the_watchers_sync_under_way(self):
         watcher = FakeWatcher({"running": True, "roots": [], "libraries": {},

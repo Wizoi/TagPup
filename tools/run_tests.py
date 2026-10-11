@@ -214,7 +214,7 @@ def keep_failed_run(text):
 #: Files that run in a lane of their own, one at a time, beside the pool and not in it: their deadlines are real
 #: time -- they start server processes and wait for them -- and a pool slot's share of a loaded machine made two
 #: of them fail that wait (docs/findings.md, #476). Beside the pool, the suite takes no longer than it did.
-ALONE = ("test_supervisor",)
+ALONE = ()   # none now; the supervisor's tests were the two that needed it
 
 
 def run(modules, jobs, accept_fewer=False):
