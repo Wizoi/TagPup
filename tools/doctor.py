@@ -84,7 +84,7 @@ def report(db_path, show=0, out=print):
         unnamed = checks.tags_without_a_node(conn)
         empty = checks.empty_folders(conn)
         nameless = checks.names_without_a_person(conn)
-        to_review = checks.names_to_review(conn)
+        at_the_top = checks.people_at_the_top(conn)
         sharing = checks.people_sharing_a_leaf(conn)
         words = search_index.present(conn)
     finally:
@@ -131,14 +131,16 @@ def report(db_path, show=0, out=print):
     if empty:
         out("folders holding no photo: %d (left by a delete that did not come through TagPup; reported, not broken: "
             "--rebuild-derived --apply takes them)" % len(empty))
-    if to_review[0] or to_review[1]:
-        out("names to review: %d waiting, %d set aside (reported, not broken: a name no person's tag is, for the owner to settle one "
-            "at a time in TagTuner's Review People -- make a person, link it, unname the faces or set it aside; nothing is "
-            "converted by itself)" % to_review[:2])
+    if at_the_top:
+        out("people at the top level of the tree (not filed in a branch): %d (reported, not broken: a name or a keyword seen "
+            "for the first time is made a node there; merge each into its branch in the library's tag view)" % len(at_the_top))
+        for tag in sorted(at_the_top)[:show]:
+            out("    %s" % tag)
     for label, found in (("no person node", nameless.none), ("several person nodes", nameless.several)):
         if found:
             out("names with %s: %d, on %d row(s) of faces and photos' people (reported, not broken: they have no "
-                "person id, and none is guessed)" % (label, len(found), sum(found.values())))
+                "person id, and none is guessed%s)" % (label, len(found), sum(found.values()),
+                                                      "; `tagpup_cli.py tree-fill` gives them nodes" if found is nameless.none else ""))
             for name, count in sorted(found.items(), key=lambda pair: (-pair[1], pair[0]))[:show]:
                 out("    %6d  %s" % (count, name))
     if sharing:
@@ -148,8 +150,7 @@ def report(db_path, show=0, out=print):
             out("    %s" % "  |  ".join(tags))
     if nameless.one:
         out("names one person is called whose rows are linked to nobody: %d, on %d face(s) decided by hand, %d other face(s) and %d "
-            "listed person(s) (reported, not broken: nothing links them by itself, so they are on no person's page; "
-            "TagTuner's names to review links one)"
+            "listed person(s) (reported, not broken: nothing links them by itself, so they are on no person's page)"
             % (len(nameless.one), sum(each[1] for each in nameless.one.values()), sum(each[2] for each in nameless.one.values()),
                sum(each[3] for each in nameless.one.values())))
         for name, (_person, by_hand, by_guess, listed_people) in sorted(
@@ -234,7 +235,7 @@ def rebuild_derived(db_path, apply=False, out=print):
 def _person_ids_wrong(conn):
     """A line for each table whose rows hold a name that is not their person's (tagpup.store.person_ids: the id is the person and
     the name a cache of the node's leaf) or an id of a node that is gone. A name with no id is not this: it is reported by
-    names_without_a_person, and linked only by the owner (the names to review)."""
+    names_without_a_person."""
     return ["%d row(s) of %s hold a name that is not their person's" % (found.rows, table)
             for table in person_ids.TABLES for found in [person_ids.out_of_step(conn, table)] if found.rows]
 

@@ -22,7 +22,6 @@ import {
 } from './sidebar.js';
 import { restoreIndexingState, wireIndexing } from './indexing.js';
 import { wireReview } from './review.js';
-import { wireNamesReview } from './names-review.js';
 import { wireTunerGear } from './gear.js';
 import { wireNameFaces } from './name-faces.js';
 import { wireZoom } from './zoom.js';
@@ -81,8 +80,6 @@ document.addEventListener('DOMContentLoaded', () => {
     wireTunerGear();
     // How many folders under the library's roots wait to be included or ignored.
     wireReview();
-    // The names no person's tag is, for the owner to settle: a first row of Review People, and the dialog it opens.
-    wireNamesReview();
     // The Folder Matches header's "Name faces from tags" (the gear's item is wired with the gear).
     wireNameFaces();
     // A library whose root this computer does not place says so, at the top of the page.

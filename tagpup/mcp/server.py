@@ -234,8 +234,8 @@ def build():
 
     @tool("Every consistency check tools/doctor.py runs, in its order, with how many rows break "
           "each and how many checks are broken; and how many photos have no CLIP vector for the "
-          "library's CLIP model, and `names_to_review` -- the names no person's tag is that the owner settles in "
-          "TagTuner, as counts by reason (reported, not broken). Rows whose file is gone are missing_files'."
+          "library's CLIP model, and `people_at_the_top` -- the people directly under the tag tree's root, "
+          "not yet filed in a branch (reported, not broken). Rows whose file is gone are missing_files'."
           + REVEAL)
     def checks(library: str, reveal: bool = False) -> dict[str, Any]:
         def read():

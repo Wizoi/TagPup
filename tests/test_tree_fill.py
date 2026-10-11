@@ -14,12 +14,14 @@ from unittest import mock
 from click.testing import CliRunner
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+import doctor  # noqa: E402
 import people_by_id  # noqa: E402
 import photo_rows  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup.store import db, people, taxonomy  # noqa: E402
-from tagpup.services import tree_fill  # noqa: E402
+from tagpup.services import inspect, tree_fill  # noqa: E402
 
 PIER = "Trips/Harbour Walk/Pier"
 ZED = "Zed Quill"
@@ -165,6 +167,30 @@ class Legacy(unittest.TestCase, people_by_id.TwoSams):
         schema.ensure(other)
         tree_fill.run(self.library, apply=True)
         self.assertEqual([], people_by_id.look(other, "SELECT tag FROM tag_taxonomy WHERE lower(tag) = lower(?)", (PIER,)))
+
+    # ---- what the owner is told after
+
+    def test_the_doctor_counts_the_people_at_the_top_and_names_them_only_when_asked(self):
+        tree_fill.run(self.library, apply=True)
+        lines = []
+        doctor.report(self.path, out=lines.append)
+        said = [line for line in lines if line.startswith("people at the top level of the tree (not filed in a branch): 2 ")]
+        self.assertEqual(1, len(said), lines)
+        self.assertNotIn(ZED, "\n".join(lines))
+        shown = []
+        doctor.report(self.path, 5, out=shown.append)
+        self.assertIn("    " + ZED, shown)
+        self.assertNotIn("names to review", "\n".join(shown + lines))
+
+    def test_the_mcp_checks_say_how_many_and_name_them_only_with_reveal(self):
+        tree_fill.run(self.library, apply=True)
+        self.assertEqual({"count": 2}, inspect.all_checks(self.library)["people_at_the_top"])
+        self.assertEqual({"count": 2, "tags": [YARA, ZED]}, inspect.all_checks(self.library, reveal=True)["people_at_the_top"])
+
+    def test_the_doctor_points_a_name_with_no_node_at_the_command(self):
+        lines = []
+        doctor.report(self.path, out=lines.append)
+        self.assertTrue([line for line in lines if line.startswith("names with no person node") and "tree-fill" in line], lines)
 
     # ---- the command
 

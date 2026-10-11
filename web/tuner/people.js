@@ -9,7 +9,6 @@ import {
 } from './elements.js';
 import { BUCKET, isBucket } from './rules.js';
 import { updateURLParams } from './shared.js';
-import { loadNamesCount, showNamesRow } from './names-review.js';
 import { renderTagList } from './tags.js';
 import { clearFaceDetails, updateMatchingSelectionUI } from './selection.js';
 import { updateTabLabels } from './grid-parts.js';
@@ -77,8 +76,6 @@ export function fetchPeopleWithCounts(isSilent = false, keepTab = false) {
             state.allPeopleWithCounts = data;
             if (personFaces) state.personFaces = personFaces;
             renderPeopleList(keepTab);
-            // Review People opens with how many names wait (a first row, only when some do); read after the list is drawn.
-            if (modeSelect.value === 'face-matching') loadNamesCount();
         }))
         .catch(err => {
             if (err.name === 'AbortError') return;
@@ -187,7 +184,6 @@ function renderPeopleList(keepTab = false) {
     if (state.allPeopleWithCounts.length === 0) {
         state.shownPeople = [];
         listStats.textContent = 'No people found';
-        showNamesRow();
         return;
     }
 
@@ -255,7 +251,6 @@ function renderPeopleList(keepTab = false) {
         li.addEventListener('click', () => selectPerson(person.name, li, false, false, li.personId));
         photoList.appendChild(li);
     });
-    showNamesRow();
 
     // Restore scroll position
     photoList.scrollTop = savedScrollTop;

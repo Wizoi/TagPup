@@ -9,7 +9,7 @@ import collections
 import os
 
 from tagpup.core import paths, vocabulary
-from tagpup.store import derived, generations, name_review, people, person_ids, schema, search_index
+from tagpup.store import derived, generations, people, person_ids, schema, search_index, taxonomy
 from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
@@ -162,7 +162,7 @@ def tags_without_a_node(conn):
 def face_person_ids_out_of_step(conn):
     """Faces whose name is not their person's: the id (`faces.tag_id`) is the person and `name` the cache of the node's leaf, so a
     name written without the id (a version of the app from before migration 29 that renamed a face) or an id of a node that is
-    gone. (A name with no id is not this: `names_without_a_person` reports it, and the owner links it.) The examples are face ids. `tools/doctor.py --rebuild-derived
+    gone. (A name with no id is not this: `names_without_a_person` reports it.) The examples are face ids. `tools/doctor.py --rebuild-derived
     --apply` puts them right, the id being the key. Waits for migration 21."""
     found = person_ids.out_of_step(conn, "faces", EXAMPLES)
     return Check("faces whose name is not their person's", found.rows, found.examples)
@@ -194,12 +194,11 @@ def people_sharing_a_leaf(conn):
     return {leaf: sorted(tags) for leaf, tags in sharing.items() if len(tags) > 1}
 
 
-def names_to_review(conn):
-    """(names waiting for the owner, names set aside, listed rows naming a group tag) -- the names-to-review list's counts
-    (tagpup.store.name_review.split is the one rule). Reported, not broken: nothing is converted by itself, the owner settles each
-    in TagTuner's Review People. Names only through `name_review.waiting`."""
-    waiting, hidden, stale = name_review.waiting(conn)
-    return len(waiting), len(hidden), stale
+def people_at_the_top(conn):
+    """The tags of the people directly under the tree's root, not filed in a branch (taxonomy.top_level_people). Reported, not
+    broken: a name or a keyword seen for the first time is made a node there (every tag has an id, 2026-10-10), and the owner
+    merges it into the right branch in the tag view of the library. Counts in the doctor; the tags only with --show."""
+    return taxonomy.top_level_people(conn)
 
 
 def people_on_faces_alone(conn):
