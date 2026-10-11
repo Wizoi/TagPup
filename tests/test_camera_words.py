@@ -56,7 +56,7 @@ class Cameras(unittest.TestCase):
 class WhatTheWordsFind(Cameras):
     def test_the_make_the_model_and_a_partial_token_find_the_camera(self):
         cases = {"tidewater": [self.big, self.small], "tid": [self.big, self.small], "r6": [self.big], "r6m2": [self.big],
-                 "TX": [self.big], "skiff": [self.small], "pixel": [self.phone], "lanternfly": [self.phone, self.xmp_only],
+                 "skiff": [self.small], "pixel": [self.phone], "lanternfly": [self.phone, self.xmp_only],
                  "kite": [self.xmp_only]}
         for text, expected in cases.items():
             with self.subTest(text=text):
@@ -66,7 +66,7 @@ class WhatTheWordsFind(Cameras):
         self.assertEqual([self.phone], self.found("lanternfly pixel"))
         self.assertEqual([self.small], self.found("tidewater skiff"))
         # "Tidewater TX R6m2" is the model alone: the make is not put before a model that begins with it.
-        self.assertEqual([self.big], self.found("tidewater tx"))
+        self.assertEqual([self.big], self.found("tidewater r6m2"))
         self.assertEqual([], self.found("tidewater tidewater2"))
 
     def test_the_lens_is_found_by_its_name_its_range_and_its_aperture(self):
@@ -78,7 +78,7 @@ class WhatTheWordsFind(Cameras):
                 self.assertEqual(expected, self.found(text))
 
     def test_a_term_is_found_anywhere_in_the_name_and_every_term_must_be_found(self):
-        self.assertEqual([self.big], self.found("ater tx"), "inside the make and the model, not only at their start")
+        self.assertEqual([self.big], self.found("ater r6m2"), "inside the make and the model, not only at their start")
         self.assertEqual([self.small], self.found("KIFF"), "without case")
         self.assertEqual([self.phone], self.found("elan"), "without accents")
         self.assertEqual([self.big], self.found("tidewater 24-70"))
@@ -167,6 +167,17 @@ class TheWordsFollowTheWrites(Cameras):
     def test_a_metadata_row_that_is_not_json_names_no_camera_and_costs_the_others_nothing(self):
         self.vl.conn.execute("UPDATE photos SET raw_metadata = '{not json' WHERE id = ?", (self.scan,))
         self.vl.conn.commit()
+        self.assertEqual([self.big, self.small], self.found("tidewater"))
+
+    def test_a_short_term_without_a_digit_is_no_camera(self):
+        for text in ("on", "a", "to", "ti"):
+            with self.subTest(text=text):
+                self.assertNotIn(self.big, self.found(text + " d.jpg"))
+                self.assertEqual([], search_index.cameras_with(self.vl.conn, text))
+        for text in ("r6", "tidewater"):
+            with self.subTest(text=text):
+                self.assertTrue(search_index.cameras_with(self.vl.conn, text))
+        self.assertEqual([self.big], self.found("r6"))
         self.assertEqual([self.big, self.small], self.found("tidewater"))
 
     def test_a_term_is_text_not_a_pattern(self):

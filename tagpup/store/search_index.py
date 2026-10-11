@@ -302,10 +302,17 @@ def _file_of(conn):
     return None
 
 
+#: The fewest characters a camera term has unless it holds a digit.
+CAMERA_TERM = 3
+
+
 def cameras_with(conn, term):
     """The ids of the photos whose camera or lens holds `term` anywhere in it, without case or accents: "r6" finds "Canon
     EOS R6m2", "24-70" finds "EF24-70mm f/2.8L II USM". Plain text, never a pattern. From the cache of the photos'
-    cameras (a library on no file, a test's in-memory one, reads them each time)."""
+    cameras (a library on no file, a test's in-memory one, reads them each time). A term of under three characters with no
+    digit matches no camera ("on", "a", "to": a caption search must not return every Canon); "r6" and "x100" do."""
+    if len(term) < CAMERA_TERM and not any(each.isdigit() for each in term):
+        return []
     key = _file_of(conn)
     cameras = _read_cameras(conn) if key is None else _cameras.get(conn, key)
     folded = _fold(term)
