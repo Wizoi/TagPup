@@ -278,6 +278,7 @@ class WhoMayDrain(unittest.TestCase):
         path = self.home.library("harbour.db")
         library_actions.create(path)
         self.lifecycle = Lifecycle(version=OLD, launcher_token=TOKEN, work=lambda: [])
+        self.addCleanup(self.lifecycle.resume)      # a drain asks the batches to stop and keeps asking until it resumes
         self.app = web.create_app("tagpup", lifecycle=self.lifecycle)
         self.app.testing = True
 

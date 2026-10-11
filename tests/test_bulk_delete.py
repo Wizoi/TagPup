@@ -19,7 +19,7 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import recycle_bin  # noqa: E402
-from tagpup.services import bulk_edit, selection  # noqa: E402
+from tagpup.services import batches  # noqa: E402
 
 REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
 ALL = {"source": {"kind": "all"}}
@@ -146,7 +146,7 @@ class Deleting(Delete):
         refused = self.start(ALL, {"token": asked["token"]}, expect=409)
         self.assertIn("changed since you were asked", refused["error"])
         self.assertEqual([], self.sent, "nothing deleted")
-        self.assertEqual(0, bulk_edit.running(self.library), "nothing begun")
+        self.assertEqual(0, batches.running_here(), "nothing begun")
         self.assertTrue(os.path.exists(self.vl.path_of(fresh)))
         # Asked again, the question names 36 and the delete deletes exactly those.
         done = self.start(ALL)
@@ -188,12 +188,12 @@ class Deleting(Delete):
             with self.subTest(params=params):
                 self.assertIn("error", self.start({"ids": self.coast[:1]}, params, expect=400))
         self.assertEqual(self.coast[:1], self.held(self.coast[:1]))
-        with mock.patch.object(selection, "MAX_SELECTED", 10):
+        with mock.patch.object(batches, "MAX_BATCH", 10):
             refused = self.start(ALL, {"token": "0" * 64}, expect=400)
         self.assertIn("Select up to 10 photos at a time", refused["error"])
         self.assertEqual([], self.sent)
 
-    def test_while_a_delete_is_written_another_bulk_edit_is_refused_and_a_second_delete_too(self):
+    def test_while_a_delete_is_written_another_edit_waits_its_turn_and_then_runs(self):
         reached, release = threading.Event(), threading.Event()
 
         def gate():
@@ -207,14 +207,20 @@ class Deleting(Delete):
             "op": "delete", "selection": {"ids": self.coast[:2]}, "params": {"token": token}}).status_code))
         thread.start()
         self.assertTrue(reached.wait(30))
-        self.assertIn("already running", self.start({"ids": self.lakes}, expect=409)["error"])
-        tags = self.client.post("/library/api/library/bulk-edit", json={"op": "tags", "selection": ALL, "params": {"add": ["Trips/Coast"]}})
-        self.assertEqual(409, tags.status_code)
-        self.assertEqual(self.lakes, self.held(self.lakes), "the refused delete deleted nothing")
+        other, second = self.check({"ids": self.lakes})["token"], []
+        waiting = threading.Thread(target=lambda: second.append(self.app.test_client().post("/library/api/library/bulk-edit", json={
+            "op": "delete", "selection": {"ids": self.lakes}, "params": {"token": other}}).status_code))
+        waiting.start()
+        while batches.running_here() < 2:
+            threading.Event().wait(0.01)
+        self.assertEqual(["running", "queued"], [each["state"] for each in batches.listing(self.library)])
+        self.assertEqual(self.lakes, self.held(self.lakes), "the waiting delete has deleted nothing")
         release.set()
         thread.join(60)
-        self.assertEqual([200], first)
+        waiting.join(60)
+        self.assertEqual(([200], [200]), (first, second))
         self.assertEqual([], self.held(self.coast[:2]))
+        self.assertEqual(0, batches.running_here())
 
     def test_the_edit_is_one_request_with_no_run_to_poll(self):
         self.start({"ids": self.coast[:2]})
@@ -245,7 +251,7 @@ class Asking(Delete):
                          sorted(paths.key(path) for path in asked))
 
     def test_over_the_bulk_cap_this_pc_only_and_nonsense(self):
-        with mock.patch.object(selection, "MAX_SELECTED", 10):
+        with mock.patch.object(batches, "MAX_BATCH", 10):
             self.assertIn("Select up to 10 photos at a time", self.check(ALL, expect=400)["error"])
         self.check({"ids": self.coast[:1]}, expect=403, environ_overrides=REMOTE)
         for body in (None, {"ids": "x"}, {"source": {"kind": "nope"}}):

@@ -42,7 +42,7 @@ import time
 import exiftool
 from exiftool.exceptions import ExifToolExecuteError, ExifToolNotRunning, ExifToolVersionError
 
-__all__ = ["ExifToolSession", "ExifToolTimeout", "ExifToolFailed", "DEFAULT_TIMEOUT"]
+__all__ = ["ExifToolSession", "ExifToolTimeout", "ExifToolFailed", "StaysDead", "DEFAULT_TIMEOUT"]
 
 logger = logging.getLogger(__name__)
 
@@ -301,3 +301,28 @@ class ExifToolSession(exiftool.ExifToolHelper, _DrainingExifTool):
             logger.warning("ExifTool failed a command (exit status %s, %s): %s", e.returncode,
                            _describe(e.cmd), _text(e.stderr).strip() or "it said nothing")
             raise ExifToolFailed(e.returncode, e.stdout, e.stderr, e.cmd) from None
+
+
+class StaysDead:
+    """A session of one batch of writes, which stays dead once a command has timed out: pyexiftool starts its process again on the
+    next command, and that command would wait its own deadline for a share that is not coming back. Every command after a timeout
+    answers the same ExifToolTimeout at once, so the files after it are errors in the time it takes to say so."""
+
+    def __init__(self, session):
+        self._session = session
+        self._dead = None
+
+    def __getattr__(self, name):
+        wanted = getattr(self._session, name)
+        if not callable(wanted):
+            return wanted
+
+        def command(*args, **kwargs):
+            if self._dead is not None:
+                raise self._dead
+            try:
+                return wanted(*args, **kwargs)
+            except ExifToolTimeout as stalled:
+                self._dead = stalled
+                raise
+        return command

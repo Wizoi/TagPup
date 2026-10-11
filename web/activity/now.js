@@ -20,6 +20,34 @@ export function loadNow() {
     });
 }
 
+/** Stop a batch of photo files of this server at its chunk (or never start it, if it waits). */
+function cancelBatch(library, batch) {
+    return api.site.json('/api/activity/batches/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ library: library.name, ticket: batch.ticket }),
+    }).then(() => loadNow());
+}
+
+/** A batch of photo files, running or waiting: how far, and Cancel when this server runs it. */
+function batchLines(library) {
+    return (library.batches || []).map(batch => {
+        const detail = batch.state === 'queued'
+            ? `${batch.photos} photos, ${batch.position} ahead; a restart drops it before anything is written`
+            : `${batch.done} of ${batch.photos} photos written${batch.conflict ? `, ${batch.conflict} changed outside` : ''}`
+              + `${batch.state === 'stopping' ? ', stopping after this chunk' : ''}${batch.here ? '' : ' (another program runs it)'}`;
+        const button = batch.ticket === null ? null : buildElement('button', {
+            className: 'btn cancel-batch', text: 'Cancel', attrs: { type: 'button', disabled: batch.state === 'stopping' } });
+        if (button) button.addEventListener('click', () => { if (!button.disabled) { button.disabled = true; cancelBatch(library, batch); } });
+        return buildElement('div', { className: 'activity' }, [
+            badge(batch.state, batch.state === 'queued' ? 'quiet' : 'busy'),
+            buildElement('span', { className: 'what', text: batch.operation }),
+            buildElement('span', { className: 'detail', text: detail }),
+            button,
+        ]);
+    });
+}
+
 function indexingLines(library) {
     const lines = [];
     const indexing = library.indexing || {};
@@ -61,6 +89,7 @@ function indexingLines(library) {
             ...runLinks(job.run, job.logs),
         ]));
     }
+    lines.push(...batchLines(library));
     return lines;
 }
 

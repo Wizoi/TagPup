@@ -42,7 +42,7 @@ import time
 
 from tagpup.core import paths, runs
 from tagpup.core.result import Conflict, NotFound, Refused
-from tagpup.services import bulk_edit
+from tagpup.services import batches
 from tagpup.services import faces as face_service
 from tagpup.services import faces_from_tags, folder_scope
 from tagpup.services import roots as roots_service
@@ -335,9 +335,8 @@ def _waiting(library):
 
 
 def other_work(library):
-    """Why not now, as sentences, from what this module can see: a bulk edit of the library's photos under way here.
-    [] when none."""
-    return ["a bulk edit is running"] if bulk_edit.running(library) else []
+    """Why not now, as sentences, from what this module can see: a batch of photo files under way here. [] when none."""
+    return ["a photo batch is running"] if batches.running_here() else []
 
 
 def _refuse_if_working(library):
@@ -353,7 +352,7 @@ def _claim(library):
     if not claim:
         if claim.why == "behind":
             raise Conflict("%s has not been brought up to date yet: open it in TagPup once and try again." % library.name)
-        where = "in this TagPup" if bulk_edit.is_this_process(claim.holder) else "in another TagPup process"
+        where = "in this TagPup" if batches.is_this_process(claim.holder) else "in another TagPup process"
         raise Conflict("Name faces from tags is already running in %s, %s. Wait for it to finish." % (library.name, where))
     return claim
 
@@ -542,7 +541,7 @@ def stored_status(library, handle):
     latest = chain[0]
     counts = latest.changed or {}
     state = counts.get("state") if latest.outcome != "running" else (
-        counts.get("state") if bulk_edit.process_alive(latest.owner) else ABANDONED)
+        counts.get("state") if batches.process_alive(latest.owner) else ABANDONED)
     if latest.outcome == "abandoned":
         state = ABANDONED
     return {"job": handle, "library": library.name, "state": state or (DONE if latest.outcome == "done" else FAILED),

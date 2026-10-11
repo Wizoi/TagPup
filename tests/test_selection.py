@@ -16,7 +16,7 @@ import web_client  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core.result import Refused  # noqa: E402
-from tagpup.services import library_view, selection  # noqa: E402
+from tagpup.services import batches, library_view, selection  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 SOURCES = (
@@ -129,24 +129,24 @@ class Resolving(Library):
                 self.assertEqual([], self.resolve({"source": named}).ids)
 
     def test_a_selection_above_the_cap_is_refused_with_how_many_it_was(self):
-        with mock.patch.object(selection, "MAX_SELECTED", 4):
+        with mock.patch.object(batches, "MAX_BATCH", 4):
             with self.assertRaises(Refused) as why:
                 self.resolve({"source": {"kind": "all"}})
             self.assertEqual("Select up to 4 photos at a time (5 are selected).", str(why.exception))
-        with mock.patch.object(selection, "MAX_SELECTED", 5):
+        with mock.patch.object(batches, "MAX_BATCH", 5):
             self.assertEqual(5, len(self.resolve({"source": {"kind": "all"}}).ids))
 
     def test_the_cap_counts_what_is_left_after_the_exclusions(self):
         # "Everything but these": 5 photos, 3 excluded, 2 are left, and a cap of 4 is no reason to refuse them. The source is read
         # up to the cap and the exclusions, so a page that excluded most of a library is not turned away for the library's size.
-        with mock.patch.object(selection, "MAX_SELECTED", 4):
+        with mock.patch.object(batches, "MAX_BATCH", 4):
             found = self.resolve({"source": {"kind": "all"}, "excluded": [self.a, self.b, self.c]})
             self.assertEqual((2, 5, 3), (len(found.ids), found.requested, found.excluded))
             self.assertEqual(4, len(self.resolve({"source": {"kind": "all"}, "excluded": [self.a]}).ids))
             with self.assertRaises(Refused) as why:
                 self.resolve({"source": {"kind": "all"}, "excluded": []})
             self.assertIn("5 are selected", str(why.exception))
-        with mock.patch.object(selection, "MAX_SELECTED", 1), self.assertRaises(Refused):
+        with mock.patch.object(batches, "MAX_BATCH", 1), self.assertRaises(Refused):
             self.resolve({"source": {"kind": "all"}, "excluded": [self.a, self.b, self.c]})   # two are left, one more than the cap
 
     def test_a_source_that_changes_while_it_is_read_is_one_moment_not_a_mixture(self):

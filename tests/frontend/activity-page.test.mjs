@@ -23,6 +23,14 @@ const NOW = {
       },
       suggesting: [{ library: "harbour", folder: "Lakes", status: "running", completed: 3, total: 9 }],
       jobs: [],
+      batches: [
+        { ticket: 3, id: 41, operation: "bulk tags", library: "harbour", photos: 60, done: 25, conflict: 1, planned: 34,
+          started: 1, state: "running", position: 0, here: true },
+        { ticket: 4, id: null, operation: "bulk people", library: "harbour", photos: 40, done: 0, conflict: 0, planned: 0,
+          started: null, state: "queued", position: 1, here: true },
+        { ticket: null, id: 42, operation: "bulk tags", library: "harbour", photos: 30, done: 2, conflict: 0, planned: 28,
+          started: null, state: "running", position: 0, here: false },
+      ],
     },
     { name: "regatta", indexing: { running: null, queued: [] }, suggesting: [],
       jobs: [{ job: "snapshots", run_id: 12, started: "2026-09-26 09:58:00", run: "job:regatta:12",
@@ -151,6 +159,24 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.match(now.textContent, /snapshots/);
     assert.match(now.textContent, /D:\\Photos\\Regatta/);
     assert.equal(document.getElementById("updated").textContent, "Updated 10:00:03");
+  });
+
+  test("Now: batches of photo files, running and waiting, with Cancel for this server's own", async (t) => {
+    const fake = server().on("/api/activity/batches/cancel", { success: true });
+    const { document, window } = await open(t, fake);
+    await flush(window, 6);
+    const now = document.getElementById("now-body");
+    assert.match(now.textContent, /bulk tags.*25 of 60 photos written, 1 changed outside/);
+    assert.match(now.textContent, /bulk people.*40 photos, 1 ahead; a restart drops it before anything is written/);
+    assert.match(now.textContent, /2 of 30 photos written \(another program runs it\)/);
+    const buttons = now.querySelectorAll("button.cancel-batch");
+    assert.equal(buttons.length, 2, "another program's batch cannot be cancelled here");
+    click(window, buttons[0]);
+    await flush(window, 4);
+    const posted = fake.calls.filter((call) => call.method === "POST");
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].url, "/api/activity/batches/cancel");
+    assert.deepEqual(posted[0].body, { library: "harbour", ticket: 3 });
   });
 
   test("Scheduled jobs: each run with its counts and error, a failure flagged, Run now", async (t) => {

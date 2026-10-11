@@ -26,7 +26,7 @@ from tagpup.core.library import picker_name
 from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
-from tagpup.services import bulk_edit
+from tagpup.services import batches, bulk_edit
 from tagpup.services import file_changes, file_only
 from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
@@ -438,11 +438,13 @@ def folder_auto_apply():
     # click on their chip files them (tagging.person_filer), the tree read once.
     try:
         # The page's records are told in the order the files were written.
-        with file_changes.exclusively():
+        with file_changes.batch_exclusively(library, "apply suggestions", len(suggestions)):
             result = tagging_actions.apply_suggestions(library, suggestions, state.exiftool(library), threshold)
             if result.refused:
                 return _refused_after_writing(library, result)
             records_written(library, result)
+    except (Conflict, Refused) as why:
+        return responses.error(409, str(why))      # too many batches wait ahead (tagpup.services.batches)
     except Exception as e:
         logger.error("Error auto-applying suggestions: %s", e)
         return responses.error(500, str(e))
@@ -954,16 +956,10 @@ def photo_delete():
     return jsonify(reply)
 
 
-#: The most photos one bulk write names (bulk tags, Smart Rename): a request over it is refused before anything is
-#: written. A write of that many runs under the global file-changes lock, one request that answers when it is done; the library
-#: view's edit of a selection has the same limit (tagpup.services.selection.MAX_SELECTED).
-BULK_LIMIT = 5000
-
-
 def _too_many(count):
-    """The 400 for a bulk write naming more than BULK_LIMIT photos, else None."""
-    if count > BULK_LIMIT:
-        return responses.error(400, "Select up to {:,} photos at a time ({:,} were named).".format(BULK_LIMIT, count))
+    """The 400 for a bulk write naming more than batches.MAX_BATCH photos (file_changes.write_fields refuses it too), else None."""
+    if count > batches.MAX_BATCH:
+        return responses.error(400, "Select up to {:,} photos at a time ({:,} were named).".format(batches.MAX_BATCH, count))
     return None
 
 
@@ -1067,12 +1063,14 @@ def photos_bulk_tags():
     try:
         # What is added is checked, not what is removed (tagpup.services.tagging). The
         # page's records are told in the order the files were written.
-        with file_changes.exclusively():
+        with file_changes.batch_exclusively(library, "bulk tags", len(photo_paths)):
             result = tagging_actions.change_tags(library, photo_paths, add_tags, remove_tags,
                                                  state.exiftool(library))
             if result.refused:
                 return _refused_after_writing(library, result)
             records_written(library, result)
+    except (Conflict, Refused) as why:
+        return responses.error(409, str(why))      # too many batches wait ahead (tagpup.services.batches)
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
         return responses.error(500, str(e))

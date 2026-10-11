@@ -177,7 +177,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
   ml/                  models: clip, faces, vector_index, grouping, and gpu (the card's turn)
   services/            one function per user action; the only code that writes: tagging, tags, people, faces,
                        identities, identify, indexing, sync, refresh_rows, relink_photos,
-                       roots*, settings, journal, file_changes, bulk_edit, selection,
+                       roots*, settings, journal, file_changes, batches, bulk_edit, selection,
                        library_view, search, suggester, suggestions, snapshots, thumbnails, tree_fill,
                        faces_from_tags, tags_from_faces, face_people, inspect, activity, maintenance
   jobs/                background work: indexing queue, suggestions, face_assignments,
@@ -265,6 +265,18 @@ a dry run that applies and undoes inside a rolled-back transaction, undoable on 
 90 days. A bulk edit that writes photo files marks each file `writing`, then `done` in the same transaction
 that records its row; a crash is settled at the next start by what the file holds. Keys the journal can
 restore are AUTOINCREMENT (never reused). `History`/`undo` are in the CLI, the MCP server and the pages' gear.
+
+**One batch model** (`tagpup/services/batches.py`, `file_changes.write_fields`; owner, 2026-10-11). A batch of photo files -- more
+than 25 -- is the journaled change `write_fields` plans: its files' states in `change_files` are its progress, there is no table and
+no thread, and the request stays synchronous. It takes a claim (one batch at a time in a process, whichever library; eight may wait,
+the next is refused saying how many are ahead; a waiting batch is lost by a restart, having written nothing), is refused above 5,000
+photos (`batches.MAX_BATCH`) unless it is the tag tree's rewrite (rename, delete, merge, a person's rename: no cap), and is written 25
+files a chunk: between chunks a writer that waits for the lock of changes of photo files is let in, and a batch asked to stop (Cancel
+on the Activity page, or an update's hand-over) withdraws the files it did not reach and applies what it wrote, undoable. A caller that
+already holds the lock (Smart Rename, the Organize page's bulk tags) takes its claim before the lock and does not yield it.
+A tag or person rename (no cap) rewrites every photo first and moves the tree after (`tags._retag`, the one place that orders them): a batch stopped half way leaves the tree as it was, says so with its change, and making the same edit again finishes the rest.
+`batches.listing` and `/api/activity/now` / `/api/activity/batches` show the batches running (read from the journal, so another
+process's too) and waiting. `tests/test_batches_go_through_the_model.py` names every route that reaches `write_fields`.
 
 **A photo's tags and people** flow one way: the file's keywords are read into `photos.keywords`; `photo_tags`
 and `photo_people` are derived from them, the faces and the tree whenever any of the three changes, in the

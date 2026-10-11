@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import web_client  # noqa: E402
 
-from tagpup.web import tagpup_routes  # noqa: E402
+from tagpup.services import batches  # noqa: E402
 
 
 class TheCap(unittest.TestCase):
@@ -28,22 +28,19 @@ class TheCap(unittest.TestCase):
         return [os.path.join(self.folder, "IMG_%05d.jpg" % n) for n in range(count)]
 
     def test_bulk_tags_over_the_cap_is_a_400_with_a_sentence_and_nothing_is_read(self):
-        reply = self.post("/photos/bulk-tags", {"paths": self.names(tagpup_routes.BULK_LIMIT + 1), "add_tags": ["Trips/Coast"]})
+        reply = self.post("/photos/bulk-tags", {"paths": self.names(batches.MAX_BATCH + 1), "add_tags": ["Trips/Coast"]})
         self.assertEqual(400, reply.status_code)
         self.assertIn("Select up to 5,000 photos at a time (5,001 were named).", reply.get_json()["error"])
 
     def test_smart_rename_over_the_cap_is_refused_the_same_way(self):
         reply = self.post("/folder/rename-photos", {"folder_path": self.folder, "grouping": "Regatta",
-                                                   "photo_paths": self.names(tagpup_routes.BULK_LIMIT + 1)})
+                                                   "photo_paths": self.names(batches.MAX_BATCH + 1)})
         self.assertEqual(400, reply.status_code)
         self.assertIn("Select up to 5,000 photos at a time", reply.get_json()["error"])
 
     def test_at_the_cap_the_request_is_not_refused_for_its_size(self):
-        reply = self.post("/photos/bulk-tags", {"paths": self.names(tagpup_routes.BULK_LIMIT), "add_tags": []})
+        reply = self.post("/photos/bulk-tags", {"paths": self.names(batches.MAX_BATCH), "add_tags": []})
         self.assertNotIn("Select up to", str(reply.get_json()))
-
-    def test_the_cap_is_five_thousand(self):
-        self.assertEqual(5000, tagpup_routes.BULK_LIMIT)
 
 
 if __name__ == "__main__":

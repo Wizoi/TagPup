@@ -17,7 +17,7 @@ from test_organize_faces import ODA, WREN  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import job_files  # noqa: E402
 from tagpup.jobs import face_assignments  # noqa: E402
-from tagpup.services import bulk_edit, face_assignment  # noqa: E402
+from tagpup.services import batches, bulk_edit, face_assignment  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, faces  # noqa: E402
 from tagpup.web import lifecycle  # noqa: E402
@@ -270,7 +270,7 @@ class UndoOfAJobRoundTwo(Case):
         entered.wait(10)
         try:
             face_assignments.forget(self.library)             # this process knows nothing of it ...
-            with unittest.mock.patch.object(bulk_edit, "process_alive", return_value=True):      # ... its owner is alive
+            with unittest.mock.patch.object(batches, "process_alive", return_value=True):      # ... its owner is alive
                 with self.assertRaises(face_assignments.Conflict):
                     face_assignments.let_go(self.library, job.handle)
             self.assertIsNotNone(face_assignment.read_plan(self.library, job.handle), "a running job's record was removed")

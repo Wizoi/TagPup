@@ -565,7 +565,7 @@ function postRenamePerson(oldName, newName, personId = null) {
             upper.fetchPeopleWithCounts();
             fetchKnownPeople();
         } else {
-            alert('Failed to rename person');
+            alert(data.renamed === false ? 'Not renamed: ' + data.error : 'Failed to rename person');
         }
     })
     .catch(err => {

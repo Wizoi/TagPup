@@ -393,19 +393,20 @@ class RenamingATagInTagTuner(TreeCase):
         finally:
             conn.close()
 
-    def test_a_photo_that_could_not_be_rewritten_is_a_keyword_with_no_node_until_it_is(self):
+    def test_a_photo_that_could_not_be_rewritten_keeps_the_node_and_the_one_rewritten_holds_a_tag_with_no_node_until_it_is_made_again(self):
         divers = self.node("Crew/Divers")
         one = self.id_of_photo(self.photo("one.jpg", ["Crew/Divers"]))
         stuck = self.photo("stuck.jpg", ["Crew/Divers"])
         db.write_with_connection(self.lib.library.path, derived.rebuild_all)
+        stuck_id = self.id_of_photo(stuck)
         self.unwritable.add(stuck)
         result = tags.rename(self.lib.library, divers, "Frogmen", exiftool_path=None)
         self.assertFalse(result.ok)
         conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
         try:
             self.assertEqual([], derived.problems(conn), "what the rows say is what the files do")
-            self.assertEqual({"Crew/Divers": 1}, dict(derived.tags_without_a_node(conn)))
-            self.assertEqual([one], derived.photos_under_tag(conn, "Crew/Frogmen"))
+            self.assertEqual({"Crew/Frogmen": 1}, dict(derived.tags_without_a_node(conn)), "the tree moves when every photo is written")
+            self.assertEqual([stuck_id], derived.photos_under_tag(conn, "Crew/Divers"), "the photo that failed still has its node")
         finally:
             conn.close()
 

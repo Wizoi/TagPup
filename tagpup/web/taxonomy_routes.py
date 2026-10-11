@@ -40,6 +40,8 @@ def _tree_edit(edit):
         return None, responses.error(404, str(missing))
     except Exception as e:
         return None, responses.error(500, str(e))
+    # Files may have been written even when it was refused (a batch stopped half way): the cached scans say what they held before.
+    tagpup_routes.forget_scans(state.require())
     if result.refused:
         return None, responses.error(400, result.refused)
     return result, None
@@ -118,9 +120,12 @@ def taxonomy_rename():
     if failed:
         return failed
     tagpup_routes.forget_scans(state.require())
+    # The tree has the new name once every photo is rewritten; one that could not be keeps the old, and so does the tree.
+    if not result.ok and not result.changed:
+        return tuner_routes.not_renamed(result)
     reply = {"success": True, "photos_affected": result.details["photos_affected"],
              "photos_rewritten": result.details["photos_rewritten"]}
-    # The tree has the new name; a photo that could not be rewritten keeps the old.
     if not result.ok:
         reply["warning"] = result.message()
+        reply["failed"] = result.details.get("failed_photos", [])
     return jsonify(reply)

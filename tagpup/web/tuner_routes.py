@@ -265,14 +265,24 @@ def tags_merge():
     except Exception as e:
         logger.error("Error merging tag %r: %s", body.get("from"), e)
         _refuse(500, str(e))
+    if body.get("apply"):
+        tagpup_routes.forget_scans(library)     # also when refused: a batch stopped half way wrote files
     if result.refused:
         _refuse(400, result.refused)
-    if body.get("apply"):
-        tagpup_routes.forget_scans(library)
     reply = dict(result.details)
     if not result.ok:
         reply["error"] = result.message()
     return jsonify(reply)
+
+
+def not_renamed(result):
+    """The reply to a rename that moved nothing in the tree because photos could not be rewritten: `success` false, `renamed`
+    false, the sentence, and the photos that failed (`failed`, [{"path", "why"}], the first 50; `failed_count` all of them). The
+    pages say "Not renamed" and keep the old name."""
+    return jsonify({"success": False, "renamed": False, "error": result.message(),
+                    "photos_affected": result.details.get("photos_affected", 0),
+                    "photos_rewritten": result.details.get("photos_rewritten", 0),
+                    "failed": result.details.get("failed_photos", []), "failed_count": result.details.get("failed_count", 0)})
 
 
 @routes.post("/api/person/rename")
@@ -291,13 +301,16 @@ def person_rename():
     except Exception as e:
         logger.error("Error renaming a person: %s", e)
         abort(500, description="Internal error: %s" % e)
+    tagpup_routes.forget_scans(library)
     if result.refused:
         _refuse(400, result.refused)
-    tagpup_routes.forget_scans(library)
+    if not result.ok and not result.changed:
+        return not_renamed(result)
     reply = {"success": True, "photos_affected": result.details["photos_affected"],
              "photos_rewritten": result.details["photos_rewritten"]}
     if not result.ok:
         reply["warning"] = result.message()
+        reply["failed"] = result.details.get("failed_photos", [])
     return jsonify(reply)
 
 

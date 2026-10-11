@@ -46,20 +46,27 @@ back -- holds one lock, and a second waits for the first and plans from the file
 left them. One lock for the process, not one per library: two libraries can hold the
 same folder, and their writes race the same way. Another process (the CLI) is not held
 by it.
+
+**A batch** (more than batches.CHUNK photos; tagpup.services.batches) is one change like any other, its files' states its progress.
+It holds a claim (one batch at a time in a process, the rest queued), and every CHUNK files it lets a waiting writer take the lock
+and asks whether it is to stop: a stopped batch withdraws the files it did not reach, applies what it wrote (undoable) and says
+"stopped after N of M". More than batches.MAX_BATCH photos are refused, but for the tag tree's rewrites (`uncapped`).
 """
 import contextlib
 import functools
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from tagpup.core import fields, paths
-from tagpup.core.result import SKIPPED_DAMAGED, Result
+from tagpup.core.result import SKIPPED_DAMAGED, Conflict, Refused, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, lock_owners, names
+from tagpup.services import batches
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, embeddings, file_journal, journal, photos, schema
 
@@ -97,11 +104,33 @@ _waiting = 0
 _waiting_guard = threading.Lock()
 
 
-def waiting():
-    """How many changes of photo files are waiting for the lock now. A job that takes the lock for a chunk at a time lets
-    them in between chunks (it waits while this is above zero): a lock is not fair, and the thread that has just let go of one
-    takes it again before a waiter has woken."""
-    return _waiting
+#: How many times this thread holds the lock (exclusively nests): a chunk lets others in only when it holds it once.
+_depth = threading.local()
+
+#: The longest a job waits, between chunks, for a writer that wants the lock, in seconds.
+MOST_WAIT = 5.0
+
+
+def wait_for_waiters(stop=None):
+    """With the lock let go of: wait until the changes of photo files waiting for it have taken their turn (at most MOST_WAIT, or
+    until `stop` is set). A lock is not fair, and the thread that has just let go of one takes it again before a waiter has
+    woken."""
+    spent = 0.0
+    while _waiting and spent < MOST_WAIT and not (stop is not None and stop.is_set()):
+        time.sleep(0.01)
+        spent += 0.01
+
+
+def let_others_in(stop=None):
+    """Between the chunks of a long change that holds the lock once: let go of it while the writers waiting for it take their turn,
+    then take it again. A change inside another's lock (held twice) keeps it: the caller above needs it held."""
+    if getattr(_depth, "n", 0) != 1 or not _waiting:
+        return
+    _one_at_a_time.release()
+    try:
+        wait_for_waiters(stop)
+    finally:
+        _one_at_a_time.acquire()
 
 
 @contextlib.contextmanager
@@ -119,10 +148,23 @@ def exclusively():
         finally:
             with _waiting_guard:
                 _waiting -= 1
+    _depth.n = getattr(_depth, "n", 0) + 1
     try:
         yield
     finally:
+        _depth.n -= 1
         _one_at_a_time.release()
+
+
+@contextlib.contextmanager
+def batch_exclusively(library, operation, count):
+    """exclusively() around a write of `count` photos by a caller that tells the pages' records in the order the files were written:
+    a batch takes its turn BEFORE the lock, or it would wait for the batch ahead while holding what that one needs."""
+    with contextlib.ExitStack() as held:
+        if count > batches.CHUNK:
+            held.enter_context(batches.claim(library, operation, count))
+        held.enter_context(exclusively())
+        yield
 
 
 def _exclusive(function):
@@ -176,19 +218,31 @@ def _pinned(function):
                          "can be undone." % (result.changed, result.details.get("change")))
             result.refuse(said)
             _settle_stopped(library, result.details.get("change"))
-            for name, empty in (("change", None), ("conflicts", []), ("read_back", {}), ("written", {})):
-                result.details.setdefault(name, empty)
-            return result
+            return _nothing_more(result)
     return held
+
+
+def _nothing_more(result):
+    """`result`, refused, with the details of a change that wrote nothing (or what it wrote) in place."""
+    for name, empty in (("change", None), ("conflicts", []), ("read_back", {}), ("written", {})):
+        result.details.setdefault(name, empty)
+    return result
+
+
+def between_chunks(batch):
+    """False when the batch is asked to stop; else lets the writers that wait take the lock, and True."""
+    if batch.stop.is_set():
+        return False
+    let_others_in(batch.stop)
+    return True
 
 
 # ---- Forward ---------------------------------------------------------------------------
 
 @roots_service.canonical_args("photo_paths")
-@_exclusive
-@_pinned
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
-                 unreadable="fail", stop_at_first_error=False, et=None, held=None, read_back_also=(), on_planned=None):
+                 unreadable="fail", stop_at_first_error=False, et=None, held=None, read_back_also=(), on_planned=None,
+                 uncapped=False):
     """Write fields into many photos as one change named `operation` (see the module's
     docstring). `read` is the fields read from each file; `plan_one(path, held)` says
     what one file is to hold (a Plan) from what it holds, {field: [texts]}.
@@ -213,10 +267,41 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     conflicts. details: `change` (its id, or None when nothing was written), `written`
     {path: detail} of each photo written or already holding it, `conflicts` the photos,
     named by id, found changed outside since they were read.
+
+    More than batches.MAX_BATCH photos are refused, nothing read, unless `uncapped` (the tag tree's rewrites only); more than
+    batches.CHUNK are a batch (the module's docstring): refused, nothing read, when batches.MOST_WAITING wait already, or when it
+    is cancelled before its turn.
     """
+    if len(photo_paths) > batches.MAX_BATCH and not uncapped:
+        return _refused_whole(photo_paths, "Select up to {:,} photos at a time ({:,} were named)."
+                              .format(batches.MAX_BATCH, len(photo_paths)))
+    with contextlib.ExitStack() as turn:
+        if len(photo_paths) > batches.CHUNK:
+            try:
+                # Not waited for by a caller that holds the lock (_depth): the batch ahead needs it.
+                turn.enter_context(batches.claim(library, operation, len(photo_paths), wait=getattr(_depth, "n", 0) == 0))
+            except (Conflict, Refused) as why:
+                return _refused_whole(photo_paths, str(why))
+        return _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
+                              stop_at_first_error, et, held, read_back_also, on_planned)
+
+
+def _refused_whole(photo_paths, why):
+    result = Result(attempted=len(photo_paths))
+    result.refuse(why)
+    return _nothing_more(result)
+
+
+@_exclusive
+@_pinned
+def _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
+                   stop_at_first_error, et, held, read_back_also, on_planned):
+    if len(photo_paths) > batches.CHUNK and batches.current() is None:
+        raise RuntimeError("%d photos are written without a batch's claim (write_fields takes it)" % len(photo_paths))
     if et is None:
+        # Dead for good after a command timed out: a share that went away costs its deadline once, not once a file.
         with exiftool_session.ExifToolSession(executable=exiftool_path) as session:
-            return _write_fields(session, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
+            return _write_fields(exiftool_session.StaysDead(session), library, operation, exiftool_path, photo_paths, read, plan_one, summary,
                                  unreadable, stop_at_first_error, held, read_back_also, on_planned)
     return _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
                          unreadable, stop_at_first_error, held, read_back_also, on_planned)
@@ -268,16 +353,27 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     wrote = {}
     if not planned:
         return result
+    batch = batches.current()
+    if batch is not None and batch.stop.is_set():
+        # Asked to stop while the files were read: nothing is planned, nothing written.
+        result.refuse("Stopped as asked before anything was written.")
+        return result
     found = _rows_of(library, [path for path, _b, _a, _d in planned])
     change_id, rows = file_journal.plan(library.path, operation, [
         {"photo_id": (found.get(paths.key(path)) or (None,))[0], "path": path, "before": before, "after": after}
         for path, before, after, _detail in planned], summary)
     result.details["change"] = change_id
+    if batch is not None:
+        batch.change_id = change_id
     try:
         _reached("plan committed")
         if on_planned is not None:
             on_planned(change_id)
         for n, row in enumerate(rows):
+            if n and n % batches.CHUNK == 0 and not between_chunks(batch):
+                file_journal.withdraw(library.path, [r.id for r in rows[n:]])
+                result.details["stopped"] = {"after": n, "of": len(rows)}
+                break
             path, detail = planned[n][0], planned[n][3]
             # Read just now, in this session, by the caller: that is the check.
             now = planned[n][1] if fresh is not None else None
@@ -299,6 +395,11 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             written.pop(row.path, None)
             result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
         file_journal.finish(library.path, change_id)
+        stopped = result.details.get("stopped")
+        if stopped:
+            result.refuse("Stopped as asked after %d of %d photos: %d file(s) were written, recorded as change %d in History, "
+                          "which can be undone; the rest were not written."
+                          % (stopped["after"], stopped["of"], result.changed, change_id))
     except BaseException:
         # The files recorded done so far are read back all the same: settling reads
         # back only the files it writes (docs/findings.md, #286).
