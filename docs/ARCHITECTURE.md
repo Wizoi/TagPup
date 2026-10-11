@@ -172,7 +172,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        family: photos, faces, people, person_ids, taxonomy, embeddings, suggestions, journal,
                        file_journal, settings, roots + adoption + root_rows, derived, search_index, folders,
                        library_view, snapshots, generations, locks, job_runs, sync_runs,
-                       added_folders, damaged_files, faces_pending, faces_detected, checks
+                       added_folders, damaged_files, faces_pending, faces_detected, tree_scan, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
                        thumbs, names, shares, lock_owners, recycle_bin, job_files
   ml/                  models: clip, faces, vector_index, grouping, and gpu (the card's turn)
