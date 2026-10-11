@@ -1,7 +1,7 @@
 // What every feature uses: the address bar, the names the library knows.
 import { api } from './common/api.js';
 import { choosePerson } from './common/person-choice.js';
-import { PeopleDirectory, personLabel, personTitle, sortedTags } from './common/vocabulary.js';
+import { PeopleDirectory, personTitle, sortedTags } from './common/vocabulary.js';
 import { state } from './state.js';
 import { upper } from './hooks.js';
 import { modeSelect, showMatchedToggle } from './elements.js';
@@ -108,7 +108,7 @@ export function personGone(status) {
 /** The name of the person a list row names (its nested `person`, else the id looked up, else the name). */
 export function labelOfPerson(name, personId = null, person = null) {
     const found = person || (personId !== null && personId !== undefined ? state.people.ofId(personId) : null);
-    return found ? personLabel(found) : String(name ?? '');
+    return found ? found.name : String(name ?? '');
 }
 
 /** The person a face's suggestion names, as a request names them: {id, name} (the id when the server sent it). */
@@ -136,7 +136,7 @@ function updatePeopleDatalist() {
     datalist.innerHTML = '';
     const offered = new Map();
     // A person with a tag is offered by their name; a name only faces hold (no tag) by the name too.
-    for (const person of state.people.all()) offered.set(personLabel(person), person);
+    for (const person of state.people.all()) offered.set(person.name, person);
     const named = new Set(state.people.all().map(person => person.name.toLowerCase()));
     for (const name of state.allKnownPeople) {
         if (!named.has(String(name).toLowerCase())) offered.set(name, null);

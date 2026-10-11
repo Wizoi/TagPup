@@ -2,7 +2,7 @@
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { pathKey, samePath } from './common/paths.js';
-import { leafOf, peopleListHas, personLabel, photoAlreadyHas, sortedTags, tagProblem } from './common/vocabulary.js';
+import { leafOf, peopleListHas, photoAlreadyHas, sortedTags, tagProblem } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import {
@@ -114,7 +114,7 @@ export function updateSelectedThumbnailsCount() {
                     const leaf = leafOf(tag);
                     const known = state.people.ofText(tag);
                     const key = known ? `id:${known.id}` : leaf;
-                    if (!peopleCounts[key]) peopleCounts[key] = { count: 0, tags: [], shown: known ? personLabel(known) : leaf, title: known ? known.tag : '' };
+                    if (!peopleCounts[key]) peopleCounts[key] = { count: 0, tags: [], shown: known ? known.name : leaf, title: known ? known.tag : '' };
                     peopleCounts[key].count++;
                     if (!peopleCounts[key].tags.includes(tag)) {
                         peopleCounts[key].tags.push(tag);
@@ -328,7 +328,7 @@ export function noteSuggestion(into, key, photoPath, score) {
 export function renderSuggestionChips(container, counts, isPerson) {
     container.innerHTML = '';
     // A person who shares a name is keyed by their tag (what a click writes); shown by their label.
-    const shownOf = name => (isPerson && state.people.ofTag(name) ? personLabel(state.people.ofTag(name)) : name);
+    const shownOf = name => (isPerson && state.people.ofTag(name) ? state.people.ofTag(name).name : name);
     const keys = sortedTags(Object.keys(counts), shownOf);
     if (keys.length === 0) {
         replaceContent(container, noneChip());

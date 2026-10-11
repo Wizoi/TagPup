@@ -5,21 +5,21 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { personLabel, personTitle } from "../../web/common/vocabulary.js";
+import { personLabelOf, personTitle } from "../../web/common/vocabulary.js";
 
 test("a person is shown by their name and titled by their tag", () => {
   const person = { id: 41, name: "Sam", tag: "Pets/Sam" };
-  assert.equal(personLabel(person), "Sam");
+  assert.equal(personLabelOf({ name: "Sam", person }), "Sam");
   assert.equal(personTitle(person), "Pets/Sam");
 });
 
 test("a person with no tag is titled by the name; nobody is nothing", () => {
-  assert.equal(personLabel({ name: "Sam" }), "Sam");
+  assert.equal(personLabelOf({ name: "Sam" }), "Sam");
   assert.equal(personTitle({ name: "Sam" }), "Sam");
-  assert.equal(personLabel(null), "");
+  assert.equal(personLabelOf(null), "");
   assert.equal(personTitle(undefined), "");
 });
 
 test("markup in a name is text, for the page to put in with textContent", () => {
-  assert.equal(personLabel({ name: "<b>Sam</b>" }), "<b>Sam</b>");
+  assert.equal(personLabelOf({ name: "<b>Sam</b>" }), "<b>Sam</b>");
 });

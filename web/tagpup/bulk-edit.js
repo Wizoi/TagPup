@@ -7,7 +7,7 @@
 // before anything is asked of the server. Smart Rename and Shift Date Taken are Organize's, not a view's (#669): the server's bulk time
 // shift (op `time_shift`) is still there, and a job of it found running or stopped is shown and resumed by the strip (bulk-job.js).
 import { api } from './common/api.js';
-import { personLabel, tagProblem } from './common/vocabulary.js';
+import { tagProblem } from './common/vocabulary.js';
 import { state } from './state.js';
 import { bulkAddPeopleInput, bulkAddTagsInput } from './elements.js';
 import { setStatus } from './status.js';
@@ -94,7 +94,7 @@ export async function editByPill({ kind, name, remove, person = null }) {
     if (!picked) return false;
     // A person the server told by id is edited by that id: the name may be another person's too.
     const byId = kind === 'person' && person && person.id !== null && person.id !== undefined;
-    const shown = byId ? personLabel(person) : name;
+    const shown = byId ? person.name : name;
     const desc = describeTags({ op, add: remove ? [] : [shown], remove: remove ? [shown] : [] });
     const params = byId
         ? { add: [], remove: [], ...(remove ? { remove_ids: [person.id] } : { add_ids: [person.id] }) }

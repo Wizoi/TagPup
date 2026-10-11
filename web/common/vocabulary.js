@@ -96,11 +96,6 @@ export function samePerson(a, b) {
 // A person is the whole tag path and their name is its leaf: shown, never compared. Two people called alike are told apart by
 // the tag in the title and in the "which one?" question (person-choice.js), not by a group joined to the name.
 
-/** What is shown for a person: their name. */
-export function personLabel(person) {
-    return person ? String(person.name ?? '') : '';
-}
-
 /** The full tag of a person, for the element's title and the screen reader: where they are filed. */
 export function personTitle(person) {
     if (!person) return '';
@@ -111,7 +106,7 @@ export function personTitle(person) {
  *  name it holds under `field`. */
 export function personLabelOf(row, field = 'name') {
     if (!row) return '';
-    return row.person ? personLabel(row.person) : String(row[field] ?? '');
+    return row.person ? String(row.person.name ?? '') : String(row[field] ?? '');
 }
 
 /** The hover and the screen reader's text for the same: the full tag when the row's person has one, else the name. */

@@ -39,7 +39,7 @@ import { samePath } from './common/paths.js';
 import { attachPersonFaces, forgetPersonFaces, hidePersonFaces } from './common/person-faces.js';
 import { choosePerson } from './common/person-choice.js';
 import {
-    leafOf, nameProblem, personFields, personLabel, personLabelOf, personTitleOf, sameNamed, sameTagPerson,
+    leafOf, nameProblem, personFields, personLabelOf, personTitleOf, sameNamed, sameTagPerson,
 } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -537,7 +537,7 @@ export async function nameFaceAs(face, who) {
         }
     }
     const name = person ? person.name : leafOf(rawName);
-    const shown = person ? personLabel(person) : name;
+    const shown = person ? person.name : name;
     const problem = nameProblem(name);
     if (problem) {
         say(problem);

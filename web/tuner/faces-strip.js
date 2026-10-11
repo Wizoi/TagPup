@@ -4,7 +4,7 @@ import { attachPersonFaces } from './common/person-faces.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { samePath } from './common/paths.js';
 import {
-    nameProblem, personFields, personLabel, personLabelOf, personTitle, personTitleOf, sameRecord, samePerson, sortedTags,
+    nameProblem, personFields, personLabelOf, personTitle, personTitleOf, sameRecord, samePerson, sortedTags,
 } from './common/vocabulary.js';
 import { state } from './state.js';
 import { emptyState, panelContent, photoList } from './elements.js';
@@ -133,7 +133,7 @@ function renderPhotoDetails(details) {
         if (at !== -1) unaccounted.splice(at, 1);
     });
     const personPills = [
-        ...taggedPeople.map(({ person }) => ({ text: personLabel(person), title: personTitle(person) })),
+        ...taggedPeople.map(({ person }) => ({ text: person.name, title: personTitle(person) })),
         ...unaccounted.map(name => ({ text: name, title: name })),
     ];
     sortedTags(personPills, each => each.text).forEach(each => {

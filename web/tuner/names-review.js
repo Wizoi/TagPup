@@ -8,7 +8,7 @@
 // answered in words, never half done (404: the page says so and reads the list again).
 import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
-import { personLabel, personTitle } from './common/vocabulary.js';
+import { personTitle } from './common/vocabulary.js';
 import { state } from './state.js';
 import { upper } from './hooks.js';
 import { modeSelect, photoList } from './elements.js';
@@ -206,7 +206,7 @@ function personSelect(entry) {
     const group = (label, people) => {
         const options = people.filter(person => person && !seen.has(person.id)).map(person => {
             seen.add(person.id);
-            return buildElement('option', { text: person.tag || personLabel(person), title: personTitle(person), attrs: { value: String(person.id) } });
+            return buildElement('option', { text: person.tag || person.name, title: personTitle(person), attrs: { value: String(person.id) } });
         });
         if (options.length) select.append(buildElement('optgroup', { attrs: { label } }, options));
     };
