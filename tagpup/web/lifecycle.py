@@ -1,29 +1,28 @@
 """Which version answers, whether the server takes new work, and letting the work under
-way finish before the always-on process moves it onto a new version (docs/ARCHITECTURE.md,
-phase 8, "Updating itself").
+way finish before a launch or an install moves it onto a new version (docs/ARCHITECTURE.md,
+"Updating a running server").
 
-The supervisor (tagpup.supervisor) runs the web server as its child. When a newer commit
-has been installed it asks the server to drain -- POST /api/server/drain, with the token
-it gave the server (tagpup.supervisor.TOKEN, which tagpup_web hands the Lifecycle) -- and
+When a newer commit has been installed, the launcher asks the server to drain --
+POST /api/server/drain, with the token in the server's record (`launcher_token`) -- and
 moves it onto the new version only once the drain says it is done:
 
 - A drain is refused at once, taking nothing away, while work runs beside the requests:
   a Suggest run, an index, a recurring job (the background tasks' busy(), tagpup.runtime);
   and, asked for a quiet moment (`quiet`), while a request came in that many seconds
-  ago -- someone is using the app. The supervisor asks again later. An update never
+  ago -- someone is using the app. The launcher asks again later. An update never
   interrupts a write.
 - Otherwise the server stops taking new work: each new request is answered 503 with
   Retry-After, which the pages wait out and send again (web/common/api.js). The
   background tasks are stopped, and the requests already in flight -- a journaled write
   among them -- are let finish.
-- When nothing is in flight and nothing runs, it is drained, and the supervisor stops it.
+- When nothing is in flight and nothing runs, it is drained, and the launcher stops it.
   When the deadline passes first, it takes work again, and says what it waited for.
 
-Without the always-on process, a launcher of another version drains it the same way
-(tagpup.launcher), with the token this server wrote in its record (`launcher_token`), and
-only from this machine; drained, the launcher ends it and serves in its place.
+The token comes only from this machine (tagpup.launcher); drained, the launcher ends the
+server and serves in its place. (`token`, a second authority a parent process could hold,
+is given by nothing now.)
 
-A server drained and never stopped -- its supervisor gone -- takes work again after
+A server drained and never stopped -- its launcher gone -- takes work again after
 LEFT_DRAINED. GET /api/server says which version answers, which the gear shows, and every
 response says it in X-TagPup-Version, by which a page left open learns that the server
 was replaced (web/common/api.js).
@@ -57,14 +56,14 @@ RETRY_AFTER_SECONDS = 2
 DRAIN_SECONDS = 120
 MAX_DRAIN_SECONDS = 1800
 
-#: A drained server not stopped in this long takes work again: its supervisor is gone.
+#: A drained server not stopped in this long takes work again: its launcher is gone.
 LEFT_DRAINED = 180
 
 #: The paths answered while draining, and not counted as work: asking how the server
 #: is, and the drain itself -- as the gate sees them, before the library's middleware
 #: takes /<library> off the path.
 #:
-#: The bare status (/api/server) is the supervisor's and startup.py's. The pages ask it
+#: The bare status (/api/server) is the launcher's. The pages ask it
 #: under their library's address (/<library>/api/server: the gear's version, and
 #: api.js's probe after an /api/ image failed), and that one is NOT exempt, on purpose:
 #: while the server drains it is turned away 503 with X-TagPup-Updating, which is how the

@@ -1,8 +1,8 @@
 """A lock on one byte of a file: held while the process lives, let go by the system when it ends however it ends.
 
-The installer's lock (install.lock), the hand-over's, the always-on process's, and the graphics card's turn
+The installer's lock (install.lock), the hand-over's, and the graphics card's turn
 (tagpup.ml.gpu: card.lock, and the tickets of its queue) are all this one lock. Two copies of the code, one in
-tagpup.supervisor and one in tagpup.ml.gpu, said the same thing twice (docs/findings.md, #762); tests/test_gpu_single_owner.py
+the supervisor (since deleted) and one in tagpup.ml.gpu, said the same thing twice (docs/findings.md, #762); tests/test_gpu_single_owner.py
 fails any other module that calls msvcrt.locking or fcntl.flock.
 
     held = byte_lock.Lock(path)

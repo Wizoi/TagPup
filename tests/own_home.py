@@ -133,8 +133,8 @@ def _reap_after_exit(folder):
         handle.write(folder + os.linesep)
 
 
-#: The records the processes of a home keep of themselves (tagpup.supervisor, tagpup.launcher).
-_RECORDS = (("data", "supervisor.json"), ("data", "server.json"), ("data", "supervisor.handover.json"))
+#: The records the processes of a home keep of themselves (tagpup.launcher keeps them in servers/, below).
+_RECORDS = ()
 
 #: Lists the processes whose command line names the folder in TAGPUP_END_UNDER (Windows).
 _UNDER = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "

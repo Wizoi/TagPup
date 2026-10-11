@@ -23,7 +23,6 @@ it is added here.
 
 SLOW = frozenset({
     "test_roots_at_scale",
-    "test_supervisor_hand_over",
     "test_launcher_hands_over",
     "test_install_app",
     "test_install_hands_over",
@@ -68,7 +67,6 @@ SCENARIO = frozenset({
     "test_roots_store",
     # Real time and real processes, short of a hand-over.
     "test_folder_watcher",
-    "test_supervisor",
     "test_mcp_server",
     "test_tagpup_server_api",
     # Real ExifTool against a table of cases.

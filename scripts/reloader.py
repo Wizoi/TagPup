@@ -12,7 +12,7 @@ from tagpup.core import processes
 logger = logging.getLogger("reloader")
 
 # Exit code used to signal a reload request from child to parent wrapper. Not 3, which is
-# the server's PORTS_TAKEN (tagpup.supervisor): a child that lost the ports must end the
+# the server's PORTS_TAKEN (tagpup.launcher): a child that lost the ports must end the
 # reloader, not restart it in a loop (docs/findings.md, #818).
 RELOAD_EXIT_CODE = 75
 
