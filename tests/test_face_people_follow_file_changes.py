@@ -338,7 +338,7 @@ class TheRecordIsKeptAsLongAsItCanBeResumed(unittest.TestCase):
             job_files.write_plan(folder, 5, {"op": "name"})
             job_files.write_state(folder, 5, {"state": "cancelled"})
             now = time.time()
-            self.assertEqual([], job_files.sweep(folder, now + 20 * 86400))
+            job_files.sweep(folder, now + 20 * 86400)
             self.assertIsNotNone(job_files.read_plan(folder, 5))
             job_files.sweep(folder, now + 31 * 86400)
             self.assertIsNone(job_files.read_plan(folder, 5))

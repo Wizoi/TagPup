@@ -1,6 +1,6 @@
 // TagPup's page: a bulk edit of the library's photos as a JOB (docs/ARCHITECTURE.md, phase 9d-1 for the server's side, 9d-2 for this).
 // The page starts it with a selection by id (POST /api/library/bulk/start) and asks how it is going about once a second (GET .../status:
-// the server answers from memory); it can cancel it, resume a time shift that stopped, and find it again after the tab was closed or
+// the server answers from memory); it can cancel it, and find it again after the tab was closed or
 // reloaded (GET .../current). The job belongs to the LIBRARY: the strip does not follow a view or a folder, and a job goes on when the
 // page does not. Only one runs at a time: while one does the bulk controls of a library view are disabled, and a second start is
 // refused by the server with a sentence the page shows, with a way to the one running.
@@ -215,7 +215,7 @@ function refreshAfterWrites(job) {
     upper.updateSelectedThumbnailsCount();
 }
 
-// ---- Starting, cancelling, resuming -----------------------------------------------------------------------------------------
+// ---- Starting, cancelling -----------------------------------------------------------------------------------------
 
 /** The sentence of a refusal or a failure to start, shown where the owner is looking. */
 function startFailed(sentence) {
@@ -323,33 +323,6 @@ export function cancelBulk() {
             bulk.cancelling = false;
             repaint();
             startFailed(`Could not cancel the bulk edit: ${err.message}`);
-            return false;
-        });
-}
-
-/** Resume a time shift that stopped: the same job, from where it was, no photo shifted twice. */
-export function resumeBulk() {
-    const bulk = state.bulk;
-    const job = bulk.job;
-    if (!job || isRunning(job) || !job.resumable || bulk.starting) return Promise.resolve(false);
-    bulk.starting = true;
-    repaint();
-    return api.fetch('/api/library/bulk/resume', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ job: job.job }) })
-        .then(res => res.json().catch(() => ({})).then(body => {
-            bulk.starting = false;
-            if (!res.ok || !body.success) {
-                bulk.trouble = (body && body.error) || `TagPup answered ${res.status}`;
-                repaint();
-                return false;
-            }
-            beginTracking({ ...job, state: 'running', message: null, finished: null, done: body.done ?? job.done, total: body.total ?? job.total,
-                resumable: false, eta_seconds: null }, bulk.request);
-            return true;
-        }))
-        .catch(err => {
-            bulk.starting = false;
-            bulk.trouble = `Could not resume: ${err.message}`;
-            repaint();
             return false;
         });
 }
@@ -486,7 +459,7 @@ function showIt() {
 }
 
 export function wireBulk() {
-    wireBulkStrip({ cancel: cancelBulk, resume: resumeBulk, again: startAgain, show: showIt, dismiss: dismissBulk });
+    wireBulkStrip({ cancel: cancelBulk, again: startAgain, show: showIt, dismiss: dismissBulk });
     // A tab brought back asks at once, rather than waiting out the slow pace it was hidden at.
     document.addEventListener('visibilitychange', () => {
         const bulk = state.bulk;

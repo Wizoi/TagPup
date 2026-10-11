@@ -791,9 +791,9 @@ def _bulk_reply(why):
 @routes.post("/api/library/bulk/start")
 def library_bulk_start():
     """Begin a bulk edit of a selection of photos by id, as a job with progress and a cancel (phase 9d-1,
-    tagpup.jobs.bulk_edits): `{"op": "tags"|"people"|"time_shift"|"delete", "selection": SELECTION, "params": {...}}` answers
+    tagpup.jobs.bulk_edits): `{"op": "tags"|"people"|"delete", "selection": SELECTION, "params": {...}}` answers
     `{"job"}`.
-    The edit is read and checked first (a tag the rules refuse, a person filed in two places, a shift of 0), then the selection
+    The edit is read and checked first (a tag the rules refuse, a person filed in two places), then the selection
     is resolved on the server; nothing is written by the request itself."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
@@ -820,8 +820,7 @@ def library_bulk_start():
 @routes.get("/api/library/bulk/status")
 def library_bulk_status():
     """How a bulk edit is getting on (tagpup.jobs.bulk_edits.status): state, counts of what changed, the first 50 errors and
-    the time left, from memory; a job this process did not run (it was restarted) is read from what the library kept.
-    `ids=1` adds `shifted_ids`, the photos a time shift has shifted, by the journal."""
+    the time left, from memory; a job this process did not run (it was restarted) is read from the library's record of the run."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
@@ -832,8 +831,6 @@ def library_bulk_status():
         found = bulk_jobs.status(library, job)
         if found is None:
             return responses.error(404, "There is no bulk edit %d in this library." % job)
-        if (request.args.get("ids") or "").lower() in YES:
-            found["shifted_ids"] = sorted(bulk_jobs.shifted_ids(library, job))
         return jsonify({"success": True, **found})
     except (Refused, NotFound, Conflict, paths.RootsError) as why:
         return _bulk_reply(why)
@@ -877,29 +874,6 @@ def library_bulk_cancel():
     except Exception as e:
         logger.error("Error cancelling a bulk edit: %s", e, exc_info=True)
         return responses.error(500, str(e))
-
-
-@routes.post("/api/library/bulk/resume")
-def library_bulk_resume():
-    """Carry on a time shift that was cancelled, stopped or abandoned by a restart, from where its record says, shifting no
-    photo twice (tagpup.jobs.bulk_edits.resume). `409` for a job that is running or when another runs; `400` for one that
-    is not resumable."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
-    library = state.require()
-    body = request.get_json(silent=True)
-    job = _job_id(str(body.get("job", "")) if isinstance(body, dict) else "")
-    if job is None:
-        return responses.error(400, "job must be a whole number.")
-    try:
-        resumed = bulk_jobs.resume(library, job, state.exiftool(library), after_write=lambda: forget_scans(library))
-    except (Refused, NotFound, Conflict, paths.RootsError) as why:
-        return _bulk_reply(why)
-    except Exception as e:
-        logger.error("Error resuming a bulk edit: %s", e, exc_info=True)
-        return responses.error(500, str(e))
-    return jsonify({"success": True, "job": resumed.handle, "total": resumed.total, "done": resumed.done,
-                    "message": resumed.message})
 
 
 @routes.get("/api/photo-thumb")
