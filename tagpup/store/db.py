@@ -40,7 +40,6 @@ import os
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
 
 from tagpup.core import paths
 from tagpup.core.library import Library
@@ -210,17 +209,6 @@ def write_with_connection(target, operation, label="database write"):
             conn.close()
 
     return write(target, attempt, label=label)
-
-
-@contextmanager
-def writing(target, label="database write"):
-    """Hold the write lock for a block that writes.
-
-    Use `write()` where the work fits in a callable -- it retries, and this cannot,
-    since a block that has already half-run is not safe to run again.
-    """
-    with lock_for(target):
-        yield
 
 
 def copy_database(source_path, target, then=None):

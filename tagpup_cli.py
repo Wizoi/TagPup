@@ -4,7 +4,6 @@ import functools
 import os
 import sys
 import logging
-from typing import List
 import click
 from rich.console import Console
 from rich.table import Table
@@ -122,16 +121,6 @@ def get_db_path(test_mode=False, cli_db=None):
         return env_db
 
     raise click.UsageError("Say which library: --db <name or path> (a file in the data folder, or a path)")
-
-def scan_for_images(dir_path: str) -> List[str]:
-    """Recursively scan directory for image files, in the form the index stores.
-
-    Walked from paths.stored(dir_path), not from the string as typed: os.walk joins
-    onto whatever it is given, so a folder typed as D:/Photos produced
-    "D:/Photos\\a.jpg" -- both separators in one row -- and a relative folder
-    produced relative rows.
-    """
-    return image_files.photos_under(dir_path)
 
 @click.group()
 @click.option("--db", type=str, help="The library to work on: a name in the data folder (e.g. 'my_photos') or a path. Required.")
@@ -257,13 +246,14 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
     embeddings = runtime.embeddings(Library(db_path), photo_index)
 
-    all_images, seen_images = [], set()
+    # Each photo with the stamp its folder's listing gave (images.stamps_under / stamps_in), by paths.key.
+    on_disk = {}
     for directory in directories:
         console.print(f"[bold cyan]Scanning directory:[/bold cyan] {directory}")
-        for found in (image_files.photos_in(directory) if no_subfolders else scan_for_images(directory)):
-            if paths.key(found) not in seen_images:
-                seen_images.add(paths.key(found))
-                all_images.append(found)
+        for key, stamp in (image_files.stamps_in(directory) if no_subfolders
+                           else image_files.stamps_under(directory)).items():
+            on_disk.setdefault(key, stamp)
+    all_images = [stamp[0] for stamp in on_disk.values()]
     console.print(f"Found {len(all_images)} image(s) total.")
 
     if not all_images:
@@ -282,27 +272,12 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # the same photos, and keyed by the raw string every one of them was re-embedded
     # and given a second row.
     # The stamps alone: no photo's JSON is read to learn whether its file changed.
-    existing_entries = {paths.key(path): {"mtime": mtime, "size": size, "has_embedding": bool(vectored)}
-                        for path, mtime, size, vectored in photo_index.stamps()}
-    images_to_process = []
-    skipped_count = 0
-
     if force_reembed:
         images_to_process = all_images
     else:
-        for path in all_images:
-            saved = existing_entries.get(paths.key(path))
-            if saved is not None:
-                try:
-                    stat = os.stat(path)
-                    if (saved.get("mtime") == stat.st_mtime and 
-                        saved.get("size") == stat.st_size and 
-                        saved.get("has_embedding", False)):
-                        skipped_count += 1
-                        continue
-                except Exception:
-                    pass
-            images_to_process.append(path)
+        current = photo_index.current(on_disk)
+        images_to_process = [path for path in all_images if paths.key(path) not in current]
+    skipped_count = len(all_images) - len(images_to_process)
 
     # A photo whose faces are still to be detected (tagpup.store.faces_pending) is indexed even with a vector:
     # Suggest may have made one since.

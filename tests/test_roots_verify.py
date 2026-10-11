@@ -187,42 +187,31 @@ class WhatItCounts(SampleCase):
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
-class ASampleCoversEveryFolder(SampleCase):
+class ASampleSpreadsOverTheRows(SampleCase):
     REAL, BULK = 1, 50
 
-    def test_it_takes_at_least_one_row_from_each_folder_and_the_same_rows_each_time(self):
+    def test_it_takes_the_same_rows_each_time_from_every_part(self):
         """The first rows of a library are in the first folder; a sample of them says nothing of the
         rest. Here 3 folders hold 51 rows each and the sample asks for 6."""
-        found = self.verify(sample=6)
-        self.assertEqual(3, found["folders"])
-        self.assertGreaterEqual(found["checked"], 3)
-        self.assertLessEqual(found["checked"], 9)
-        self.assertEqual(found["checked"], self.verify(sample=6)["checked"])
+        looked = []
+        real = roots_verify.shares.stamp_of
+        with mock.patch.object(roots_verify.shares, "stamp_of", lambda path: looked.append(path) or real(path)):
+            found = self.verify(sample=6)
+            first = list(looked)
+            del looked[:]
+            self.verify(sample=6)
+        self.assertEqual(6, found["checked"])
+        self.assertEqual(first, looked)
         self.assertEqual(153, found["rows"])
+        self.assertEqual(3, len({os.path.dirname(path) for path in first}), "a folder the sample never saw")
 
-    def test_a_sample_that_is_stopped_early_has_looked_at_folders_from_everywhere(self):
-        """On a slow share a sample may run out of time: it must not have seen only the first folders."""
-        seen = []
-        real_list = roots_verify._list_one
-
-        def listing(folder):
-            seen.append(folder)
-            return real_list(folder)
-
-        clock = types.SimpleNamespace(monotonic=lambda: 100.0 if len(seen) >= 2 else 0.0)
-        with mock.patch.object(roots_verify, "_list_one", listing), mock.patch.object(roots_verify, "time", clock):
-            found = self.verify(budget=10)
+    def test_a_sample_that_runs_out_of_time_says_so_and_counts_what_it_saw(self):
+        clock = types.SimpleNamespace(monotonic=iter([0.0, 0.0, 0.0, 100.0, 100.0]).__next__)
+        with mock.patch.object(roots_verify, "time", clock), mock.patch.object(roots_verify, "SAMPLE_BUDGET", 10):
+            found = self.verify(sample=6)
         self.assertEqual("time", found["stopped"])
-        everything = sorted(os.path.dirname(path) for path in self.side.real)
-        self.assertNotEqual(sorted(set(everything))[:2], sorted(seen), "the sample went through the folders in order")
-
-    def test_more_folders_than_the_sample_still_each_get_a_row(self):
-        by_folder = {"f%03d" % n: ("f%03d" % n, [("a", "a", 1, 1), ("b", "b", 1, 1)]) for n in range(40)}
-        chosen = roots_verify.sample_of(by_folder, 10)
-        self.assertEqual(40, len(chosen))
-        self.assertTrue(all(len(rows) >= 1 for rows in chosen.values()))
-        everything = roots_verify.sample_of(by_folder, 10_000)
-        self.assertEqual(80, sum(len(rows) for rows in everything.values()))
+        self.assertEqual(2, found["checked"])
+        self.assertIn("ran out of time", found["summary"])
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
@@ -277,25 +266,19 @@ class APlaceThatCannotBeReached(SampleCase):
 
     def test_a_share_that_stops_answering_half_way_says_so_and_counts_nothing_unlooked_at_as_missing(self):
         copy = self.copy_of_pictures()
-        real_list = roots_verify._list_one
-        release = threading.Event()
+        real = roots_verify.shares.stamp_of
         seen = []
 
-        def flaky(folder):
-            seen.append(folder)
-            if len(seen) > 1:
-                release.wait(30)
-            return real_list(folder)
+        def flaky(path):
+            seen.append(path)
+            return real(path) if len(seen) <= 4 else roots_verify.shares.UNANSWERED
 
-        roots_verify.forget_away()
-        self.addCleanup(roots_verify.forget_away)
-        self.addCleanup(release.set)
-        with mock.patch.object(roots_verify, "_list_one", flaky):
-            found = self.verify(copy, seconds=0.3)
+        with mock.patch.object(roots_verify.shares, "stamp_of", flaky):
+            found = self.verify(copy)
         self.assertEqual("unreachable", found["stopped"])
-        self.assertTrue(found["partial"])
+        self.assertFalse(found["reachable"])
         self.assertEqual(0, found["missing"])
-        self.assertEqual(self.REAL, found["checked"], "only the folder that answered was looked at")
+        self.assertEqual(4, found["checked"], "only the files that answered were looked at")
         self.assertIn("stopped answering", found["message"])
 
 

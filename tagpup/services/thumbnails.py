@@ -71,6 +71,10 @@ class Thumb:
     def __init__(self, content, kind, etag=None, mtime=None, kept=False):
         self.content, self.kind, self.etag, self.mtime, self.kept = content, kind, etag, mtime, kept
 
+    def is_version(self, version):
+        """Is `version` -- the mtime a page was told of the file, in its url -- the file's (store.photos.same_mtime)?"""
+        return store_photos.same_mtime(version, self.mtime)
+
 
 # ---- Where a photo's entry is ---------------------------------------------------------------
 

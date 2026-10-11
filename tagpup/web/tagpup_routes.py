@@ -828,7 +828,7 @@ def photo_thumb():
     reply.headers["X-TagPup-Thumb"] = thumb.kind
     stamped = False
     try:
-        stamped = thumb.mtime is not None and abs(float(request.args.get("v")) - thumb.mtime) < 0.1
+        stamped = thumb.is_version(float(request.args.get("v")))
     except (TypeError, ValueError):
         pass
     if thumb.etag:
