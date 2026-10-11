@@ -123,7 +123,6 @@ export const bulkStripErrorsSummary = document.getElementById('bulk-strip-errors
 export const bulkStripErrorList = document.getElementById('bulk-strip-error-list');
 export const bulkStripLive = document.getElementById('bulk-strip-live');
 export const btnBulkCancel = document.getElementById('btn-bulk-cancel');
-export const btnBulkResume = document.getElementById('btn-bulk-resume');
 export const btnBulkAgain = document.getElementById('btn-bulk-again');
 export const btnBulkShow = document.getElementById('btn-bulk-show');
 export const btnBulkDismiss = document.getElementById('btn-bulk-dismiss');

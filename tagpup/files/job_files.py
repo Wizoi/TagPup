@@ -1,12 +1,12 @@
-"""The small files a bulk edit keeps in the library's cache folder so that a restart can find it (docs/ARCHITECTURE.md, phase
-9d-1): for each job, `<job>.state.json` -- what it is, how far it got, what it counted -- and, for a job that cannot safely be
-started again (a time shift is not idempotent), `<job>.ids`, the photos it resolved when it began.
+"""The small files a resumable job keeps in the library's cache folder so that a restart can find it (docs/ARCHITECTURE.md,
+phase 9d-1): for each job, `<job>.state.json` -- what it is, how far it got, what it counted -- and `<job>.plan.json`, what it is
+to do. Only the face assignments (tagpup.jobs.face_assignments) write them now. A bulk edit of a selection kept `<job>.state.json`
+and `<job>.ids` until it stopped being resumable; the sweep still lets go of what an older version left.
 
 Nothing here knows a library's database. A file is written to a temporary name in the folder and renamed over its own
 (`os.replace`), so a reader (the status route, a resume after a crash) sees a whole file or the one before it, never half of
 one. A file that is missing, cut short or not what was written reads as None: the caller says the job is not known, and
-nothing is guessed from a damaged record. The files are small (the state a few KB, the ids 7 bytes a photo: 200,000 photos
-1.4 MB, written once).
+nothing is guessed from a damaged record.
 """
 import itertools
 import json
@@ -16,8 +16,7 @@ import time
 _counter = itertools.count()
 
 #: How long (seconds) a job's files are kept after its last activity (the newest of its files) before the next job's start lets
-#: them go. They can name the tags and the people of an edit and the files that failed, so nothing is kept long: a week, except a
-#: time shift that can still be resumed (its list of photos AND its state are there), which is kept a month.
+#: them go: a month for a job that has its plan and its state (the face assignments', which can be resumed), a week for any other.
 KEEP_SECONDS = 7 * 86400
 KEEP_RESUMABLE_SECONDS = 30 * 86400
 
@@ -111,31 +110,9 @@ def read_plan(folder, job):
     return found if isinstance(found, dict) else None
 
 
-def write_ids(folder, job, ids):
-    _write(ids_path(folder, job), json.dumps(list(ids), separators=(",", ":")).encode("utf-8"))
-
-
-def has_ids(folder, job):
-    """Is there a list of photos for job `job` that looks whole -- a JSON list, read from its two ends and not parsed: a list of
-    200,000 ids is 1.4 MB and a status asks this for every poll? (read_ids parses it, for the resume that needs it.)"""
-    try:
-        with open(ids_path(folder, job), "rb") as handle:
-            head = handle.read(1)
-            handle.seek(-1, os.SEEK_END)
-            tail = handle.read(1)
-        return head == b"[" and tail == b"]"
-    except OSError:
-        return False
-
-
-def read_ids(folder, job):
-    """The photo ids job `job` resolved, as a list, or None when there are none or they cannot be read."""
-    found = _read(ids_path(folder, job))
-    return found if isinstance(found, list) and all(type(each) is int for each in found) else None
-
-
 def forget(folder, job):
-    """Let go of everything kept of job `job`: its state and its list of photos. Missing files are no matter."""
+    """Let go of everything kept of job `job`: its state, its plan and (an older bulk edit's) its list of photos. Missing files
+    are no matter."""
     for path in (state_path(folder, job), ids_path(folder, job), plan_path(folder, job)):
         try:
             os.remove(path)
@@ -143,39 +120,16 @@ def forget(folder, job):
             pass
 
 
-def forget_ids(folder, job):
-    """Let go of job `job`'s list of photos (it is over for good). A list already gone is no matter."""
-    try:
-        os.remove(ids_path(folder, job))
-    except OSError:
-        pass
-
-
-def jobs_with_records(folder):
-    """The ids of the jobs that have BOTH a list of photos and a state: the time shifts that a resume can carry on."""
-    found = {}
-    try:
-        names = os.listdir(folder)
-    except OSError:
-        return []
-    for name in names:
-        job, _dot, kind = name.partition(".")
-        if job.isdigit() and kind in ("ids", "state.json"):
-            found.setdefault(int(job), set()).add(kind)
-    return sorted(job for job, kinds in found.items() if kinds == {"ids", "state.json"} and has_ids(folder, job)
-                  and read_state(folder, job) is not None)
-
-
 def sweep(folder, now=None):
     """Let go of the files of jobs untouched for too long, and the temporary files a crash left. A job's files are ONE unit, kept
     or deleted together, by the job's last activity (the newest of them: a state file is rewritten whenever the job runs or is
-    resumed): KEEP_RESUMABLE_SECONDS for one that has both its list and its state (a time shift that can be resumed), KEEP_SECONDS
-    for any other. Returns the ids of the resumable jobs it let go, for the library's record of them to say so. Never raises."""
+    resumed): KEEP_RESUMABLE_SECONDS for one that has both its plan and its state, KEEP_SECONDS
+    for any other. Never raises."""
     now = time.time() if now is None else now
     try:
         names = os.listdir(folder)
     except OSError:
-        return []
+        return
     jobs = {}
     for name in names:
         path = os.path.join(folder, name)
@@ -191,13 +145,8 @@ def sweep(folder, now=None):
                 entry["newest"] = max(entry["newest"], os.path.getmtime(path))
         except OSError:
             pass
-    expired = []
     for job, entry in jobs.items():
-        pair = entry["kinds"] == {"ids", "state.json"}
-        # A face assignment's plan and state (tagpup.jobs.face_assignments): resumable, so kept as long as a time shift's.
+        # A face assignment's plan and state (tagpup.jobs.face_assignments): resumable, so kept a month.
         stopped = {"plan.json", "state.json"} <= entry["kinds"]
-        if now - entry["newest"] > (KEEP_RESUMABLE_SECONDS if pair or stopped else KEEP_SECONDS):
+        if now - entry["newest"] > (KEEP_RESUMABLE_SECONDS if stopped else KEEP_SECONDS):
             forget(folder, job)
-            if pair:
-                expired.append(job)
-    return sorted(expired)

@@ -9,7 +9,6 @@ An EDIT is what is done to every photo of a selection:
   click on a person's chip files it (`vocabulary.person_tag`, the one rule; a name two people have is refused), a person a
   file already names (by the id of their node: two people called alike are two) is not added again, and no node of the tag
   tree is made;
-* `time_shift`: move Date Taken by `{"minutes": n}` (tagpup.services.photos.date_shift_plan);
 * `delete`: send each photo's file to the Recycle Bin and forget its row, faces and thumbnail, as the folder view's Delete
   does it (tagpup.services.photos.delete, the one owner: not journaled, as that is not; a photo whose place has no Recycle Bin
   goes through this PC's, #694), `{"token": text}` -- the token of the photos the question named (selection.where_deleted: the
@@ -28,10 +27,10 @@ import logging
 import os
 from dataclasses import dataclass, field
 
-from tagpup.core import dates, paths, validation, vocabulary
-from tagpup.core.result import Conflict, Refused, Result
+from tagpup.core import paths, validation, vocabulary
+from tagpup.core.result import Conflict, Refused
 from tagpup.files import exiftool_session, job_files, recycle_bin
-from tagpup.services import damaged_photos, file_changes, file_only, libraries, library_view, tagging
+from tagpup.services import damaged_photos, file_changes, libraries, library_view, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.store import file_journal, taxonomy
@@ -39,8 +38,8 @@ from tagpup.store import library_view as store
 
 logger = logging.getLogger(__name__)
 
-TAGS, PEOPLE, TIME_SHIFT, DELETE = "tags", "people", "time_shift", "delete"
-OPS = (TAGS, PEOPLE, TIME_SHIFT, DELETE)
+TAGS, PEOPLE, DELETE = "tags", "people", "delete"
+OPS = (TAGS, PEOPLE, DELETE)
 
 #: The most tags, or people, one edit adds, and the same of what it takes off.
 MOST_NAMED = 200
@@ -54,7 +53,7 @@ MOST_TEXT = 200
 
 #: What the journal calls the changes of a job (History's `operation`): the work's own name, then the job, so that the
 #: files a job wrote are found by it (tagpup.store.file_journal.photo_ids_done).
-OPERATIONS = {TAGS: "bulk tags", PEOPLE: "bulk people", TIME_SHIFT: "bulk time shift", DELETE: "bulk delete"}
+OPERATIONS = {TAGS: "bulk tags", PEOPLE: "bulk people", DELETE: "bulk delete"}
 
 
 def operation_of(op, job):
@@ -65,29 +64,16 @@ def operation_of(op, job):
 @dataclass
 class Edit:
     """What is done to each photo. `add` and `remove` are tags as they are written (a person's already filed as a tag),
-    `persons` the tags of `add` that are people, `minutes` a time shift's; a delete's `token` (of the photos its question
-    named)."""
+    `persons` the tags of `add` that are people; a delete's `token` (of the photos its question named)."""
     op: str
     add: list = field(default_factory=list)
     remove: list = field(default_factory=list)
     persons: list = field(default_factory=list)
-    minutes: int = 0
     token: str = ""
-
-    def to_json(self):
-        return {"op": self.op, "add": self.add, "remove": self.remove, "persons": self.persons, "minutes": self.minutes,
-                "token": self.token}
-
-    @classmethod
-    def from_json(cls, found):
-        return cls(found["op"], list(found.get("add") or []), list(found.get("remove") or []),
-                   list(found.get("persons") or []), int(found.get("minutes") or 0), str(found.get("token") or ""))
 
     def describe(self):
         """What it does, in words that name no tag or person (a record the Activity page lists, which can be read over a
-        shoulder): "add 2 and remove 1 tag", "shift Date Taken by 90 minutes"."""
-        if self.op == TIME_SHIFT:
-            return "shift Date Taken by %d minute(s)" % self.minutes
+        shoulder): "add 2 and remove 1 tag"."""
         if self.op == DELETE:
             return "delete the files to the Recycle Bin (through this PC's where their place has none)"
         parts = []
@@ -127,16 +113,6 @@ def prepare(library, op, params):
         raise Refused("op must be one of %s." % ", ".join(OPS))
     if not isinstance(params, dict):
         raise Refused("params must be an object.")
-    if op == TIME_SHIFT:
-        minutes = params.get("minutes")
-        if type(minutes) is not int:
-            raise Refused("A time shift is a whole number of minutes.")
-        problem = validation.problem("time shift", minutes)
-        if problem:
-            raise Refused(problem)
-        if minutes == 0:
-            raise Refused("A shift of 0 minutes changes nothing.")
-        return Edit(TIME_SHIFT, minutes=minutes)
     if op == DELETE:
         token = params.get("token")
         if not isinstance(token, str) or not token:
@@ -228,12 +204,6 @@ class ChunkSession:
         self._session = session
         self._dead = None
 
-    @property
-    def dead(self):
-        """Did a command of this session time out (or its process die)? Then what it was doing to the file it was at is not
-        known, and nor is what it did before it said so."""
-        return self._dead is not None
-
     def __getattr__(self, name):
         wanted = getattr(self._session, name)
         if not callable(wanted):
@@ -250,89 +220,9 @@ class ChunkSession:
         return command
 
 
-class ChunkUndecided(Exception):
-    """A command of the chunk stalled and the files could not then be read to see what it had done: which photos of the chunk
-    were shifted is not known. The job stops with the chunk in flight in its record, for a resume to decide from the journal and
-    the files, and shifts nothing over a guess."""
-
-
-#: What an error says of a photo that is not shifted, decided after a stalled command by reading it.
-NOT_SHIFTED = "ExifTool did not answer in time; read afterwards, the file was not shifted"
-
-#: ... of one that cannot be told.
-UNCONFIRMED = "could not confirm whether it was shifted: the file differs from both what it held and what the shift leaves"
-
-
-def conflicts(library, operation):
-    """The files of the changes named `operation` that the journal holds as conflicts: after a stalled command, a file that
-    may nonetheless have been written."""
-    return file_journal.files_of_operation(library.path, operation, "conflict")
-
-
-def unsettled(library, operation, ids):
-    """The files of `ids` that the changes named `operation` leave unfinished: `planned` or `writing` (written or not, nobody has
-    recorded which), and, in a change being UNDONE by a process that is alive (settle leaves that to it), any not yet `undone`:
-    its `done` files are about to be unshifted, and the 10 it has undone and the 15 it has not are each the wrong answer for a
-    resume that plans from what the files hold. A time shift resumed while any is left plans a photo from a file it cannot trust."""
-    wanted = set(ids)
-    found = [row for state in ("planned", "writing") for row in file_journal.files_of_operation(library.path, operation, state)
-             if row.photo_id in wanted]
-    for change in file_journal.unfinished(library.path):
-        if change.operation == operation and change.undoing:
-            found.extend(row for row in file_journal.files_of(library.path, change.id)
-                         if row.photo_id in wanted and row.state in ("done", "planned", "writing") and row not in found)
-    return found
-
-
-LOST = "lost"
-
-
-def journal_lost(library, operation, change_id):
-    """None when the journal still holds the change `change_id`, which a record of the job names, as a change of `operation`
-    with its files; else LOST (the journal ends below it, or holds no such change, or another operation's under that id: a
-    snapshot restored)."""
-    if file_journal.highest(library.path) < change_id:
-        return LOST
-    found = file_journal.change(library.path, change_id)
-    if found is None or found.operation != operation:
-        return LOST
-    return None
-
-
-def decide(library, rows, exiftool_path):
-    """file_changes.reconcile over a session of its own -- the chunk's has timed out and stays dead -- with the chunk's deadline.
-    (landed, not_written, elsewhere); ChunkUndecided when a file cannot be read to tell, or ExifTool cannot be had."""
-    try:
-        with exiftool_session.ExifToolSession(executable=exiftool_path, timeout=CHUNK_TIMEOUT) as fresh:
-            landed, not_written, elsewhere, unknown = file_changes.reconcile(library, rows, ChunkSession(fresh))
-    except Exception as problem:
-        logger.warning("Could not read the files of a chunk after a stalled command: %s", problem)
-        raise ChunkUndecided(type(problem).__name__) from None
-    if unknown:
-        raise ChunkUndecided("%d file(s) could not be read" % len(unknown))
-    return landed, not_written, elsewhere
-
-
-def _decided(library, result, exiftool_path):
-    """After a stalled command in a time shift's chunk, read every file the chunk planned that is not recorded done and say what
-    became of it: written after all (counted changed, its conflict row done), not written (an error saying so), or changed by
-    something else (an error saying that). ChunkUndecided when it cannot be told."""
-    change = result.details.get("change")
-    rows = [row for row in file_journal.files_of(library.path, change) if row.state != "done"] if change else []
-    if not rows:
-        return
-    landed, not_written, elsewhere = decide(library, rows, exiftool_path)
-    landed_keys = {paths.key(row.path) for row in landed}
-    said = {paths.key(row.path): NOT_SHIFTED for row in not_written}
-    said.update({paths.key(row.path): UNCONFIRMED for row in elsewhere})
-    result.errors = [(what, said.get(paths.key(what), why)) for what, why in result.errors if paths.key(what) not in landed_keys]
-    result.changed += len(landed)
-
-
-def run_chunk(library, edit, ids, exiftool_path, operation, on_planned=None):
+def run_chunk(library, edit, ids, exiftool_path, operation):
     """Do `edit` to the photos `ids` (a few: a job takes 25), and say what became of each (Outcome). An exception that
-    escapes is not one photo's -- ExifTool that cannot start, a library that cannot be read -- and stops the job.
-    `on_planned(change_id)` is told of a time shift's change once it is planned and before its first file is written."""
+    escapes is not one photo's -- ExifTool that cannot start, a library that cannot be read -- and stops the job."""
     conn = library_view.opened(library)
     try:
         found = store.paths_of(conn, ids)
@@ -354,14 +244,9 @@ def run_chunk(library, edit, ids, exiftool_path, operation, on_planned=None):
     with exiftool_session.ExifToolSession(executable=exiftool_path, timeout=CHUNK_TIMEOUT) as session:
         et = ChunkSession(session)
         with file_changes.exclusively():
-            if edit.op == TIME_SHIFT:
-                result = _shift(library, chosen, edit.minutes, exiftool_path, operation, et, on_planned)
-                if et.dead:
-                    _decided(library, result, exiftool_path)
-            else:
-                result = tagging.change_tags(
-                    library, chosen, edit.add, edit.remove, exiftool_path, operation=operation, stop_at_first_error=False,
-                    persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None, et=et)
+            result = tagging.change_tags(
+                library, chosen, edit.add, edit.remove, exiftool_path, operation=operation, stop_at_first_error=False,
+                persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None, et=et)
     _count(out, result, present, by_key)
     return out
 
@@ -466,85 +351,18 @@ def _count(out, result, present, by_key):
     out.unchanged = max(0, len(present) - out.changed - gone - damaged - (len(out.errors) - away))
 
 
-def _shift(library, photo_paths, minutes, exiftool_path, operation, et=None, on_planned=None):
-    """photos.shift_date_taken for a bulk job's chunk: a photo whose file is gone, or found damaged, is left out and counted
-    (the folder's shift refuses the whole batch for one damaged photo); one ExifTool cannot read is an error, not a skip;
-    and no record of each photo is read back for a page, which nobody is waiting to receive. Nothing is caught here: an
-    exception is the job's to stop at."""
-    refused = Result(attempted=len(photo_paths))
-    present, gone = tagging.leave_out_missing(photo_paths)
-    held, loose = libraries.split(library, present)
-    if held and libraries.refuse_writes(refused, library, held, damaged_ok=True):
-        return refused
-    kept, left = libraries.leave_out_damaged(refused, library, held) if held else ([], [])
-    if kept is None:
-        return refused
-    writable, skipped = file_only.leave_out_unwritable(loose)
-    plan_one = photo_actions.date_shift_plan(minutes, strict=True)
-    journaled = file_changes.write_fields(library, operation, exiftool_path, kept, dates.SHIFTED_FIELDS, plan_one,
-                                          summary={"photos": len(kept), "minutes": minutes}, et=et,
-                                          on_planned=on_planned) if kept else None
-    files = file_only.write_fields(exiftool_path, writable, dates.SHIFTED_FIELDS, plan_one, et=et) if writable else None
-    result = libraries.with_skipped(file_only.combined(journaled, files), left + skipped)
-    result.attempted += len(gone)
-    for what, why in gone:
-        result.skip(what, why)
-    result.details[tagging.SKIPPED_MISSING] = len(gone)
-    result.details.pop("written", None)
-    return result
-
-
-# ---- What a restart finds -----------------------------------------------------------------------
-
-def write_state(library, job, state):
-    """Keep `state` as job `job`'s record in the library's cache folder (tagpup.files.job_files)."""
-    job_files.write_state(library.bulk_jobs, job, state)
-
-def read_state(library, job):
-    """Job `job`'s record, or None."""
-    return job_files.read_state(library.bulk_jobs, job)
-
-def write_ids(library, job, ids):
-    job_files.write_ids(library.bulk_jobs, job, ids)
-
-def read_ids(library, job):
-    """The photos job `job` resolved when it began, or None when the list is lost."""
-    return job_files.read_ids(library.bulk_jobs, job)
-
-def forget_ids(library, job):
-    job_files.forget_ids(library.bulk_jobs, job)
-
-def forget(library, job):
-    """Let go of everything kept of job `job` (its state and its list of photos): when it is over for good."""
-    job_files.forget(library.bulk_jobs, job)
-
+# ---- What an older version left ----------------------------------------------------------------
 
 def sweep(library, now=None):
-    """Let go of the records of jobs untouched too long (tagpup.files.job_files.sweep: a job's files go together, a time shift that
-    can be resumed is kept a month, anything else a week). The ids of the resumable jobs let go."""
-    return job_files.sweep(library.bulk_jobs, now)
-
-
-def resumable_heads(library):
-    """The ids of the jobs a resume can still carry on (both their list of photos and their state are there): the library keeps
-    their first runs, which their ids are, however many runs come after."""
-    return job_files.jobs_with_records(library.bulk_jobs)
-
-
-def has_record(library, job):
-    """Does job `job` have the record a resume needs: its list of photos and its state, both readable?"""
-    return job_files.has_ids(library.bulk_jobs, job) and job_files.read_state(library.bulk_jobs, job) is not None
+    """Let go of the records (state, list of photos) an older version kept of its bulk edits, once they are old
+    (tagpup.files.job_files.sweep). Nothing writes them now."""
+    job_files.sweep(library.bulk_jobs, now)
 
 
 def is_this_process(owner):
     """Is `owner` ('host:pid:start', as a run names its process) this process?"""
     return owner == file_journal.owner()
 
-
-def shifted_ids(library, operation):
-    """The ids of the photos the changes named `operation` (operation_of) wrote and left done: the journal's account, and the
-    only one that is exact after a crash."""
-    return file_journal.photo_ids_done(library.path, operation)
 
 def process_alive(owner):
     """Is the process that owned a run -- 'host:pid:start' -- still going, and not this one? A run of this process that nothing

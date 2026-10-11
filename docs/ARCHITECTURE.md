@@ -209,7 +209,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
   warmed on a thread, released after an idle period; each library's job runners; `begin`/`gpu_turn` take the
   card's turn. Services and jobs are given models; they never build one.
 - **Background jobs** run through one runner per library (`tagpup.jobs`): the index queue (an indexing child
-  process, via the CLI's `index`), Suggest runs, bulk edits by photo id (resumable, one journaled change per
+  process, via the CLI's `index`), Suggest runs, bulk edits by photo id (started again, never resumed; one journaled change per
   chunk), face assignments, Name faces from tags, Verify of a root, Identify caches. **Recurring jobs**
   (`tagpup.jobs.recurring`: snapshots, sync, pruning the journal) are run by the web server only; the
   folder **watcher** syncs a folder when it changes. Event-driven first: a schedule is only for safety.

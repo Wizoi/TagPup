@@ -5,10 +5,12 @@ ExifTool is a table of files (tests/fake_exiftool.py), the photos are real small
 tag tree and the journal are real. A job runs on a thread; a test joins it (no sleep), and pauses it in the middle of a write by
 an event the fake sets and waits on. Fictional names only: the library is photographs of real people, many of them minors.
 """
+import json
 import os
 import socket
 import sys
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -19,9 +21,10 @@ from fake_exiftool import Files  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
+from tagpup.files import job_files  # noqa: E402
 from tagpup.jobs import bulk_edits  # noqa: E402
 from tagpup.services import bulk_edit, file_changes, libraries  # noqa: E402
-from tagpup.store import damaged_files, db  # noqa: E402
+from tagpup.store import damaged_files, db, job_runs  # noqa: E402
 
 REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
 ALL = {"source": {"kind": "all"}}
@@ -81,9 +84,6 @@ class Bulk(unittest.TestCase):
 
     def tags_job(self, add=(), remove=(), selection=None, expect=200):
         return self.start("tags", selection, {"add": list(add), "remove": list(remove)}, expect)
-
-    def shift_job(self, minutes=90, selection=None, expect=200):
-        return self.start("time_shift", selection, {"minutes": minutes}, expect)
 
     def status(self, handle, **query):
         reply = self.client.get("/library/api/library/bulk/status", query_string=dict(job=handle, **query))
@@ -212,7 +212,7 @@ class Progress(Bulk):
         handle = self.tags_job(add=["Trips/Coast"])["job"]
         self.assertTrue(gate.reached.wait(30))
         asked = mock.Mock(side_effect=AssertionError("the status asked the library"))
-        with mock.patch.object(bulk_edits.runs_service, "get", asked), mock.patch.object(bulk_edits.bulk_edit, "read_state", asked):
+        with mock.patch.object(bulk_edits.runs_service, "get", asked):
             seen = self.status(handle)
         asked.assert_not_called()
         self.assertEqual(("running", self.PHOTOS), (seen["state"], seen["total"]))
@@ -276,7 +276,6 @@ class OneAtATime(Bulk):
         refused = self.tags_job(add=["Trips/Lakes"], expect=409)
         self.assertIn("already running", refused["error"])
         self.assertIn("bulk tags", refused["error"])
-        self.assertEqual(409, self.post("resume", {"job": handle}).status_code)
         gate.release.set()
         self.finish(handle)
         self.finish(self.tags_job(add=["Trips/Lakes"])["job"])
@@ -306,6 +305,25 @@ class OneAtATime(Bulk):
         with mock.patch("tagpup.store.file_journal.owner_alive", return_value=True):
             refused = self.tags_job(add=["Trips/Coast"], expect=409)
         self.assertIn("another TagPup process", refused["error"])
+
+
+class StartIsAllOrNothing(Bulk):
+    def test_a_start_whose_thread_cannot_be_started_leaves_nothing_behind(self):
+        from tagpup.web import lifecycle
+        with mock.patch.object(bulk_edits, "_launch", mock.Mock(side_effect=RuntimeError("can't start new thread at C:\\private"))):
+            reply = self.post("start", {"op": "tags", "selection": ALL, "params": {"add": ["Trips/Coast"]}})
+        self.assertEqual(409, reply.status_code)
+        self.assertNotIn("private", reply.get_json()["error"])
+        self.assertEqual((0, []), (bulk_edits.running(self.library), lifecycle.long_work()))
+        self.assertEqual(0, self.vl.rows("SELECT COUNT(*) FROM job_runs")[0][0], "the claim's row was given back")
+        self.assertEqual(0, self.files.writes)
+        self.finish(self.tags_job(add=["Trips/Coast"])["job"])
+
+    def test_a_start_that_is_stopped_by_the_process_dying_is_not_swallowed(self):
+        with mock.patch.object(bulk_edits, "_launch", mock.Mock(side_effect=Crash())):
+            with self.assertRaises(Crash):
+                bulk_edits.start(self.library, bulk_edit.prepare(self.library, "tags", {"add": ["Trips/Coast"]}), self.ids, "exiftool")
+        self.assertEqual(0, bulk_edits.running(self.library))
 
 
 class Cancelling(Bulk):
@@ -350,7 +368,6 @@ class Cancelling(Bulk):
         again = self.finish(self.tags_job(add=["Trips/Coast"])["job"])
         self.assertEqual("done", again["state"])
         self.assertTrue(all("Trips/Coast" in self.tags(photo_id) for photo_id in self.ids))
-        self.assertEqual(400, self.post("resume", {"job": handle}).status_code, "tags are not resumed; they are started again")
 
 
 class WhilePhotosMove(Bulk):
@@ -530,9 +547,8 @@ class WhatGoesWrong(Bulk):
         self.assertEqual(409, status.status_code)
         self.assertEqual(0, self.files.writes)
 
-    def test_the_four_routes_answer_this_pc_only(self):
-        for path, body in (("start", {"op": "tags", "selection": ALL, "params": {"add": ["A"]}}), ("cancel", {"job": 1}),
-                           ("resume", {"job": 1})):
+    def test_the_routes_answer_this_pc_only(self):
+        for path, body in (("start", {"op": "tags", "selection": ALL, "params": {"add": ["A"]}}), ("cancel", {"job": 1})):
             self.assertEqual(403, self.post(path, body, environ_overrides=REMOTE).status_code, path)
         reply = self.client.get("/library/api/library/bulk/status?job=1", environ_overrides=REMOTE)
         self.assertEqual(403, reply.status_code)
@@ -542,7 +558,6 @@ class WhatGoesWrong(Bulk):
         self.assertEqual(404, self.client.get("/library/api/library/bulk/status?job=777").status_code)
         self.assertEqual(400, self.client.get("/library/api/library/bulk/status?job=x").status_code)
         self.assertEqual(400, self.client.get("/library/api/library/bulk/status").status_code)
-        self.assertEqual(404, self.post("resume", {"job": 777}).status_code)
 
 
 class People(Bulk):
@@ -622,159 +637,6 @@ class People(Bulk):
         self.assertEqual(["Trips/Coast"], self.tags(self.ids[1]))
 
 
-class TimeShift(Bulk):
-    def shifted(self, taken, minutes=90):
-        from tagpup.core import dates
-        return dates.shifted(taken, minutes)
-
-    def test_a_shift_moves_the_date_taken_once_in_every_photo_and_says_which(self):
-        reply = self.shift_job(90)
-        done = self.finish(reply["job"])
-        self.assertEqual(("done", self.PHOTOS, self.PHOTOS), (done["state"], done["changed"], done["done"]))
-        for photo_id in self.ids:
-            self.assertEqual(self.shifted(self.taken[photo_id]), self.files.taken_of(self.path(photo_id)))
-            self.assertEqual(1, self.files.writes_of[paths.key(self.path(photo_id))])
-        shown = self.status(reply["job"], ids="1")
-        self.assertEqual(sorted(self.ids), shown["shifted_ids"])
-
-    def test_a_photo_with_no_date_taken_is_unchanged_and_both_date_fields_move_together(self):
-        bare = self.path(self.ids[0])
-        self.files.fields[paths.key(bare)] = {}
-        both = self.path(self.ids[1])
-        self.files.fields[paths.key(both)]["EXIF:CreateDate"] = self.taken[self.ids[1]]
-        done = self.finish(self.shift_job(30)["job"])
-        self.assertEqual((self.PHOTOS - 1, 1), (done["changed"], done["unchanged"]))
-        self.assertEqual({}, self.files.fields[paths.key(bare)])
-        self.assertEqual(self.shifted(self.taken[self.ids[1]], 30), self.files.fields[paths.key(both)]["EXIF:CreateDate"])
-        self.assertEqual(self.shifted(self.taken[self.ids[1]], 30), self.files.taken_of(both))
-
-    def test_the_cursor_and_the_list_are_kept_in_the_cache_folder_and_the_list_goes_when_it_is_done(self):
-        reply = self.shift_job(5)
-        self.finish(reply["job"])
-        self.assertIsNone(bulk_edit.read_ids(self.library, reply["job"]))
-        self.assertIsNone(bulk_edit.read_state(self.library, reply["job"]), "a job that is over keeps no record of its edit")
-        self.assertEqual("done", self.status(reply["job"])["state"], "its status is the library's record of the run")
-
-    def test_a_restart_in_the_middle_leaves_it_abandoned_and_resume_shifts_nothing_twice(self):
-        # The process dies as the 30th file is written: one chunk done, the second under way.
-        def die(_path, n):
-            if n == 30:
-                raise Crash()
-        self.files.on_write = die
-        with mock.patch.object(bulk_edits.Job, "_end", lambda self_, *a, **k: None):
-            handle = self.shift_job(90)["job"]
-            bulk_edits._held(self.library)[handle].thread.join(60)
-        self.crash()
-        self.files.on_write = None
-        seen = self.status(handle)
-        self.assertEqual(("abandoned", True), (seen["state"], seen["resumable"]))
-        self.assertIn("closed before this finished", seen["message"])
-        self.assertIn("no photo already shifted is shifted again", seen["message"])
-        self.assertEqual(25, seen["done"], "the first chunk is settled")
-        resumed = self.post("resume", {"job": handle})
-        self.assertEqual(200, resumed.status_code, resumed.get_json())
-        self.assertEqual(handle, resumed.get_json()["job"])
-        done = self.finish(handle)
-        self.assertEqual(("done", self.PHOTOS), (done["state"], done["done"]))
-        for photo_id in self.ids:
-            key = paths.key(self.path(photo_id))
-            self.assertEqual(self.shifted(self.taken[photo_id]), self.files.taken_of(self.path(photo_id)), photo_id)
-            self.assertEqual(1, self.files.writes_of[key], "photo %d was written %d times" % (photo_id, self.files.writes_of[key]))
-        self.assertEqual(done["changed"], self.PHOTOS)
-        self.assertEqual(sorted(self.ids), self.status(handle, ids="1")["shifted_ids"])
-
-    def test_a_restart_after_a_file_was_written_and_before_its_row_is_still_shifted_once(self):
-        written = []
-        real = file_changes._reached
-
-        def die_after_the_file(step):
-            real(step)
-            if step == "file written":
-                written.append(1)
-                if len(written) == 30:
-                    raise Crash()
-        with mock.patch.object(file_changes, "_reached", die_after_the_file), \
-                mock.patch.object(bulk_edits.Job, "_end", lambda self_, *a, **k: None):
-            handle = self.shift_job(90)["job"]
-            bulk_edits._held(self.library)[handle].thread.join(60)
-            self.crash()
-            self.assertEqual(200, self.post("resume", {"job": handle}).status_code)
-            self.finish(handle)
-        for photo_id in self.ids:
-            self.assertEqual(self.shifted(self.taken[photo_id]), self.files.taken_of(self.path(photo_id)))
-            self.assertEqual(1, self.files.writes_of[paths.key(self.path(photo_id))])
-
-    def test_a_restart_before_the_chunk_planned_anything_retries_the_whole_chunk(self):
-        doomed = paths.key(self.path(self.ids[40]))
-
-        def die_reading(path, n):
-            if paths.key(path) == doomed:
-                raise Crash()
-        self.files.on_read = die_reading
-        with mock.patch.object(bulk_edits.Job, "_end", lambda self_, *a, **k: None):
-            handle = self.shift_job(90)["job"]
-            bulk_edits._held(self.library)[handle].thread.join(60)
-        self.crash()
-        self.files.on_read = None
-        self.post("resume", {"job": handle})
-        done = self.finish(handle)
-        self.assertEqual(self.PHOTOS, done["changed"])
-        for photo_id in self.ids:
-            self.assertEqual(1, self.files.writes_of[paths.key(self.path(photo_id))])
-
-    def test_a_cancelled_shift_resumes_from_where_it_stopped(self):
-        gate = Gate(30)
-        self.files.on_write = gate
-        self.addCleanup(gate.release.set)
-        handle = self.shift_job(90)["job"]
-        self.assertTrue(gate.reached.wait(30))
-        self.post("cancel", {"job": handle})
-        gate.release.set()
-        stopped = self.finish(handle)
-        self.assertEqual(("cancelled", True, 50), (stopped["state"], stopped["resumable"], stopped["done"]))
-        self.post("resume", {"job": handle})
-        done = self.finish(handle)
-        self.assertEqual(("done", self.PHOTOS, self.PHOTOS), (done["state"], done["done"], done["changed"]))
-        for photo_id in self.ids:
-            self.assertEqual(1, self.files.writes_of[paths.key(self.path(photo_id))])
-
-    def test_resume_is_refused_for_a_job_that_is_done_running_or_gone_and_for_one_whose_list_is_lost(self):
-        handle = self.shift_job(5)["job"]
-        self.finish(handle)
-        self.assertEqual(400, self.post("resume", {"job": handle}).status_code, "it is done")
-        gate = Gate(self.files.writes + 30)
-        self.files.on_write = gate
-        self.addCleanup(gate.release.set)
-        second = self.shift_job(5)["job"]
-        self.assertTrue(gate.reached.wait(30))
-        self.assertEqual(409, self.post("resume", {"job": second}).status_code, "it is running")
-        self.post("cancel", {"job": second})
-        gate.release.set()
-        self.finish(second)
-        bulk_edit.forget_ids(self.library, second)
-        lost = self.post("resume", {"job": second})
-        self.assertEqual(400, lost.status_code)
-        self.assertIn("cannot be resumed", lost.get_json()["error"])
-
-    def test_a_failed_shift_that_stopped_part_way_can_be_resumed_when_exiftool_is_back(self):
-        calls = []
-
-        def starts(*args, **kwargs):
-            calls.append(1)
-            if len(calls) == 2:
-                raise FileNotFoundError("ExifTool went away")
-            return self.files.session()
-        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", starts):
-            handle = self.shift_job(45)["job"]
-            failed = self.finish(handle)
-        self.assertEqual(("failed", 25, True), (failed["state"], failed["done"], failed["resumable"]))
-        self.assertIn("FileNotFoundError", failed["message"])
-        self.assertEqual(200, self.post("resume", {"job": handle}).status_code)
-        self.assertEqual("done", self.finish(handle)["state"])
-        for photo_id in self.ids:
-            self.assertEqual(1, self.files.writes_of[paths.key(self.path(photo_id))])
-
-
 class AfterARestart(Bulk):
     def test_the_status_of_a_job_the_process_did_not_run_comes_from_what_the_library_kept(self):
         gate = Gate(30)
@@ -800,7 +662,8 @@ class AfterARestart(Bulk):
         self.crash()
         self.files.on_write = None
         seen = self.status(handle)
-        self.assertEqual(("abandoned", False), (seen["state"], seen["resumable"]))
+        self.assertEqual("abandoned", seen["state"])
+        self.assertEqual(25, seen["done"], "the first chunk is settled")
         self.assertIn("closed before this finished", seen["message"])
         again = self.finish(self.tags_job(add=["Trips/Coast"])["job"])
         self.assertEqual("done", again["state"])
@@ -831,41 +694,34 @@ class AfterARestart(Bulk):
         self.finish(handle)
         self.assertIsNone(self.current())
 
-    def test_current_after_a_restart_is_the_abandoned_job_and_a_resumed_shift_is_found_by_its_first_id(self):
+    def test_current_after_a_restart_is_the_abandoned_job_and_a_job_started_again_replaces_it(self):
         def die(_path, n):
             if n == 30:
                 raise Crash()
         self.files.on_write = die
         with mock.patch.object(bulk_edits.Job, "_end", lambda self_, *a, **k: None):
-            handle = self.shift_job(90)["job"]
+            handle = self.tags_job(add=["Trips/Coast"])["job"]
             bulk_edits._held(self.library)[handle].thread.join(60)
         self.crash()
         self.files.on_write = None
         seen = self.current()
-        self.assertEqual((handle, "abandoned", True), (seen["job"], seen["state"], seen["resumable"]))
-        self.post("resume", {"job": handle})
-        self.finish(handle)
-        self.assertIsNone(self.current(), "the resumed job finished")
+        self.assertEqual((handle, "abandoned", 25), (seen["job"], seen["state"], seen["done"]))
+        self.finish(self.tags_job(add=["Trips/Coast"])["job"])
+        self.assertIsNone(self.current(), "the one started again finished")
 
-    def test_current_offers_a_cancelled_job_and_not_one_older_than_the_cache_keeps(self):
+    def test_current_offers_a_cancelled_job_and_not_one_older_than_a_month(self):
         gate = Gate(2)
         self.files.on_write = gate
         self.addCleanup(gate.release.set)
-        handle = self.shift_job(5)["job"]
+        handle = self.tags_job(add=["Trips/Coast"])["job"]
         self.assertTrue(gate.reached.wait(30))
         self.post("cancel", {"job": handle})
         gate.release.set()
         self.finish(handle)
         seen = self.current()
-        self.assertEqual((handle, "cancelled", True), (seen["job"], seen["state"], seen["resumable"]))
+        self.assertEqual((handle, "cancelled"), (seen["job"], seen["state"]))
+        bulk_edits._jobs.clear()
         with mock.patch.object(bulk_edits.time, "time", return_value=seen["started"] + 31 * 86400):
-            self.assertIsNone(self.current())
-
-    def test_current_does_not_offer_a_job_that_is_too_old_to_resume(self):
-        handle = self.shift_job(5)["job"]
-        self.finish(handle)
-        expired = dict(self.status(handle), state="expired", resumable=False)
-        with mock.patch.object(bulk_edits, "status", lambda library, asked: expired):
             self.assertIsNone(self.current())
 
     def test_the_job_goes_on_when_the_page_is_closed_or_another_library_is_open(self):
@@ -881,6 +737,58 @@ class AfterARestart(Bulk):
         gate.release.set()
         self.assertEqual("done", self.finish(handle)["state"])
         self.assertEqual("done", self.status(handle)["state"])
+
+
+class WhatAnOlderVersionLeft(Bulk):
+    """Time shift was an edit of a selection that could be resumed, with a list of photos and a state kept in the cache folder.
+    It is gone; what it left in a library is a run in `job_runs` and, for a while, those two files. None of it may crash a page
+    that opens the library, a start, a cancel or the sweep."""
+
+    def old_run(self, outcome, counts):
+        found = self.vl.conn.execute(
+            "INSERT INTO job_runs (job, library, started, outcome, changed, owner) VALUES ('bulk edit', 'library', ?, ?, ?, ?)",
+            (job_runs.stamp(time.time() - 3600), outcome, json.dumps(counts),
+             GHOST if outcome == "running" else None)).lastrowid
+        self.vl.conn.commit()
+        return found
+
+    def test_time_shift_is_not_an_edit_any_more(self):
+        reply = self.post("start", {"op": "time_shift", "selection": ALL, "params": {"minutes": 90}})
+        self.assertEqual(400, reply.status_code)
+        self.assertIn("op must be one of", reply.get_json()["error"])
+        self.assertEqual(([], 0), (self.vl.rows("SELECT id FROM job_runs"), self.files.writes))
+
+    def test_a_time_shift_an_older_version_abandoned_is_shown_as_abandoned_and_is_no_trouble(self):
+        handle = self.old_run("running", {"op": "time_shift", "job": 99, "total": 60, "done": 25, "changed": 25, "state": "running",
+                                          "what": "bulk time shift: shift Date Taken by 30 minute(s), 25 of 60 photos"})
+        self.vl.conn.execute("UPDATE job_runs SET owner = ? WHERE id = ?", (GHOST, handle))
+        self.vl.conn.commit()
+        seen = self.status(handle)
+        self.assertEqual(("abandoned", "time_shift", 25, 60), (seen["state"], seen["op"], seen["done"], seen["total"]))
+        self.assertNotIn("resumable", seen)
+        self.assertEqual(handle, self.client.get("/library/api/library/bulk/current").get_json()["job"]["job"])
+        self.assertEqual("abandoned", self.post("cancel", {"job": handle}).get_json()["state"])
+        self.assertEqual(404, self.post("resume", {"job": handle}).status_code, "nothing resumes any more")
+        self.finish(self.tags_job(add=["Trips/Coast"])["job"])
+        self.assertEqual(self.PHOTOS, len([photo_id for photo_id in self.ids if "Trips/Coast" in self.tags(photo_id)]))
+
+    def test_a_finished_run_that_a_resume_carried_on_reads_as_the_run_it_is(self):
+        head = self.old_run("done", {"op": "time_shift", "job": 5, "total": 60, "done": 60, "changed": 60, "state": "done"})
+        tail = self.old_run("done", {"op": "time_shift", "job": head, "total": 60, "done": 60, "changed": 35, "state": "done"})
+        self.assertEqual(("done", 60), (self.status(tail)["state"], self.status(tail)["done"]))
+        self.assertIsNone(self.client.get("/library/api/library/bulk/current").get_json()["job"])
+
+    def test_the_files_it_kept_are_swept_when_old_and_a_new_job_is_not_confused_by_them(self):
+        folder = self.library.bulk_jobs
+        job_files.write_state(folder, 31, {"op": "time_shift", "state": "abandoned"})
+        _ids_path = job_files.ids_path(folder, 31)
+        with open(_ids_path, "w") as handle:
+            handle.write("[1,2,3]")
+        long_ago = time.time() - 8 * 86400
+        for name in os.listdir(folder):
+            os.utime(os.path.join(folder, name), (long_ago, long_ago))
+        self.finish(self.tags_job(add=["Trips/Coast"])["job"])
+        self.assertEqual([], [name for name in os.listdir(folder) if name.startswith("31.")])
 
 
 class TheLock(Bulk):
