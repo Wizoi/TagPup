@@ -88,12 +88,11 @@ describe("the Roots dialog", () => {
     assert.ok(row.querySelector(".roots-back").disabled, "no earlier place to go back to");
   });
 
-  test("it carries one quiet line linking to the Activity page's File access, and asks nothing for it", async (t) => {
+  test("it carries no line about other programs scanning the files, and asks nothing about them", async (t) => {
     const ctx = await tuner(t);
     const dialog = await openFromGear(ctx);
-    const note = dialog.querySelector(".file-access-note");
-    assert.equal(text(note), "Other programs may be scanning these files: see Activity > File access");
-    assert.equal(note.querySelector("a").getAttribute("href"), "/activity/#file-access");
+    assert.equal(dialog.querySelector(".file-access-note"), null);
+    assert.equal(dialog.querySelector('a[href*="file-access"]'), null);
     assert.equal(ctx.server.calls.filter((c) => c.url.includes("file-access")).length, 0);
   });
 
@@ -141,9 +140,8 @@ describe("the Roots dialog", () => {
     assert.match(css, /\.roots-result:not\(:empty\) \{[^}]*margin:/);
   });
 
-  test("the File access link is in a colour readable on the dark page, and the dialog gives way on a narrow window", async () => {
+  test("the dialog gives way on a narrow window", async () => {
     const css = readFileSync(new URL("../../web/tuner/style.css", import.meta.url), "utf8");
-    assert.match(css, /\.file-access-note a \{[^}]*color: #a5b4fc/);
     assert.match(css, /@media \(max-width: 600px\) \{[^@]*\.roots-title \{ flex-wrap: wrap/);
   });
 

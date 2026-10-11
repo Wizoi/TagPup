@@ -180,7 +180,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        identities, identify, indexing, sync, refresh_rows, relink_photos,
                        roots*, settings, journal, file_changes, bulk_edit, selection,
                        library_view, search, suggester, suggestions, snapshots, thumbnails, tree_fill,
-                       faces_from_tags, tags_from_faces, face_people, inspect, activity, file_access, maintenance
+                       faces_from_tags, tags_from_faces, face_people, inspect, activity, maintenance
   jobs/                background work: indexing queue, suggestions, bulk_edits, face_assignments,
                        naming_faces, identify, verifying, watching, recurring
   web/                 one Flask app per page from one factory (app.py), *_routes.py by concern, security,
@@ -322,7 +322,7 @@ Every section of the former `ARCHITECTURE.md` is in `docs/history/`, unedited. C
 | Phase 7.6: Settings in the library, and a gear on each page | [history/ARCHITECTURE_jobs_sync_journal.md](history/ARCHITECTURE_jobs_sync_journal.md) |
 | Phase 8: Sync | [history/ARCHITECTURE_jobs_sync_journal.md](history/ARCHITECTURE_jobs_sync_journal.md) |
 | Phase 8.5: Activity | [history/ARCHITECTURE_jobs_sync_journal.md](history/ARCHITECTURE_jobs_sync_journal.md) |
-| File access check | [history/ARCHITECTURE_jobs_sync_journal.md](history/ARCHITECTURE_jobs_sync_journal.md) |
+| Which program holds a file (lock owners; the Activity File access probes were deleted 2026-10-11) | [history/ARCHITECTURE_jobs_sync_journal.md](history/ARCHITECTURE_jobs_sync_journal.md) |
 | Roots and machines | [history/ARCHITECTURE_roots_and_markers.md](history/ARCHITECTURE_roots_and_markers.md) |
 | Phase 9: Library views | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |
 | Phase 9a-1: the derived tables the views stand on | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |
