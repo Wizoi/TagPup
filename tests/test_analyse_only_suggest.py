@@ -429,7 +429,6 @@ class AFailureIsSaidAndLeavesNothingHalfRun(Base):
         self.assertEqual(4, found["unread"])
         self.assertTrue(any("CUDA out of memory" in note for note in found["notes"]), found["notes"])
         self.assert_library_unchanged()
-        self.assertEqual([], self.rows("SELECT * FROM damaged_files"))
         # Tried again by the next start, not skipped for good.
         self.clip.fail = None
         self.start(self.cup)

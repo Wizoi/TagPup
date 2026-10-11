@@ -46,7 +46,7 @@ KINDS = {
     13: schema.ADDITIVE,     # job_runs
     14: schema.ADDITIVE,     # the sync_runs table
     15: schema.ADDITIVE,     # the added_folders table
-    16: schema.ADDITIVE,     # the damaged_files table
+    16: schema.ADDITIVE,     # makes nothing now (it made damaged_files, which 31 drops)
     17: schema.ADDITIVE,     # the faces_pending table
     18: schema.ADDITIVE,     # the roots table, empty
     19: schema.ADDITIVE,     # photo_tags, folders and photo_folder, derived from the photos
@@ -58,14 +58,15 @@ KINDS = {
     25: schema.ADDITIVE,     # the faces_detected table, empty
     26: schema.ADDITIVE,     # makes nothing now (it made library_identity and folder_ids, empty)
     27: schema.ADDITIVE,     # makes nothing now (it made search_gear, the camera and lens words)
-    28: schema.ADDITIVE,     # idx_faces_tag, idx_photo_people_tag and name_review_dismissals (empty)
+    28: schema.ADDITIVE,     # idx_faces_tag and idx_photo_people_tag (it made name_review_dismissals, empty, which 31 drops)
     29: schema.ADDITIVE,     # the trigger that keeps a person faces name from being deleted; the faces' generation moves with tag_id
     30: schema.DESTRUCTIVE,  # drops search_gear, photo_meta, folder_ids and library_identity (one backup)
+    31: schema.DESTRUCTIVE,  # drops name_review_dismissals and damaged_files (one backup)
 }
 
 
 #: The migrations that only make indexes (and, for 29, a trigger), or make nothing now (26 and 27): they change no row of any table.
-INDEX_ONLY = (20, 22, 23, 26, 27, 29)
+INDEX_ONLY = (16, 20, 22, 23, 26, 27, 28, 29)
 
 
 class TheNamesTestsExpect(unittest.TestCase):
@@ -580,10 +581,10 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
             self.assertEqual(migration_names.after(10), schema.ensure(path))
         # What it touches: change_files, which it makes, and changes, the runner's own;
         # migration 12 touches change_files alone, 13 job_runs, 14 sync_runs, 15
-        # added_folders and 16 damaged_files, which they make; 21 faces and photo_people, whose
+        # added_folders, which they make; 21 faces and photo_people, whose
         # columns it adds (a count of faces reads its smallest index, not its rows).
         self.assertLessEqual(set(counted), {"change_files", "changes", "job_runs", "sync_runs", "added_folders",
-                                            "damaged_files", "faces_pending", "faces", "photo_people",
+                                            "faces_pending", "faces", "photo_people",
                                             "faces_detected"})
 
 

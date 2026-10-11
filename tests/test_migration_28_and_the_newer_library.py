@@ -2,8 +2,8 @@
 phase 2; docs/findings.md, #1012, #1013).
 
 Migration 28 is additive: `idx_faces_tag` and `idx_photo_people_tag`, the indexes a person is read by id with
-(`WHERE tag_id = ?` scanned `idx_faces_person` whole on faces and had no index on photo_people), and the empty
-`name_review_dismissals`. No row of any table changes, and a change journaled before it can still be undone.
+(`WHERE tag_id = ?` scanned `idx_faces_person` whole on faces and had no index on photo_people); it made the empty
+`name_review_dismissals` too, until migration 31 dropped it. No row of any table changes, and a change journaled before it can still be undone.
 
 The guard: stage 2 turns the id/name direction round, so a version of the app from before it that opened a migrated
 library would write names without ids and read ids it does not know. `schema.ensure` refuses a library whose schema is
@@ -86,7 +86,7 @@ class MigrationTwentyEight(unittest.TestCase):
     def schema_rows(self):
         return look(self.path, "SELECT type, name, tbl_name FROM sqlite_master ORDER BY type, name")
 
-    def test_a_library_at_27_gets_two_indexes_and_an_empty_table_and_the_trigger_of_29_and_nothing_else(self):
+    def test_a_library_at_27_gets_two_indexes_and_the_trigger_of_29_and_nothing_else(self):
         before_schema = self.schema_rows()
         tables = [name for (name,) in look(self.path, "SELECT name FROM sqlite_master WHERE type = 'table' "
                                                        "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
@@ -95,14 +95,11 @@ class MigrationTwentyEight(unittest.TestCase):
         self.assertEqual(migration_names.after(27), schema.ensure(self.path))
         added = {row for row in self.schema_rows() if row not in before_schema}
         self.assertEqual({("index", "idx_faces_tag", "faces"), ("index", "idx_photo_people_tag", "photo_people"),
-                          ("table", "name_review_dismissals", "name_review_dismissals"),
-                          ("index", "sqlite_autoindex_name_review_dismissals_1", "name_review_dismissals"),
                           ("trigger", "person_tag_not_deleted_while_named", "tag_taxonomy")}, added,
                          "no column, no other table; the trigger is migration 29's")
         self.assertEqual(before, {table: look(self.path, "SELECT * FROM %s" % table) for table in tables})
-        self.assertEqual([(0,)], look(self.path, "SELECT COUNT(*) FROM name_review_dismissals"))
         migration = [m for m in schema.MIGRATIONS if m.version == 28][0]
-        self.assertEqual((schema.ADDITIVE, ("name_review_dismissals",)), (migration.kind, migration.touches))
+        self.assertEqual((schema.ADDITIVE, ()), (migration.kind, migration.touches))
 
     def test_the_planner_reads_a_person_by_id_from_the_indexes(self):
         schema.ensure(self.path)
@@ -144,7 +141,6 @@ class MigrationTwentyEight(unittest.TestCase):
         names = [name for (_t, name, _tbl) in self.schema_rows()]
         self.assertEqual(27, look(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
         self.assertNotIn("idx_faces_tag", names)
-        self.assertNotIn("name_review_dismissals", names)
         schema._current.clear()
         self.assertEqual(migration_names.after(27), schema.ensure(self.path))
         self.assertIn("idx_faces_tag", [name for (_t, name, _tbl) in self.schema_rows()])

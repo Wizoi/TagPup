@@ -73,7 +73,7 @@ class Plans(unittest.TestCase):
         text = "\n".join("\n".join(lines) for _statement, lines in found)
         self.assertIn(index, text)
         for statement, lines in found:
-            if "sqlite_master" in statement or "FROM roots" in statement or "damaged_files" in statement:
+            if "sqlite_master" in statement or "FROM roots" in statement:
                 continue
             for line in lines:
                 if line.startswith("SCAN"):

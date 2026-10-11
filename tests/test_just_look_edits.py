@@ -126,7 +126,7 @@ class Base(unittest.TestCase):
 class TheLibraryIsDumpedWhole(Base):
     def test_the_dump_sees_the_tables_a_write_could_change(self):
         for table in ("photos", "changes", "change_files", "change_rows", "generations", "settings", "job_runs",
-                      "damaged_files", "embeddings", "faces", "added_folders", "tag_taxonomy", "photo_tags",
+                      "embeddings", "faces", "added_folders", "tag_taxonomy", "photo_tags",
                       "photo_people", "suggestions", "sync_runs", "roots"):
             self.assertIn(table, self.before, "the dump does not look at %s" % table)
         self.assertEqual(2, len(self.before["photos"]))
