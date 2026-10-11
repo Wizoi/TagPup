@@ -134,6 +134,14 @@ class TheRules(ALibraryAtRest):
 
 
 class KeywordsWithNoNode(ALibraryAtRest):
+    """A keyword the index reads gets its node (2026-10-10); one with none is a photo read before that, or a node deleted
+    since. The library is made so: the node of "Mystery" is taken out."""
+
+    def setUp(self):
+        super().setUp()
+        self.conn.execute("DELETE FROM tag_taxonomy WHERE tag = 'Mystery'")
+        self.conn.commit()
+
     def test_they_are_counted_by_keyword_use_and_photo_and_never_broken(self):
         self.assertEqual({}, self.counts())
         distinct, uses, photos, ranked = checks.tags_without_a_node(self.conn)
@@ -150,12 +158,15 @@ class KeywordsWithNoNode(ALibraryAtRest):
         doctor.report(self.path, 5, out=shown.append)
         self.assertIn("Mystery", "\n".join(shown))
 
-    def test_the_tree_is_not_changed_by_reporting_them_or_by_indexing_them(self):
+    def test_the_tree_is_not_changed_by_reporting_them_and_indexing_a_photo_gives_its_keyword_a_node(self):
         nodes = self.conn.execute("SELECT COUNT(*) FROM tag_taxonomy").fetchone()[0]
+        checks.tags_without_a_node(self.conn)
+        doctor.report(self.path, out=lambda line: None)
+        self.assertEqual(nodes, self.conn.execute("SELECT COUNT(*) FROM tag_taxonomy").fetchone()[0])
         photo_rows.add_read(self.conn, os.path.join(self.pictures, "2025", "d.jpg"), {"XMP:Subject": ["Another Stray"]})
         self.conn.commit()
-        self.assertEqual(nodes, self.conn.execute("SELECT COUNT(*) FROM tag_taxonomy").fetchone()[0])
-        self.assertEqual(2, checks.tags_without_a_node(self.conn)[0])
+        self.assertEqual(nodes + 1, self.conn.execute("SELECT COUNT(*) FROM tag_taxonomy").fetchone()[0])
+        self.assertEqual(1, checks.tags_without_a_node(self.conn)[0], "the one read before is still without")
 
     def test_the_doctor_says_nothing_of_them_when_there_are_none(self):
         self.conn.execute("DELETE FROM photos WHERE id = ?", (self.ids["b.jpg"],))

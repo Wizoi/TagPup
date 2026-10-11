@@ -79,14 +79,25 @@ class TheKeywordsOfAPhoto(ALibrary):
                          sorted(self.rows("SELECT photo_id, tag_id FROM photo_tags"),
                                 key=lambda row: (row[0], row[1] != self.node("Trips/Coast"))))
 
-    def test_a_keyword_with_no_node_gets_no_row_and_no_node_is_made(self):
+    def test_a_keyword_the_index_reads_with_no_node_gets_the_node_and_its_photo_the_row(self):
         self.tree("Trips/Coast")
-        nodes = self.rows("SELECT COUNT(*) FROM tag_taxonomy")
         one = self.photo("2024", "a.jpg", ["Trips/Coast", "Trips/Lakeside", "Mystery"])
         self.photo("2024", "b.jpg", ["Trips/Lakeside"])
         self.rebuilt()
+        self.assertEqual(["Mystery", "Trips/Coast", "Trips/Lakeside"], self.tags_of(one))
+        self.assertEqual({}, dict(derived.tags_without_a_node(self.conn)))
+
+    def test_a_keyword_with_no_node_gets_no_row_and_a_rebuild_makes_no_node(self):
+        """A photo read before the index made nodes, or a node deleted since: the rebuild only reads the tree."""
+        self.tree("Trips/Coast")
+        one = self.photo("2024", "a.jpg", ["Trips/Coast", "Trips/Lakeside", "Mystery"])
+        self.photo("2024", "b.jpg", ["Trips/Lakeside"])
+        self.conn.execute("DELETE FROM tag_taxonomy WHERE tag IN ('Trips/Lakeside', 'Mystery')")
+        self.conn.commit()
+        nodes = self.rows("SELECT COUNT(*) FROM tag_taxonomy")
+        self.rebuilt()
         self.assertEqual(["Trips/Coast"], self.tags_of(one))
-        self.assertEqual(nodes, self.rows("SELECT COUNT(*) FROM tag_taxonomy"), "indexing never changes the tree")
+        self.assertEqual(nodes, self.rows("SELECT COUNT(*) FROM tag_taxonomy"), "a rebuild does not change the tree")
         self.assertEqual({"Trips/Lakeside": 2, "Mystery": 1}, dict(derived.tags_without_a_node(self.conn)))
 
     def test_a_keyword_that_differs_only_in_case_names_the_node(self):
@@ -107,6 +118,7 @@ class TheKeywordsOfAPhoto(ALibrary):
     def test_a_bare_leaf_is_not_the_path_it_is_a_person_of(self):
         """Keywords are full paths; a bare name some old writer left is the people rule's to
         resolve (store.people), not a node of its own."""
+        taxonomy.add_path(self.conn, "People", root_has_face=1)
         self.tree("People/Cora Ingersoll")
         bare = self.photo("2024", "a.jpg", ["Cora Ingersoll"])
         full = self.photo("2024", "b.jpg", ["People/Cora Ingersoll"])
@@ -348,6 +360,8 @@ class WhatRebuildingDoes(ALibrary):
 
     def test_a_tag_added_to_the_tree_after_a_photo_was_read_is_found_by_a_rebuild(self):
         one = self.photo("2024", "a.jpg", ["Trips/Coast"])
+        self.conn.execute("DELETE FROM tag_taxonomy WHERE tag IN ('Trips/Coast', 'Trips')")   # a node gone since the read
+        self.conn.commit()
         self.rebuilt()
         self.assertEqual([], self.tags_of(one))
         self.tree("Trips/Coast")

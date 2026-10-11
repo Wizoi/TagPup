@@ -29,6 +29,7 @@ import fake_exiftool  # noqa: E402
 import tuner_client  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
@@ -445,6 +446,8 @@ class TestMatchBulkListsThePerson(TunerAPITestBase):
         assignment also displaced another name."""
         # Naming writes the person to the photo's file (#907), so the file holds what the row says: Bob.
         files = fake_exiftool.standing_in(self)
+        # The tree a library has once it has a node (naming a face with a new name makes one): its face root is in it.
+        db.write_with_connection(self.TEST_DB, lambda conn: taxonomy.add_path(conn, "People", root_has_face=1))
         photo = self.add_photo(self.make_photo_file("a.jpg"), tags=["People/Bob"])
         files.keep_tags(photo, ["People/Bob"])
         face = self.add_face(photo, unit_vector(80))

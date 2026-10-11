@@ -87,16 +87,44 @@ def _differences(conn, photo_ids, known, loose=None):
                 yield photo_id, people
 
 
-def rebuild(conn, photo_ids=None, known=None, ids=None):
+def _made(conn, changes, loose):
+    """`changes` ((photo id, people as [(id, name, source)]), from _differences) with the people who have a name and no id given
+    one: the person called the name if the tree has them now (a vocabulary read before the tree grew), else a node made for the
+    name (taxonomy.ensure_node, which links the faces that hold it). A name two people have, or a group's, stays a name."""
+    from tagpup.store import taxonomy   # taxonomy imports this module
+    names = {vocabulary.key(name): name
+             for _photo, listed in changes for tag_id, name, _source in listed if tag_id is None and name}
+    names.update({vocabulary.key(name): name for _face, name in loose})
+    tree, given = derived.Tree.read(conn), {}
+    for key, name in names.items():
+        node_id, made = taxonomy.ensure_node(conn, name, person=True, tree=tree)
+        if node_id is not None:
+            given[key] = (node_id, made)
+    if not given:
+        return changes
+    named = {node_id: tag for node_id, tag in tree.tags.items()}
+    return [(photo_id, [(given[vocabulary.key(name)][0], vocabulary.leaf_of(named[given[vocabulary.key(name)][0]]), source)
+                        if tag_id is None and name and vocabulary.key(name) in given
+                        and (source == "keyword" or given[vocabulary.key(name)][1]) else (tag_id, name, source)
+                        for tag_id, name, source in listed]) for photo_id, listed in changes]
+
+
+def rebuild(conn, photo_ids=None, known=None, ids=None, make=False):
     """Write the people of each photo in `photo_ids` -- every photo, without -- by the one
     rule (vocabulary.people_rows: each person by the id of their node, a person with two faces
     or two keywords once, two people called alike both), and settle each row written
     (person_ids.follow_listed; every row, when every photo is rebuilt). `known` is the tree's
     PeopleVocabulary, and `ids` its person_ids.People, each read from `conn` when not given.
     A face of these photos with a name and no id (written by something that knew none) stays an unresolved name: a rebuild
-    links nothing (person_ids.link_added is the one owner). Returns how many photos' people changed. The caller commits."""
+    links nothing (person_ids.link_added is the one owner) -- unless `make`, which a writer that INTRODUCES names says
+    (the index's read, a face named): then a name no node has is given its node (`_made`), and that links. Returns how
+    many photos' people changed. The caller commits."""
     written, loose = [], []
-    for photo_id, people in list(_differences(conn, photo_ids, known, loose)):
+    changes = list(_differences(conn, photo_ids, known, loose))
+    if make and (loose or any(tag_id is None for _photo, listed in changes for tag_id, _name, _source in listed)):
+        changes = _made(conn, changes, loose)
+        ids = None   # read again: it holds none of the people just made
+    for photo_id, people in changes:
         conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))
         if person_ids.present(conn):
             conn.executemany("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, ?, ?)",
@@ -130,14 +158,14 @@ def repair(db_path, photo_ids):
                                     label="photos' people")
 
 
-def rebuild_photos(conn, photo_paths, known=None):
+def rebuild_photos(conn, photo_paths, known=None, make=False):
     """rebuild, for the photos at `photo_paths`, however they are spelled. Returns how many
     photos' people changed. The caller commits."""
     ids = []
     for photo_path in photo_paths:
         where, params = store_roots.sql_equals(conn, "path", photo_path)
         ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
-    return rebuild(conn, ids, known) if ids else 0
+    return rebuild(conn, ids, known, make=make) if ids else 0
 
 
 def keyword_keys(conn):

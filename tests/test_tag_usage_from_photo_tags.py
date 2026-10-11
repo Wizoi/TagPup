@@ -55,11 +55,13 @@ class TheCounts(unittest.TestCase):
 
     def test_a_keyword_with_no_node_counts_toward_nothing_and_a_case_folded_one_toward_its_node(self):
         """The meaning, pinned (findings #553): counts follow the views' derivation (photo_tags), which ties a photo's
-        keyword to a node, else the node it is without case, and makes no node: so a keyword with no node credits no
-        level above it (the old lineage count credited 'Not'), and 'trips/lakes' credits the node 'Trips/Lakes'."""
+        keyword to a node, else the node it is without case: so a keyword with no node credits no level above it (the old
+        lineage count credited 'Not'), and 'trips/lakes' credits the node 'Trips/Lakes'. The index makes a keyword's node
+        (2026-10-10), so a keyword with none is a photo read before: the node is taken out here."""
         before = photos.tag_usage(self.vl.path)
         self.vl.photo("Event 0", "folded.jpg", tags=["trips/lakes"])
         self.vl.photo("Event 0", "orphan.jpg", tags=["Orphans/Nowhere"])
+        self.vl.forget("Orphans/Nowhere", "Not/In/The/Tree")
         after = photos.tag_usage(self.vl.path)
         self.assertEqual(before["Trips/Lakes"] + 1, after["Trips/Lakes"])
         self.assertEqual(before["Trips"] + 1, after["Trips"])

@@ -137,6 +137,7 @@ class WhatASearchHolds(Library):
     def test_a_member_that_names_nothing(self):
         # A keyword with no node of the tree (a photo may carry it: it has no row in photo_tags) and a person nobody is.
         loose = self.vl.photo("Misc", "loose.jpg", taken="2019:01:01 10:00:00", tags=["Unfiled/Odd one", "Activity/Sailing"])
+        self.vl.forget("Unfiled/Odd one")   # read before the index made nodes
         self.assertEqual([], self.found(search(all_of=[member("keyword", "Unfiled/Odd one"), member("keyword", "Activity/Sailing")]))["ids"])
         self.assertEqual([], self.found(search(any_of=[member("person", "Nobody Atall")], none_of=[member("year", "1999")]))["ids"])
         everything = self.found(search(none_of=[member("keyword", "Unfiled/Odd one")]))

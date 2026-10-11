@@ -195,9 +195,9 @@ class Base(unittest.TestCase):
                 stamp = store_embeddings.stamp_of(path)
                 store_embeddings.put(conn, path, model, stamp[0], stamp[1],
                                      np.array(vector_of(path), dtype=np.float32).tobytes())
-            store_faces.insert(conn, self.held[0], [0, 0, 100, 100], ROWAN.tobytes(), name="Rowan Thackeray", prob=0.99)
             store_taxonomy.add_node(conn, "Trips/Regatta")
             store_taxonomy.add_node(conn, "People/Rowan Thackeray")
+            store_faces.insert(conn, self.held[0], [0, 0, 100, 100], ROWAN.tobytes(), name="Rowan Thackeray", prob=0.99)
             conn.commit()
         finally:
             conn.close()
@@ -514,7 +514,7 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
         self.assertEqual(["From Elsewhere", "Trips/Regatta", "People/Rowan Thackeray"], tags_in(self.loose[1]))
         self.assert_library_unchanged()
 
-    def test_a_person_the_tree_does_not_hold_is_filed_under_the_people_root_and_the_tree_is_untouched(self):
+    def test_a_person_named_at_the_top_of_the_tree_is_filed_by_that_node_and_the_tree_is_untouched(self):
         conn = db.connect(self.library.path)
         try:
             store_faces.insert(conn, self.held[1], [0, 0, 100, 100], WREN.tobytes(), name="Wren Okafor", prob=0.99)
@@ -527,8 +527,8 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
         offer = self.suggested(self.cup)["cup_03.jpg"]
         self.assertEqual(["Wren Okafor"], [p["name"] for p in offer["people"]])
         self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
-        # As a click on the chip files her (#546): under the one people root, never bare.
-        self.assertEqual(["Trips/Regatta", "People/Wren Okafor"], tags_in(self.loose[2]))
+        # As a click on the chip files her: by her node, which naming her face made at the top of the tree (2026-10-10).
+        self.assertEqual(["Trips/Regatta", "Wren Okafor"], tags_in(self.loose[2]))
         self.assertEqual(tree, tree_of(self.library.path))
         self.assert_library_unchanged()
 

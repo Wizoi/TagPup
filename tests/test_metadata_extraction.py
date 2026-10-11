@@ -230,8 +230,10 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
         self.assertEqual(people, ["Cora Ingersoll"])
 
     def test_a_face_root_category_never_resolves_as_a_person(self):
-        """"Family" is a category; a photo tagged with it gains no person named Family."""
+        """"Family" is a category -- a face root with tags under it; a photo tagged with it gains no person named Family.
+        (One with nothing under it is a person of the top level: tests/test_top_level_person.py.)"""
         self.add_tag("Family", "Family", has_face=1)
+        self.add_tag("Family/Jane Doe", "Jane Doe", has_face=1)
         self.assertEqual(extract_people({}, ["Family"], people_vocabulary(self.db_path)), [])
 
     def test_a_person_under_a_face_root_still_resolves(self):

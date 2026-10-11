@@ -289,7 +289,7 @@ def _rebuilt(conn, photo_ids, changed, vocabulary=None, known=None):
     if changed and photo_ids:
         known = known or person_ids.read(conn)
         person_ids.follow_faces(conn, photo_ids, known)
-        people.rebuild(conn, photo_ids, known=vocabulary, ids=known)
+        people.rebuild(conn, photo_ids, known=vocabulary, ids=known, make=True)   # a name no node has gets one
     return changed
 
 

@@ -25,6 +25,9 @@ class PhotoPeople(unittest.TestCase):
         self.lib = TempLibrary(self)
         self.photo = self.lib.photo("dunes.jpg")
         self.lib.add_row(self.photo, tags=["People/" + WREN, "Places/Dunes"])
+        # The nodes the read of those keywords made (2026-10-10).
+        self.write(lambda conn: (taxonomy.add_path(conn, "People", root_has_face=1),
+                                 taxonomy.add_path(conn, "People/" + WREN), taxonomy.add_path(conn, "Places/Dunes")))
         self.write(lambda conn: people.rebuild(conn))
 
     def write(self, operation):

@@ -552,12 +552,9 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 batch_embeddings.append(emb)
                 batch_metas.append(meta)
                 
-                # Learn new tags into taxonomy
+                # Learn new tags into taxonomy. The people a photo names get their nodes where it is recorded
+                # (store.photos.record_indexed -> taxonomy.ensure_node), not here: people[] holds leaf names.
                 taxonomy.add_tags(meta["tags"])
-                # Not add_tags: people[] holds leaf names, and treating a leaf as a
-                # whole path mints a bare root node beside the People/<name> that
-                # already exists. This runs on every index, so it undid every cleanup.
-                taxonomy.add_people(meta["people"])
                 
                 # Save progress incrementally in batches of 100
                 if len(batch_embeddings) >= 100:
