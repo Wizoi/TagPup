@@ -105,18 +105,21 @@ Tags and captions are written back using ExifTool:
   18,502 keyword values in the main gallery, 18,364 are full paths separated by `/` and
   none are bare leaves. Levels are preserved on every write; a photo's existing depth is
   never flattened.
-- **People Enter The Taxonomy Under A People Root**:`extract_people()` returns *leaf*
-  names -- `photos.people` is the flattened view used for display and matching -- so
-  passing that list to `taxonomy.add_tags()` treated each leaf as a whole path and
-  minted a bare root node per person, beside the `People/<name>` the hierarchical
-  keyword had already created. Indexing calls `taxonomy.add_people()` instead, which
-  files a person under the root the library already uses for people (`People`,
-  `Family`, `Friends`, or one marked `has_face`) and does nothing at all when that
-  person is already in the taxonomy somewhere.
-
-  A newly seen person is filed at the depth the library already uses: where people live
-  at `Family/Immediate/<name>`, a new one joins them there rather than appearing at
-  `Family/<name>`, which would be a second and shallower home for people.
+- **A Name Or Keyword Seen For The First Time Gets A Node (every tag has an id, owner 2026-10-10)**:
+  `extract_people()` returns *leaf* names, and indexing used to file a new person under the
+  library's people root by the depth it used. Now the index records a batch of photos and
+  makes the node of each keyword and name the tree lacks in one place, `taxonomy.ensure_node`
+  (`derived.make_nodes` for the batch's keywords, the face and photo writers for names): a keyword
+  its own path, a name a node directly under the tree's root marked as a person, to be merged
+  into the right branch in the tag view. Nothing is made for a name two people have, a group's
+  name, a bare keyword that is a person's name, or a keyword that would go under a person
+  that faces or photos use (a file never turns a person into a group; the doctor counts them).
+  **A folder from another program with thousands of distinct keywords makes thousands of
+  nodes**, each a tag the owner must merge or delete by hand (there is no bulk delete) and
+  that Suggest embeds. So a batch of reads that would make more than 500 new nodes
+  (`derived.MAX_NEW_NODES_PER_BATCH`) makes none and leaves its keywords without a node:
+  the doctor counts them, and `tree-fill` (SPEC "tree-fill") makes them when asked. A
+  `sync` re-read of a changed file does not make nodes; `tree-fill` is safe to repeat.
 
   `add_tag()` additionally refusesto create a bare root that an existing **people**
   path already claims: photo files carry both forms in the wild, and a file saying
@@ -286,6 +289,11 @@ Names the faces a photo's person tag names (`tagpup.services.faces_from_tags`, o
 **`--folder FOLDER`** (#994) counts and writes only the photos under that folder and its subfolders (the same folder rules as `faces-from-tags --folder`); the rule for each photo is the same, so the folder's plan is the whole-library plan restricted to its photos. A folder the library holds no photo under is refused (exit status 1).
 
 Puts on a photo the people its faces name and its keywords do not (`tagpup.services.tags_from_faces`, over `tagpup.services.face_people`; #861). A face named and the photo's person tag are one decision; faces named before that (TagTuner's strip, Match, AutoMatch All, Identify Faces, clustering) left photos listing a person from a face alone (`photo_people` source `face`), "a green box and No people tags". A dry run unless `--apply`: counts only, never a name or a path -- the photos, the people, how many photo files would be written, and how many people are left: filed by the tag tree in two places (or under several people roots), for you to place; named in the photo's keywords already under a root the tree does not file people under (`Parkrunner/<name>`: the same rule as the keyword writer, the leaf under any root; a tree question -- make that root a people root, or retag), so the count to write is what `--apply` writes and a second run finds none; and "from a guess only" -- no face of that name was named by hand, only by clustering or automatch. `--guesses` writes those too, with a printed warning: the keyword makes each guess a decided reference for the faces compared with it afterwards (#640). **`--apply` changes photo files**: it writes each person's keyword into the photo's file with ExifTool, 25 photos to a change of the journal (operation `person tags from faces`; `history` lists them, `undo` takes one back, each recording every file's fields before and after -- no copy of the library is taken). A file ExifTool cannot read or write is counted and the others are written (exit status 1, run it again); a file changed since it was read is a conflict, reported and never overwritten; TagPup and TagTuner may stay open. The doctor (`tools/doctor.py`) reports the same count as "photos listing a person from a face alone" (reported, not broken).
+
+### `tree-fill [--apply] [--reveal]`
+The one-time command that gives the names and keywords a library holds without a node their nodes (`tagpup.services.tree_fill`; owner, 2026-10-10, "every tag has an id"). Indexing and naming a face now do it as a name or keyword is first seen (`taxonomy.ensure_node`); this makes up for what was read before. A file **keyword** no node of the tag tree is gets its own path (every level above it); a **name** a face or a photo's people hold with no id, and no person is called so, gets a node directly under the tree's root, marked as a person; the faces and listed people are linked to it (`person_ids.link_added`) and the photos get their keyword rows, all in one transaction (`people.tree_edit`). The owner then merges the nodes into the right branch in the library's tag view (the tag merge moves faces and photo lists by id). Left, and counted: a name two people have, a name a group has, a name of one person whose rows are linked to nobody, and a bare keyword that is a person's name (their keyword; it gets no node of its own). Keywords that differ only in case, in Unicode form, in separators (`\`, `|`) or by a slash at an end are one node. A keyword that would go under a person faces or photos use is left without a node (counted; a node would turn the person into a group). When most of the keywords share one root the tree lacks (photo_index: 197 of 200), the dry run says so first, with the count and without the root's name (`--reveal` gives it): if the root was removed on purpose, do not apply; **`--skip-root NAME`** (repeatable) makes everything else.
+
+A dry run unless `--apply`: it does the same work in the library's write lock and rolls it back, so its counts are what an apply would change (nodes made, for keywords and for names; faces and listed people linked; keyword rows added). **`--apply`** backs the library up first (`db.backup`, `data/backups/<library>.before-tree-fill-<time>.db`), then makes them and says what it changed; run twice, the second finds nothing. **The tag tree is not journaled**: `undo` cannot take it back; the backup can. Counts only; **`--reveal`** also lists the names and keywords.
 
 ### `settings` and `settings set KEY VALUE [--acknowledge GROUP] [--apply]`
 `settings` lists the library's settings, key and value, read without stamping it. `settings set` changes one as one journaled change (`tagpup.services.settings.change`), which `history` lists and `undo` takes back -- a dry run unless `--apply`, saying what would change. A value the validator refuses is refused (exit status 1), as is a locked setting (the CLIP model, face detection, ExifTool) unless its group is named with `--acknowledge`. Folders (`library.roots`, `library.ignored`) are one a line or separated by `|`: `tagpup_cli.py --db photo_index settings set library.roots "D:\Training\Pictures" --apply`. Setting the roots adds every folder under a new root that holds photos and no indexed photo to `library.ignored` in the same change, and says how many; a root not on disk now is taken, with a warning. A dry run reads the settings without migrating a library behind this version, and says how far behind it is.

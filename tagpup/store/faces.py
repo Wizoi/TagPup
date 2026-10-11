@@ -289,15 +289,8 @@ def _rebuilt(conn, photo_ids, changed, vocabulary=None, known=None):
     if changed and photo_ids:
         known = known or person_ids.read(conn)
         person_ids.follow_faces(conn, photo_ids, known)
-        people.rebuild(conn, photo_ids, known=vocabulary, ids=known)
+        people.rebuild(conn, photo_ids, known=vocabulary, ids=known, make=True)   # a name no node has gets one
     return changed
-
-
-def relist(conn, face_ids):
-    """The lists of people of the photos `face_ids` are in, written again by the one rule after faces were given a person (the
-    owner's link or make in the names to review): a listed row follows its face's id, and a keyword's row is its path's, as
-    always. The caller commits."""
-    return _rebuilt(conn, _photos_of(conn, set(face_ids)), True)
 
 
 def remove_for_photo(conn, photo_path):

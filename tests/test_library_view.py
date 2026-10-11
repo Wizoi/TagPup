@@ -400,6 +400,7 @@ class AKeyword(Library):
 
     def test_a_node_added_after_a_photo_was_indexed_finds_it(self):
         late = self.vl.photo("A", "late.jpg", taken="2024:02:01 00:00:00", tags=["Trips/Later"])
+        self.vl.forget("Trips/Later")   # read before the index made nodes
         self.assertEqual([], self.ids("keyword", "Trips/Later"))
         self.vl.tree("Trips/Later")
         from tagpup.store import taxonomy
@@ -571,6 +572,7 @@ class TheNavigator(Library):
         photo("2023 B", "4.jpg", taken="2023:01:02 00:00:00", tags=["Activity/Sailing", "Not In The Tree"])
         photo("Misc", "5.jpg")
         photo("2019", "6.jpg")
+        self.vl.forget("Not In The Tree")   # a keyword read before the index made nodes: it has none
 
     def section(self, name):
         return library_view.navigator(self.vl.library, name)

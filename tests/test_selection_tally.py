@@ -35,6 +35,7 @@ class Tally(unittest.TestCase):
         self.c = self.vl.photo("2023 Lakes", "c.jpg", taken="2023:01:02 10:00:00", tags=["Trips/Lakes"])
         self.d = self.vl.photo("Misc", "d.jpg", tags=[rowan, "Not In The Tree"])
         self.e = self.vl.photo("Misc", "e.jpg")
+        self.vl.forget("Not In The Tree")   # a keyword read before the index made nodes: it has none
 
     def ask(self, selection_body, **kwargs):
         return self.client.post("/library/api/library/selection/tally", json={"selection": selection_body}, **kwargs)

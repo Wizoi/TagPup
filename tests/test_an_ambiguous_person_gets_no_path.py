@@ -56,7 +56,6 @@ class FindingAPerson(unittest.TestCase):
 
     def test_a_name_filed_twice_is_not_filed_a_third_time(self):
         tree = taxonomy(TWICE)
-        tree.add_people(["Rowan Thackeray"])
         tree.add_tag("Rowan Thackeray")
         self.assertEqual(TWICE, tree.paths)
 

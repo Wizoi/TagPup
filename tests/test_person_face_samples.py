@@ -51,8 +51,19 @@ class Case(unittest.TestCase):
             return face_id
         return db.write_with_connection(self.lib.library.path, add)
 
-    def samples(self):
+    def raw(self):
         return identify_jobs.face_samples(self.lib.library, self.cache)
+
+    def samples(self):
+        """{person's name: faces}: a person a writer named is keyed by their node's id (naming a face with a name no node has
+        makes the node, 2026-10-10), a name the fixture wrote by SQL by the name."""
+        got = identify_jobs.face_samples(self.lib.library, self.cache)
+        conn = db.connect(db.readonly_uri(self.lib.library.path), uri=True)
+        try:
+            names = dict(conn.execute("SELECT id, name FROM tag_taxonomy"))
+        finally:
+            conn.close()
+        return {names.get(key, key) if isinstance(key, int) else key: faces_of for key, faces_of in got.items()}
 
 
 class Choosing(Case):
@@ -120,8 +131,8 @@ class WhenTheFacesChange(Case):
 
     def test_it_is_not_recomputed_while_nothing_moves(self):
         self.face(0, WREN)
-        first = self.samples()
-        self.assertIs(self.samples(), first)
+        first = self.raw()
+        self.assertIs(self.raw(), first)
 
 
 class TheRoute(unittest.TestCase):

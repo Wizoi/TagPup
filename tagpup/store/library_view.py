@@ -830,23 +830,32 @@ def people_counts(conn):
     return sorted(found, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0].name)))
 
 
+#: The group the navigator puts the people at the top of the tree in (not a node: its id is TOP).
+TOP_LEVEL = "Top level"
+TOP = -1
+
+
 def people_groups(conn, counted):
     """The branches of the tag tree the people of `counted` -- people_counts's [(Ref, photos)] -- are filed under, as the
     navigator's People shows them (phase 9, #673): ({person_ids.key_of(person): the tag of the node above the person, or None},
     [{"id", "tag", "name", "parent_id", "count"}] of every branch above a person, `count` the photos naming anyone under it,
     each photo once), and how many photos name someone who is not filed (None above).
 
-    A person is the tree's node (tagpup.store.person_ids: a leaf `has_face` node, not a root; a branch is never a person), by
-    the id the rows hold. A name with no such node is not filed. The photos are one pass of photo_people grouped by photo in
+    A person is the tree's node (tagpup.store.person_ids: a `has_face` node with no node under it; a branch is never a person), by
+    the id the rows hold. A person directly under the tree's root is in the group TOP_LEVEL (a pseudo-group, id -1) until the owner
+    merges them into a branch. A name with no such node is not filed. The photos are one pass of photo_people grouped by photo in
     SQLite (Python sees the distinct sets of ids, not 68,000 photos) and rolled up the tree's parent ids, as the keywords'
     counts are."""
     known = person_ids.read(conn)
     nodes = {node_id: (tag, parent_id, name) for node_id, tag, parent_id, name in
              conn.execute("SELECT id, tag, parent_id, name FROM tag_taxonomy")}
+    nodes[TOP] = (TOP_LEVEL, None, TOP_LEVEL)
     group_of, parent_of = {}, {}
     for person, _photos in counted:
         node = person.id if person.id in known.nodes else None
         parent = nodes[node][1] if node in nodes else None
+        if node is not None and parent is None:
+            parent = TOP   # a person at the top of the tree is filed there, not nowhere
         group_of[person_ids.key_of(person.id, person.name)] = nodes[parent][0] if parent in nodes else None
         if node is not None:
             parent_of[node] = parent if parent in nodes else None

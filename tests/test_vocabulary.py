@@ -106,7 +106,7 @@ class WhatAPhotosMetadataSays(unittest.TestCase):
     def test_a_library_adds_its_own_roots_and_its_flat_people(self):
         known = vocabulary.PeopleVocabulary.from_rows(
             ["Pets", "Crew"],
-            [("Pets", "Pets"), ("Pets/Biscuit", "Biscuit"), ("Crew", "Crew"),
+            [("Pets", "Pets"), ("Pets/Biscuit", "Biscuit"), ("Crew", "Crew"), ("Crew/Tamsin Oakes", "Tamsin Oakes"),
              ("Hazel Brookmire", "Hazel Brookmire")])
         tags = ["Pets/Biscuit", "Crew/Tamsin Oakes", "Hazel Brookmire", "Crew"]
         self.assertEqual(vocabulary.extract_people({}, tags, known),

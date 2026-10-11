@@ -30,6 +30,7 @@ from face_rows import add_face, people_of  # noqa: E402
 import fake_exiftool  # noqa: E402
 
 from tagpup.store import people as store_people  # noqa: E402
+from tagpup.store import taxonomy  # noqa: E402
 
 
 class ExclusionTestBase(unittest.TestCase):
@@ -58,6 +59,7 @@ class ExclusionTestBase(unittest.TestCase):
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
+        conn.execute("DELETE FROM tag_taxonomy")   # a name given to a face makes its node (2026-10-10): not for the next test
         conn.commit()
         conn.close()
 
@@ -68,6 +70,11 @@ class ExclusionTestBase(unittest.TestCase):
 
     def get(self, path):
         return self.requests.get(path)
+
+    def person(self, conn, name):
+        """The node of a person the library has: every name a face or a photo carries has one (2026-10-10)."""
+        taxonomy.add_path(conn, "People", root_has_face=1)
+        return taxonomy.add_path(conn, "People/" + name)
 
     def add_photo(self, name, people=()):
         """A photo whose keywords name `people`, its people rebuilt from them."""
@@ -89,6 +96,8 @@ class ExclusionTestBase(unittest.TestCase):
 
     def add_face(self, photo, embedding, name=None, box=(0, 0, 100, 100)):
         conn = sqlite3.connect(self.TEST_DB)
+        if name:
+            self.person(conn, name)
         fid = add_face(conn, photo, box=box, embedding=embedding.tobytes(), name=name, prob=0.99)
         store_people.rebuild_photos(conn, [photo])   # as the store does, inserting a named face
         conn.commit()
@@ -510,7 +519,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
 
     def test_overwrite_still_replaces_when_explicitly_asked(self):
         """--force-reembed means redo the work, accepting the loss."""
-        photo = self.add_photo("a.jpg", people=["Jane Doe"])
+        photo = self.add_photo("a.jpg")   # no keyword for the person: it would name the new face again
         self.add_face(photo, identity_vector(1), name="Jane Doe")
 
         pi = self.index()

@@ -873,6 +873,8 @@ def _person_indexes(conn):
     in the journal and no backup is needed; the table is new, so no change can have recorded a row of it."""
     conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_tag ON faces(tag_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_photo_people_tag ON photo_people(tag_id, photo_id)")
+    # Nothing reads or writes this table since 2026-10-10 (the names to review went when every name was given a node); a later
+    # migration drops it. It stays so that a library at this version and a newer one still open.
     conn.execute("CREATE TABLE IF NOT EXISTS name_review_dismissals ("
                  " name_key TEXT PRIMARY KEY,"
                  " rows_seen INTEGER NOT NULL,"

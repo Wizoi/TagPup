@@ -49,7 +49,7 @@ ALSO_CALLS = {("tagpup/store/adoption.py", "_photos_pass"): [("tagpup/store/adop
 
 #: Functions that write the tree and are only ever called inside people.tree_edit.
 TREE_WRITERS_COVERED_ELSEWHERE = {
-    ("tagpup/store/taxonomy.py", "add_path"): "add_node, repair, move_branch, seed and TagTaxonomy.save_to_db",
+    ("tagpup/store/taxonomy.py", "add_path"): "add_node, ensure_node, repair, move_branch and seed",
 }
 
 

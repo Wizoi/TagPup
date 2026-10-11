@@ -1,10 +1,10 @@
 """People by the id of their node in the tag tree: the one door a person goes through
 (docs/ARCHITECTURE.md, "Identity by id", stage 1, and "People by id, stage 2").
 
-A person is a node of the tree with `has_face` set that is not a root (a root holding faces is a
-category, as vocabulary.PeopleVocabulary reads it) and has no node under it: a branch tag cannot be a
-person *(owner, 2026-10-04; docs/findings.md, #660)*, it is a GROUP of people (Family/Thackeray beside
-Family/Thackeray/Sam), and a group is never put on a photo as a person (rule b, `resolve`).
+A person is a node of the tree with `has_face` set and no node under it, wherever it sits -- directly under the
+tree's root too (owner, 2026-10-10, "every tag has an id"): a branch tag cannot be a person *(owner, 2026-10-04;
+docs/findings.md, #660)*, it is a GROUP of people (Family/Thackeray beside Family/Thackeray/Sam, or the root People
+beside People/Sam), and a group is never put on a photo as a person (rule b, `resolve`).
 
 **The id is the person.** `faces.tag_id` and `photo_people.tag_id` hold the node a row means, and
 everything that groups, counts or joins "this person" reads the id. The name beside it
@@ -23,10 +23,10 @@ tag first, as TagTuner's New Person does) or leaves an unresolved name.
 A name with no id is an UNRESOLVED name, and nothing links it by chance: `follow_*`, `sync` and `settle` keep an id that
 is set (with its node's leaf as the cache), drop the id of a node that is gone, and give a missing one to NOBODY, however
 unique the name has become -- a name that became one person's because a same-named node left says nothing about who a row
-meant. Rows are linked by exactly three things: the writer that wrote the row and knew the id (`target`), `link_added` for
-a name a person was ADDED under (a node made, moved or renamed into it: `follow_tree`, and the journal), and the owner
-(the names to review). A keyword's row is resolved by its path when it is written. It never moves an id
-that is set.
+meant. Rows are linked by exactly two things: the writer that wrote the row and knew the id (`target`), and `link_added` for
+a name a person was ADDED under (a node made, moved or renamed into it: `follow_tree`, and the journal) -- which is how a
+name that had no node is linked once `taxonomy.ensure_node` gives it one. A keyword's row is resolved by its path when it is
+written. It never moves an id that is set.
 
 The tree is read inside the writer's transaction, every time, and never kept: a rename committed by
 another process between two writes is what the second one reads. Ids are AUTOINCREMENT, never given
@@ -158,8 +158,8 @@ class People:
         parents = set(parents)
         for node_id, tag, name in sorted(nodes):
             self.node_names[node_id] = name
-            if not tag or vocabulary.SEPARATOR not in tag:
-                continue   # a root: a category of people, not a person
+            if not tag or (node_id not in parents and vocabulary.is_filing_root(tag)):
+                continue   # a new library's empty People is where people are filed
             leaf = vocabulary.key(name)
             if not leaf:
                 continue
@@ -254,8 +254,7 @@ class People:
         function has no memory of what changed, and a name that became one person's because a same-named node left
         (a rename, a merge, a force delete) says nothing about who the row meant. An unresolved name is linked only by
         (a) the writer that wrote the row and knew the id, (b) `follow_tree`, when a node was ADDED under that name
-        (made, moved or renamed into it), (c) an explicit action of the owner (the names to review; `fill`, the
-        migration's one-time backfill). A keyword's row is resolved by its PATH when it is written (vocabulary.extract_refs)."""
+        (made, moved or renamed into it), (c) `fill`, the migration's one-time backfill. A keyword's row is resolved by its PATH when it is written (vocabulary.extract_refs)."""
         if name is None:
             return None, None
         if held is not None:
@@ -492,7 +491,7 @@ def follow_tree(conn, before):
     made, moved or renamed into it) -- links the rows that name it and hold no id (a hand decision too: the person was added for that name, and the
     decision was always to that name). That is the one rule for linking an unresolved name after an edit: a name that became
     exactly one person's because a same-named node LEFT (renamed away, merged, deleted) was ambiguous before and stays
-    unresolved, hand decisions included, for the owner to settle (the review list); nothing is guessed. An edit that does none of these costs two reads of the
+    unresolved, hand decisions included, for the owner to settle (the doctor lists them); nothing is guessed. An edit that does none of these costs two reads of the
     tree. Returns rows changed."""
     if not present(conn):
         return 0
@@ -514,14 +513,12 @@ def follow_tree(conn, before):
 
 
 def link_added(conn, keys, known=None):
-    """THE one place that links an unresolved name -- a face or a listed person with a name and no id -- to a person after the fact
-    (and, as the owner's explicit action, the names to review):
+    """THE one place that links an unresolved name -- a face or a listed person with a name and no id -- to a person after the fact:
     the rows whose name's key is in `keys` are given the one person that name is. The callers say which names a person was ADDED
     under (a node made, moved or renamed into the name): `follow_tree`, for an edit of the tree, and the journal, for a node
     its change inserted or renamed. Nothing else links one: not `settle` (which has no memory of what changed), not a rebuild
     of a photo, not the journal's replay of a face -- a name that became one person's because a same-named node left says nothing
-    about who a row meant. A writer that knows the id writes it; a keyword is resolved by its path; the owner links the rest
-    (the names to review). Returns rows changed."""
+    about who a row meant. A writer that knows the id writes it; a keyword is resolved by its path. Returns rows changed."""
     keys = set(keys)
     if not keys or not present(conn):
         return 0
@@ -543,19 +540,6 @@ def _link(conn, table, name, person):
     only = " AND source = 'face'" if table == "photo_people" else ""
     return conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS NULL%s" % (table, only),
                         (person.id, person.name, name)).rowcount
-
-
-def link_to(conn, key, person):
-    """The OWNER's choice for an unresolved name (the names to review): the faces and listed people whose name's key is `key` and
-    that hold no id are given `person` -- a Person the caller resolved in this transaction, whatever the name is called. Not
-    guessed from the name: the owner picked the person. Returns rows changed. The caller commits."""
-    if not key or not present(conn):
-        return 0
-    changed = 0
-    for table in TABLES:
-        for name in _spellings(conn, key, table):
-            changed += _link(conn, table, name, person)
-    return changed
 
 
 def names_of_nodes(conn, node_ids, known=None):
@@ -644,7 +628,7 @@ def unresolved(conn):
     person is called but whose rows are not linked to them (`one`: {name: (the person's id, faces decided by hand, other
     faces, listed people)}) -- a name that became one person's because a same-named node left, or a rename into a person's
     name by something that did not know the id: nothing links it by itself (`link_added`), so it is on no person's page
-    until the owner links it (the names to review).
+    until the owner renames the person or makes the rows' person by hand.
     A row that holds an id is a person already, whatever its name is. Reported, not broken: no id is guessed, the
     names are left as they are, and the tree is the owner's to settle. Reads only."""
     if not present(conn):
@@ -675,99 +659,11 @@ def unresolved(conn):
     return Unresolved(dict(none), dict(several), branch, counted)
 
 
-#: One unresolved name, as the names to review list it (all its spellings together): `name` the spelling with the most rows,
-#: `why` "none" (no person tag has it), "several" (two or more do), "one" (exactly one person has it, but these rows are not
-#: linked to them) or "branch" (only a group has it), `person` the one person for "one" (a Person) else None, `faces` the rows
-#: of faces and `by_hand` how many of them were decided by hand, `listed` the rows of photo_people a FACE made, `from_keyword` the rows
-#: a keyword or the metadata made, counted APART: such a row is its path's person (people.rebuild), not a row to settle by name,
-#: `spellings` the names as the rows hold them.
-Review = collections.namedtuple("Review", "key name why person faces by_hand listed from_keyword spellings")
-
-
-def _spellings(conn, key, table=None):
-    """The names, as the rows hold them, whose key is `key`, of those that hold no id (one table, or both)."""
-    return sorted({name for each in ((table,) if table else TABLES) for (name,) in conn.execute(
-        "SELECT DISTINCT name FROM %s WHERE tag_id IS NULL AND name IS NOT NULL" % each) if vocabulary.key(name) == key})
-
-
-def review_pairs(conn, key=None):
-    """[Review] of every name that faces and photos' people hold WITHOUT an id (see `unresolved`, which counts both tables
-    together and also those holding the id of a node that is gone; the doctor's out-of-step line is that), or only the one whose
-    key is `key`. Two grouped reads, no row's vector: faces from idx_faces_person, photo_people (80,000 small rows) by
-    idx_photo_people_name. Reads only."""
-    if not present(conn):
-        return []
-    only, marks = "", ()
-    if key is not None:
-        marks = _spellings(conn, key)
-        if not marks:
-            return []
-        only = " AND name IN (%s)" % _marks(marks)
-    known = read(conn)
-    found = {}
-
-    def row_of(name):
-        return found.setdefault(vocabulary.key(name),
-                                {"spellings": {}, "faces": 0, "by_hand": 0, "listed": 0, "from_keyword": 0})
-
-    for name, rows, by_hand in conn.execute(
-            "SELECT name, COUNT(*), COALESCE(SUM(name_source = 'manual'), 0) FROM faces"
-            " WHERE name IS NOT NULL AND tag_id IS NULL" + only + " GROUP BY name", marks):
-        row = row_of(name)
-        row["spellings"][name] = row["spellings"].get(name, 0) + rows
-        row["faces"] += rows
-        row["by_hand"] += by_hand
-    for name, rows, keyword in conn.execute(
-            "SELECT name, COUNT(*), COALESCE(SUM(source <> 'face'), 0) FROM photo_people"
-            " WHERE name IS NOT NULL AND tag_id IS NULL" + only + " GROUP BY name", marks):
-        row = row_of(name)
-        row["spellings"][name] = row["spellings"].get(name, 0) + rows
-        row["listed"] += rows - keyword
-        row["from_keyword"] += keyword
-    reviews = []
-    for each, row in found.items():
-        name = max(row["spellings"], key=lambda spelled: (row["spellings"][spelled], spelled))
-        why = known.why_not(name) or "one"
-        reviews.append(Review(each, name, why, known.by_id.get(known.id_of(name)) if why == "one" else None, row["faces"],
-                              row["by_hand"], row["listed"], row["from_keyword"], sorted(row["spellings"])))
-    return sorted(reviews, key=lambda review: (vocabulary.tag_sort_key(review.name), review.key))
-
-
-def keyword_photos(conn, key):
-    """The ids of the photos that list the name whose key is `key` with no id from a keyword or the metadata (not a face): what the
-    owner's "rebuild these photos" rebuilds by the path rule."""
-    found = set()
-    for name in _spellings(conn, key, "photo_people"):
-        found.update(photo_id for (photo_id,) in conn.execute(
-            "SELECT DISTINCT photo_id FROM photo_people WHERE name = ? AND tag_id IS NULL AND source <> 'face'", (name,)))
-    return sorted(found)
-
-
-def samples(conn, key, limit=4):
-    """([face ids], [photo ids]) of up to `limit` rows each that hold the name whose key is `key` with no id: the faces whose crops
-    an entry shows, the photos whose list holds it. By the exact spellings the rows hold (equality, the indexes)."""
-    face_ids, photo_ids = [], []
-    for name in _spellings(conn, key):
-        face_ids += [face_id for (face_id,) in conn.execute(
-            "SELECT id FROM faces WHERE name = ? AND tag_id IS NULL ORDER BY id LIMIT ?", (name, limit))]
-        photo_ids += [photo_id for (photo_id,) in conn.execute(
-            "SELECT DISTINCT photo_id FROM photo_people WHERE name = ? AND tag_id IS NULL ORDER BY photo_id LIMIT ?", (name, limit))]
-    return sorted(face_ids)[:limit], sorted(set(photo_ids))[:limit]
-
-
-def unlinked_faces(conn, name):
-    """The ids of the faces called `name` (without case) that hold no id: what the owner's action `link_added(conn, {key(name)})`
-    -- the names to review -- would link, read first so the change can be journaled."""
-    key = vocabulary.key(name)
-    return [face_id for face_id, held in conn.execute("SELECT id, name FROM faces WHERE tag_id IS NULL AND name IS NOT NULL")
-            if vocabulary.key(held) == key]
-
-
 def repair(db_path):
     """Settle every id and cached name, in one write under the library's write lock: drop the id of a node that is gone, give a
-    row its node's name, take an id off a face with no name. A name with no id is NOT linked (People.settle: that is the
-    owner's, in the names to review). Returns {table: rows changed}. Only the id and name columns of faces and photo_people
-    change: no photo, tag or file."""
+    row its node's name, take an id off a face with no name. A name with no id is NOT linked (People.settle: nothing links one
+    but `link_added`, for a name a person was ADDED under). Returns {table: rows changed}. Only the id and name columns of faces
+    and photo_people change: no photo, tag or file."""
     def write(conn):
         return sync(conn)
 

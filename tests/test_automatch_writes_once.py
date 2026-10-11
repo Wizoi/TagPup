@@ -105,6 +105,7 @@ class NamingUnnamedFacesTogether(FacesCase):
                          self.lib.rows("SELECT id, name FROM faces WHERE id IN (?, ?) ORDER BY id", (mine, theirs)))
 
     def test_a_write_rebuilds_its_photos_reading_the_tree_once(self):
+        db.write_with_connection(self.lib.library.path, lambda conn: taxonomy.add_node(conn, "People/" + ROWAN, 1))
         face = self.face(self.photo("b.jpg"))
         with mock.patch.object(person_ids.People, "read", wraps=person_ids.People.read) as reads:
             db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name(conn, [face], ROWAN))

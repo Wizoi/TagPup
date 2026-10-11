@@ -28,11 +28,6 @@ export const state = {
     //: Everyone with a person tag, as /api/people?records=1 answers (a PeopleDirectory): who a typed text is, and each
     //: person's label. Filled by shared.js; empty until it answers.
     people: new PeopleDirectory([]),
-    //: Names to review (names-review.js): how many wait (null until read), whether the server has the route, whether the
-    //: count could not be read, and the dialog's parts, built the first time it opens.
-    names: { count: null, available: true, unreadable: false, modal: null, list: null, results: null, status: null,
-             toggle: null, toggleLabel: null, opener: null, entries: [], groups: [], dismissed: 0, showDismissed: false,
-             busy: false, token: 0 },
     lastLoadedPersonName: null,
     //: The person whose grid is being fetched right now. Redrawing the sidebar asks
     //: for the active person's grid unless it is already loaded; one still on its way

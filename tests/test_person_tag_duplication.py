@@ -10,6 +10,11 @@ list to taxonomy.add_tags(), which treats each string as a whole tag path -- so 
 name became a root node beside the People/<name> the hierarchical keyword had already
 created. It ran on every index, so a cleanup done once was undone by the next run: the
 taxonomy had been taken from 51 of these to zero before, and they came back.
+
+What is left here: a bare keyword a person's path already claims is not added as a node of its own
+(TagTaxonomy.add_tag). The people a photo names get their nodes where the photo is recorded
+(tests/test_every_tag_has_an_id.py); TagTaxonomy.add_people, which chose People/<name> by the depth the
+library used, went with the owner's decision of 2026-10-10.
 """
 import os
 import shutil
@@ -50,52 +55,6 @@ class TaxonomyTestBase(unittest.TestCase):
         return tax
 
 
-class TestPeopleEnterUnderAPeopleRoot(TaxonomyTestBase):
-    def test_a_new_person_is_filed_under_people(self):
-        tax = self.taxonomy()
-        tax.add_people(["Josephine Sandoval"])
-        self.assertIn("People/Josephine Sandoval", tax.paths)
-
-    def test_and_not_as_a_root_of_their_own(self):
-        tax = self.taxonomy()
-        tax.add_people(["Josephine Sandoval"])
-        self.assertNotIn("Josephine Sandoval", tax.paths)
-
-    def test_a_person_already_in_the_taxonomy_is_left_where_they_are(self):
-        # The point is to avoid a second home, not to move the first one.
-        tax = self.taxonomy(["Family/Cora Ingersoll"], face_roots=["Family"])
-        tax.add_people(["Cora Ingersoll"])
-        self.assertIn("Family/Cora Ingersoll", tax.paths)
-        self.assertNotIn("People/Cora Ingersoll", tax.paths)
-        self.assertNotIn("Cora Ingersoll", tax.paths)
-
-    def test_a_library_using_family_does_not_grow_a_people_beside_it(self):
-        tax = self.taxonomy(["Family/Someone Else"], face_roots=["Family"])
-        tax.add_people(["Josephine Sandoval"])
-        self.assertIn("Family/Josephine Sandoval", tax.paths)
-        self.assertNotIn("People/Josephine Sandoval", tax.paths)
-
-    def test_a_name_that_arrives_with_a_path_keeps_it(self):
-        tax = self.taxonomy()
-        tax.add_people(["Friends/Ada Lovelace"])
-        self.assertIn("Friends/Ada Lovelace", tax.paths)
-
-    def test_blank_names_are_ignored(self):
-        tax = self.taxonomy()
-        tax.add_people(["", "   ", None or ""])
-        self.assertEqual(tax.paths, set())
-
-    def test_repeating_an_index_run_adds_nothing_new(self):
-        # This is the property that was missing: it ran every time, so every cleanup
-        # was temporary.
-        tax = self.taxonomy()
-        tax.add_people(["Josephine Sandoval"])
-        before = set(tax.paths)
-        for _ in range(3):
-            tax.add_people(["Josephine Sandoval"])
-        self.assertEqual(tax.paths, before)
-
-
 class TestABareNameIsNotASecondHome(TaxonomyTestBase):
     """Photo keywords carry both forms in the wild, and one of them must not stick."""
 
@@ -131,61 +90,6 @@ class TestABareNameIsNotASecondHome(TaxonomyTestBase):
         tax = self.taxonomy(["People/Team/Cora Ingersoll"])
         tax.add_tag("Cora Ingersoll")
         self.assertNotIn("Cora Ingersoll", tax.paths)
-
-
-class TestTheIndexerUsesIt(unittest.TestCase):
-    def test_indexing_records_people_through_add_people(self):
-        """The call site is the whole fix; a test on the method alone would pass
-        while the indexer kept minting roots."""
-        with open(os.path.join(WORKSPACE_DIR, "tagpup_cli.py"), encoding="utf-8") as f:
-            source = f.read()
-        self.assertIn('taxonomy.add_people(meta["people"])', source)
-        self.assertNotIn('taxonomy.add_tags(meta["people"])', source)
-
-
-
-class TestNewPeopleKeepTheLibrarysDepth(TaxonomyTestBase):
-    """A library whose people live three levels deep must not gain a shallower home.
-
-    The main gallery files people at Family/Immediate/<name> -- 4,830 three-level tags
-    and 58 at four. Filing somebody new at Family/<name> would put a second, shallower
-    home for people beside the real one, which is the bare-root fault wearing different
-    clothes.
-    """
-
-    def test_a_new_person_joins_the_existing_parent(self):
-        tax = self.taxonomy([
-            "Family/Immediate/Cora Ingersoll",
-            "Family/Immediate/Delphine Ingersoll",
-        ], face_roots=["Family"])
-        tax.add_people(["Marisol Ingersoll"])
-        self.assertIn("Family/Immediate/Marisol Ingersoll", tax.paths)
-        self.assertNotIn("Family/Marisol Ingersoll", tax.paths)
-
-    def test_the_commonest_parent_wins(self):
-        tax = self.taxonomy([
-            "Family/Immediate/Cora Ingersoll",
-            "Family/Immediate/Delphine Ingersoll",
-            "Family/Extended/Someone Else",
-        ], face_roots=["Family"])
-        tax.add_people(["Marisol Ingersoll"])
-        self.assertIn("Family/Immediate/Marisol Ingersoll", tax.paths)
-
-    def test_a_flat_library_still_files_people_at_the_root(self):
-        tax = self.taxonomy(["People/Ada Lovelace"])
-        tax.add_people(["Grace Hopper"])
-        self.assertIn("People/Grace Hopper", tax.paths)
-
-    def test_an_empty_library_falls_back_to_the_people_root(self):
-        tax = self.taxonomy()
-        tax.add_people(["Ada Lovelace"])
-        self.assertIn("People/Ada Lovelace", tax.paths)
-
-    def test_non_people_depth_does_not_decide_where_people_go(self):
-        # Activity/Sport/Running is three deep, but it says nothing about people.
-        tax = self.taxonomy(["Activity/Sport/Running", "People/Ada Lovelace"])
-        tax.add_people(["Grace Hopper"])
-        self.assertIn("People/Grace Hopper", tax.paths)
 
 
 class TestKeywordsKeepTheirLevels(unittest.TestCase):

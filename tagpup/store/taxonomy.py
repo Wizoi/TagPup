@@ -3,14 +3,16 @@ TagTaxonomy, the tree held in memory by the indexer and the suggester.
 
 TagTaxonomy was scripts/taxonomy.py.
 """
+import contextlib
 import json
 import logging
 import os
+import unicodedata
 from typing import Dict, List, Optional, Set
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.vocabulary import PeopleVocabulary
-from tagpup.store import db, generations, people, person_ids, schema
+from tagpup.store import db, derived, generations, people, person_ids, schema
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,94 @@ def add_path(conn, path, root_has_face=0):
     return parent_id
 
 
+def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
+    """THE one place a name or a keyword that has no node gets one (owner, 2026-10-10: every tag has an id): (the node's id,
+    whether a node was made or, for a name, marked as a person), or (None, False) for a text with no levels, a name that two
+    people have or that is a group's, and a bare keyword that is a person's name. The caller commits. The edit is a
+    tree_edit, so what follows it follows: the photos carrying the keyword get their rows, and a person made (a node under
+    a face root, or for a name) is linked to the faces and listed people that hold the name and no id (person_ids.follow_tree
+    -> link_added, the one owner of linking).
+
+    A keyword is found as the tree spells it, else without case, in one Unicode form and as `vocabulary.normalize` spells it
+    (derived.Tree), so a level that exists is never made a second time under another case; one that does not is made with
+    each missing level above it (add_path), a root without the flag. A NAME (`person`; a bare one) is the person called it
+    if one is, else a node directly under the tree's root marked as a person; a childless word tag of that name at the top
+    is marked as one, and a name with a node under it (a group) is given none. `tree` is the derived.Tree the caller holds
+    (kept up to date here); `known` the person_ids.People, read here when it is needed and not given. `edited`: the caller
+    is inside a tree_edit of its own (tagpup.services.tree_fill makes many nodes in one). Idempotent: the second call finds
+    the node the first made."""
+    path = vocabulary.normalize(text)
+    if not path or not tree_exists(conn):
+        return None, False
+    tree = tree or derived.Tree.read(conn)
+    bare = vocabulary.SEPARATOR not in path
+    if bare:
+        known = known or person_ids.read(conn)
+        if person:
+            try:
+                found = known.person(path)
+            except person_ids.PersonProblem:
+                return None, False   # two people have the name, or it is a group's: the owner settles it
+            if found is not None:
+                return found.id, False
+        elif known.why_not(path) in (None, "several"):
+            return None, False   # a person's name: their keyword, not a tag of its own
+    spelled, level, hit = _walk(tree, path)
+    parts = vocabulary.segments(path)
+    if hit is not None:
+        if person and bare:
+            has_face, grown = conn.execute(
+                "SELECT has_face, EXISTS (SELECT 1 FROM tag_taxonomy WHERE parent_id = ?) FROM tag_taxonomy WHERE id = ?",
+                (hit, hit)).fetchone()
+            if grown:
+                return None, False
+            if not has_face:
+                with contextlib.nullcontext() if edited else people.tree_edit(conn):
+                    conn.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (hit,))
+                return hit, True
+        return hit, False
+    new = unicodedata.normalize("NFC", vocabulary.SEPARATOR.join(([spelled] if spelled else []) + parts[level:]))   # one form
+    try:
+        refuse_child_of_person(conn, new)
+    except person_ids.PersonHasNoChildren:
+        return None, False   # a person that faces or photos use is not turned into a group by a file (rule a): no node
+    with contextlib.nullcontext() if edited else people.tree_edit(conn):
+        if not tree_has_nodes(conn):   # a tree with no node says People is the face root (people_roots): its first node keeps that
+            add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT, root_has_face=1)
+        node_id = add_path(conn, new, root_has_face=1 if person and bare else 0)
+    for each in vocabulary.lineage(new):
+        found = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (each,)).fetchone()
+        tree.add(found[0], each)
+    return node_id, True
+
+
+def _walk(tree, path):
+    """(the tree's spelling of the levels of `path` that exist, the index of the first that does not, the id of the node `path`
+    is or None) -- the levels matched as derived.Tree matches a keyword."""
+    spelled, parts = "", vocabulary.segments(path)
+    for level, part in enumerate(parts):
+        hit = tree.find(spelled + vocabulary.SEPARATOR + part if spelled else part)
+        if hit is None:
+            return spelled, level, None
+        spelled = tree.tags[hit]
+    return spelled, len(parts), tree.find(spelled)
+
+
+def under_a_used_person(conn, tree, text):
+    """Would a node for the keyword `text` go under a person that faces or photos use (so ensure_node leaves it without one)?
+    Reads only. `tree` is the derived.Tree."""
+    path = vocabulary.normalize(text)
+    spelled, level, hit = _walk(tree, path)
+    if hit is not None or not path:
+        return False
+    try:
+        refuse_child_of_person(conn, unicodedata.normalize(
+            "NFC", vocabulary.SEPARATOR.join(([spelled] if spelled else []) + vocabulary.segments(path)[level:])))
+    except person_ids.PersonHasNoChildren:
+        return True
+    return False
+
+
 def add_node(conn, path, root_has_face=0):
     """add_path, for one node added on its own: the photos whose people it changes are
     rebuilt (people.tree_edit). A loop adding many wraps the loop instead. Returns the
@@ -76,6 +166,16 @@ def people_roots(conn):
         "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name}
 
 
+def top_level_people(conn):
+    """The tags of the people directly under the tree's root: face nodes at the top with nothing under them (owner,
+    2026-10-10: a person is a node marked as one with no node under it, wherever it sits)."""
+    if not tree_exists(conn):
+        return []
+    return [tag for (tag,) in conn.execute(
+        "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND parent_id IS NULL AND id NOT IN"
+        " (SELECT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL)") if tag and not vocabulary.is_filing_root(tag)]
+
+
 def people_filing(db_path):
     """How the library's tree files people, read once: ({lowercased leaf: [every path under a
     people root ending in it]}, [the people roots' names as the tree spells them]). A library
@@ -87,14 +187,17 @@ def people_filing(db_path):
     try:
         if not tree_has_nodes(conn):
             return {}, [vocabulary.NEW_LIBRARY_FACE_ROOT]
+        top = set(top_level_people(conn))   # a person at the top is no root that people are filed under
         roots = {name.strip().lower(): name.strip() for (name,) in conn.execute(
-            "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name}
+            "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name and name not in top}
         found, groups = {}, set(group_tags(conn))
         for tag_path in tags(conn):
             if tag_path in groups:
                 continue   # a group of people is not filed as a person (#986)
             if "/" in tag_path and vocabulary.key(vocabulary.root_of(tag_path)) in roots:
                 found.setdefault(vocabulary.key(vocabulary.leaf_of(tag_path)), []).append(tag_path)
+        for tag_path in top_level_people(conn):
+            found.setdefault(vocabulary.key(tag_path), []).append(tag_path)
         return {leaf: sorted(each) for leaf, each in found.items()}, sorted(roots.values())
     finally:
         conn.close()
@@ -105,8 +208,10 @@ def _read_people_paths(conn):
     people root, leaving out anyone filed in two places."""
     roots = people_roots(conn)
     mapping, groups = {}, set(group_tags(conn))
+    top = set(top_level_people(conn))
     for tag_path in tags(conn):
-        if tag_path in groups or "/" not in tag_path or vocabulary.key(vocabulary.root_of(tag_path)) not in roots:
+        if tag_path in groups or (tag_path not in top and (
+                "/" not in tag_path or vocabulary.key(vocabulary.root_of(tag_path)) not in roots)):
             continue   # a group of people is not a person to file under (#986)
         leaf = vocabulary.key(vocabulary.leaf_of(tag_path))
         mapping[leaf] = None if leaf in mapping and mapping[leaf] != tag_path else tag_path
@@ -328,7 +433,7 @@ def refuse_child_of_person(conn, tag):
         return
     for above in reversed(vocabulary.lineage(tag)[:-1]):
         node = conn.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (above,)).fetchone()
-        if not node or not node[1] or "/" not in above:
+        if not node or not node[1]:
             continue
         if conn.execute("SELECT 1 FROM tag_taxonomy WHERE parent_id = ? LIMIT 1", (node[0],)).fetchone():
             return   # a group already: the tag goes under a group
@@ -363,8 +468,9 @@ def face_roots(db_path):
     try:
         if not tree_exists(conn):
             return []
+        top = set(top_level_people(conn))   # a person at the top is none of the roots
         return [tag for (tag,) in conn.execute(
-            "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%' ORDER BY tag")]
+            "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%' ORDER BY tag") if tag not in top]
     finally:
         conn.close()
 
@@ -555,16 +661,11 @@ class TagTaxonomy:
         self.db_path = db_path
         # Store full paths of known hierarchical tags, e.g., {"Family/Immediate/Jane Doe", "Activity/Botanical Garden"}
         self.paths: Set[str] = set()
-        # What the database held when this was loaded or last saved. save_to_db adds
-        # only paths beyond these: everything else is either still there or was
-        # deleted or renamed by someone else since, and must stay that way.
-        self._in_db: Set[str] = set()
 
     def load(self):
         """Read the library's tree. A library that does not exist has none: opening it
         would create it."""
         self.paths = set()
-        self._in_db = set()
         if not os.path.exists(self.db_path):
             return
         try:
@@ -573,34 +674,8 @@ class TagTaxonomy:
                 self.paths = set(tags(conn))
             finally:
                 conn.close()
-            self._in_db = set(self.paths)
         except Exception as e:
             logger.error(f"Error loading taxonomy from DB: {e}")
-
-    def save(self):
-        """Add the paths this has gained to the library's tree (save_to_db)."""
-        self.save_to_db()
-
-    def save_to_db(self):
-        """Sync self.paths with the database tag_taxonomy table."""
-        if not os.path.exists(self.db_path):
-            return
-        try:
-            seed(self.db_path)
-            conn = db.connect(self.db_path, timeout=10.0)
-            
-            # Insert the paths added since this was loaded, and their ancestors. Not
-            # the whole set: a long-running indexer holds what it loaded, and a tag
-            # deleted or renamed in the app meanwhile came back on its next save.
-            added = self.paths - self._in_db
-            with people.tree_edit(conn):
-                for path in sorted(added):
-                    add_path(conn, path)
-            conn.commit()
-            conn.close()
-            self._in_db |= added
-        except Exception as e:
-            logger.error(f"Error syncing taxonomy paths to DB: {e}")
 
     @staticmethod
     def normalize_tag(tag: str) -> str:
@@ -693,67 +768,6 @@ class TagTaxonomy:
                 return None
             found = path
         return found
-
-    def people_root(self) -> str:
-        """The root this library files people under: People when the library flags it,
-        else the first root it flags, else People -- the root a new library is given."""
-        roots = self.people_roots()
-        spelled = {vocabulary.key(vocabulary.root_of(p)): vocabulary.root_of(p) for p in self.paths}
-        default = vocabulary.NEW_LIBRARY_FACE_ROOT
-        if default.lower() in roots:
-            return spelled.get(default.lower(), default)
-        flagged = sorted(spelled[r] for r in roots if r in spelled)
-        return flagged[0] if flagged else default
-
-    def people_parent(self) -> str:
-        """Where a newly seen person belongs, at the depth this library already uses.
-
-        A library whose people live at Family/Immediate/<name> should not gain a
-        Family/<name> beside them the first time somebody new turns up: that is a
-        second, shallower home for people, which is the same fault as a bare root
-        wearing different clothes. The commonest existing parent wins; the plain root
-        is the fallback for a library with nobody in it yet.
-        """
-        roots = self.people_roots()
-        parents = {}
-        for path in self.paths:
-            parts = vocabulary.segments(path)
-            if len(parts) < 2:
-                continue
-            if vocabulary.key(parts[0]) not in roots:
-                continue
-            parent = vocabulary.parent_of(path)
-            parents[parent] = parents.get(parent, 0) + 1
-        if not parents:
-            return self.people_root()
-        # Deepest among the most common, so a tie does not silently flatten.
-        best = max(parents.items(), key=lambda kv: (kv[1], kv[0].count("/")))
-        return best[0]
-
-    def add_people(self, names: List[str]):
-        """Record people in the taxonomy, under a people root.
-
-        `names` are leaf names: extract_people flattens a hierarchical keyword down
-        to the person it names, because that is the form used for display and for
-        matching. Passing them to add_tags instead treated each as a whole path and
-        minted a bare root node per person, beside the People/<name> the keyword had
-        already created -- and it ran on every index, so every cleanup was undone by
-        the next run.
-
-        A name already somewhere in the taxonomy is left where it is: the point is to
-        avoid a second home for it, not to move the first one.
-        """
-        root = self.people_parent()
-        for name in names:
-            normalized = self.normalize_tag(name)
-            if not normalized:
-                continue
-            if "/" in normalized:
-                self.add_tag(normalized)
-                continue
-            if self.person_paths(normalized):
-                continue
-            self.add_tag("%s/%s" % (root, normalized))
 
     def expand_tag(self, tag: str) -> List[str]:
         """Given a tag, if it matches a path in the taxonomy, expand it to include all ancestors."""

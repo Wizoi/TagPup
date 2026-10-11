@@ -673,7 +673,9 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         (row_path, row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
          json.dumps(row.get("captions", [])),
          store_roots.raw_to_row(json.dumps(row.get("raw_metadata", {})), roots), row.get("document_id")))
-    people.rebuild_photos(conn, [stored], known)
+    if not (batch is not None and batch.prepared) and derived.make_nodes(conn, [row.get("tags", [])], batch):
+        known = None   # the vocabulary the caller read holds none of the people just made
+    people.rebuild_photos(conn, [stored], known, make=True)
     _dated_paths(conn, [stored])
     photo_id = _row_id(conn, stored)
     if held:

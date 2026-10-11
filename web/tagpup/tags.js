@@ -382,7 +382,9 @@ export async function resolveTagOrPerson(inputName, isPersonField = false, { pro
     }
     
     const allRoots = state.taxonomyNodes.filter(n => n.parent_id === null);
-    const peopleRoots = allRoots.filter(r => r.has_face === 1);
+    // A root people are filed under has nodes under it (an empty one is a person of the top level), or is a new library's People.
+    const peopleRoots = allRoots.filter(r => r.has_face === 1
+        && (r.name.toLowerCase() === 'people' || state.taxonomyNodes.some(n => n.parent_id === r.id)));
     const keywordRoots = allRoots.filter(r => r.has_face === 0);
     
     const matches = state.taxonomyNodes.filter(n => n.name.toLowerCase() === inputName.toLowerCase());

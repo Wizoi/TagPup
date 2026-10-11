@@ -9,8 +9,9 @@ made from the photos, never written by anything else, never journaled (journal.D
   (identity by id; docs/ARCHITECTURE.md, "Identity by id"). A keyword is matched to a node as the
   tree spells it, else without case, trimmed and with "|" and "\\" read as "/"
   (`vocabulary.normalize`); a bare leaf ("Cora Ingersoll") is not "People/Cora Ingersoll", which
-  is the people rule's to resolve. A keyword with NO node gets no row, and no node is made for it:
-  the owner's tree does not change by indexing a photo. `tags_without_a_node` says which.
+  is the people rule's to resolve. A keyword the index READS with no node gets one when it is first seen
+  (`make_nodes`, owner 2026-10-10: every tag has an id), so its photo has the row; a bare keyword that is a person's
+  leaf is that person's, and gets none. A keyword written some other way, or read before, and with no node has no row.
   "A keyword and everything under it" is a range on `tag_taxonomy.tag`, the node's ids joined to
   this table (`photos_under_tag`).
 * `folders(id, parent_id, path, name)` and `photo_folder(photo_id, folder_id)`: the folder tree of
@@ -44,6 +45,7 @@ migration 19 yet: the migrations before it write photos too.
 import collections
 import json
 import re
+import unicodedata
 
 from tagpup.core import paths, vocabulary
 from tagpup.store import db, search_index
@@ -78,12 +80,15 @@ _ODD = re.compile(r"[|\\]|^\s|\s$|\s/|/\s|//|^/|/$")
 
 
 def keyword(text):
-    """The form a keyword and a node are compared in: `vocabulary.normalize`d, without case."""
-    return vocabulary.key(vocabulary.normalize(text))
+    """The form a keyword and a node are compared in: `vocabulary.normalize`d, in one Unicode form (an accent typed as one
+    character or as two is one keyword), without case."""
+    return unicodedata.normalize("NFC", vocabulary.key(vocabulary.normalize(text)))
 
 
 def _fast_key(text):
-    return keyword(text) if _ODD.search(text) else text.lower()
+    if _ODD.search(text):
+        return keyword(text)
+    return text.lower() if text.isascii() else unicodedata.normalize("NFC", text.lower())
 
 
 class Tree:
@@ -93,12 +98,17 @@ class Tree:
     edited meanwhile is read again by the next."""
 
     def __init__(self, nodes):
-        self.exact, self.folded = {}, {}
+        self.exact, self.folded, self.tags = {}, {}, {}
         for node_id, tag in sorted(nodes):
-            if not tag:
-                continue
-            self.exact.setdefault(tag, node_id)
-            self.folded.setdefault(keyword(tag), node_id)
+            self.add(node_id, tag)
+
+    def add(self, node_id, tag):
+        """A node the tree has now (one made after it was read)."""
+        if not tag:
+            return
+        self.exact.setdefault(tag, node_id)
+        self.folded.setdefault(keyword(tag), node_id)
+        self.tags[node_id] = tag
 
     @classmethod
     def read(cls, conn):
@@ -148,6 +158,9 @@ class Batch:
         self.conn = conn
         self._tree = None
         self.folders = {}
+        #: The batch's keywords were all given to make_nodes at once (so a read does not make its own); and how many nodes
+        #: that left unmade for being too many.
+        self.prepared, self.flagged = False, 0
         #: {person: the unit vectors of their decided faces, or None}: what a run of writes naming faces
         #: from their photos' tags has read of each person, once (tagpup.store.face_tags, #841).
         self.decided = {}
@@ -245,6 +258,47 @@ def refresh_photos(conn, photo_ids, batch=None):
             states[photo_id] = _state(path, keywords_of(tags_json), batch.tree)
         changed += _put(conn, states, batch, [photo_id for photo_id in chunk if photo_id not in states])
     return changed
+
+
+#: The most nodes one batch of reads may make from the keywords it meets. A batch that would make more makes NONE and counts them
+#: (`Batch.flagged`): a folder from another program with thousands of distinct keywords is the owner's to look at, since each
+#: node is a tag to merge or delete by hand and Suggest embeds every one of them. `tree-fill` makes them when the owner asks.
+MAX_NEW_NODES_PER_BATCH = 500
+
+
+def make_nodes(conn, tag_lists, batch=None):
+    """Give each keyword of a batch of reads (a list of keyword lists; one list for one photo) that has no node its node
+    (taxonomy.ensure_node: the keyword's own path, every missing level of it), so that every keyword a file holds has an id.
+    All of the batch's nodes are made in ONE tree_edit, which scans the photos' keywords once for the batch and not once for each
+    node; and a batch that would make more than MAX_NEW_NODES_PER_BATCH makes none. Run before the photos' people are rebuilt: a
+    keyword under a face root makes a person, linked in the same transaction. A keyword that would go under a person faces or
+    photos use is left without a node. The caller commits. Returns how many nodes were made, the levels above a keyword too."""
+    if not present(conn):
+        return 0
+    from tagpup.store import people, taxonomy   # taxonomy imports this module
+    batch = batch or Batch(conn)
+    tree, wanted, levels = batch.tree, {}, set()
+    for tags in tag_lists:
+        for text in tags if isinstance(tags, (list, tuple)) else ():
+            if not isinstance(text, str) or tree.find(text) is not None or keyword(text) in wanted:
+                continue
+            path = vocabulary.normalize(text)
+            if not path:
+                continue
+            wanted[keyword(text)] = text
+            for level in vocabulary.lineage(path):
+                if tree.find(level) is None:
+                    levels.add(keyword(level))
+    if not wanted:
+        return 0
+    if len(levels) > MAX_NEW_NODES_PER_BATCH:
+        batch.flagged += len(levels)
+        return 0
+    before = len(tree.tags)
+    with people.tree_edit(conn):
+        for text in wanted.values():
+            taxonomy.ensure_node(conn, text, tree=tree, edited=True)
+    return len(tree.tags) - before
 
 
 def record(conn, photo_id, path, tags, batch=None):

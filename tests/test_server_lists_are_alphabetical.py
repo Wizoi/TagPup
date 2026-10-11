@@ -41,7 +41,7 @@ class ListsAreAlphabetical(unittest.TestCase):
 
     def test_the_autocomplete_is_alphabetical_and_holds_the_same_tags(self):
         offered = tags_service.autocomplete(self.lib.library)
-        self.assertEqual(sorted(offered), sorted(set(IN_ORDER_OF_ADDING) | {"People"}))
+        self.assertEqual(sorted(offered), sorted(set(IN_ORDER_OF_ADDING) | {"People", "Places"}))
         self.assertLess(offered.index("apple"), offered.index("Zoo"))
         self.assertLess(offered.index("Trip 3"), offered.index("Trip 10"))
         self.assertLess(offered.index("Éclair"), offered.index("Trip 3"))

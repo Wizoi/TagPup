@@ -172,14 +172,14 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        family: photos, faces, people, person_ids, taxonomy, embeddings, suggestions, journal,
                        file_journal, settings, roots + adoption + root_rows, derived, search_index, folders,
                        library_view, snapshots, generations, locks, job_runs, sync_runs,
-                       added_folders, damaged_files, faces_pending, faces_detected, name_review, checks
+                       added_folders, damaged_files, faces_pending, faces_detected, tree_scan, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
                        thumbs, names, shares, lock_owners, recycle_bin, job_files
   ml/                  models: clip, faces, vector_index, grouping, and gpu (the card's turn)
   services/            one function per user action; the only code that writes: tagging, tags, people, faces,
                        identities, identify, indexing, sync, refresh_rows, relink_photos,
                        roots*, settings, journal, file_changes, bulk_edit, selection,
-                       library_view, search, suggester, suggestions, snapshots, thumbnails, name_review,
+                       library_view, search, suggester, suggestions, snapshots, thumbnails, tree_fill,
                        faces_from_tags, tags_from_faces, face_people, inspect, activity, file_access, maintenance
   jobs/                background work: indexing queue, suggestions, bulk_edits, face_assignments,
                        naming_faces, identify, verifying, watching, recurring
@@ -235,8 +235,14 @@ one transaction with its checks, and only a destructive one takes a backup). Col
 **Ids.** A photo is `photos.id` (an integer kept across renames and moves; `path` is an attribute, and
 `document_id` is the XMP identity the file may carry). A face is `faces.id`, pointing at `photos.id`. **A
 person is the id of a node in the tag tree** (`tag_taxonomy.id`): `faces.tag_id` and `photo_people.tag_id`
-are the key and `name` a cache of the node's leaf; a name with no id is an *unresolved name*, left as it is
-and listed for the owner (names to review). A person tag is a leaf; a branch is a group, never a person.
+are the key and `name` a cache of the node's leaf. **Every tag has an id** (owner, 2026-10-10): a name or a keyword
+first seen with no node is given one by `taxonomy.ensure_node` -- a name a node directly under the tree's root marked as a
+person, a keyword its own path -- so no row holds a name and no id except a name two people have or a group has (the doctor
+counts them). A person is a face node with no node under it, wherever it sits (a top-level one is filed by its own tag until
+the owner merges it into a branch); a branch is a group, never a person. A batch of reads makes its nodes in one tree edit
+and none when it would make more than 500 (`derived.MAX_NEW_NODES_PER_BATCH`): a folder from another program with thousands
+of keywords would make thousands of tags to merge or delete by hand, each embedded by Suggest; `tree-fill` makes them on
+request. The navigator files a top-level person under "Top level".
 A folder is the derived `folders` row (rebuilt, its integer ids change). The `folder_ids` and `library_identity`
 tables the folder markers wrote were dropped by migration 30 (owner, 2026-10-10: the marker code is deleted; the
 `.tagpup` files stay on disk and nothing reads them).
@@ -249,7 +255,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 | Kind | Tables | Written by |
 |---|---|---|
 | File copy (the file is the truth) | `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`) | only after a file is read or written: indexer, `refresh_rows`, `record_tags_in_index` (`store/photos.py`) |
-| Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders`, `name_review_dismissals`, `damaged_files` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
+| Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders`, `damaged_files` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
 | Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `search_words`/`search_names` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `suggestions`, `faces_pending`, `faces_detected` | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py` |
 | Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs`, `sync_runs` | `store/schema.py`, `store/generations.py`, `store/job_runs.py`, `store/sync_runs.py` |
 | The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state) | `store/journal.py`, `store/file_journal.py` |

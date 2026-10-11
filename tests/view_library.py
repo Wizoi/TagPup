@@ -48,6 +48,21 @@ class ViewLibrary:
             taxonomy.add_path(self.conn, tag, root_has_face=1 if tag.split("/")[0] == face_root else 0)
         self.conn.commit()
 
+    def forget(self, *tags):
+        """Take the nodes of `tags`, and the levels above them left with nothing under them, out of the tree: the library of a
+        photo read before the index made a keyword's node (2026-10-10), or whose node was deleted since. The photos keep the
+        keyword; their rows for it go with the node."""
+        for tag in tags:
+            node = self.conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone()
+            while node is not None:
+                parent = self.conn.execute("SELECT parent_id FROM tag_taxonomy WHERE id = ?", node).fetchone()[0]
+                self.conn.execute("DELETE FROM tag_taxonomy WHERE id = ?", node)
+                node = None
+                if parent is not None and not self.conn.execute(
+                        "SELECT 1 FROM tag_taxonomy WHERE parent_id = ?", (parent,)).fetchone():
+                    node = (parent,)
+        self.conn.commit()
+
     def photo(self, folder, name, taken=None, tags=(), real=False, shade=(90, 110, 130), size=(800, 600), at=None,
               caption=None, fields=None):
         """The id of a photo recorded as the indexer records a read of `folder`/`name` under Pictures (`at`: the whole

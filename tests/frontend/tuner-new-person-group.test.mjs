@@ -16,6 +16,7 @@ const TREE = [
   { id: 1, tag: "Friends", parent_id: null, name: "Friends", has_face: 1 },
   { id: 2, tag: "Friends/Sam", parent_id: 1, name: "Sam", has_face: 1 },
   { id: 3, tag: "Pets", parent_id: null, name: "Pets", has_face: 1 },
+  { id: 8, tag: "Pets/Biscuit", parent_id: 3, name: "Biscuit", has_face: 1 },
   { id: 4, tag: "Places", parent_id: null, name: "Places", has_face: 0 },
   { id: 5, tag: "Family", parent_id: null, name: "Family", has_face: 1 },
   { id: 6, tag: "Family/Ingersoll", parent_id: 5, name: "Ingersoll", has_face: 1 },

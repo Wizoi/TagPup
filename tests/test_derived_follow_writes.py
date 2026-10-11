@@ -107,7 +107,7 @@ class TheIndexRecordsAPhoto(WithALibrary):
         self.agrees()
         counts = {tag: n for tag, n in self.rows("SELECT t.tag, COUNT(*) FROM photo_tags pt JOIN tag_taxonomy t"
                                                  " ON t.id = pt.tag_id GROUP BY t.tag")}
-        self.assertEqual({"Trips/Coast": 10, "People/Rowan Thackeray": 10}, counts)
+        self.assertEqual({"Trips/Coast": 10, "People/Rowan Thackeray": 10, "Mystery": 10}, counts, "Mystery was made on the first read")
 
     def test_reading_a_photo_again_writes_what_changed_and_the_folder_keeps_its_id(self):
         self.tree("Trips/Coast", "Trips/Lake")
@@ -126,26 +126,13 @@ class TheIndexRecordsAPhoto(WithALibrary):
 
     def test_a_keyword_whose_node_is_made_after_the_photo_gets_its_row_when_the_node_is(self):
         one = self.read("2024", "a.jpg", ["Trips/Coast/Harbour"])
+        self.assertEqual(["Trips/Coast/Harbour"], self.tags_of(one), "the read made the node")
+        self.conn.execute("DELETE FROM tag_taxonomy WHERE tag = 'Trips/Coast/Harbour'")   # a node gone since
         self.conn.commit()
         self.assertEqual([], self.tags_of(one))
         taxonomy.add_node(self.conn, "Trips/Coast/Harbour")   # TagTuner's New Tag, or the indexer's tree save
         self.conn.commit()
         self.assertEqual(["Trips/Coast/Harbour"], self.tags_of(one))
-        self.agrees()
-
-    def test_the_trees_save_after_an_index_run_gives_every_photo_its_rows(self):
-        """The indexer records the photos, then saves the tree with the tags it met
-        (TagTaxonomy.save_to_db): the rows follow the tree's edit."""
-        from tagpup.store.taxonomy import TagTaxonomy
-        for number in range(6):
-            self.read("2024", "p%d.jpg" % number, ["Trips/Coast", "Activity/Sailing"] if number % 2 else ["Pets/Dog"])
-        self.conn.commit()
-        self.assertEqual(0, self.rows("SELECT COUNT(*) FROM photo_tags")[0][0], "no node yet")
-        tree = TagTaxonomy(self.path)
-        tree.load()
-        tree.add_tags(["Trips/Coast", "Activity/Sailing", "Pets/Dog"])
-        tree.save()
-        self.assertEqual(9, self.rows("SELECT COUNT(*) FROM photo_tags")[0][0])
         self.agrees()
 
     def test_a_batch_reads_the_tree_inside_its_transaction_so_a_tree_edited_meanwhile_is_the_one_used(self):

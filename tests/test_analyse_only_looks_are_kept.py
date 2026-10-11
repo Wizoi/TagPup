@@ -283,8 +283,9 @@ class TheYearPromptsAreKeptInMemory(Base):
 
 
 class APersonIsFiledAsTheChipFilesThem(Base):
-    """#546: Apply All wrote a bare name for a named face whose node the tree lacks; a click on the chip
-    files it under the one people root. Both now: People/<name>, no node made."""
+    """#546: Apply All wrote a bare name for a named face whose node the tree lacks. A face named gets its node when it is
+    named (every tag has an id, 2026-10-10): directly under the tree's root, so Apply All and a click on the chip file it by
+    that node's path until the owner merges it into a branch. The run itself makes no node."""
 
     def know_wren(self):
         conn = db.connect(self.library.path)
@@ -301,7 +302,7 @@ class APersonIsFiledAsTheChipFilesThem(Base):
         self.start(self.cup)
         self.assertEqual(["Wren Okafor"], [p["name"] for p in self.suggested(self.cup)["cup_03.jpg"]["people"]])
         self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
-        self.assertEqual(["Trips/Regatta", "People/Wren Okafor"], base.tags_in(self.loose[2]))
+        self.assertEqual(["Trips/Regatta", "Wren Okafor"], base.tags_in(self.loose[2]))
         self.assertEqual(tree, base.tree_of(self.library.path), "a node was made")
         self.assert_library_unchanged()
 
@@ -310,8 +311,8 @@ class APersonIsFiledAsTheChipFilesThem(Base):
         self.assertFalse(self.start(self.regatta)["in_memory"])
         self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.regatta, "threshold": 0.0,
                                                                "photo_paths": [self.held[2]]}).status_code)
-        self.assertIn("People/Wren Okafor", base.tags_in(self.held[2]))
-        self.assertNotIn("Wren Okafor", base.tags_in(self.held[2]))
+        self.assertIn("Wren Okafor", base.tags_in(self.held[2]))
+        self.assertNotIn("People/Wren Okafor", base.tags_in(self.held[2]))
 
     def test_with_two_people_roots_the_name_is_left_as_it_was_for_the_page_to_ask(self):
         self.know_wren()
