@@ -22,6 +22,7 @@ from contextlib import closing
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import NotFound, Refused
+from tagpup.files import images
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import roots as roots_service
 from tagpup.store import checks as rules
@@ -306,6 +307,37 @@ def _people_at_the_top(conn, reveal=False):
     as `tags` only with `reveal`."""
     top = sorted(taxonomy.top_level_people(conn))
     return dict({"count": len(top)}, **({"tags": top} if reveal else {}))
+
+
+# ---- Photos whose file does not open ------------------------------------------------------
+
+def files_that_fail_to_open(library):
+    """The photos whose file is there and does not open: empty, ending in zero bytes as an interrupted copy leaves
+    a file (images.ZERO_TAIL), or not a picture Pillow can identify -- the end of each file and its header are
+    read, and no picture is decoded (about a millisecond a photo; a whole decode is thirty). A JPEG cut short in the
+    middle of its picture is not found here: the write that meets it leaves it alone (tagpup.files.field_values.read,
+    `validate`). {"count", "unreached": photos whose file could not be looked at (a share, a lock), not counted, and
+    not the missing ones (`missing_files`), "files": [(id, path, why)] by path}. Reported, not broken. Nothing is
+    written; the paths are for a caller that reveals them."""
+    with _reading(library) as conn:
+        held = inspection.photo_files(conn)
+    failed, unreached = [], 0
+    for photo_id, path in held:
+        try:
+            if images.tail_check(path) >= images.ZERO_TAIL:
+                failed.append((photo_id, path, images.DAMAGE["zero-filled"]))
+                continue
+            images.shown_size(path)
+        except images.Unreadable as damage:
+            failed.append((photo_id, path, images.DAMAGE.get(damage.kind, damage.kind)))
+        except FileNotFoundError:
+            continue
+        except OSError as problem:
+            if images.is_damage(problem):
+                failed.append((photo_id, path, images.DAMAGE["not an image"]))
+            else:
+                unreached += 1
+    return {"count": len(failed), "unreached": unreached, "files": failed}
 
 
 # ---- Rows whose file is gone ------------------------------------------------------------

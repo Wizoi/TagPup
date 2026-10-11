@@ -89,8 +89,7 @@ def refuse_unwritable(result, photo_paths, full=False):
 
 def leave_out_unwritable(photo_paths):
     """(`photo_paths` but the unwritable ones, [(path, why)] of those left out): a bulk write
-    skips them and writes the rest (libraries.leave_out_damaged does for the photos a
-    library holds)."""
+    skips them and writes the rest."""
     found = dict(unwritable(photo_paths))
     return ([p for p in photo_paths if p not in found],
             [(path, "damaged, nothing is written to it: %s" % why) for path, why in found.items()])
@@ -155,10 +154,13 @@ def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_err
     written = result.details["written"] = {}
     result.details.update(change=None, conflicts=[], read_back={})
     stored = [paths.stored(p) for p in photo_paths]
-    held = fresh if fresh is not None else field_values.read(et, stored, read)
+    held = fresh if fresh is not None else field_values.read(et, stored, read, validate=True)
     planned = []
     for path in stored:
         now = held.get(paths.key(path))
+        if isinstance(now, field_values.CutShort):
+            file_changes.skip_cut_short(result, path, now)
+            continue
         if now is None or isinstance(now, Exception):
             why = now or "ExifTool answered nothing for it"
             if unreadable == "skip":

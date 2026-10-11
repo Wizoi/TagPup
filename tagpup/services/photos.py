@@ -341,8 +341,9 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     if problem:
         result.refuse(problem)
         return result
-    # A photo found damaged refuses the whole rename, nothing moved: skipped, it kept a name
-    # the numbering gave another photo, which moved it aside and lost its record.
+    # A photo of a folder the library does not hold that is empty, or ends in zeros as an interrupted copy leaves it,
+    # refuses the whole rename, nothing moved: skipped, it kept a name the numbering gave another photo, which moved it
+    # aside and lost its record. (A rename writes no metadata: a held photo is renamed whatever its file holds.)
     held, loose = libraries.split(library, photo_paths)
     if held and libraries.refuse_writes(result, library, held):
         return result
@@ -462,9 +463,8 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         result.refuse(problem)
         return result
     refused = Result(attempted=len(photo_paths))
-    # A photo found damaged refuses the whole shift, nothing written, as it refuses a rename.
     # Photos of folders the library does not hold are shifted in their files only
-    # (tagpup.services.file_only), and are asked for what they decode as, not for records.
+    # (tagpup.services.file_only), and are asked for what they decode as. A photo cut short is left out by the writer.
     held, loose = libraries.split(library, photo_paths)
     if held and libraries.refuse_writes(refused, library, held):
         return refused
@@ -526,7 +526,7 @@ def delete(library, photo_path):
         result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
         return result
     # A damaged photo may be deleted: nothing is written into it.
-    if libraries.refuse_writes(result, library, [photo_path], damaged_ok=True):
+    if libraries.refuse_writes(result, library, [photo_path]):
         return result
     try:
         went = recycle_bin.delete_file(photo_path)
@@ -572,7 +572,7 @@ def rotate(library, photo_path, direction, exiftool_path):
         turned = file_only.rotate(photo_path, direction, exiftool_path)
         turned.details.update({file_only.FILE_ONLY: turned.changed, file_only.WITH_ROWS: 0})
         return turned
-    if libraries.refuse_writes(result, library, [photo_path]):
+    if libraries.refuse_writes(result, library, [photo_path]) or file_only.refuse_unwritable(result, [photo_path]):
         return result
     # The row is stamped only if it described the file just before the turn (#249).
     before = embeddings.stamp_of(photo_path)

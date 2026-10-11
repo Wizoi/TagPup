@@ -186,7 +186,6 @@ export const addFolderFacts = document.getElementById('add-folder-facts');
 export const btnAddFolder = document.getElementById('btn-add-folder');
 export const btnJustLook = document.getElementById('btn-just-look');
 export const justLookingNote = document.getElementById('just-looking-note');
-export const damagedBadge = document.getElementById('damaged-badge');
 // The top of the grid, one floating header in a library view (#713), and its strip that says which view is open (library-view.js)
 export const folderViewTop = document.getElementById('folder-view-top');
 export const libraryStrip = document.getElementById('library-strip');
@@ -208,7 +207,5 @@ export const librarySearchNote = document.getElementById('library-search-note');
 export const btnSortBy = document.getElementById('btn-sort-by');
 export const sortByCurrent = document.getElementById('sort-by-current');
 export const sortMenu = document.getElementById('sort-menu');
-export const damagedNotice = document.getElementById('damaged-notice');
-export const photoDamagedNote = document.getElementById('photo-damaged-note');
 export const justLookingText = document.getElementById('just-looking-text');
 export const btnAddFolderFromNote = document.getElementById('btn-add-folder-from-note');

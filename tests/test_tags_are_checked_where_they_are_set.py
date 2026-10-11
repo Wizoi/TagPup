@@ -34,7 +34,7 @@ def fake_exiftool(holds):
     left the file as it was is not a change (docs/findings.md, #276)."""
     held = {"XMP:Subject": list(holds)}
     et = MagicMock()
-    et.get_tags.side_effect = lambda paths, tags=None: [dict(held)]
+    et.get_tags.side_effect = lambda paths, tags=None, params=None: [dict(held)]
 
     def set_tags(paths, tags=None, params=None):
         held.update(tags or {})

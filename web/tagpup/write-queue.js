@@ -69,7 +69,7 @@ export function markEntry(entry, status) {
 
 /**
  * A bulk write skipped `count` photos as damaged: nothing is written into a photo found
- * damaged (the server's libraries.leave_out_damaged). Said on the entry and in the status.
+ * damaged (the server skips a photo cut short: file_changes.skip_cut_short). Said on the entry and in the status.
  */
 export function noteSkipped(entry, count) {
     if (!entry || !count) return;

@@ -21,10 +21,10 @@ from fake_exiftool import Files  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
-from tagpup.files import job_files  # noqa: E402
+from tagpup.files import job_files, shares  # noqa: E402
 from tagpup.jobs import bulk_edits  # noqa: E402
 from tagpup.services import bulk_edit, file_changes, libraries  # noqa: E402
-from tagpup.store import damaged_files, db, job_runs  # noqa: E402
+from tagpup.store import db, job_runs  # noqa: E402
 
 REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
 ALL = {"source": {"kind": "all"}}
@@ -433,9 +433,7 @@ class WhatGoesWrong(Bulk):
     def test_a_damaged_photo_is_skipped_and_counted_and_the_rest_are_written(self):
         victim = self.path(self.ids[3])
         held = self.tags(self.ids[3])
-        stat = os.stat(victim)
-        db.write_with_connection(self.vl.path, lambda conn: damaged_files.record(
-            conn, victim, (stat.st_mtime, stat.st_size), "truncated", "ends early"))
+        self.files.cut_short.add(paths.key(victim))
         done = self.run_tags(add=["Trips/Coast"])
         self.assertEqual((1, self.PHOTOS - 1, 0), (done["skipped_damaged"], done["changed"], done["error_count"]))
         self.assertEqual(held, self.tags(self.ids[3]), "nothing is written into a damaged photo")
@@ -483,25 +481,24 @@ class WhatGoesWrong(Bulk):
         real = libraries.refuse_writes
         calls = []
 
-        def refuse_the_first(result, library, photo_paths, damaged_ok=False):
+        def refuse_the_first(result, library, photo_paths):
             calls.append(1)
             if len(calls) == 1:
                 result.refuse("Can't check E:: try again. A photo there was found damaged, and whether it still is could not be told.")
                 return True
-            return real(result, library, photo_paths, damaged_ok)
+            return real(result, library, photo_paths)
         with mock.patch.object(libraries, "refuse_writes", refuse_the_first):
             done = self.run_tags(add=["Trips/Coast"])
         self.assertEqual(("done", 25, self.PHOTOS - 25), (done["state"], done["error_count"], done["changed"]))
         self.assertIn("Can't check", done["errors"][0]["why"])
 
     def test_photos_on_a_share_that_does_not_answer_are_errors_not_sent_to_exiftool_and_the_others_are_written(self):
-        from tagpup.services import damaged_photos
         away = {paths.key(self.path(photo_id)) for photo_id in self.ids[:6]}
-        real = damaged_photos.stamp_of
+        real = shares.stamp_of
 
         def stamp_of(path):
-            return damaged_photos.UNANSWERED if paths.key(path) in away else real(path)
-        with mock.patch.object(damaged_photos, "stamp_of", stamp_of):
+            return shares.UNANSWERED if paths.key(path) in away else real(path)
+        with mock.patch.object(shares, "stamp_of", stamp_of):
             done = self.run_tags(add=["Trips/Coast"])
         self.assertEqual(("done", 6, self.PHOTOS - 6), (done["state"], done["error_count"], done["changed"]))
         self.assertIn("share that did not answer", done["errors"][0]["why"])
@@ -509,8 +506,7 @@ class WhatGoesWrong(Bulk):
             self.assertNotIn(key, self.files.reads, "ExifTool was never asked to read a file on the share that is away")
 
     def test_a_whole_share_away_stops_the_job_after_five_chunks_and_not_after_five_minutes_a_photo(self):
-        from tagpup.services import damaged_photos
-        with mock.patch.object(damaged_photos, "stamp_of", return_value=damaged_photos.UNANSWERED), \
+        with mock.patch.object(shares, "stamp_of", return_value=shares.UNANSWERED), \
                 mock.patch.object(bulk_edits, "CHUNK", 5):
             done = self.run_tags(add=["Trips/Coast"])
         self.assertEqual(("failed", 25, 0), (done["state"], done["done"], done["changed"]))

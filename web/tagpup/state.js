@@ -193,12 +193,4 @@ export const state = {
     // `in_memory`): kept in the server's memory, not the library's. Once the library holds the folder, or
     // the server has let them go, Suggest is run again (suggestions.js).
     suggestionsInMemory: null,
-
-    // The open folder's photos found damaged, by pathKey (GET /api/folder/damaged), and
-    // how many times it was asked, so an older answer does not overwrite a newer
-    // (damaged.js).
-    damagedPhotos: {},
-    damagedAsked: 0,
-    // Check again under way: its button is disabled, and a second click sends nothing.
-    damagedChecking: false,
 };

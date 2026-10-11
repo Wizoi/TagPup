@@ -21,7 +21,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 - Journal and maintenance services: `tagpup/services/journal.py`, `tagpup/services/maintenance.py`, `tagpup/services/job_runs.py`, `tagpup/store/job_runs.py`, `tagpup/store/sync_runs.py`
 - Settings: `tagpup/store/settings.py`, `tagpup/services/settings.py` (the `SETTINGS` registry in `tagpup/core/validation.py` is shared with Integration)
 - Roots as data: `tagpup/store/roots.py`, `tagpup/store/root_rows.py`, `tagpup/store/roots_check.py`, `tagpup/services/roots.py`, `tagpup/services/roots_location.py`, `tagpup/services/roots_verify.py`
-- Small stores: `tagpup/store/added_folders.py`, `tagpup/store/damaged_files.py`, `tagpup/store/faces_pending.py`, `tagpup/store/faces_detected.py`, `tagpup/store/removals.py`
+- Small stores: `tagpup/store/added_folders.py`, `tagpup/store/faces_pending.py`, `tagpup/store/faces_detected.py`, `tagpup/store/removals.py`
 - Tables: `schema_version`, `changes`, `change_rows`, `change_files`, `settings`, `generations`, `job_runs`, `sync_runs`, `roots`, `added_folders`, `damaged_files`, `faces_pending`, `faces_detected`, every derived table (`photo_tags`, `folders`, `photo_folder`, `photo_people`, `search_words`, `search_names` and their FTS shadows) and every trigger. The schema file holds every domain's tables, so a new table anywhere is a Data review.
 - State on 2026-10-11 (counted): the three live libraries are at schema 30; none is waiting for a migration.
 

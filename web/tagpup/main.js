@@ -37,7 +37,6 @@ import { attachBulk, wireBulk } from './bulk-job.js';
 import { renderSyncInfo } from './sync-state.js';
 import { photosWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
-import { checkDamagedPhotos, showLibraryDamage } from './damaged.js';
 import {
     carryTagsForward, deleteActivePhoto, facesFollowTags, openLibraryPhoto, openPhotoInDefaultApp, removePhotoTags,
     renderPhotoFaces, renderTags, rotatePhoto,
@@ -66,7 +65,7 @@ import {
 
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
-    addedFromView, applySuggestedTagDirect, checkDamagedPhotos, checkFolderMembership, checkSuggestionsStatus, choosePane,
+    addedFromView, applySuggestedTagDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
     deleteSelection, facesFollowTags,
     populateCameraModelsDropdown, recordUndo, removePhotoTags,
     renderFileList, renderPhotoFaces, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
@@ -199,8 +198,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // main.js declares no state of its own (tests/frontend/page-state.test.mjs), so
     // nothing here reaches a binding before its line has run; what is left of the rule
     // is this block's position, and tests/frontend/tag-vocabulary.test.mjs keeps it.
-    // How many of the library's photos were found damaged, in the header (damaged.js).
-    showLibraryDamage();
     // A bulk edit already running in this library (started before this page was opened or reloaded) is picked up by its strip.
     attachBulk();
     const params = new URLSearchParams(window.location.search);

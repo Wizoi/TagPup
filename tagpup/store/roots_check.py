@@ -16,7 +16,6 @@ TABLES = (
     ("photos", ("path",)),
     ("change_files", ("path", "new_path")),
     ("added_folders", ("path",)),
-    ("damaged_files", ("path",)),
 )
 
 

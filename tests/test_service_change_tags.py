@@ -30,7 +30,7 @@ class ChangingTags(unittest.TestCase):
         self.lib.execute("INSERT INTO tag_taxonomy (tag, name, has_face) VALUES"
                          " ('People/Rowan Thackeray', 'Rowan Thackeray', 1)")
         self.et = mock.MagicMock()
-        self.et.get_tags.side_effect = lambda paths, tags=None: [
+        self.et.get_tags.side_effect = lambda paths, tags=None, params=None: [
             {"SourceFile": p, "XMP:Subject": list(self.files.get(p, []))} for p in paths]
         keeps_writes(self.et, self.files)
         session = mock.MagicMock()

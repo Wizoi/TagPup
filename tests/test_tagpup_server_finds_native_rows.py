@@ -103,7 +103,7 @@ def fake_exiftool(get_tags_result):
     kept = {}
     et = MagicMock()
 
-    def get_tags(paths, tags=None):
+    def get_tags(paths, tags=None, params=None):
         written = kept.get(paths[0], {}) if len(paths) == 1 else {}
         return [dict(found, **written) for found in get_tags_result]
 
@@ -330,7 +330,7 @@ class TestTimeShiftKeepsTheRealPaths(HandlerCase):
         held = {"EXIF:DateTimeOriginal": "2024:07:04 10:00:00"}
         session = MagicMock()
         et = session.return_value.__enter__.return_value
-        et.get_tags.side_effect = lambda paths, tags=None: [{"SourceFile": forward(p), **held} for p in paths]
+        et.get_tags.side_effect = lambda paths, tags=None, params=None: [{"SourceFile": forward(p), **held} for p in paths]
         et.set_tags.side_effect = lambda paths, tags=None, params=None: held.update(tags or {})
         # The route reads the cold folder and the service reads it back, both through
         # tagpup.files.

@@ -38,7 +38,7 @@ class FakeExifTool:
     def __exit__(self, *exc):
         return False
 
-    def get_tags(self, batch, tags=None):
+    def get_tags(self, batch, tags=None, params=None):
         self.reads.extend(os.path.basename(path) for path in batch)
         rows = []
         for path in batch:

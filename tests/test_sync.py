@@ -58,7 +58,7 @@ class Reads:
             def __exit__(self, *exc):
                 return False
 
-            def get_tags(self, batch, tags=None):
+            def get_tags(self, batch, tags=None, params=None):
                 reads.read.extend(batch)
                 return [{"SourceFile": path.replace(os.sep, "/"), **reads.truth.get(os.path.basename(path), {})}
                         for path in batch]

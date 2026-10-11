@@ -25,7 +25,7 @@ class SavingACaptionThatRenames(unittest.TestCase):
         self.lib.add_row(self.photo, tags=["Beach"])
         self.holds = {"XMP:Subject": ["Beach"], "XMP:PreservedFileName": ["IMG_0001.jpg"]}
         self.et = mock.MagicMock()
-        self.et.get_tags.side_effect = lambda paths, tags=None: [dict(self.holds, SourceFile=paths[0])]
+        self.et.get_tags.side_effect = lambda paths, tags=None, params=None: [dict(self.holds, SourceFile=paths[0])]
         self.et.set_tags.side_effect = lambda paths, tags=None, params=None: self.holds.update(tags or {})
         session = mock.MagicMock()
         session.return_value.__enter__.return_value = self.et

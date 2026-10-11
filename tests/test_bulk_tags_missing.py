@@ -14,6 +14,7 @@ import web_client  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 from test_service_replace_tag import keeps_writes  # noqa: E402
 
+from tagpup.files import shares  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 
 
@@ -25,7 +26,7 @@ class LeavingOutMissing(unittest.TestCase):
             self.lib.add_row(path, tags=[])
         self.files = {self.a: [], self.b: [], self.c: []}
         self.et = mock.MagicMock()
-        self.et.get_tags.side_effect = lambda paths, tags=None: [
+        self.et.get_tags.side_effect = lambda paths, tags=None, params=None: [
             {"SourceFile": p, "XMP:Subject": list(self.files.get(p, []))} for p in paths]
         keeps_writes(self.et, self.files)
         session = mock.MagicMock()
@@ -70,11 +71,10 @@ class LeavingOutMissing(unittest.TestCase):
         self.assertEqual(self.files[self.c], [], "the run stopped at the error")
 
     def test_a_file_that_cannot_be_read_is_not_taken_for_missing(self):
-        from tagpup.services import damaged_photos
-        with mock.patch.object(damaged_photos, "stamp_of", return_value=damaged_photos.CANNOT_READ):
+        with mock.patch.object(shares, "stamp_of", return_value=shares.CANNOT_READ):
             present, gone = tagging.leave_out_missing([self.a, self.b])
         self.assertEqual((present, gone), ([self.a, self.b], []))
-        with mock.patch.object(damaged_photos, "stamp_of", return_value=damaged_photos.UNANSWERED):
+        with mock.patch.object(shares, "stamp_of", return_value=shares.UNANSWERED):
             self.assertEqual(tagging.leave_out_missing([self.a])[1], [])
 
 

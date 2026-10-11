@@ -7,7 +7,8 @@ Prints what the library holds, then each rule (tagpup.store.checks) with how man
 break it -- among them the library's roots: a rooted row that cannot be read, a native row
 under a root -- then how many photos have no CLIP vector for the model the config names,
 then the photos that list a person from a face alone (a face was named and no keyword says so: reported, not broken),
-then the rows whose file is not on disk, by folder, and the photos under no root, by folder.
+then the rows whose file is not on disk, by folder, how many photos' files fail to open (empty, ending in zero bytes, not a
+picture: the end of each file is read, no picture decoded), and the photos under no root, by folder.
 Counts only, unless --show asks for examples: they are paths and tags, and paths name
 people. Then the keywords photos carry that the tag tree has no node for, which is reported, not
 broken (the tree is the owner's, and indexing never adds to it).
@@ -42,6 +43,7 @@ sys.path.insert(0, ROOT)
 from tagpup import runtime  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.services import inspect  # noqa: E402
 from tagpup.store import checks, db, derived, embeddings, people, person_ids, schema, search_index  # noqa: E402
 
 
@@ -122,6 +124,12 @@ def report(db_path, show=0, out=print):
             % (rows, len(missing), len(gone)))
         for folder, count, there in missing[:show]:
             out("    %6d  %s%s" % (count, folder, "" if there else "  (folder gone)"))
+        opens = inspect.files_that_fail_to_open(Library(db_path))
+        out("photos whose file fails to open: %d (reported, not broken: empty, ending in zero bytes as an interrupted copy "
+            "leaves a file, or not a picture; a JPEG cut short inside its picture is left alone by the write that meets it)%s"
+            % (opens["count"], "; %d could not be looked at" % opens["unreached"] if opens["unreached"] else ""))
+        for _photo_id, path, why in opens["files"][:show]:
+            out("    %s: %s" % (path, why))
     distinct, uses, photos, ranked = unnamed
     if distinct:
         out("photo tags with no tree node: %d keyword(s), %d use(s) on %d photo(s) (reported, not broken: the index "

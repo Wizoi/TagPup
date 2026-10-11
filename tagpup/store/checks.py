@@ -302,7 +302,7 @@ def missing_files(conn):
 #: the derived `folders`: its paths are the photos' folders in the form the photos' rows are in, which the
 #: adoption rebuilds, and `photo_folders_out_of_date` / `folders_out_of_date` compare it with the photos.
 ROOT_COLUMNS = (("photos", "path"), ("change_files", "path"), ("change_files", "new_path"),
-                ("added_folders", "path"), ("damaged_files", "path"))
+                ("added_folders", "path"))
 
 
 def _roots_or_why(conn):

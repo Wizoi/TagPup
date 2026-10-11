@@ -216,7 +216,7 @@ class TestAPhotoExifToolObjectsTo(unittest.TestCase):
         def execute(self, *args):
             self.forced.append(args)
 
-        def get_tags(self, paths, tags=None):
+        def get_tags(self, paths, tags=None, params=None):
             self.reads += 1
             return [dict(self.before if self.reads == 1 else self.after)]
 

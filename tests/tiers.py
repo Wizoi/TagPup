@@ -44,8 +44,7 @@ SCENARIO = frozenset({
     # Writes that stop part-way or meet a damaged photo, with a real ExifTool.
     "test_partial_writes_leave_rows_unread",
     "test_no_writes_to_damaged_photos",
-    "test_damaged_photos_reindexed",
-    "test_damaged_photos_are_remembered",
+    "test_writes_refuse_cut_short_photos",
     "test_rotate_keeps_the_photo",
     "test_taxonomy_lifecycle",
     # Faces and tags kept in step across files, jobs and the CLI's journaled apply.

@@ -64,7 +64,6 @@ function quietTheFolder() {
     state.folderPhotos = [];
     state.folderSuggestions = {};
     upper.checkFolderMembership(null);   // nothing is held back, no folder is asked to be added: every photo is held
-    upper.checkDamagedPhotos(null);      // a card says for itself whether its photo is damaged
     btnToggleRename.disabled = true;
     btnToggleTimeshift.disabled = true;
     btnFolderAutoApply.disabled = true;

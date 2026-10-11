@@ -733,16 +733,6 @@ export function refetchCards(ids) {
     }).catch(err => console.error('Could not ask for the card again:', err));
 }
 
-/** What a card says of damage, as the folder's damaged list does (damaged.js markCard reads it). */
-export function cardDamage(card) {
-    if (!card || !card.damaged) return null;
-    const incomplete = card.damage === 'incomplete';
-    return {
-        kind: card.damage, indexed: incomplete, detail: '',
-        reason: incomplete ? 'Possibly an incomplete copy: the file ends in zero bytes' : 'The picture cannot be read',
-    };
-}
-
 // ---- A card and the photo it stands for ------------------------------------------------
 
 /** The id of the held card whose photo is at this path, or null. */

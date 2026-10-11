@@ -188,6 +188,12 @@ def whose_file_is_gone(conn):
         if not os.path.exists(path)], 1)
 
 
+def photo_files(conn):
+    """(id, native path) of every photo, by path: the files a library says it holds."""
+    return store_roots.ordered(conn, store_roots.natives(
+        conn, conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall(), 1), 1)
+
+
 # ---- Query plans ------------------------------------------------------------------------
 
 class NotARead(ValueError):

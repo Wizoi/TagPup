@@ -154,7 +154,7 @@ describe("in a view of the library", () => {
   const ID = 4242;
   const record = (extra = {}) => photoRecord({
     id: ID, filename: "v.jpg", path: "D:\\Library\\Photos\\v.jpg", tags: ["Trips/Coast"], mtime: 1700000000.5, size: 2048,
-    taken: "2020:01:01 10:00:00", damaged: false, damage: null, ...extra,
+    taken: "2020:01:01 10:00:00", ...extra,
   });
 
   async function view(t, { photo, saved } = {}) {
@@ -163,7 +163,7 @@ describe("in a view of the library", () => {
     server
       .on("/api/library/ids", { total: 1, ids: [ID], complete: true })
       .on("/api/library/cards", { cards: [{ id: ID, name: "v.jpg", path: state.photo.path, taken: "2020:01:01 10:00:00",
-        damaged: Boolean(state.photo.damaged), damage: state.photo.damage, thumb: `/api/photo-thumb?id=${ID}&v=1700000000.5` }] })
+        thumb: `/api/photo-thumb?id=${ID}&v=1700000000.5` }] })
       .on("/api/library/photo", () => ({ photo: state.photo }))
       .on("/api/photo/save-metadata", saved || { success: true, mtime: 1700000600.5, size: 2200 });
     const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/?view=all", server });
@@ -191,16 +191,6 @@ describe("in a view of the library", () => {
     assert.equal(ctx.server.lastBody("/api/photo/save-metadata").stamp.size, 2048, "the refused save named the stamp it was built from");
   });
 
-  test("a recorded-unreadable photo opened from a view shows why and asks for no picture", async (t) => {
-    const ctx = await view(t, { photo: record({ damaged: true, damage: "truncated" }) });
-    ctx.document.querySelector(".btn-thumbnail-detail").click();
-    await wait(ctx.window, 80);
-    const note = ctx.document.getElementById("photo-damaged-note");
-    assert.ok(!note.classList.contains("hidden"), "the note is shown");
-    assert.match(note.textContent, /can't be read/);
-    assert.equal(ctx.document.getElementById("main-image").getAttribute("src") || "", "");
-    assert.equal(ctx.server.urls().filter((u) => u.includes("/api/photo-file")).length, 0);
-  });
 });
 
 describe("a bulk write from a selection names itself", () => {

@@ -125,7 +125,7 @@ const frame = (window) => new Promise((resolve) => window.requestAnimationFrame(
 
 export const cardOf = (id, extra = {}) => ({
   id, name: `IMG_${id}.jpg`, path: `D:\\Library\\2020\\Event 01\\IMG_${id}.jpg`, taken: "2020:01:01 10:00:00",
-  damaged: false, damage: null, thumb: `/api/photo-thumb?id=${id}&v=1600000000.0`, ...extra,
+  thumb: `/api/photo-thumb?id=${id}&v=1600000000.0`, ...extra,
 });
 export const recordOf = (id, extra = {}) => photoRecord({
   id, filename: `IMG_${id}.jpg`, path: `D:\\Library\\2020\\Event 01\\IMG_${id}.jpg`, tags: ["Trips/Coast"], people: [],
@@ -172,7 +172,6 @@ export async function loadViewPage(t, {
     .on("/api/databases", { databases: ["photo_index", "other"], selected: library })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/suggest-status", { status: "idle" })
-    .on("/api/folder/damaged", { photos: [] })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/photo/delete", { success: true })

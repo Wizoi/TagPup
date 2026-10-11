@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import web_client  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
-from tagpup.services import damaged_photos, library_view  # noqa: E402
+from tagpup.files import shares  # noqa: E402
+from tagpup.services import library_view  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 
 
@@ -151,7 +152,7 @@ class TheCardStatsHaveABudget(unittest.TestCase):
             asked.append(path)
             clock[0] += 0.6
             return None   # gone
-        with mock.patch.object(damaged_photos, "stamp_of", slow), \
+        with mock.patch.object(shares, "stamp_of", slow), \
                 mock.patch.object(library_view, "time", mock.Mock(monotonic=lambda: clock[0])):
             cards = library_view.cards(vl.library, ids, check_disk=True)
         self.assertEqual(3, len(asked), "stats at 0, 0.6 and 1.2 s; the one due at 1.8 s is past the budget")
@@ -168,7 +169,7 @@ class TheCardStatsHaveABudget(unittest.TestCase):
                 mock.patch("tagpup.files.recycle_bin._mount_point", return_value="C:\\"):
             self.assertFalse(shares.on_a_network_drive("C:\\Photos\\a.jpg"))
         self.assertTrue(shares.on_a_network_drive("\\\\server\\share\\a.jpg"))
-        self.assertTrue(damaged_photos._on_a_share("\\\\server\\share\\a.jpg"))
+        self.assertTrue(shares.on_a_share("\\\\server\\share\\a.jpg"))
 
     def test_a_stat_of_a_mapped_drive_goes_through_the_bounded_look(self):
         calls = []
@@ -178,9 +179,9 @@ class TheCardStatsHaveABudget(unittest.TestCase):
             return "away", None
         with mock.patch("tagpup.files.recycle_bin._drive_type", return_value=4), \
                 mock.patch("tagpup.files.recycle_bin._mount_point", return_value="Z:\\"), \
-                mock.patch.object(damaged_photos.shares, "bounded", bounded):
-            answer = damaged_photos.stamp_of("Z:\\Photos\\a.jpg")
-        self.assertIs(damaged_photos.UNANSWERED, answer)
+                mock.patch.object(shares, "bounded", bounded):
+            answer = shares.stamp_of("Z:\\Photos\\a.jpg")
+        self.assertIs(shares.UNANSWERED, answer)
         self.assertEqual(["Z:\\Photos\\a.jpg"], calls)
 
 

@@ -16,14 +16,13 @@ import {
     formatFriendlyDateSingle, getFolderDateStats, parseExifDateToLocalDate, takenOf
 } from './format.js';
 import { baseOf, photoChangedOnDisk, queueWriteOf, stampOf, takeStamp } from './edits.js';
-import { damageOf, markCard } from './damaged.js';
 import { renderFileList, visiblePhotos } from './folder.js';
 import { openLibraryPhoto, photoFileUrl, selectPhoto } from './photo.js';
 import { createVGrid } from './vgrid.js';
 import { cardLabel, settleRoving, wireGridKeys } from './grid-keys.js';
 import { markStale } from './stale.js';
 import {
-    applyEditedRecords, cardDamage, libraryCardKey, libraryCount, libraryIdOfPath, libraryIndexOfKey, libraryRecordAt
+    applyEditedRecords, libraryCardKey, libraryCount, libraryIdOfPath, libraryIndexOfKey, libraryRecordAt
 } from './library-source.js';
 import {
     addToSelection, clearIdSelection, invertIdSelection, isIdSelected, isPhotoSelected, isSelected, removeFromSelection,
@@ -117,7 +116,7 @@ function labelCard(card, selected) {
     card.setAttribute('aria-selected', selected ? 'true' : 'false');
     card.setAttribute('aria-label', cardLabel({
         name: card.dataset.name, date: card.dataset.date, selected,
-        damaged: card.classList.contains('damaged'), stale: card.dataset.stale || undefined,
+        stale: card.dataset.stale || undefined,
     }));
 }
 
@@ -422,19 +421,14 @@ function buildThumbnailCard(photo) {
         imgWrapper.appendChild(aiBadge);
     }
 
-    // A photo that cannot be read has no picture to ask for: its card says why (damaged.js).
     // The picture is asked for by the grid, once the card has stayed in view (vgrid.js).
-    const damage = inLibrary ? cardDamage(photo) : damageOf(photo.path);
-    if (!damage || damage.indexed) {
-        const img = document.createElement('img');
-        img.dataset.src = inLibrary ? api.image(photo.thumb) : photoFileUrl(photo, 300);
-        img.alt = '';           // the card's label says what it is
-        // A picture that cannot be had (the file is gone, the share is away) is a grey card, not a broken-image icon.
-        img.addEventListener('error', () => img.classList.add('failed'));
-        imgWrapper.appendChild(img);
-    }
+    const img = document.createElement('img');
+    img.dataset.src = inLibrary ? api.image(photo.thumb) : photoFileUrl(photo, 300);
+    img.alt = '';           // the card's label says what it is
+    // A picture that cannot be had (the file is gone, the share is away) is a grey card, not a broken-image icon.
+    img.addEventListener('error', () => img.classList.add('failed'));
+    imgWrapper.appendChild(img);
     card.appendChild(imgWrapper);
-    if (damage) markCard(card, damage);
     if (photo.stale) {
         markStale(card, photo);
         card.dataset.stale = photo.stale;

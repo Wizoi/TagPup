@@ -3,7 +3,7 @@
 A `Side` is a library and the folder of photos it describes, in a TagPup home of the test's
 own: a few real JPEGs (the flows that write files run real ExifTool on them) and rows for
 many more that are not on disk, as photo_index holds rows for photos indexed earlier; faces,
-suggestions, added folders, damaged files, the folder settings and a journal of changes made
+suggestions, added folders, the folder settings and a journal of changes made
 before anything was adopted -- all made by the code that makes them for real
 (tests/photo_rows.py, tagpup.services). Two sides built alike hold the same photos under
 different folders, one of them adopted by a root and the other not: the same flow on both
@@ -31,7 +31,7 @@ from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
-from tagpup.store import added_folders, damaged_files, db, derived, journal, suggestions  # noqa: E402
+from tagpup.store import added_folders, db, derived, journal, suggestions  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -80,7 +80,7 @@ def convert_to_root(db_path, location, name=NAME, address=ADDRESS):
     """Leave the library as the conversion that has run on the three live libraries left it
     (`roots adopt`, removed 2026-10-11): root `name` recorded, the map placing it at `location`,
     every path under it held as the root's row -- photos, the paths in raw_metadata and in
-    suggestions.raw, change_files, added_folders, damaged_files and the two folder settings --
+    suggestions.raw, change_files, added_folders and the two folder settings --
     the folder tree rebuilt, and the change History lists. A test fixture, since nothing in the
     program converts a library any more; a Result whose `changed` is the paths converted."""
     machine().add(name, location)
@@ -115,7 +115,7 @@ def convert_to_root(db_path, location, name=NAME, address=ADDRESS):
                     conn.execute("UPDATE suggestions SET raw = ? WHERE photo_id = ?",
                                  (store_roots.suggested_to_row(raw, roots), photo_id))
             for table, key, columns in (("change_files", "id", ("path", "new_path")),
-                                        ("added_folders", "path", ("path",)), ("damaged_files", "path", ("path",))):
+                                        ("added_folders", "path", ("path",))):
                 for found in conn.execute("SELECT %s, %s FROM %s" % (key, ", ".join(columns), table)).fetchall():
                     new = {column: row_of(value) for column, value in zip(columns, found[1:]) if value}
                     new = {column: value for column, value in new.items() if value != dict(zip(columns, found[1:]))[column]}
@@ -187,10 +187,6 @@ class Side:
                                     "nearest_neighbors": [{"path": neighbour, "similarity": 0.8}]},
                 "raw_before_consensus": True})
             added_folders.record(conn, os.path.join(self.pictures, "Added later"), subfolders=True)
-            damaged_files.record(conn, os.path.join(self.pictures, FOLDERS[0], "Cut short.jpg"), (1.0, 100),
-                                 "truncated", "the picture ends early")
-            damaged_files.record(conn, os.path.join(self.pictures, FOLDERS[1], "Cut short.jpg"), (1.0, 100),
-                                 "truncated", "the picture ends early")
             conn.commit()
         finally:
             conn.close()

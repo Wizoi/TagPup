@@ -25,7 +25,7 @@ from view_library import ViewLibrary  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
-from tagpup.services import damaged_photos, library_view  # noqa: E402
+from tagpup.services import library_view  # noqa: E402
 from tagpup.store import db, derived, schema  # noqa: E402
 from tagpup.store import library_view as store  # noqa: E402
 
@@ -483,9 +483,9 @@ class TheCards(Library):
 
     def test_a_card_is_small_and_names_the_photo_by_id(self):
         card = library_view.cards(self.vl.library, [self.two, self.one])[0]
-        self.assertEqual({"id", "name", "path", "taken", "damaged", "damage", "thumb"}, set(card))
-        self.assertEqual((self.two, "two.jpg", self.vl.path_of(self.two), "2024:01:02 00:00:00", False, None),
-                         (card["id"], card["name"], card["path"], card["taken"], card["damaged"], card["damage"]))
+        self.assertEqual({"id", "name", "path", "taken", "thumb"}, set(card))
+        self.assertEqual((self.two, "two.jpg", self.vl.path_of(self.two), "2024:01:02 00:00:00"),
+                         (card["id"], card["name"], card["path"], card["taken"]))
         self.assertTrue(card["thumb"].startswith("/api/photo-thumb?id=%d&v=" % self.two))
 
     def test_the_cards_are_in_the_order_asked_and_a_deleted_photo_is_left_out(self):
@@ -497,15 +497,6 @@ class TheCards(Library):
         card = library_view.cards(self.vl.library, [self.one])[0]
         mtime = self.vl.rows("SELECT mtime FROM photos WHERE id = ?", self.one)[0][0]
         self.assertEqual("/api/photo-thumb?id=%d&v=%s" % (self.one, repr(float(mtime))), card["thumb"])
-
-    def test_a_damaged_photo_is_flagged_while_its_record_describes_it(self):
-        row = self.vl.rows("SELECT mtime, size FROM photos WHERE id = ?", self.one)[0]
-        damaged_photos.remember(self.vl.library, [(self.vl.path_of(self.one), (row[0], row[1]), "truncated", "x", 0)])
-        card = library_view.cards(self.vl.library, [self.one, self.two])
-        self.assertEqual([(True, "truncated"), (False, None)], [(each["damaged"], each["damage"]) for each in card])
-        self.vl.conn.execute("UPDATE photos SET size = size + 1 WHERE id = ?", (self.one,))
-        self.vl.conn.commit()
-        self.assertFalse(library_view.cards(self.vl.library, [self.one])[0]["damaged"], "the file is not the one found damaged")
 
     def test_500_cards_are_one_batch_and_read_no_blob_or_metadata(self):
         for n in range(60):

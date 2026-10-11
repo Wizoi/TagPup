@@ -39,7 +39,8 @@ import time
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import NotFound, Refused
-from tagpup.services import damaged_photos, thumbnails
+from tagpup.files import shares
+from tagpup.services import thumbnails
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.store import db, person_ids
@@ -439,11 +440,6 @@ def photo(library, photo_id, exiftool_path=None):
         if stamp is None:
             record["missing"] = True
     record["id"] = photo_id
-    # What the library records of the photo's damage, as its card says it (the panel shows why, and asks for no
-    # picture of a file recorded unreadable).
-    shown = cards(library, [photo_id])
-    record["damaged"] = bool(shown and shown[0]["damaged"])
-    record["damage"] = shown[0]["damage"] if shown else None
     return record
 
 
@@ -451,12 +447,12 @@ def disk_mark(path, mtime, size):
     """What the disk says of the file a row describes: MISSING when it is not there, CHANGED when its size and time are
     other than the row's (the folder scan's own test, store.photos.describes), else None. None too when the file
     cannot be read, when its share did not answer in time (a share found away is answered at once, so a page of cards
-    on it waits once: damaged_photos.stamp_of), and when the row was never stamped -- Suggest's row for a photo nobody
+    on it waits once: shares.stamp_of), and when the row was never stamped -- Suggest's row for a photo nobody
     read holds no size or time to compare, and 'changed' would claim a difference nothing knows of."""
-    stamp = damaged_photos.stamp_of(path)
+    stamp = shares.stamp_of(path)
     if stamp is None:
         return MISSING
-    if stamp is damaged_photos.CANNOT_READ or stamp is damaged_photos.UNANSWERED:
+    if stamp is shares.CANNOT_READ or stamp is shares.UNANSWERED:
         return None
     if mtime is None or size is None:
         return None
@@ -479,7 +475,6 @@ def find(library, photo_path):
 
 def _cards(conn, photo_ids, check_disk=False):
     held = store.card_rows(conn, photo_ids)
-    recorded = store.damaged(conn)
     found = []
     started = time.monotonic()
     for photo_id in photo_ids:
@@ -487,10 +482,7 @@ def _cards(conn, photo_ids, check_disk=False):
         if row is None:
             continue   # deleted since the page was read
         path, mtime, size, taken = row
-        record = recorded.get(paths.key(path))
-        flagged = record is not None and damaged_photos.describes((record.mtime, record.size), (mtime, size))
         card = {"id": photo_id, "name": os.path.basename(path), "path": path, "taken": taken,
-                "damaged": bool(flagged), "damage": record.kind if flagged else None,
                 "thumb": thumbnails.url(photo_id, mtime)}
         if check_disk and time.monotonic() - started < STAT_BUDGET_SECONDS:
             mark = disk_mark(path, mtime, size)

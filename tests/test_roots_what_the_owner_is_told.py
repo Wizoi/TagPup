@@ -23,11 +23,10 @@ import share_waits  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.files import shares  # noqa: E402
-from tagpup.services import damaged_photos, file_changes, inspect, roots_location, roots_verify, tagging  # noqa: E402
+from tagpup.services import file_changes, inspect, roots_location, roots_verify, tagging  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import job_runs as store_job_runs  # noqa: E402
-from tagpup.web import app as web  # noqa: E402
 
 WINDOWS = os.name == "nt"
 
@@ -230,15 +229,6 @@ class AnUnplacedRootIsACheckResult(Base):
         self.assertIn("machine_roots.json", call("check", {"library": "photo_index", "name": "roots_placed"}))
         self.assertIn("machine_roots.json", call("summary", {"library": "photo_index"}))
 
-    def test_the_attention_list_answers_with_the_sentence_not_a_500(self):                    # #473
-        self.lose_the_map()
-        app = web.create_app("tuner", startup=self.library)
-        app.testing = False
-        reply = app.test_client().get("/api/activity/attention")
-        self.assertEqual(200, reply.status_code)
-        answer = reply.get_json()["libraries"][0]
-        self.assertIn("machine_roots.json", answer.get("error", ""))
-
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class OneOwnerOfAShareBeingAway(unittest.TestCase):
@@ -248,29 +238,28 @@ class OneOwnerOfAShareBeingAway(unittest.TestCase):
         shares.forget()
         self.addCleanup(shares.forget)
 
-    def test_the_damaged_lists_and_verify_use_the_same_cache(self):                           # #474
-        self.assertIs(damaged_photos._away, shares._away)
+    def test_a_look_at_one_file_and_verify_use_the_same_cache(self):                          # #474
         release = threading.Event()
         self.addCleanup(release.set)
         state, _ = roots_verify._bounded(self.SHARE, lambda: release.wait(30), 0.2)
         self.assertEqual("away", state)
         waits, counting = share_waits.counted()
         with counting:
-            self.assertIsNone(damaged_photos._folder_stamps(self.SHARE + "\\2024"),
-                              "a share Verify found away was asked for again by the damaged photos' list")
+            self.assertIs(shares.UNANSWERED, shares.stamp_of(self.SHARE + "\\2024\\a.jpg"),
+                          "a share Verify found away was asked for again by a look at one file")
         self.assertEqual([], waits, "and waited for")
 
     def test_and_the_other_way(self):                                                         # #474
         release = threading.Event()
         self.addCleanup(release.set)
-        with mock.patch.object(damaged_photos, "_stamps_in", lambda folder: release.wait(30)), \
-                mock.patch.object(damaged_photos, "SHARE_WAIT", 0.2):
-            self.assertIsNone(damaged_photos._folder_stamps(self.SHARE + "\\2024"))
+        with mock.patch.object(shares, "_stat_state", lambda path: release.wait(30)), \
+                mock.patch.object(shares, "SHARE_WAIT", 0.2):
+            self.assertIs(shares.UNANSWERED, shares.stamp_of(self.SHARE + "\\2024\\a.jpg"))
         self.assertIn(shares.share_of(self.SHARE), shares._away)
         waits, counting = share_waits.counted()
         with counting:
             self.assertEqual("away", roots_verify._bounded(self.SHARE, lambda: "never asked", 5)[0])
-        self.assertEqual([], waits, "a share the damaged photos' list found away was waited for by Verify")
+        self.assertEqual([], waits, "a share a look at one file found away was waited for by Verify")
 
     def test_the_duplicate_is_gone(self):                                                     # #474
         source = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tagpup", "services",
