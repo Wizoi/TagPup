@@ -37,7 +37,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Derived tables (`photo_tags`, `folders`, `photo_folder`, `photo_meta`, the search words) | `tagpup/store/derived.py`, `tagpup/store/search_index.py` | `tests/test_derived_writers.py` |
 | Who is who (clustering, a face's name looking wrong) | `tagpup/core/clustering.py`, `tagpup/services/identities.py` | `tests/test_face_values_have_one_owner.py` |
 | Keeping a library in step with its folders | `tagpup/services/sync.py`, `tagpup/jobs/watching.py` | `tests/test_sync.py` |
-| A folder renamed outside the apps | `tagpup/services/folder_follow.py`, `tagpup/services/folder_ids.py`, `tagpup/files/folder_marker.py` | `tests/test_folder_ids*.py` |
+| A folder renamed outside the apps | `tagpup/services/sync.py` (pairs the files by name, size and modified time; a folder renamed and re-saved is reported missing and renamed back by hand) | `tests/test_sync.py`, `tests/test_unused_folder_id_tables.py` |
 | Roots (where a library's folders are, per machine) | `tagpup/services/roots*.py`, `tagpup/store/adoption.py`, `tagpup/config.py` | `tests/test_roots*.py` |
 | The library views (grid, navigator, search) | `tagpup/services/library_view.py`, `tagpup/store/library_view.py`, `web/tagpup/` | `tests/test_library_view.py`, `tests/frontend/` |
 | A page's request, its DOM output | `web/common/api.js`, `web/common/dom.js` | `tests/frontend/` |
@@ -171,14 +171,14 @@ tagpup/                config (where the libraries are), logs, runtime (composit
   store/               the only SQL. db (connections, locks), schema (migrations), one module per table or
                        family: photos, faces, people, person_ids, taxonomy, embeddings, suggestions, journal,
                        file_journal, settings, roots + adoption + root_rows, derived, search_index, folders,
-                       folder_ids, library_view, snapshots, generations, locks, job_runs, sync_runs,
+                       library_view, snapshots, generations, locks, job_runs, sync_runs,
                        added_folders, damaged_files, faces_pending, faces_detected, name_review, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
-                       thumbs, names, folder_marker, shares, lock_owners, recycle_bin, job_files
+                       thumbs, names, shares, lock_owners, recycle_bin, job_files
   ml/                  models: clip, faces, vector_index, grouping, and gpu (the card's turn)
   services/            one function per user action; the only code that writes: tagging, tags, people, faces,
-                       identities, identify, indexing, sync, refresh_rows, relink_photos, folder_follow,
-                       folder_ids, roots*, settings, journal, file_changes, bulk_edit, selection,
+                       identities, identify, indexing, sync, refresh_rows, relink_photos,
+                       roots*, settings, journal, file_changes, bulk_edit, selection,
                        library_view, search, suggester, suggestions, snapshots, thumbnails, name_review,
                        faces_from_tags, tags_from_faces, face_people, inspect, activity, file_access, maintenance
   jobs/                background work: indexing queue, suggestions, bulk_edits, face_assignments,
@@ -203,7 +203,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
   Faces, the tag tree, settings, roots, history) on 8080. The library comes from the URL. It listens on this
   PC only (127.0.0.1 and ::1) until phase 10 adds logins. Also served: the Activity page (`/activity/`, the
   background work of every library, loopback only). The **CLI**
-  (`tagpup_cli.py`: index, sync, search, history, undo, jobs, folder-ids, roots, ...) and the **MCP
+  (`tagpup_cli.py`: index, sync, search, history, undo, jobs, roots, ...) and the **MCP
   server** (`python -m tagpup.mcp`, for Claude: reads give counts and ids, names and paths only with
   `reveal=true`) are the other entry points. All build one `Runtime` and call services.
 - **One composition root** (`tagpup.runtime.Runtime`): models built once from the library's own settings,
@@ -237,8 +237,9 @@ one transaction with its checks, and only a destructive one takes a backup). Col
 person is the id of a node in the tag tree** (`tag_taxonomy.id`): `faces.tag_id` and `photo_people.tag_id`
 are the key and `name` a cache of the node's leaf; a name with no id is an *unresolved name*, left as it is
 and listed for the owner (names to review). A person tag is a leaf; a branch is a group, never a person.
-A folder has two forms: the derived `folders` row (rebuilt, its integer ids change) and, once marked, the
-`folder_ids` row (a UUID per library, also written in the folder's `.tagpup` marker file).
+A folder is the derived `folders` row (rebuilt, its integer ids change). The `folder_ids` and `library_identity`
+tables and the `.tagpup` files the folder markers wrote are unused (owner, 2026-10-10: the marker code is deleted; the
+tables are dropped by migration 30, the files stay on disk and nothing reads them).
 
 **Roots.** `roots` (name, the share's address) is empty until the owner adopts a root. A library with roots
 holds a path under one as `@<root>/<relative>` (`paths.to_row`/`from_row`, converted at the database
@@ -248,7 +249,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 | Kind | Tables | Written by |
 |---|---|---|
 | File copy (the file is the truth) | `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`) | only after a file is read or written: indexer, `refresh_rows`, `record_tags_in_index` (`store/photos.py`) |
-| Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `folder_ids`, `library_identity`, `added_folders`, `name_review_dismissals`, `damaged_files` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
+| Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders`, `name_review_dismissals`, `damaged_files` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
 | Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `photo_meta`, `search_words`/`search_names`/`search_gear` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `suggestions`, `faces_pending`, `faces_detected` | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py` |
 | Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs`, `sync_runs` | `store/schema.py`, `store/generations.py`, `store/job_runs.py`, `store/sync_runs.py` |
 | The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state) | `store/journal.py`, `store/file_journal.py` |
@@ -315,7 +316,6 @@ Every section of the former `ARCHITECTURE.md` is in `docs/history/`, unedited. C
 | Phase 7.6: Settings in the library, and a gear on each page | [history/ARCHITECTURE_jobs_sync_journal.md](history/ARCHITECTURE_jobs_sync_journal.md) |
 | Phase 8: Sync | [history/ARCHITECTURE_jobs_sync_journal.md](history/ARCHITECTURE_jobs_sync_journal.md) |
 | Phase 8.5: Activity | [history/ARCHITECTURE_jobs_sync_journal.md](history/ARCHITECTURE_jobs_sync_journal.md) |
-| Folder ids | [history/ARCHITECTURE_roots_and_markers.md](history/ARCHITECTURE_roots_and_markers.md) |
 | File access check | [history/ARCHITECTURE_jobs_sync_journal.md](history/ARCHITECTURE_jobs_sync_journal.md) |
 | Roots and machines | [history/ARCHITECTURE_roots_and_markers.md](history/ARCHITECTURE_roots_and_markers.md) |
 | Phase 9: Library views | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |

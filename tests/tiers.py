@@ -60,8 +60,6 @@ SCENARIO = frozenset({
     # Two real processes on one library, and folders renamed or marked on disk.
     "test_people_by_id_at_once",
     "test_migration_28_and_the_newer_library",
-    "test_folder_ids",
-    "test_folder_ids_scenarios",
     # Roots: the folders a library holds, through a whole scenario.
     "test_roots_scenarios",
     "test_roots_adoption",

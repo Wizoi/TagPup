@@ -470,6 +470,27 @@ class MissingFiles(SyncTestCase):
         self.assertIn(first, self.rows())
         self.assertIn(second, self.rows())
 
+    def test_a_folder_renamed_and_saved_again_is_flagged_missing_and_its_rows_are_left(self):
+        # The owner renames it back by hand: no marker file in the folder is read, and one a library once wrote is
+        # only a file (owner, 2026-10-10).
+        first, second = self.photo(self.trip, "IMG_0001.jpg"), self.photo(self.trip, "IMG_0002.jpg")
+        self.indexed(first, second, self.photo(self.meet, "IMG_0003.jpg"))
+        with open(os.path.join(self.trip, ".tagpup"), "w", encoding="utf-8") as handle:
+            handle.write("not read by anything\n")
+        before = self.rows()
+        renamed = os.path.join(self.pictures, "2025-11 Harbour Day")
+        os.rename(self.trip, renamed)
+        for name in ("IMG_0001.jpg", "IMG_0002.jpg"):
+            os.utime(os.path.join(renamed, name), (THEN + 5, THEN + 5))     # saved again: no stamp pairs them
+        result = self.run_sync(apply=True)
+        self.assertTrue(result.ok, result.message())
+        counts = result.details["counts"]
+        self.assertEqual((2, 1, 1), (counts["missing"], counts["missing_folders"], counts["folders_gone"]))
+        self.assertEqual([{"folder": self.trip, "rows": 2, "gone": True}], result.details["reveal"]["missing_folders"])
+        self.assertEqual(before, self.rows(), "the rows are left as they were")
+        self.assertNotIn("folder_markers", result.details)
+        self.assertEqual(0, self.query("SELECT COUNT(*) FROM changes WHERE operation = 'follow_folder_markers'")[0][0])
+
     def test_a_root_that_is_not_there_is_reported_like_an_unplugged_drive(self):
         here = self.photo(self.meet, "IMG_0001.jpg")
         self.indexed(here)

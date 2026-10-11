@@ -50,21 +50,12 @@ export function lastVerifyText(last) {
         `${count(last.missing)} missing`];
     if (last.unread) found.push(`${count(last.unread)} never read by the index`);
     if (last.unreadable) found.push(`${count(last.unreadable)} could not be read`);
-    const marks = last.marked ? ` ${count(last.marks_match)} of ${count(last.marked)} marked folders match; `
-        + `${count(last.marks_differ)} differ.` : '';
-    return `Last checked ${last.when}, ${what}: ${found.join(', ')}.${marks}`;
-}
-
-/** The folder markers of a Verify, one line in the server's own words ("N of M marked folders match; K differ; L
- *  not marked."), or '' for a library that has marked no folder of the root. */
-export function markerLine(verify) {
-    return verify && verify.markers && verify.markers.line ? `${verify.markers.line}.` : '';
+    return `Last checked ${last.when}, ${what}: ${found.join(', ')}.`;
 }
 
 /** What a Verify answered, as lines for a person: its summary, and what is wrong with the place. */
 export function verifyLines(verify) {
     const lines = [verify.summary];
-    if (markerLine(verify)) lines.push(markerLine(verify));
     for (const why of verify.poor_why || []) {
         if (why !== verify.message) lines.push(why);
     }
@@ -91,12 +82,8 @@ function rootElement(name) {
 function showProgress(element, status) {
     const box = element.querySelector('.roots-progress');
     box.classList.remove('hidden');
-    // The folder markers are read before the rows, and the rows do not move meanwhile: say what is being done.
-    const markers = status.markers_of > 0 && status.markers_read < status.markers_of && !status.checked && !status.folders;
-    box.querySelector('.roots-progress-text').textContent = markers
-        ? `Reading folder markers: ${count(status.markers_read)} of ${count(status.markers_of)}`
-            + (status.cancelling ? ', stopping...' : '...')
-        : `Looking at every row: ${count(status.checked)} of ${count(status.rows)} (${count(status.folders)} folders)` +
+    box.querySelector('.roots-progress-text').textContent =
+        `Looking at every row: ${count(status.checked)} of ${count(status.rows)} (${count(status.folders)} folders)` +
         (status.cancelling ? ', stopping...' : '...');
 }
 
@@ -295,7 +282,7 @@ function openPanel(entry, element, mode) {
             }
             const found = answer.verify ? verifyLines(answer.verify) : [];
             if (!answer.success) {
-                lines(check, [answer.error, found[0], markerLine(answer.verify)], 'validation-error');
+                lines(check, [answer.error, found[0]], 'validation-error');
                 // A poor result may be accepted, by someone who says so; nothing else may.
                 if (answer.would_refuse) overrideLabel.classList.remove('hidden');
                 checked = answer.would_refuse ? { poor: true } : null;

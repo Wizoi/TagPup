@@ -221,29 +221,17 @@ describe("Verify", () => {
     assert.match(text(dialog.querySelector(".roots-result")), /a sample of 2000 of 68466 rows.*1998 match/);
   });
 
-  test("the folder markers are one line beside the summary, only for a library that has marked folders (#984)", async (t) => {
-    const ctx = await tuner(t);
-    const markers = { rows: 40, checked: 40, match: 38, differs: 0, unmarked: 2, malformed: 0, unreadable: 0,
-      not_there: 0, partial: false, line: "38 of 40 marked folders match; 0 differ; 2 not marked" };
-    let asked = 0;
-    ctx.server.first("/api/roots/verify", () => ({ success: true, started: false,
-      verify: { ...VERIFY, markers: ++asked === 1 ? markers : null } }));
-    const dialog = await openFromGear(ctx);
-    click(ctx.window, dialog.querySelector(".roots-verify"));
-    await flush(ctx.window, 6);
-    const shown = [...dialog.querySelectorAll(".roots-result p")].map((p) => text(p));
-    assert.equal(shown.length, 2, shown.join(" | "));
-    assert.equal(shown[1], "38 of 40 marked folders match; 0 differ; 2 not marked.");
-    click(ctx.window, dialog.querySelector(".roots-verify"));
-    await flush(ctx.window, 6);
-    assert.equal(dialog.querySelectorAll(".roots-result p").length, 1, "nothing extra for a library with no marked folders");
-  });
-
-  test("the last check says how many marked folders matched (#984)", async (t) => {
+  test("a Verify with no marker answer is the summary alone; the last check's old marker counts are not shown", async (t) => {
     const ctx = await tuner(t, { roots: [entry({ last_verify: { when: "2026-10-02 10:00:00", mode: "sample",
       checked: 2000, matches: 1998, differs: 2, missing: 0, marked: 40, marks_match: 38, marks_differ: 1, outcome: "done" } })] });
-    const row = (await openFromGear(ctx)).querySelector(".roots-root");
-    assert.match(text(row.querySelector(".roots-last")), /0 missing\. 38 of 40 marked folders match; 1 differ\.$/);
+    const dialog = await openFromGear(ctx);
+    assert.doesNotMatch(text(dialog.querySelector(".roots-last")), /marked folders/);
+    ctx.server.first("/api/roots/verify", { success: true, started: false, verify: {
+      ...VERIFY, markers: { line: "38 of 40 marked folders match; 0 differ; 2 not marked" } } });
+    click(ctx.window, dialog.querySelector(".roots-verify"));
+    await flush(ctx.window, 6);
+    assert.equal(dialog.querySelectorAll(".roots-result p").length, 1);
+    assert.doesNotMatch(text(dialog.querySelector(".roots-result")), /marked folders/);
   });
 
   test("a place that cannot be reached is said as that, not as missing rows", async (t) => {
@@ -270,30 +258,19 @@ describe("Verify", () => {
     assert.match(text(dialog.querySelector(".roots-result")), /under way already/);
   });
 
-  test("while the folder markers are read the progress says so, not '0 of 68,466' (#984)", async (t) => {
+  test("a status that still carries marker counts shows the rows' progress", async (t) => {
     const ctx = await tuner(t);
     ctx.server.routes.length = 0;
     ctx.server
       .on("/api/roots/verify", { success: true, started: true,
-        status: { root: "pictures", state: "running", checked: 0, rows: 68466, folders: 0, markers_read: 0, markers_of: 2672 } })
+        status: { root: "pictures", state: "running", checked: 0, rows: 68466, folders: 0 } })
       .on("/api/roots", () => listing([entry({ verifying: { root: "pictures", state: "running", checked: 0, rows: 68466,
         folders: 0, markers_read: 1200, markers_of: 2672, cancelling: false } })]));
     const dialog = await openFromGear(ctx);
     click(ctx.window, dialog.querySelector(".roots-verify-all"));
     await flush(ctx.window, 4);
     await wait(ctx.window, 60);
-    assert.equal(text(dialog.querySelector(".roots-progress-text")), "Reading folder markers: 1,200 of 2,672...");
-  });
-
-  test("markers that were not read (a cancel, a share away) show no '0 of 0' line (#984)", async (t) => {
-    const ctx = await tuner(t);
-    ctx.server.first("/api/roots/verify", { success: true, started: false, verify: { ...VERIFY, markers: {
-      rows: 40, checked: 0, match: 0, differs: 0, unmarked: 0, partial: true, line: "" } } });
-    const dialog = await openFromGear(ctx);
-    click(ctx.window, dialog.querySelector(".roots-verify"));
-    await flush(ctx.window, 6);
-    assert.equal(dialog.querySelectorAll(".roots-result p").length, 1);
-    assert.doesNotMatch(text(dialog.querySelector(".roots-result")), /marked folders/);
+    assert.equal(text(dialog.querySelector(".roots-progress-text")), "Looking at every row: 0 of 68,466 (0 folders)...");
   });
 
   test("all rows is a job: progress is followed, and the result is shown when it ends", async (t) => {
@@ -532,18 +509,17 @@ describe("Change location", () => {
     assert.equal(ctx.posted("/api/roots/change-location").pop().override, true);
   });
 
-  test("a place whose markers differ is refused with its counts, in a sentence that names no folder (#984)", async (t) => {
+  test("a place that is refused is shown with its sentence", async (t) => {
     const { ctx, dialog, type } = await panelOn(t);
-    const why = "3 of the 40 marked folders looked at carry the marker of a different folder: this looks like another folder at that place.";
+    const why = "30 of the 40 rows looked at (75%) are not there: this looks like another folder, or another copy.";
     ctx.server.routes.unshift({ match: "/api/roots/change-location", status: 400, headers: {}, body: () => ({
       success: false, error: `Not changed: ${why} Say override to change it anyway.`, would_refuse: why,
-      verify: { ...VERIFY, poor: true, poor_why: [why], markers: { line: "37 of 40 marked folders match; 3 differ; 0 not marked" } } }) });
+      verify: { ...VERIFY, poor: true, poor_why: [why] } }) });
     type("D:/Other");
     click(ctx.window, dialog.querySelector(".roots-look"));
     await flush(ctx.window, 6);
     const shown = text(dialog.querySelector(".roots-check"));
-    assert.match(shown, /marker of a different folder/);
-    assert.match(shown, /37 of 40 marked folders match; 3 differ; 0 not marked\./);
+    assert.match(shown, /another folder, or another copy/);
     assert.ok(!dialog.querySelector(".roots-override").classList.contains("hidden"));
   });
 

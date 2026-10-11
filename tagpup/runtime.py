@@ -52,7 +52,7 @@ from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import recurring, watching
-from tagpup.services import damaged_photos, file_changes, folder_ids, indexing, search
+from tagpup.services import damaged_photos, file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
 from tagpup.services import sync as sync_service
@@ -330,20 +330,6 @@ def sync(library, folder=None, apply=False, index_new=True):
                                                           together=True)
     return sync_service.sync(library, folder, apply, exiftool(library, settings), queue,
                              roots=settings.roots, ignored=settings.ignored)
-
-
-def mark_folders(library, apply=False):
-    """Write a `.tagpup` marker in each leaf folder of `library` and record the ids
-    (tagpup.services.folder_ids.mark): a dry run unless `apply`. Needs no setting of the library's,
-    so it stamps none."""
-    return folder_ids.mark(library, apply)
-
-
-def follow_folder_markers(library, apply=False, rehearse=False):
-    """Follow the marked folders that moved (tagpup.services.folder_ids.follow): a dry run
-    unless `apply`, looking beside each folder that is gone (a sync also looks where it found files)."""
-    settings = library_settings(library) if apply else peek_settings(library)
-    return folder_ids.follow(library, apply=apply, exiftool_path=exiftool(library, settings), rehearse=rehearse)
 
 
 def check_damaged(library, photo_paths=None):
