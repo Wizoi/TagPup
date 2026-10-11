@@ -27,8 +27,8 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 
 ## The contract other domains rely on, and must not bypass
 1. **Order**: Date Taken, file name or caption key, ascending or descending, then **photo id as the tie-break in the order's direction**; photos with no key come after those with one, by id, in both directions. Never `mtime` (DECISIONS 2026-09-28).
-2. **Paging**: a page is `limit` rows (1..500) after an opaque cursor that belongs to one order and is refused for another; no photo twice, none skipped, even across equal keys (#504). `total` counts a photo once even if several members of a union hold it; a navigator count is the photos under a node, each once.
-3. **Reads only**: views open the library read-only and never migrate, stamp or write a derived table. A page, its total and an id list are separate reads; a list a page edits from (`ids`) is one transaction. Emptiness is not an error. Caps: `MAX_LIMIT`, `MAX_IDS`, `MAX_CARDS`, `MAX_MEMBERS`, `MAX_TOKEN` in `tagpup/services/library_view.py`.
+2. **The list**: a source's ids in one order, no photo twice, none skipped, even across equal keys (#504). `total` counts a photo once even if several members of a union hold it; a navigator count is the photos under a node, each once.
+3. **Reads only**: views open the library read-only and never migrate, stamp or write a derived table. The ids and the cards are separate reads; the id list is one transaction. Emptiness is not an error. Caps: `MAX_IDS`, `MAX_CARDS`, `MAX_MEMBERS` in `tagpup/services/library_view.py`.
 4. **A search never ranks**: typed words are ANDed term by term, each a quoted prefix in the words table or a substring of the file and folder names; nothing typed is FTS5 syntax.
 5. **The card**: at most one process on the machine has a model on it at a time, taken through `Runtime.begin` / `gpu_turn`; waiters are told who holds it. A model is built once per settings, by the runtime, from the library's own settings, and released after the idle period. A CPU-only machine takes no turn. Nothing outside `tagpup/ml/` loads a model, touches `torch.cuda` or puts FAISS on the card.
 6. **Vectors follow their photo** (rename, settle, rotate, undo); a looking (analyse-only) Suggest keeps no vector and writes nothing.
@@ -41,7 +41,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | Models built once by the runtime; no test loads one | `tests/test_models_single_owner.py`, `tests/test_no_test_loads_a_model.py` |
 | Idle models and indexes released | `tests/test_models_released_when_idle.py`, `tests/test_vectors_and_pool_released_when_idle.py`, `tests/test_unload_models_now.py` |
 | A view page searches an index, never scans `photos` | `tests/test_library_view_plans.py` |
-| Keyset ties and orders | `tests/test_library_view.py`, `tests/test_library_view_routes.py` |
+| Ties and orders | `tests/test_library_view.py`, `tests/test_library_view_routes.py` |
 | Derived tables follow every writer | `tests/test_derived_writers.py`, `tests/test_search_words.py`, `tests/test_camera_words.py` |
 | A looking run keeps no vector | `tests/test_analyse_only_suggest.py` (weak: #544 passed with `remember` forced on) |
 | FAISS uses one thread; a search keeps no thread buffers | `tests/test_a_search_keeps_no_thread_buffers.py` |
@@ -53,7 +53,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 1. Does every new or changed query on `photos`, `photo_*`, `faces` or `embeddings` have an `EXPLAIN QUERY PLAN` run on `data/photo_index.db` through `db.readonly_uri`, and does the plan test name an index, not a plan string?
 2. Does any SELECT touch a BLOB it does not use (`faces.embedding`, `face_crops.jpeg`, `embeddings.vector`, `photos.raw_metadata`)?
 3. Is every order total (key, then id in the same direction)? Is there a test with equal keys across a page boundary and one with a missing key?
-4. Can a cursor of one order be read in another? Does a long non-ASCII name still fit `MAX_TOKEN`?
+4. Do equal keys fall back to the id, in the order's direction?
 5. Where a page edits from a list, are the page and its total or ids read in one transaction?
 6. A new view kind: added in the store, `_source_of`, `library-source.js`, `navigator-model.js` and `search-model.js` together, with a test of a union of it and of a search containing it?
 7. A new derived value: does it follow every writer (the index's record, bulk tag writes, sync, moves, undo, a person's rename) and does `derived.rebuild_all` and a doctor check cover it? Say what Data owns.
@@ -66,10 +66,10 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 14. Does a Just look run write anything (vectors, rows, settings, derived tables)?
 15. Interrupted or two at once: a view read while a bulk write runs; a Suggest beside a CLI index wanting the card; the server's idle release racing a request.
 
-Recurring classes: keyset paging and ties; a plan that scans on the real library; a derived table that missed a writer; the page keeping its own rule; a navigator stale or capped; models on the card (two big models on one card, a model kept after a settings change, a warm-up that loads with nobody asking); memory held by a library of this size; a stale vector; a looking run that leaks. Open: #761 (two libraries naming different CLIP models in one process).
+Recurring classes: orders and ties; a plan that scans on the real library; a derived table that missed a writer; the page keeping its own rule; a navigator stale or capped; models on the card (two big models on one card, a model kept after a settings change, a warm-up that loads with nobody asking); memory held by a library of this size; a stale vector; a looking run that leaks. Open: #761 (two libraries naming different CLIP models in one process).
 
 ## Who decides
-- **You decide:** a new kind of view source, a sort order, the shape of a cursor or a count, what a derived table holds for the views (with Data), query shape and indexes, idle and release mechanics.
+- **You decide:** a new kind of view source, a sort order, the shape of a count, what a derived table holds for the views (with Data), query shape and indexes, idle and release mechanics.
 - **The human owner decides:** which CLIP or face model, input resolution, the face-box coordinate system, the thresholds that decide a name (all re-embed the library: one way), which words are searchable, anything written into a photo file (face regions, baked vectors), how long the card is kept (it is shared with the owner's other programs). Ask in your report; do not decide.
 - **Between domains:** you are the callee for view replies and the card's turn: you decide those contracts. People decides how a person is keyed in a facet; you consume it. The integration owner reviews only the contract-table diff and the scenario list; veto only for a second owner of a rule, an unguarded new contract, anything unsafe for an update or hand-over, or a second migration in flight.
 

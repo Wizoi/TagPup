@@ -1,5 +1,5 @@
 """What the library views ask of the database (docs/ARCHITECTURE.md, phase 9a-2): which photos a source
-holds, in what order, a page at a time, and the counts the navigator shows.
+holds, in what order, and the counts the navigator shows.
 
 A SOURCE says which photos: all of them; a folder -- by its path, never an id -- and, when asked, its
 subfolders; a keyword and everything under it, or its node alone (`keyword_only`); a person; a year; the
@@ -7,10 +7,7 @@ photos of a year whose date names no month of it (`year_other`); a month; or ANY
 union: the rows a person selected in the navigator, phase 9 #672 -- one statement, a photo in two of
 them once); or a SEARCH (phase 9e): the photos in ALL OF a list of sources, ANY OF another and NONE OF a third, and
 -- once the library has its word index -- matching the words typed, again one statement. Every source is ordered by when the photo was taken and then by id, those with no date at
-the end (by id), unless another order is asked (ORDERS: Date Taken, file name or caption, either way), and
-paged by a KEYSET -- the (taken, id) of the last photo of the page before -- never by OFFSET, so a page costs
-what a page costs however far down it is, and a photo added, taken away or re-dated between two pages
-neither repeats nor skips another.
+the end (by id), unless another order is asked (ORDERS: Date Taken, file name or caption, either way).
 
 `taken` is the text ExifTool gave ("2024:06:01 10:00:00", with a zone after it in a few), which sorts as
 the time does; a few rows hold a date written with dashes, which sort apart from the rest and are paged
@@ -80,12 +77,6 @@ class WordIndexComing(NoWordIndex):
     def __init__(self):
         super().__init__("The word index is being made now; try again in a few seconds. Searching by tags, people, "
                          "folders and dates works meanwhile.")
-
-#: Where a page begins and after what: (phase, taken, id). Phase 0 holds the photos with a date, ordered by
-#: (taken, id); phase 1 those with none, ordered by id (taken is None). None begins at the start. In an order by name
-#: `taken` holds the file name of the last photo and the phase is 0: every photo has a name. In an order by caption
-#: phase 0 holds the captioned photos, `taken` the caption's key (caption_sql), and phase 1 those with none.
-Cursor = collections.namedtuple("Cursor", "phase taken id")
 
 #: The orders a source is read in (phase 9, #671, #714): by Date Taken -- the photos with none AFTER the dated ones in both
 #: directions, by id in the order's direction --, by file name, or by caption -- the photos with none after the captioned
@@ -433,10 +424,6 @@ def spellings(conn, name):
     return _Reads(conn).spellings(name)
 
 
-#: The largest id a photo can have, and one more: the start of a descending read of ids.
-_PAST_LAST_ID = 2 ** 62
-
-
 #: The orders read by the index of an expression: {order: (the expression of `p`, the index, whether a photo may have
 #: none)}. A photo with none comes after those that have one, by id in the order's direction, as an undated photo does.
 _KEYED = {}
@@ -499,64 +486,8 @@ def _by_index(conn, scope, index):
     return from_, "(%s)" % where, scope.params
 
 
-def _keyed_page(conn, scope, cursor, limit, order):
-    """A page in an order of _KEYED: those with a key by (key without case, id), then -- for a key a photo may lack --
-    those with none by id, each phase one statement, as _page reads the dated and the undated."""
-    key, index, nullable = _KEYED[order]
-    from_, where, params = _by_index(conn, scope, index)
-    way, beyond = (" DESC", "<") if order in DESCENDING else ("", ">")
-    want = limit + 1
-    rows = []
-    if cursor is None or cursor.phase == 0:
-        sql = "SELECT %s, p.id FROM %s WHERE %s" % (key, from_, where)
-        values = list(params)
-        if nullable and cursor is None:
-            # After a cursor its bound is the range, and NULL is neither above nor below it: one lower bound for the index to
-            # seek, not two of which it might take the first.
-            sql += _HAS_KEY % key
-        if cursor is not None:
-            # The bound on the key alone is what the index seeks; the pair with the id is the keyset.
-            sql += " AND %s COLLATE NOCASE %s= ? AND (%s COLLATE NOCASE, p.id) %s (?, ?)" % (key, beyond, key, beyond)
-            values += [cursor.taken, cursor.taken, cursor.id]
-        sql += " ORDER BY %s COLLATE NOCASE%s, p.id%s LIMIT ?" % (key, way, way)
-        rows = [(photo_id, value) for value, photo_id in conn.execute(sql, values + [want])]
-    if nullable and len(rows) < want:
-        start = _PAST_LAST_ID if order in DESCENDING else 0
-        after = cursor.id if cursor is not None and cursor.phase == 1 else start
-        rows += [(photo_id, None) for (photo_id,) in conn.execute(
-            "SELECT p.id FROM %s WHERE %s AND %s IS NULL AND p.id %s ? ORDER BY p.id%s LIMIT ?" % (from_, where, key, beyond, way),
-            list(params) + [after, want - len(rows)])]
-    return rows[:limit], len(rows) > limit
-
-
-def _page(conn, scope, cursor, limit, order=TAKEN):
-    if order in _KEYED:
-        return _keyed_page(conn, scope, cursor, limit, order)
-    desc = order == TAKEN_DESC
-    way, beyond = (" DESC", "<") if desc else ("", ">")
-    want = limit + 1   # one more than the page says whether another page follows
-    rows = []
-    if cursor is None or cursor.phase == 0:
-        sql = "SELECT p.taken, p.id FROM %s WHERE (%s) AND p.taken IS NOT NULL" % (scope.from_, scope.where)
-        values = list(scope.params)
-        if cursor is not None:
-            sql += " AND (p.taken, p.id) %s (?, ?)" % beyond
-            values += [cursor.taken, cursor.id]
-        sql += " ORDER BY p.taken%s, p.id%s LIMIT ?" % (way, way)
-        rows = [(photo_id, taken) for taken, photo_id in conn.execute(sql, values + [want])]
-    if len(rows) < want and not scope.dated:
-        # The undated photos come after the dated ones in either direction, by id in the order's.
-        start = _PAST_LAST_ID if desc else 0
-        after = cursor.id if cursor is not None and cursor.phase == 1 else start
-        undated = conn.execute(
-            "SELECT p.id FROM %s WHERE (%s) AND p.taken IS NULL AND p.id %s ? ORDER BY p.id%s LIMIT ?"
-            % (scope.from_, scope.where, beyond, way), list(scope.params) + [after, want - len(rows)]).fetchall()
-        rows += [(photo_id, None) for (photo_id,) in undated]
-    return rows[:limit], len(rows) > limit
-
-
 def all_ids(conn, source, cap, order=TAKEN):
-    """([photo id] of the whole source in the order `page` gives, how many photos the source holds): at most `cap`
+    """([photo id] of the whole source in the order asked, how many photos the source holds): at most `cap`
     ids, the total counted when the source holds more. Two statements at most, one per phase, each an index-ordered
     read of ids alone -- the keyset page's order without the keyset. By name, one: the name index walked in order. By
     caption, the caption index walked in order, the captioned and then those with none."""
@@ -634,36 +565,6 @@ def id_plans(conn, source, cap, order=TAKEN):
     elapsed = (time.perf_counter() - started) * 1000
     return [(sql, [row[-1] for row in conn.execute("EXPLAIN QUERY PLAN " + sql)])
             for sql in seen if sql.lstrip().upper().startswith("SELECT")], elapsed
-
-
-def total(conn, source):
-    """How many photos `source` holds."""
-    scope = _scope(conn, source)
-    return 0 if scope is None else conn.execute(*scope.count).fetchone()[0]
-
-
-def page(conn, source, cursor=None, limit=100, order=TAKEN):
-    """([(photo id, taken)] of the page after `cursor`, whether there are more after it): `limit` photos of
-    `source` in order, those with a date first by (taken, id), then those with none by id (in `order`; by name the
-    second of each pair is the file name, by caption the caption's key or None). One statement for each phase it
-    reaches; `next_cursor` of the last photo continues."""
-    scope = _scope(conn, source)
-    return ([], False) if scope is None else _page(conn, scope, cursor, limit, order)
-
-
-def view(conn, source, cursor=None, limit=100, order=TAKEN):
-    """(page rows, whether more follow, the total): `page` and `total` with the source resolved once."""
-    scope = _scope(conn, source)
-    if scope is None:
-        return [], False, 0
-    rows, more = _page(conn, scope, cursor, limit, order)
-    return rows, more, conn.execute(*scope.count).fetchone()[0]
-
-
-def next_cursor(row):
-    """The cursor that continues after `row`, (photo id, taken -- or name, by name; caption, by caption)."""
-    photo_id, taken = row
-    return Cursor(0 if taken is not None else 1, taken, photo_id)
 
 
 # ---- The cards -------------------------------------------------------------------------------

@@ -50,19 +50,13 @@ class Routes(unittest.TestCase):
 
 
 class TheIds(Routes):
-    def test_every_source_gives_the_order_the_view_pages_in(self):
+    def test_every_source_gives_the_services_order(self):
         for query in (dict(kind="all"), dict(kind="folder", folder=self.folder), dict(kind="folder", folder=self.folder, recursive="1"),
                       dict(kind="keyword", value="Trips"), dict(kind="person", value="Wren Halloway"),
                       dict(kind="year", value="2024"), dict(kind="month", value="2024-06")):
             with self.subTest(query=query):
-                paged, token = [], None
-                while True:
-                    page = library_view.view(self.vl.library, query["kind"], query.get("folder") or query.get("value"),
-                                             query.get("recursive") == "1", token, 2)
-                    paged += page["ids"]
-                    token = page["next"]
-                    if not token:
-                        break
+                paged = library_view.ids(self.vl.library, query["kind"], query.get("folder") or query.get("value"),
+                                         query.get("recursive") == "1")["ids"]
                 reply, found = self.ids(**query)
                 self.assertEqual(200, reply.status_code)
                 self.assertEqual(paged, found["ids"])
@@ -127,7 +121,7 @@ class TheCards(Routes):
     def test_cards_come_in_the_order_asked_and_are_the_views_cards(self):
         _, found = self.cards("%d,%d,%d" % (self.b, self.c, self.a))
         self.assertEqual([self.b, self.c, self.a], [card["id"] for card in found["cards"]])
-        shown = {card["id"]: card for card in library_view.view(self.vl.library, "all")["cards"]}
+        shown = {card["id"]: card for card in library_view.cards(self.vl.library, library_view.ids(self.vl.library, "all")["ids"])}
         for card in found["cards"]:
             # The route's cards are the view's, and say besides (phase 9c) when the file is not as the row says
             # (tests/test_library_cards_stale.py): these rows have no files.

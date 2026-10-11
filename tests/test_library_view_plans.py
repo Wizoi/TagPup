@@ -81,69 +81,6 @@ class Plans(unittest.TestCase):
                                     "a scan: %s\n%s" % (statement, "\n".join(lines)))
         return text
 
-    # ---- A page of each kind of source ------------------------------------------------------
-
-    def page(self, source, cursor=None):
-        return lambda conn: store.view(conn, source, cursor, 500)
-
-    def test_all_seeks_the_date_index_and_needs_no_sort(self):
-        text = self.assert_searches(self.page(store.Source(store.ALL)), "idx_photos_taken")
-        self.assertNotIn("TEMP B-TREE", text)
-
-    def test_a_page_deep_into_it_is_a_seek_too(self):
-        cursor = store.Cursor(0, "2018:06:15 10:00:00", 400)
-        text = self.assert_searches(self.page(store.Source(store.ALL), cursor), "idx_photos_taken")
-        self.assertNotIn("TEMP B-TREE", text)
-
-    def test_a_year_seeks_its_index_in_order(self):
-        text = self.assert_searches(self.page(store.Source(store.YEAR, 2016)), "idx_photos_year")
-        self.assertNotIn("TEMP B-TREE", text)
-
-    def test_a_month_is_a_range_of_the_date_index(self):
-        text = self.assert_searches(self.page(store.Source(store.MONTH, "2016-02")), "idx_photos_taken (taken>? AND taken<?)")
-        self.assertNotIn("TEMP B-TREE", text)
-        asked = [statement for statement, _lines in self.plan_of(self.page(store.Source(store.MONTH, "2016-02")))]
-        self.assertEqual([], [each for each in asked if "taken IS NULL" in each], "every photo of a month has a date")
-
-    def test_a_folder_and_its_subfolders_is_a_range_of_the_path_index(self):
-        self.assert_searches(self.page(store.Source(store.FOLDER, self.top, True)), "idx_photos_path_nocase (path>? AND path<?)")
-        self.assert_searches(self.page(store.Source(store.FOLDER, self.folder, True)), "idx_photos_path_nocase")
-
-    def test_a_folder_alone_is_its_rows_of_photo_folder_by_folder_id(self):
-        text = self.assert_searches(self.page(store.Source(store.FOLDER, self.folder, False)), "idx_photo_folder_folder (folder_id=?)")
-        self.assertIn("sqlite_autoindex_folders_1 (path=?)", text)
-
-    def test_a_keyword_is_two_seeks_of_the_tree_and_one_of_photo_tags_for_each_node(self):
-        text = self.assert_searches(self.page(store.Source(store.KEYWORD, "Trips")), "idx_photo_tags_tag (tag_id=?)")
-        self.assertIn("sqlite_autoindex_tag_taxonomy_1 (tag=?)", text)
-        self.assertIn("idx_tag_taxonomy_tag (tag>? AND tag<?)", text)
-
-    def test_a_person_is_the_name_index(self):
-        found = self.plan_of(self.page(store.Source(store.PERSON, "Wren Halloway")))
-        text = "\n".join("\n".join(lines) for _statement, lines in found)
-        self.assertIn("idx_photo_people_name (name=?)", text)
-        for statement, lines in found:
-            for line in lines:
-                if line.startswith("SCAN"):
-                    # the names the person is spelled as: a pass of the name index (400 names on photo_index), covering;
-                    # and the tree, read whole once (person_ids.read): a table of a few hundred nodes
-                    self.assertTrue("SELECT DISTINCT name FROM photo_people" in statement or "tag_taxonomy" in statement
-                                    or "sqlite_master" in statement, statement)
-                    if "photo_people" in statement:
-                        self.assertIn("COVERING INDEX idx_photo_people_name", line)
-
-    def test_the_undated_photos_come_from_the_date_index_too(self):
-        cursor = store.Cursor(1, None, 0)
-        text = self.assert_searches(self.page(store.Source(store.ALL), cursor), "idx_photos_taken (taken=? AND id>?)")
-        self.assertNotIn("TEMP B-TREE", text)
-
-    def test_the_totals_are_counts_of_an_index(self):
-        for source in (store.Source(store.ALL), store.Source(store.YEAR, 2016), store.Source(store.MONTH, "2016-02"),
-                       store.Source(store.FOLDER, self.top, True), store.Source(store.FOLDER, self.folder),
-                       store.Source(store.KEYWORD, "Trips")):
-            with self.subTest(kind=source.kind):
-                self.assert_searches(lambda conn, s=source: store.total(conn, s), "INDEX")
-
     # ---- A source's whole id list (phase 9b-2) --------------------------------------------------
 
     def ids(self, source):
