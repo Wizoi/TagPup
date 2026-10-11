@@ -1021,9 +1021,6 @@ def undo(ctx, change_id, apply_):
         return
     console.print("Undid change %d: %d %s written back." % (
         change_id, result.changed, "file(s)" if result.details.get("files") else "row(s)"))
-    if "added_followed_back" in result.details:
-        back = result.details["added_followed_back"]
-        console.print("Added folder(s) pointed back: %s." % ("none (left as they are)" if back is None else back))
     for what, error in result.errors:
         console.print("[yellow]%s: %s[/yellow]" % (what, error))
 

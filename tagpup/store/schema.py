@@ -769,7 +769,7 @@ def _faces_detected(conn):
 
 
 def _folder_ids(conn):
-    """The ids folders carry (tagpup.store.folder_ids; docs/ARCHITECTURE.md, "Folder ids"): `library_identity`,
+    """The ids folders carry (unused since 2026-10-10, dropped by migration 30; docs/ARCHITECTURE.md): `library_identity`,
     at most one row, the library's own identifier, which opening a library never fills -- only the first explicit
     `folder-ids mark --apply` stamps it, in the transaction that records the first ids, since an identifier handed
     out in marker files cannot be taken back -- and `folder_ids`, one row for each folder the library has marked:

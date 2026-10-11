@@ -82,7 +82,7 @@ KEYS = {
     "embeddings": ("photo_id", "model"),
     "suggestions": ("photo_id",),
     "settings": ("key",),
-    "folder_ids": ("id",),
+    "folder_ids": ("id",),     # unused since 2026-10-10; the live libraries each hold one `mark_folders` change of it
 }
 
 #: Tables keyed by a name, not by an id SQLite hands out: a row put back under its name is
@@ -943,16 +943,10 @@ def record_faces(conn, operation, before):
     return record(conn, operation, changes, {"faces": len(changes), "note": PERSON_NOTES.get(operation, "")}) if changes else None
 
 
-def apply(db_path, operation, edits, summary=None, also=None):
+def apply(db_path, operation, edits, summary=None):
     """Apply `edits` to the library at `db_path` as one change named `operation`, with
     `summary` (counts, never names) kept with it. Refusal, with nothing written, when a
-    row is not what the plan read. Returns what it wrote (Applied).
-
-    `also(conn)`, when given, is called in the change's own transaction once its rows are
-    written and before the commit, when the change has rows: a write the change cannot be
-    without that is not a row of a table in KEYS (the library's identifier, stamped with the
-    first ids that carry it: tagpup.services.folder_ids). An error it raises rolls the
-    whole change back."""
+    row is not what the plan read. Returns what it wrote (Applied)."""
     schema.ensure(db_path)
     with db.lock_for(db_path):
         conn = db.connect(db_path)
@@ -962,8 +956,6 @@ def apply(db_path, operation, edits, summary=None, also=None):
                 try:
                     changes, skipped = _resolve(conn, edits)
                     change_id = _forward(conn, operation, changes, summary) if changes else None
-                    if change_id is not None and also is not None:
-                        also(conn)
                 except sqlite3.IntegrityError as e:
                     raise _integrity(e) from e
                 _reached("forward written")
