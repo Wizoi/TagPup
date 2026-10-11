@@ -13,7 +13,7 @@ import { state } from './state.js';
 import { selectionFoldersList, selectionPeopleList, selectionTagsList } from './elements.js';
 import { selectionCount, tallyRequest } from './selected.js';
 import { editByPill } from './bulk-edit.js';
-import { lockBulkControls } from './bulk-job.js';
+import { lockBulkControls } from './bulk-run.js';
 import { drawJumpNote, drawJumps } from './selection-panel.js';
 
 /** How long the selection must stand still before it is counted. */

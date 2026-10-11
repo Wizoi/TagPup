@@ -23,7 +23,6 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import recycle_bin  # noqa: E402
-from tagpup.jobs import bulk_edits  # noqa: E402
 
 
 class Share(unittest.TestCase):
@@ -151,7 +150,6 @@ class ThroughTheOwners(unittest.TestCase):
         self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
         self.library = self.vl.library
-        self.addCleanup(bulk_edits.forget, self.library)
         self.share = os.path.join(self.vl.pictures, "Share")
         self.binned = []
         bin_patch = mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=self.recycle)
@@ -197,10 +195,8 @@ class ThroughTheOwners(unittest.TestCase):
         self.assertEqual(sum(os.path.getsize(self.vl.path_of(each)) for each in self.on_share), asked["copy_bytes"])
         self.assertEqual(recycle_bin.mirror_root(), asked["restores_to"])
         self.assertIsNone(asked["no_room"])
-        reply = self.client.post("/library/api/library/bulk/start", json={"op": "delete", "selection": {"source": {"kind": "all"}},
-                                                                         "params": {"token": asked["token"]}}).get_json()
-        bulk_edits._held(self.library)[reply["job"]].thread.join(60)
-        done = self.client.get("/library/api/library/bulk/status", query_string={"job": reply["job"]}).get_json()
+        done = self.client.post("/library/api/library/bulk-edit", json={"op": "delete", "selection": {"source": {"kind": "all"}},
+                                                                       "params": {"token": asked["token"]}}).get_json()
         self.assertEqual((5, 0), (done["changed"], done["error_count"]))
         self.assertEqual(3, len([each for each in self.binned if "TagPup deleted from shares" in each]))
 
@@ -345,15 +341,13 @@ class AskedFirst(ThroughTheOwners):
         asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": {"ids": self.on_share + [deep]}}).get_json()
         self.assertEqual((4, 1, None), (asked["through_this_pc"], asked["too_long"], asked["no_room"]))
 
-    def test_a_chunk_is_checked_again_before_copying_the_bin_fills_during_a_long_job(self):
+    def test_the_copies_are_checked_again_before_copying_the_bin_fills_during_a_long_edit(self):
         asked = self.client.post("/library/api/library/selection/delete-check", json={"selection": {"ids": self.on_share}}).get_json()
         recycle_bin.forget_bin()
         self.addCleanup(recycle_bin.forget_bin)
         with mock.patch.dict(os.environ, {"TAGPUP_RECYCLE_BIN": "1,1,0"}):
-            reply = self.client.post("/library/api/library/bulk/start", json={"op": "delete", "selection": {"ids": self.on_share},
-                                                                             "params": {"token": asked["token"]}}).get_json()
-            bulk_edits._held(self.library)[reply["job"]].thread.join(60)
-        done = self.client.get("/library/api/library/bulk/status", query_string={"job": reply["job"]}).get_json()
+            done = self.client.post("/library/api/library/bulk-edit", json={"op": "delete", "selection": {"ids": self.on_share},
+                                                                           "params": {"token": asked["token"]}}).get_json()
         self.assertEqual((0, 3), (done["changed"], done["error_count"]))
         self.assertIn("Recycle Bin", done["errors"][0]["why"])
         self.assertEqual(self.on_share, self.held(self.on_share))

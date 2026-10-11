@@ -3,7 +3,7 @@
 
 Identify Faces' Assign, Unmatch and Ignore cluster, and Re-examine this folder, used to change faces only. Now each is the
 decision of a single face (tagpup.services.face_people) for many photos, so it writes photo files, and runs here on a thread of its own
-in the server while the request that started it waits for the end (`finished`), as a bulk edit's page polls (tagpup.jobs.bulk_edits).
+in the server while the request that started it waits for the end (`finished`), as a page polls a job.
 
 **How it runs.** The plan (tagpup.services.face_assignment) is decided and refused as a whole first, then written to the library's
 cache folder BEFORE the first step, with the state. Each step is a few faces (a few photos' files, one journaled change of photo
@@ -22,7 +22,7 @@ click is a Conflict naming it. Writes of other faces go on; each step decides ag
 photo whose file could not be written (its face is left as it was). A step that raises is the job's failure, with a fixed sentence.
 Counts only in the library's record (`job_runs`) and the status; never a name or a path. The PLAN and the STATE kept in the
 library's cache folder (`<job>.plan.json`, `<job>.state.json`) do hold names -- the person, the names a removal's faces had, the
-faces and the journal changes of the files written -- for 30 days (tagpup.files.job_files.sweep), as a bulk edit's state names
+faces and the journal changes of the files written -- for 30 days (tagpup.files.job_files.sweep), as an older bulk edit's state named
 its people; they are what a resume and the job's Undo read.
 
 **Undo** (`undo`): one undo for the whole job. The faces go back as they were -- an assignment's faces unreviewed, a removal's

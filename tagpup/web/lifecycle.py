@@ -34,7 +34,6 @@ import time
 
 from flask import Blueprint, current_app, jsonify, request
 
-from tagpup.jobs import bulk_edits as bulk_edit_jobs
 from tagpup.jobs import face_assignments as face_assignment_jobs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces as naming_faces_jobs
@@ -107,9 +106,6 @@ def long_work():
     indexing = indexing_jobs.running()
     if indexing:
         found.append("indexing in %d library(ies)" % indexing)
-    edits = bulk_edit_jobs.running()
-    if edits:
-        found.append("%d bulk edit(s)" % edits)
     naming = naming_faces_jobs.running()
     if naming:
         found.append("%d naming of faces from tags" % naming)

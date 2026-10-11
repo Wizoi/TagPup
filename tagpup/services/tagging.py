@@ -289,10 +289,10 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
     """Add the same tags to many photos and take the same tags off them. Adding or
     removing tags on a selection of photos. See _change_each.
 
-    `operation` names the change in the journal. A bulk JOB (tagpup.jobs.bulk_edits) passes its own and
+    `operation` names the change in the journal. A bulk edit of a selection (tagpup.services.bulk_edit) passes its own and
     `stop_at_first_error=False`: a photo that cannot be read or written is an error and the others are written all the
     same. `persons` ({paths.key(path): the tags of `add` that are people}): a person the file already names is not
-    added again (_change_each). `et`: an ExifTool session the caller opened (a bulk job's chunk gets its own,
+    added again (_change_each). `et`: an ExifTool session the caller opened (a bulk edit gets its own,
     with a deadline of its own), used instead of one per write.
 
     A photo whose file is gone is left out and listed in the result's skips (details[SKIPPED_MISSING] says how many);
@@ -374,7 +374,7 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
 
     `persons`: as add_tags'. `et`: an ExifTool session the caller opened (with a deadline of its own), as
     change_tags'. `stop_at_first_error` False: a photo that cannot be read or written is an error and the others are
-    written, as a bulk job does. Apply All's own is add_tags; the faces' (tagpup.services.face_people) adds and takes
+    written, as a bulk edit does. Apply All's own is add_tags; the faces' (tagpup.services.face_people) adds and takes
     off a person per photo."""
     adds = dict.fromkeys(t for add, _remove in changes.values() for t in add)
     problem = validation.first_problem("tag", adds) or refuse_under_people(library, adds)

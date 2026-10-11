@@ -1,8 +1,8 @@
 """One bulk write names at most 5,000 photos (findings #535).
 
 Select all of 68,000 and a bulk tag posted five megabytes of paths and ran under the global file-changes lock for
-hours, with no progress, no cancel and no undo of its own. The server refuses a request over the cap before it
-reads or writes anything; a job with progress for more is the editing stage's (docs/ARCHITECTURE.md, phase 9d).
+hours. The server refuses a request over the cap before it reads or writes anything; the library view's edit of a
+selection has the same cap (tests/test_bulk_edits.py, TheLimit).
 """
 import os
 import sys
@@ -30,17 +30,17 @@ class TheCap(unittest.TestCase):
     def test_bulk_tags_over_the_cap_is_a_400_with_a_sentence_and_nothing_is_read(self):
         reply = self.post("/photos/bulk-tags", {"paths": self.names(tagpup_routes.BULK_LIMIT + 1), "add_tags": ["Trips/Coast"]})
         self.assertEqual(400, reply.status_code)
-        self.assertIn("Narrow the selection: bulk edits over 5000 photos arrive with the editing stage", reply.get_json()["error"])
+        self.assertIn("Select up to 5,000 photos at a time (5,001 were named).", reply.get_json()["error"])
 
     def test_smart_rename_over_the_cap_is_refused_the_same_way(self):
         reply = self.post("/folder/rename-photos", {"folder_path": self.folder, "grouping": "Regatta",
                                                    "photo_paths": self.names(tagpup_routes.BULK_LIMIT + 1)})
         self.assertEqual(400, reply.status_code)
-        self.assertIn("Narrow the selection", reply.get_json()["error"])
+        self.assertIn("Select up to 5,000 photos at a time", reply.get_json()["error"])
 
     def test_at_the_cap_the_request_is_not_refused_for_its_size(self):
         reply = self.post("/photos/bulk-tags", {"paths": self.names(tagpup_routes.BULK_LIMIT), "add_tags": []})
-        self.assertNotIn("Narrow the selection", str(reply.get_json()))
+        self.assertNotIn("Select up to", str(reply.get_json()))
 
     def test_the_cap_is_five_thousand(self):
         self.assertEqual(5000, tagpup_routes.BULK_LIMIT)

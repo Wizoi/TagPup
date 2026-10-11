@@ -1,5 +1,5 @@
 """A SELECTION of photos, by id, and what is made of one: the photos it holds, in order (docs/ARCHITECTURE.md, phase
-9d-1). The one reading and the one resolver of the bulk edits (tagpup.jobs.bulk_edits) and of the selection panel's tally.
+9d-1). The one reading and the one resolver of the bulk edits (tagpup.services.bulk_edit) and of the selection panel's tally.
 
 A selection is one of two shapes, sent by a page that never holds 68,000 ids to send:
 
@@ -28,8 +28,8 @@ from tagpup.store import selection_folders as store_folders
 #: The most ids a selection lists (`ids`, or `excluded`).
 MAX_LISTED = 20_000
 
-#: The most photos a selection holds, however it is named.
-MAX_SELECTED = 200_000
+#: The most photos a selection holds, however it is named: what one bulk edit writes in one request (owner, 2026-10-11).
+MAX_SELECTED = 5_000
 
 #: The most tags, and the most people, a tally lists; the rest are counted in `more`.
 MAX_TALLIED = 500
@@ -198,13 +198,12 @@ def _too_long(library, photo_ids, binless, named):
 
 def _refuse_if_large(count):
     if count > MAX_SELECTED:
-        raise Refused("That selects %s photos; a bulk edit takes at most %s. Narrow the selection."
-                      % ("{:,}".format(count), "{:,}".format(MAX_SELECTED)))
+        raise Refused("Select up to %s photos at a time (%s are selected)." % ("{:,}".format(MAX_SELECTED), "{:,}".format(count)))
 
 
 def resolve(library, selection):
     """The photos `selection` holds, as Resolved: those that exist now, in order -- an ids selection in the order named, a
-    source in `/api/library/ids`'s order -- each once, at most MAX_SELECTED (else Refused). The photo that exists is decided
+    source in `/api/library/ids`'s order -- each once, at most MAX_SELECTED once the excluded are out (else Refused). The photo that exists is decided
     here, by the library's own rows; a source is read in one transaction, so a library changing meanwhile gives a list that
     was true at one moment."""
     conn = library_view.opened(library)
@@ -214,10 +213,11 @@ def resolve(library, selection):
             there = store.existing_ids(conn, selection.ids)
             ids = [photo_id for photo_id in selection.ids if photo_id in there]
             return Resolved(ids, len(selection.ids), len(selection.ids) - len(ids), 0)
-        found, total = store.source_ids(conn, selection.source, MAX_SELECTED)
-        _refuse_if_large(total)
+        # The limit is of the photos left once the excluded are out ("everything but these 63,500" is 4,500 photos).
+        found, total = store.source_ids(conn, selection.source, MAX_SELECTED + len(selection.excluded))
     finally:
         conn.close()
     left_out = set(selection.excluded)
     ids = [photo_id for photo_id in dict.fromkeys(found) if photo_id not in left_out]
+    _refuse_if_large(total - len(found) + len(ids))
     return Resolved(ids, total, 0, len(found) - len(ids))

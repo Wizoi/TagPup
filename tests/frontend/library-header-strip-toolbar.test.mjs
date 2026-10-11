@@ -6,7 +6,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { closeAllApps, click, openFolder, photoRecord } from "./harness.mjs";
-import { loadViewPage, pageErrors, jobStatus, speedUp, recordOf } from "./view-page.mjs";
+import { loadViewPage, pageErrors, speedUp, recordOf } from "./view-page.mjs";
 
 afterEach(() => {
   closeAllApps();
@@ -177,8 +177,7 @@ describe("#674: Delete of a view's selection", () => {
     ctx.answer = true;
     ctx.window.confirm = (text) => { ctx.questions.push(text); return typeof ctx.answer === "function" ? ctx.answer(text) : ctx.answer; };
     ctx.window.alert = (text) => ctx.alerts.push(text);
-    ctx.bulk.start = { op: "delete", total: 3 };
-    ctx.bulk.status = jobStatus({ op: "delete", total: 3 });
+    ctx.bulk.edit = { op: "delete", total: 3, changed: 3 };
     return ctx;
   }
   const remove = async (ctx) => {
@@ -193,13 +192,13 @@ describe("#674: Delete of a view's selection", () => {
     assert.ok(organize.document.getElementById("btn-delete-selection").classList.contains("hidden"));
   });
 
-  test("3 photos across folders: asked where they go, then the question names them and the Recycle Bin, then a job by id", async (t) => {
+  test("3 photos across folders: asked where they go, then the question names them and the Recycle Bin, then one request by id", async (t) => {
     const ctx = await view(t);
     for (const id of [2, 5, 9]) pick(ctx, id);
     await remove(ctx);
     assert.deepEqual(plain(calls(ctx, "/selection/delete-check")[0].body), { selection: { ids: [2, 5, 9] } });
-    assert.deepEqual(ctx.questions, ["Delete 3 photos? The files go to the Recycle Bin, where they can be restored. Their rows leave the library, with their faces. It takes less than a minute and runs as a job you can watch and cancel; while it runs, saving a photo elsewhere waits for the photos being deleted at that moment. It cannot be undone in TagPup."]);
-    const [start] = calls(ctx, "/bulk/start");
+    assert.deepEqual(ctx.questions, ["Delete 3 photos? The files go to the Recycle Bin, where they can be restored. Their rows leave the library, with their faces. It takes less than a minute; TagPup is busy until it is done, and saving a photo elsewhere waits for the photos being deleted at that moment. It cannot be undone in TagPup."]);
+    const [start] = calls(ctx, "/api/library/bulk-edit");
     assert.deepEqual(plain(start.body), { op: "delete", selection: { ids: [2, 5, 9] }, params: { token: "t-three" } },
       "the token of the photos the question named");
     assert.ok(!calls(ctx, "/api/photo/delete").length, "never the one-photo route, once a photo");
@@ -213,7 +212,7 @@ describe("#674: Delete of a view's selection", () => {
     assert.match(ctx.questions[0], /^Delete 3 photos\? 1 of them is where there is no Recycle Bin \(1 on a network share\): it is copied to this PC \(4 MB\), the copy goes to this PC's Recycle Bin, and then the original is deleted\. Restored from the Recycle Bin, a copy goes to C:\\Users\\wren\\Downloads\\TagPup deleted from shares, not back to where it was\. The other 2 go to the Recycle Bin\./);
     assert.doesNotMatch(ctx.questions[0], /PERMANENTLY|permanently/);
     assert.match(ctx.questions[0], /It takes at least about 1 minute \(copies from a share/, "a floor, not a promise, for copies from a share (#705)");
-    assert.deepEqual(plain(calls(ctx, "/bulk/start")[0].body.params), { token: "t-three" });
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params), { token: "t-three" });
     const all = await view(t, 40, { where: { ...BIN, total: 1, through_this_pc: 1, reasons: [{ reason: "on a removable drive", photos: 1 }], copy_bytes: 1000 } });
     pick(all, 4);
     await remove(all);
@@ -226,41 +225,40 @@ describe("#674: Delete of a view's selection", () => {
     await remove(ctx);
     assert.equal(ctx.questions.length, 0);
     assert.match(ctx.alerts[0], /not room on this PC/);
-    assert.equal(calls(ctx, "/bulk/start").length, 0);
+    assert.equal(calls(ctx, "/api/library/bulk-edit").length, 0);
   });
 
-  test("the question refused deletes nothing; rapid clicks ask once and start one job", async (t) => {
+  test("the question refused deletes nothing; rapid clicks ask once and send one request", async (t) => {
     const ctx = await view(t);
     pick(ctx, 2);
     ctx.answer = false;
     await remove(ctx);
     assert.equal(ctx.questions.length, 1);
-    assert.equal(calls(ctx, "/bulk/start").length, 0);
+    assert.equal(calls(ctx, "/api/library/bulk-edit").length, 0);
     ctx.answer = true;
     for (let n = 0; n < 4; n++) click(ctx.window, el(ctx, "btn-delete-selection"));
     await ctx.settle(80);
     assert.equal(calls(ctx, "/selection/delete-check").length, 2, "one more check for four clicks");
     assert.equal(ctx.questions.length, 2);
-    assert.equal(calls(ctx, "/bulk/start").length, 1);
+    assert.equal(calls(ctx, "/api/library/bulk-edit").length, 1);
   });
 
-  test("Select all of 68,000 less 2: the source and the 2, a second question, never 68,000 ids", async (t) => {
-    const ctx = await view(t, 68000, { where: { ...BIN, total: 67998, token: "t", folders: 2672 } });
+  test("Select all of 5,002 less 2: the source and the 2, one question, never 5,000 ids", async (t) => {
+    const ctx = await view(t, 5002, { where: { ...BIN, total: 5000, token: "t", folders: 2672 } });
     el(ctx, "btn-select-all-thumbnails").click();
     pick(ctx, 3);
     pick(ctx, 4);
     await remove(ctx);
-    assert.equal(ctx.questions.length, 2);
-    assert.match(ctx.questions[0], /^Delete 67,998 photos\?.* It takes about 1 hour 16 minutes and runs as a job/, "the measured 15 a second (#693)");
-    assert.equal(ctx.questions[1], "This is 67,998 photos. Continue?");
-    assert.deepEqual(plain(calls(ctx, "/bulk/start")[0].body.selection), { source: { kind: "all", value: null, recursive: false }, excluded: [3, 4] });
+    assert.equal(ctx.questions.length, 1);
+    assert.match(ctx.questions[0], /^Delete 5,000 photos\?.* It takes about 6 minutes; TagPup is busy until it is done/, "the measured 15 a second (#693)");
+    assert.deepEqual(plain(calls(ctx, "/api/library/bulk-edit")[0].body.selection), { source: { kind: "all", value: null, recursive: false }, excluded: [3, 4] });
   });
 
-  test("more than a bulk edit takes is said and nothing is asked of the server", async (t) => {
-    const ctx = await view(t, 300, { onIds: () => ({ source: {}, total: 250000, ids: range(300), complete: false }) });
+  test("more than 5,000 is said and nothing is asked of the server", async (t) => {
+    const ctx = await view(t, 300, { onIds: () => ({ source: {}, total: 5001, ids: range(300), complete: false }) });
     el(ctx, "btn-select-all-thumbnails").click();
     await remove(ctx);
-    assert.match(ctx.alerts[0], /250,000 photos are selected; a bulk edit takes at most 200,000/);
+    assert.equal(ctx.alerts[0], "Select up to 5,000 photos at a time (5,001 are selected).");
     assert.equal(calls(ctx, "/selection/delete-check").length, 0);
     assert.equal(ctx.questions.length, 0);
   });
@@ -271,33 +269,37 @@ describe("#674: Delete of a view's selection", () => {
     pick(ctx, 2);
     await remove(ctx);
     assert.equal(ctx.questions.length, 0);
-    assert.equal(calls(ctx, "/bulk/start").length, 0);
+    assert.equal(calls(ctx, "/api/library/bulk-edit").length, 0);
     assert.match(el(ctx, "status-text").textContent, /nothing was deleted: The library is busy\./);
   });
 
-  test("while a bulk edit runs, Delete is off with the reason, and a click starts nothing", async (t) => {
+  test("while a bulk edit is written, Delete is off with the reason, and a click sends nothing; the page says how many and how long", async (t) => {
     const ctx = await view(t);
-    ctx.bulk.start = { op: "tags", total: 1 };
-    ctx.bulk.status = jobStatus({ total: 1 });
+    ctx.hold.bulkEdit = true;
     pick(ctx, 2);
     el(ctx, "bulk-add-tags-input").value = "Trips/Coast";
     click(ctx.window, el(ctx, "btn-bulk-add-tags"));
     await ctx.settle(40);
     assert.equal(el(ctx, "btn-delete-selection").disabled, true);
-    assert.match(el(ctx, "btn-delete-selection").title, /A bulk edit is running/);
+    assert.match(el(ctx, "btn-delete-selection").title, /A bulk edit is being written/);
+    assert.match(el(ctx, "status-text").textContent, /^Add Trips\/Coast to 1 photo: writing the files takes less than a minute\./);
+    assert.ok(!el(ctx, "bulk-strip").classList.contains("hidden"));
+    assert.equal(el(ctx, "btn-bulk-dismiss").classList.contains("hidden"), true, "a write under way is not dismissed");
     await ctx.module("bulk-edit.js").deleteSelection();
     assert.equal(calls(ctx, "/selection/delete-check").length, 0);
-    assert.equal(calls(ctx, "/bulk/start").length, 1, "only the tags job");
+    ctx.held.splice(0).forEach((each) => each.release());
+    await ctx.settle(40);
+    assert.equal(calls(ctx, "/api/library/bulk-edit").length, 1, "only the tags edit");
+    assert.equal(el(ctx, "btn-delete-selection").disabled, false);
   });
 
   test("when it ends the view's order is read again: the deleted leave the view, the count and the selection; the strip says so", async (t) => {
     let ids = range(40);
     const ctx = await view(t, 40, { onIds: () => ({ source: {}, total: ids.length, ids, complete: true }) });
     for (const id of [2, 5, 9]) pick(ctx, id);
-    await remove(ctx);
     const asked = ctx.idsAsked.length;
-    ids = ids.filter((id) => ![2, 5, 9].includes(id));
-    ctx.bulk.status = jobStatus({ op: "delete", total: 3, done: 3, changed: 3, state: "done", finished: 1760000100 });
+    ids = ids.filter((id) => ![2, 5, 9].includes(id));   // the server has deleted them by the time it answers
+    await remove(ctx);
     await ctx.until(() => ctx.idsAsked.length > asked);
     await ctx.settle(100);
     assert.equal(ctx.state.library.total, 37);
@@ -306,30 +308,21 @@ describe("#674: Delete of a view's selection", () => {
     assert.match(el(ctx, "bulk-strip-counts").textContent, /^deleted 3 /);
   });
 
-  test("the photo open in the details panel was deleted: the panel closes onto the grid when the job ends", async (t) => {
+  test("the photo open in the details panel was deleted: the panel closes onto the grid when the edit is done", async (t) => {
     let ids = range(40);
     const ctx = await view(t, 40, { onIds: () => ({ source: {}, total: ids.length, ids, complete: true }), onPhoto: (id) => ({ photo: recordOf(id) }) });
+    ctx.bulk.edit = { op: "delete", total: 1, changed: 1 };
     pick(ctx, 5);
-    await remove(ctx);
     ctx.module("photo.js").openLibraryPhoto(5);
     await ctx.settle(100);
     assert.ok(ctx.state.activePhotoPath, "the photo is open");
     ids = ids.filter((id) => id !== 5);
-    ctx.bulk.status = jobStatus({ op: "delete", total: 1, done: 1, changed: 1, state: "done", finished: 1760000100 });
+    await remove(ctx);
     await ctx.until(() => ctx.state.activePhotoPath === null);
     assert.equal(ctx.state.activePhotoPath, null);
     assert.ok(el(ctx, "panel-content").classList.contains("hidden"));
     assert.ok(!el(ctx, "folder-view-content").classList.contains("hidden"));
     assert.equal(ctx.photosAsked.filter((id) => id === 5).length, 1, "the deleted photo is not asked for again");
-  });
-
-  test("a delete found stopped after a reload says how to finish it", async (t) => {
-    const ctx = await view(t);
-    ctx.bulk.current = jobStatus({ op: "delete", total: 100, done: 40, changed: 40, state: "abandoned", message: "TagPup was closed before this finished: 40 of 100 photos were done." });
-    await ctx.module("bulk-job.js").attachBulk({ force: true });
-    await ctx.settle(40);
-    assert.equal(el(ctx, "bulk-strip-title").textContent, "Delete 100 photos");
-    assert.match(el(ctx, "bulk-strip-message").textContent, /Deleted 40 photos; 0 errors\. Select the photos that are left and delete them again to finish it\.$/);
   });
 });
 
@@ -346,8 +339,7 @@ describe("#691-#693: a Delete deletes exactly what its question named", () => {
     ctx.server.on("/api/library/selection/delete-check", () => (typeof ctx.where === "function" ? ctx.where() : ctx.where));
     ctx.questions = [];
     ctx.window.confirm = (text) => { ctx.questions.push(text); return true; };
-    ctx.bulk.start = { op: "delete", total: 3 };
-    ctx.bulk.status = jobStatus({ op: "delete", total: 3 });
+    ctx.bulk.edit = { op: "delete", total: 3, changed: 3 };
     return ctx;
   }
 
@@ -357,50 +349,34 @@ describe("#691-#693: a Delete deletes exactly what its question named", () => {
     click(ctx.window, el(ctx, "btn-delete-selection"));
     await ctx.settle(80);
     assert.match(ctx.questions[0], /^Delete 4 photos\?/);
-    assert.equal(plain(calls(ctx, "/bulk/start")[0].body.params).token, "four");
+    assert.equal(plain(calls(ctx, "/api/library/bulk-edit")[0].body.params).token, "four");
   });
 
-  test("the server refuses a start whose selection changed: its sentence is shown and nothing runs", async (t) => {
+  test("the server refuses a delete whose selection changed: its sentence is shown and nothing was deleted", async (t) => {
     const ctx = await view(t, { total: 3, token: "three", folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, no_room: null });
-    ctx.server.first("/api/library/bulk/start", { error: "The selection changed since you were asked (photos came into it or left it): nothing was deleted. Ask again: click Delete once more." }, { status: 409 });
+    ctx.server.first("/api/library/bulk-edit", { error: "The selection changed since you were asked (photos came into it or left it): nothing was deleted. Ask again: click Delete once more." }, { status: 409 });
     for (const id of [2, 5, 9]) pick(ctx, id);
     click(ctx.window, el(ctx, "btn-delete-selection"));
     await ctx.settle(80);
     assert.match(el(ctx, "bulk-strip-message").textContent, /The selection changed since you were asked/);
-    assert.equal(el(ctx, "bulk-strip-title").textContent, "The edit did not start");
-    assert.ok(el(ctx, "btn-bulk-show").classList.contains("hidden"), "no job to show");
+    assert.equal(el(ctx, "bulk-strip-title").textContent, "The edit did not go through");
+    assert.ok(!el(ctx, "btn-bulk-dismiss").classList.contains("hidden"));
+    assert.equal(el(ctx, "btn-delete-selection").disabled, false, "the controls are back");
   });
 
-  test("Start again of a cancelled delete asks again -- where the files are, the question, a new token -- never re-sends", async (t) => {
+  test("asked again, the question is asked afresh: where the files are, the question, a new token", async (t) => {
     let n = 0;
     const ctx = await view(t, () => ({ total: 3, token: `token-${++n}`, folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, no_room: null }));
     for (const id of [2, 5, 9]) pick(ctx, id);
     click(ctx.window, el(ctx, "btn-delete-selection"));
     await ctx.settle(60);
-    ctx.bulk.status = jobStatus({ op: "delete", total: 3, done: 1, changed: 1, state: "cancelled", message: "Cancelled after 1 of 3 photos." });
-    await ctx.until(() => !el(ctx, "btn-bulk-again").classList.contains("hidden"));
-    ctx.bulk.status = jobStatus({ op: "delete", total: 3, job: 8 });
-    ctx.bulk.start = { job: 8, op: "delete", total: 2 };
-    click(ctx.window, el(ctx, "btn-bulk-again"));
+    click(ctx.window, el(ctx, "btn-delete-selection"));
     await ctx.settle(80);
     assert.equal(calls(ctx, "/selection/delete-check").length, 2, "asked where the files are again");
     assert.equal(ctx.questions.length, 2, "and the question asked again");
-    const [first, second] = calls(ctx, "/bulk/start");
-    assert.deepEqual(plain(second.body.selection), plain(first.body.selection));
+    const [first, second] = calls(ctx, "/api/library/bulk-edit");
+    assert.equal(plain(first.body.params).token, "token-1");
     assert.equal(plain(second.body.params).token, "token-2", "the new answer's token, not the first");
-  });
-
-  test("Start again refused at the question deletes nothing", async (t) => {
-    const ctx = await view(t, { total: 3, token: "t", folders: 1, through_this_pc: 0, reasons: [], copy_bytes: 0, no_room: null });
-    for (const id of [2, 5, 9]) pick(ctx, id);
-    click(ctx.window, el(ctx, "btn-delete-selection"));
-    await ctx.settle(60);
-    ctx.bulk.status = jobStatus({ op: "delete", total: 3, done: 1, changed: 1, state: "cancelled", message: "Cancelled." });
-    await ctx.until(() => !el(ctx, "btn-bulk-again").classList.contains("hidden"));
-    ctx.window.confirm = () => false;
-    click(ctx.window, el(ctx, "btn-bulk-again"));
-    await ctx.settle(80);
-    assert.equal(calls(ctx, "/bulk/start").length, 1);
   });
 });
 
@@ -426,7 +402,7 @@ describe("#704, #705: the question's paths and pace for photos that go through t
 
   test("the pace of copies through this PC is its own, and a floor: 'at least'", async (t) => {
     const local = await ask(t, { ...WHERE, total: 3000, through_this_pc: 0, reasons: [], copy_bytes: 0 });
-    assert.match(local, /It takes about 3 minutes and runs/);
+    assert.match(local, /It takes about 3 minutes;/);
     const share = await ask(t, { ...WHERE, total: 3000, through_this_pc: 3000, reasons: [{ reason: "on a network share", photos: 3000 }], copy_bytes: 3000 * 3.4 * 1024 * 1024 });
     assert.match(share, /It takes at least about 4 minutes \(copies from a share take as long as the share does\)/, "3,000 at 15 a second, and 10 GB at 200 MB a second");
   });

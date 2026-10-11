@@ -132,15 +132,22 @@ class Resolving(Library):
         with mock.patch.object(selection, "MAX_SELECTED", 4):
             with self.assertRaises(Refused) as why:
                 self.resolve({"source": {"kind": "all"}})
-            self.assertIn("5 photos", str(why.exception))
+            self.assertEqual("Select up to 4 photos at a time (5 are selected).", str(why.exception))
         with mock.patch.object(selection, "MAX_SELECTED", 5):
             self.assertEqual(5, len(self.resolve({"source": {"kind": "all"}}).ids))
 
-    def test_the_cap_counts_the_source_and_not_what_is_left_after_the_exclusions(self):
-        # 5 photos, 3 excluded: the source is above the cap of 4, however few remain. A page excluding most of a library
-        # is asking for the library's size to be read, and 200,000 is the most a job holds.
-        with mock.patch.object(selection, "MAX_SELECTED", 4), self.assertRaises(Refused):
-            self.resolve({"source": {"kind": "all"}, "excluded": [self.a, self.b, self.c]})
+    def test_the_cap_counts_what_is_left_after_the_exclusions(self):
+        # "Everything but these": 5 photos, 3 excluded, 2 are left, and a cap of 4 is no reason to refuse them. The source is read
+        # up to the cap and the exclusions, so a page that excluded most of a library is not turned away for the library's size.
+        with mock.patch.object(selection, "MAX_SELECTED", 4):
+            found = self.resolve({"source": {"kind": "all"}, "excluded": [self.a, self.b, self.c]})
+            self.assertEqual((2, 5, 3), (len(found.ids), found.requested, found.excluded))
+            self.assertEqual(4, len(self.resolve({"source": {"kind": "all"}, "excluded": [self.a]}).ids))
+            with self.assertRaises(Refused) as why:
+                self.resolve({"source": {"kind": "all"}, "excluded": []})
+            self.assertIn("5 are selected", str(why.exception))
+        with mock.patch.object(selection, "MAX_SELECTED", 1), self.assertRaises(Refused):
+            self.resolve({"source": {"kind": "all"}, "excluded": [self.a, self.b, self.c]})   # two are left, one more than the cap
 
     def test_a_source_that_changes_while_it_is_read_is_one_moment_not_a_mixture(self):
         # The dated photos and the undated are two statements. A photo dated between them is, without one transaction,

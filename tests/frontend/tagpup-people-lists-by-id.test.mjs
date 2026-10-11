@@ -157,7 +157,7 @@ describe("a library view's tally", () => {
     const pet = [...ctx.document.querySelectorAll("#selection-people-list .selection-summary-chip")].find((chip) => /Pets/.test(chip.title));
     click(ctx.window, pet.querySelector(".selection-summary-chip-remove"));
     await ctx.settle(60);
-    const started = ctx.server.calls.filter((call) => call.url.includes("/api/library/bulk/start"));
+    const started = ctx.server.calls.filter((call) => call.url.includes("/api/library/bulk-edit"));
     assert.equal(started.length, 1);
     assert.equal(started[0].body.op, "people");
     assert.deepEqual(started[0].body.params, { add: [], remove: [], remove_ids: [41] });
@@ -169,7 +169,7 @@ describe("a library view's tally", () => {
     const friend = [...ctx.document.querySelectorAll("#selection-people-list .selection-summary-chip")].find((chip) => /Friends/.test(chip.title));
     click(ctx.window, friend.querySelector(".selection-summary-chip-apply"));
     await ctx.settle(60);
-    const started = ctx.server.calls.filter((call) => call.url.includes("/api/library/bulk/start"));
+    const started = ctx.server.calls.filter((call) => call.url.includes("/api/library/bulk-edit"));
     assert.deepEqual(started[0].body.params, { add: [], remove: [], add_ids: [40] });
   });
 
@@ -183,7 +183,7 @@ describe("a library view's tally", () => {
     ctx.window.confirm = () => true;
     click(ctx.window, ctx.document.querySelector("#selection-people-list .selection-summary-chip-remove"));
     await ctx.settle(60);
-    const started = ctx.server.calls.filter((call) => call.url.includes("/api/library/bulk/start"));
+    const started = ctx.server.calls.filter((call) => call.url.includes("/api/library/bulk-edit"));
     assert.deepEqual(started[0].body.params, { add: [], remove: ["Fenn Ashdown"] });
   });
 });

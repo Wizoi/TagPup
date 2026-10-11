@@ -27,7 +27,6 @@ ALLOWED = {
     "/api/name-faces/confirm": "the job itself",
     "/api/name-faces/cancel": "the job itself",
     "/api/faces/job/cancel": "stops an assignment of faces after its step; writes nothing of its own",
-    "/api/library/bulk/cancel": "stops a bulk edit after its step; writes nothing of its own",
     "/api/folder/suggest-cancel": "stops Suggest, which writes no name, face or tag",
     "/api/folder/suggest-start": "Suggest writes its own suggestion rows and rows for photos never read, no face name, tag or file; the job refuses to start beside it",
     # Reads asked with a body, or a command to the machine.

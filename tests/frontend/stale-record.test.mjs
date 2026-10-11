@@ -231,7 +231,7 @@ describe("a bulk write from a selection names itself", () => {
     const ctx = await selectionOf(t, 5001);
     click(ctx.window, ctx.document.getElementById("btn-bulk-add-tags"));
     await flush(ctx.window, 8);
-    assert.ok(ctx.alerts.some((m) => /Narrow the selection: bulk edits over 5000 photos arrive with the editing stage/.test(m)));
+    assert.ok(ctx.alerts.some((m) => /Select up to 5,000 photos at a time \(5,001 are selected\)/.test(m)));
     assert.equal(bulkCalls(ctx), 0);
   });
 });

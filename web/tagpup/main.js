@@ -33,7 +33,7 @@ import { choosePane, navigatorCountsChanged, navigatorFollows, wireNavigator } f
 import { showSortOrder, wireSortMenu } from './sort-menu.js';
 import { searchFollows, searchVocabularyChanged, wireSearch } from './search.js';
 import { addedFromView, wireBanner } from './library-banner.js';
-import { attachBulk, wireBulk } from './bulk-job.js';
+import { wireBulk } from './bulk-run.js';
 import { renderSyncInfo } from './sync-state.js';
 import { photosWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
@@ -66,7 +66,7 @@ import {
 // What a feature calls in a module above it (hooks.js).
 Object.assign(upper, {
     addedFromView, applySuggestedTagDirect, checkFolderMembership, checkSuggestionsStatus, choosePane,
-    deleteSelection, facesFollowTags,
+    facesFollowTags,
     populateCameraModelsDropdown, recordUndo, removePhotoTags,
     renderFileList, renderPhotoFaces, renderSuggestionsPanel, renderSyncInfo, renderTags, renderThumbnails, searchFollows, searchVocabularyChanged,
     selectPhoto,
@@ -164,7 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // The photo panel's Back, to the grid of a library view as it was left.
     wireViewLeft();
 
-    // The strip of a bulk edit of the library's photos: Cancel, Resume, Start again.
+    // The strip of a bulk edit of the library's photos: Dismiss.
     wireBulk();
 
     enableSwipeNavigation(mainImage);
@@ -198,8 +198,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // main.js declares no state of its own (tests/frontend/page-state.test.mjs), so
     // nothing here reaches a binding before its line has run; what is left of the rule
     // is this block's position, and tests/frontend/tag-vocabulary.test.mjs keeps it.
-    // A bulk edit already running in this library (started before this page was opened or reloaded) is picked up by its strip.
-    attachBulk();
     const params = new URLSearchParams(window.location.search);
     const initialPath = params.get('path');
     // A `?view` in the address names the library view to open, and wins over a `?path`.

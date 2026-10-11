@@ -37,7 +37,7 @@ def _this_pc_only():
 #: refusal is tuner_routes.clustering_refusal, which TagTuner's own writes ask too); reads are never refused. Every other write
 #: route is guarded, or allowed with a reason, in tests/test_write_routes_are_classified.py.
 GUARDED = frozenset((
-    "/api/folder/index-start", "/api/folder/add", "/api/sync/review/include", "/api/library/bulk/start",
+    "/api/folder/index-start", "/api/folder/add", "/api/sync/review/include", "/api/library/bulk-edit",
     "/api/photo/save-metadata", "/api/photos/bulk-tags", "/api/folder/auto-apply",
     "/api/photo/delete", "/api/sync", "/api/history/<int:change_id>/undo", "/api/faces/job/resume",
     "/api/faces/job/undo", "/api/taxonomy/update"))
