@@ -157,7 +157,6 @@ class WritesKeepTheId(Library):
             results = {check.name: check.count for check in checks.run(conn)}
         finally:
             conn.close()
-        self.assertEqual({ASH: 2}, found.several, "a face and the photo's list")
         self.assertEqual({}, found.none)
         self.assertEqual(0, results["faces whose name is not their person's"])
         self.assertEqual(0, results["people listed whose name is not their person's"])
@@ -554,7 +553,6 @@ class TheDoctor(Library):
             self.assertEqual(2, doctor.report(self.path), "the face, and the photo whose list now differs from the face's")
         text = said.getvalue()
         self.assertIn("faces whose name is not their person's", text)
-        self.assertIn("names with several person nodes: 1", text)
         self.assertIn("names one person is called whose rows are linked to nobody: 1", text,
                       "a name whose id was not written is reported, and linked only by the owner (the names to review)")
         self.assertNotIn(ASH, text, "names only with --show")

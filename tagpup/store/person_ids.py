@@ -314,7 +314,7 @@ class Directory:
     A row that names a person by ID (every answer that has the row's `tag_id`) gets `of_id`, exactly the person. A row with a name
     and no id is NOT a person (owner, 2026-10-10): the leaf is never identity, so no row is given a person by its name. `of_name`
     is for a name somebody TYPED or an external tool supplied: the person when exactly one is called it, None when none is or when
-    two are (a typed name two people have is asked "which one?" by path; the doctor flags people sharing a leaf)."""
+    two are (a typed name two people have is asked "which one?" by path)."""
 
     def __init__(self, nodes):
         self._records, self._by_key, self._by_tag, self._by_id = [], {}, {}, {}
@@ -617,12 +617,12 @@ def out_of_step(conn, table, examples=5, spelling=True):
     return Disagreement(rows, sorted(set(found))[:examples])
 
 
-Unresolved = collections.namedtuple("Unresolved", "none several branch one")
+Unresolved = collections.namedtuple("Unresolved", "none branch one")
 
 
 def unresolved(conn):
     """The names faces and photos' people hold with no id and no person to give one: those no person node is called
-    (`none`) or more than one is (`several`), {name: rows of both tables}; and those called only by a
+    (`none`), {name: rows of both tables}; and those called only by a
     branch -- a has_face node with nodes under it, such as Family/Coast, which is not a person
     *(owner, 2026-10-04; docs/findings.md, #660)* -- (`branch`: {name: ([the branches' ids], rows)}); and those exactly ONE
     person is called but whose rows are not linked to them (`one`: {name: (the person's id, faces decided by hand, other
@@ -632,9 +632,9 @@ def unresolved(conn):
     A row that holds an id is a person already, whatever its name is. Reported, not broken: no id is guessed, the
     names are left as they are, and the tree is the owner's to settle. Reads only."""
     if not present(conn):
-        return Unresolved({}, {}, {}, {})
+        return Unresolved({}, {}, {})
     known = read(conn)
-    none, several, branch, one = collections.Counter(), collections.Counter(), {}, {}
+    none, branch, one = collections.Counter(), {}, {}
     for table in TABLES:
         for name, held, count in _pairs(conn, table):
             if held is not None and held in known.node_names:
@@ -644,8 +644,6 @@ def unresolved(conn):
                 one[name] = known.id_of(name)
             elif why == "none":
                 none[name] += count
-            elif why == "several":
-                several[name] += count
             elif why == "branch":
                 nodes, rows = branch.get(name, (sorted(known.branches[vocabulary.key(name)]), 0))
                 branch[name] = (nodes, rows + count)
@@ -656,7 +654,7 @@ def unresolved(conn):
             " FROM faces WHERE tag_id IS NULL AND name = ?", (name,)).fetchone()
         listed = conn.execute("SELECT COUNT(*) FROM photo_people WHERE tag_id IS NULL AND name = ?", (name,)).fetchone()[0]
         counted[name] = (person, by_hand, by_guess, listed)
-    return Unresolved(dict(none), dict(several), branch, counted)
+    return Unresolved(dict(none), branch, counted)
 
 
 def repair(db_path):
