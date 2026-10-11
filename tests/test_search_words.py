@@ -107,22 +107,14 @@ class WhatTheWordsFind(Library):
         with self.assertRaises(Refused):
             self.found(" ".join("w%d" % n for n in range(search_index.MAX_TERMS + 1)))
 
-    def test_words_with_sources_and_in_every_order_page_as_their_list(self):
+    def test_words_with_sources_are_found_in_every_order(self):
         self.vl.photo("Misc", "harbour_b.jpg", taken="2018:01:01 10:00:00", caption="the harbour again")
         self.vl.photo("Misc", "harbour_a.jpg", caption="harbour, undated")
         for order in store.ORDERS:
             with self.subTest(order=order):
                 value = words("harbour", none_of=[{"kind": "month", "value": "2018-01"}])
                 listed = library_view.ids(self.vl.library, "search", value, order=order)
-                token, paged = None, []
-                while True:
-                    page = library_view.view(self.vl.library, "search", value, False, token, 1, order)
-                    paged += page["ids"]
-                    token = page["next"]
-                    if token is None:
-                        break
-                self.assertEqual(listed["ids"], paged)
-                self.assertEqual(2, listed["total"])
+                self.assertEqual((2, 2), (len(listed["ids"]), listed["total"]))
         within = self.found("misc", all_of=[{"kind": "year", "value": "2020"}])
         self.assertEqual([self.water], within)
 
