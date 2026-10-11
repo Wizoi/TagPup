@@ -290,6 +290,26 @@ def photos_in(folder):
         return []
 
 
+def stamps_in(folder):
+    """{paths.key: (path as stored, mtime, size)} of the photos directly in `folder`, not in its subfolders:
+    photos_in, each with the stamp its listing gives, as stamps_under does for a folder and all below it."""
+    found = {}
+    try:
+        with os.scandir(paths.stored(folder)) as listing:
+            for entry in listing:
+                if is_photo(entry.name) and not walks_into(entry):
+                    try:
+                        if entry.is_dir():
+                            continue
+                        stat_of = entry.stat()
+                    except OSError:
+                        continue
+                    found[paths.key(entry.path)] = (entry.path, stat_of.st_mtime, stat_of.st_size)
+    except OSError:
+        pass
+    return found
+
+
 def stamps_under(folder):
     """{paths.key: (path as stored, mtime, size)} of the photos under `folder`, at any
     depth: the photos photos_under finds, each with the stamp its folder's listing gives.

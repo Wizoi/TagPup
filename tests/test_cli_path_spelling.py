@@ -22,7 +22,8 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 from tagpup.store import db as tagpup_db
 from tagpup.core import paths
 from tagpup.services.search import PhotoIndex
-from tagpup_cli import cli, scan_for_images
+from tagpup_cli import cli
+from tagpup.files.images import photos_under as scan_for_images
 from tagpup.ml.clip import output_dim
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

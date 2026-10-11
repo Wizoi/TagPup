@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from tagpup.core import paths
 from tagpup.files.identity import read_document_id
 from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import db, generations, schema
@@ -74,7 +75,7 @@ class PhotoEmbeddings:
             try:
                 stat = os.stat(file_path)
                 row = store_embeddings.get(self.photo_index.conn, file_path, self.model_key)
-                if row and row.mtime == stat.st_mtime and row.size == stat.st_size:
+                if row and store_photos.describes(row.mtime, row.size, (stat.st_mtime, stat.st_size)):
                     return np.frombuffer(row.vector, dtype=np.float32).tolist()
             except Exception as e:
                 logger.warning(f"Failed to read/validate database cache for {file_path}: {e}")
@@ -211,6 +212,13 @@ class PhotoIndex:
             return []
         with self._read_lock:
             return store_photos.stamps_with_vectors(self.conn, self.model)
+
+    def current(self, on_disk):
+        """The paths.key of each photo of `on_disk` ({key: (path, mtime, size)}: the files as they are) whose row
+        holds a vector and describes its file (store.photos.describes: the one answer sync gives too)."""
+        return {key for path, mtime, size, vectored in self.stamps()
+                if vectored and (key := paths.key(path)) in on_disk
+                and store_photos.describes(mtime, size, on_disk[key][1:])}
 
     def _load_unlocked(self, vectors=True) -> bool:
         try:
