@@ -160,11 +160,9 @@ def people_filing(db_path):
     try:
         if not tree_has_nodes(conn):
             return {}, [vocabulary.NEW_LIBRARY_FACE_ROOT]
+        top = set(top_level_people(conn))   # a person at the top is no root that people are filed under
         roots = {name.strip().lower(): name.strip() for (name,) in conn.execute(
-            "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name}
-        grown = {vocabulary.key(tag) for tag in group_tags(conn) if "/" not in tag}   # the roots with nodes under them
-        if grown & roots.keys():
-            roots = {key: name for key, name in roots.items() if key in grown}   # a person at the top is no root people go under
+            "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name and name not in top}
         found, groups = {}, set(group_tags(conn))
         for tag_path in tags(conn):
             if tag_path in groups:
@@ -443,10 +441,9 @@ def face_roots(db_path):
     try:
         if not tree_exists(conn):
             return []
-        every = [tag for (tag,) in conn.execute(
-            "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%' ORDER BY tag")]
-        grown = set(group_tags(conn))   # the roots with nodes under them: a person at the top is none of the roots
-        return [tag for tag in every if tag in grown] or every   # unless every root is empty: then they are the roots
+        top = set(top_level_people(conn))   # a person at the top is none of the roots
+        return [tag for (tag,) in conn.execute(
+            "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%' ORDER BY tag") if tag not in top]
     finally:
         conn.close()
 

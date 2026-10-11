@@ -433,7 +433,9 @@ describe("naming a face names the person on the photo too", () => {
   });
 
   test("a placement answered Cancel adds no tag and names no face", async (t) => {
-    const two = [...TAXONOMY, { id: 5, tag: "Family", name: "Family", parent_id: null, has_face: 1 }];
+    // Two roots that hold people: a root with nobody under it is a person of the top level, not a root.
+    const two = [...TAXONOMY, { id: 5, tag: "Family", name: "Family", parent_id: null, has_face: 1 },
+      { id: 6, tag: "Family/Ada Lovelace", name: "Ada Lovelace", parent_id: 5, has_face: 1 }];
     const ctx = await openPhoto(t, { tree: two });
     ctx.show();
     click(ctx.window, ctx.boxes()[0]);

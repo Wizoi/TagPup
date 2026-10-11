@@ -21,11 +21,12 @@ const modalMatchesList = document.getElementById('modal-matches-list');
 const btnModalCancel = document.getElementById('btn-modal-cancel');
 const btnModalSave = document.getElementById('btn-modal-save');
 
-/** The places a person can be made: a root that holds faces, or a group under one (a face node with a node under it). */
+/** The places a person can be made: a group (a face node with a node under it), or a new library's empty People. */
 function groupsOf(nodes) {
     const list = Array.isArray(nodes) ? nodes : [];
     const parents = new Set(list.map(node => node.parent_id).filter(id => id !== null && id !== undefined));
-    return list.filter(node => node.has_face === 1 && node.tag && (rootOf(node.tag) === node.tag || parents.has(node.id)))
+    return list.filter(node => node.has_face === 1 && node.tag
+            && (parents.has(node.id) || (rootOf(node.tag) === node.tag && node.name.toLowerCase() === 'people')))
         .map(node => ({ id: node.id, tag: node.tag })).sort((a, b) => a.tag.localeCompare(b.tag));
 }
 
