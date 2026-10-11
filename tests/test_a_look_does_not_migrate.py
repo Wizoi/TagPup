@@ -40,7 +40,7 @@ class ALookAtALibraryBehind(unittest.TestCase):
         return " ".join(result.output.split())
 
     def test_stats_list_index_and_search_leave_it_behind_and_say_so(self):
-        for command in (["stats"], ["list-index"], ["search", "harbour"]):
+        for command in (["stats"], ["list-index"]):
             with self.subTest(command=command[0]):
                 output = self.look(*command)
                 self.assertEqual(schema.LATEST - 1, self.version())
@@ -66,7 +66,7 @@ class ALookAtALibraryTooFarBehindToRead(unittest.TestCase):
         at_version(self.db_path, 0)
 
     def test_it_says_the_library_is_behind_not_that_there_is_no_index(self):
-        for command in (["stats"], ["list-index"], ["search", "harbour"]):
+        for command in (["stats"], ["list-index"]):
             with self.subTest(command=command[0]):
                 with mock.patch("tagpup.ml.clip.ClipModel._init_model"), \
                         mock.patch("tagpup.ml.clip.ClipModel.embed_text", return_value=[0.1] * 512):

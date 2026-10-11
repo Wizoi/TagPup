@@ -645,58 +645,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
             console.print(f"  • {root}: {count} path(s)")
 
 @cli.command()
-@click.argument("query")
-@click.option("--k", default=10, help="Number of results to return.")
-@click.pass_context
-def search(ctx, query: str, k: int):
-    """Semantic text search across indexed library."""
-    runtime = get_runtime(read_only=True)
-
-    # Load Index
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-    model_name = runtime.settings(Library(db_path)).embedder["model_name"]
-    photo_index = library_index(runtime, db_path, read_only=True)
-    loaded = photo_index.load()
-    say_if_behind(photo_index)
-    if not loaded:
-        say_not_loaded(photo_index, " Please run 'index' first.")
-        return
-        
-    try:
-        # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
-        mismatch = stored_mismatch(photo_index, model_name)
-        if mismatch:
-            console.print(f"[bold red]Error:[/bold red] Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Please run 'index' first to rebuild the index using the new model.")
-            return
-
-        # Embed text query
-        console.print(f"Embedding query: '[bold yellow]{query}[/bold yellow]'")
-        query_vector = runtime.clip(Library(db_path)).embed_text(query)
-
-        # Perform search
-        results = photo_index.search(query_vector, k=k)
-
-        if not results:
-            console.print("[yellow]No matches found.[/yellow]")
-            return
-
-        # Print results
-        table = Table(title=f"Search Results for '{query}'")
-        table.add_column("Similarity", justify="right", style="cyan")
-        table.add_column("Photo Path", style="green")
-        table.add_column("Existing Tags", style="magenta")
-
-        for sim, meta in results:
-            tags_str = ", ".join(meta.get("tags", []) + meta.get("people", []))
-            table.add_row(f"{sim:.3f}", meta["path"], tags_str)
-
-        console.print(table)
-    finally:
-        photo_index.close()
-
-@cli.command()
 @click.pass_context
 def stats(ctx):
     """Index statistics (tag counts, people, coverage)."""

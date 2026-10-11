@@ -156,11 +156,7 @@ class TestFunctionalCLI(unittest.TestCase):
         self.assertIn("Nature", result.output)
         self.assertIn("Alice", result.output)
 
-        # --- 4. SEARCH COMMAND ---
-        result = runner.invoke(cli, ["search", "forest scene"])
-        self.assertEqual(result.exit_code, 0, f"search command failed: {result.output}")
-        self.assertIn("Search Results", result.output)
-        self.assertIn("Nature, Forest", result.output)
+
 
 if __name__ == "__main__":
     unittest.main()
