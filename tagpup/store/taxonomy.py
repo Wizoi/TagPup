@@ -3,9 +3,11 @@ TagTaxonomy, the tree held in memory by the indexer and the suggester.
 
 TagTaxonomy was scripts/taxonomy.py.
 """
+import contextlib
 import json
 import logging
 import os
+import unicodedata
 from typing import Dict, List, Optional, Set
 
 from tagpup.core import paths, vocabulary
@@ -58,7 +60,7 @@ def add_path(conn, path, root_has_face=0):
     return parent_id
 
 
-def ensure_node(conn, text, person=False, tree=None, known=None):
+def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
     """THE one place a name or a keyword that has no node gets one (owner, 2026-10-10: every tag has an id): (the node's id,
     whether a node was made or, for a name, marked as a person), or (None, False) for a text with no levels, a name that two
     people have or that is a group's, and a bare keyword that is a person's name. The caller commits. The edit is a
@@ -71,8 +73,9 @@ def ensure_node(conn, text, person=False, tree=None, known=None):
     each missing level above it (add_path), a root without the flag. A NAME (`person`; a bare one) is the person called it
     if one is, else a node directly under the tree's root marked as a person; a childless word tag of that name at the top
     is marked as one, and a name with a node under it (a group) is given none. `tree` is the derived.Tree the caller holds
-    (kept up to date here); `known` the person_ids.People, read here when it is needed and not given. Idempotent: the
-    second call finds the node the first made."""
+    (kept up to date here); `known` the person_ids.People, read here when it is needed and not given. `edited`: the caller
+    is inside a tree_edit of its own (tagpup.services.tree_fill makes many nodes in one). Idempotent: the second call finds
+    the node the first made."""
     path = vocabulary.normalize(text)
     if not path or not tree_exists(conn):
         return None, False
@@ -103,12 +106,12 @@ def ensure_node(conn, text, person=False, tree=None, known=None):
             if grown:
                 return None, False
             if not has_face:
-                with people.tree_edit(conn):
+                with contextlib.nullcontext() if edited else people.tree_edit(conn):
                     conn.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (hit,))
                 return hit, True
         return hit, False
-    new = vocabulary.SEPARATOR.join(([spelled] if spelled else []) + parts[level:])
-    with people.tree_edit(conn):
+    new = unicodedata.normalize("NFC", vocabulary.SEPARATOR.join(([spelled] if spelled else []) + parts[level:]))   # one form
+    with contextlib.nullcontext() if edited else people.tree_edit(conn):
         if not tree_has_nodes(conn):   # a tree with no node says People is the face root (people_roots): its first node keeps that
             add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT, root_has_face=1)
         node_id = add_path(conn, new, root_has_face=1 if person and bare else 0)

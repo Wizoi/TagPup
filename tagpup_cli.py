@@ -68,6 +68,7 @@ from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import faces_from_tags as faces_from_tags_service
 from tagpup.services import tags_from_faces as tags_from_faces_service
+from tagpup.services import tree_fill as tree_fill_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import damaged_photos
@@ -1225,6 +1226,59 @@ def tags_from_faces(ctx, apply_, guesses, folder):
             console.print("  %d x %s" % (count, why), markup=False, soft_wrap=True)
     if result.refused or result.errors:
         raise SystemExit(1)
+
+
+@cli.command("tree-fill")
+@click.option("--apply", "apply_", is_flag=True,
+              help="Back the library up, then make the nodes in one transaction. Without it, only says how many it would.")
+@click.option("--reveal", is_flag=True, help="Also list the names and keywords (a library is photographs of real people).")
+@click.pass_context
+def tree_fill(ctx, apply_, reveal):
+    """Give the names and keywords the library holds without a node their nodes, once (every tag has an id): a file
+    keyword no node of the tag tree is gets its own path, a name a face or a photo's people hold with no id gets a node
+    directly under the tree's root, marked as a person; the rows are linked to them. Merge them into the right branch
+    afterwards in the library's tag view (the tag merge moves faces and photo lists by id).
+
+    Left, and counted: a name two people have, a name a group has, and a bare keyword that is a person's name. A dry run
+    unless --apply; counts only, and a second --apply finds nothing. The tag tree is not journaled: `undo` cannot take
+    this back; --apply takes a backup of the library first."""
+    library = _existing_library(ctx)
+    report = tree_fill_service.run(library, apply=False)
+    words, names = report["keywords"], report["names"]
+    console.print("%d keyword(s) hold no node of the tag tree: %d use(s) on %d photo(s)."
+                  % (words["without_a_node"], words["uses"], words["photos"]), markup=False)
+    console.print("%d name(s) on faces (%d row(s)) and listed people (%d row(s)) hold no id and no person is called so."
+                  % (names["without_a_node"], names["faces"], names["listed"]), markup=False)
+    for count, why in ((words["left_a_persons_name"], "bare keyword(s) that are a person's name: their keyword, no node of their own"),
+                       (names["left_several_people"], "name(s) that several people have: left, for you to rename one"),
+                       (names["left_a_group"], "name(s) that a group of people has: left"),
+                       (names["left_one_person_unlinked"], "name(s) of one person whose rows are linked to nobody: left")):
+        if count:
+            console.print("  %d %s." % (count, why), markup=False)
+    if reveal:
+        for text in report["reveal"]["keywords"] + report["reveal"]["names"]:
+            console.print("    " + text, markup=False, soft_wrap=True)
+    if not report["made"]["nodes"] and not report["linked"]["faces"] and not report["linked"]["listed_people"]:
+        console.print("Nothing to make.")
+        return
+    if not apply_:
+        _tree_fill_said("Would make", report)
+        console.print("Nothing changed. --apply backs the library up and makes them (not journaled).")
+        return
+    copy = tagpup_db.backup(library.path, "tree-fill")
+    console.print("Backed up to %s." % copy, markup=False, soft_wrap=True)
+    done = tree_fill_service.run(library, apply=True)
+    _tree_fill_said("Made", done)
+    console.print("The tag tree is not journaled: `undo` cannot take this back; the backup can.")
+
+
+def _tree_fill_said(verb, report):
+    """What a tree-fill made or would make, in counts."""
+    made, linked = report["made"], report["linked"]
+    console.print("%s %d node(s): %d for keywords (with their levels), %d for names (%d of them people)."
+                  % (verb, made["nodes"], made["for_keywords"], made["for_names"], made["persons_among_names"]), markup=False)
+    console.print("  linked %d face(s) and %d listed person row(s) to their person; %d keyword row(s) added to photos."
+                  % (linked["faces"], linked["listed_people"], report["keyword_rows_added"]), markup=False)
 
 
 def _job_libraries(ctx):
