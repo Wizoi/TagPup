@@ -22,7 +22,7 @@ The tool is built as a modular Python application with script wrappers. It relie
                        [TagTaxonomy]             ---> [TagSuggester] (Face Match)
                                |                              | (Aggregate & Score)
                                v                              v
-                       [photo_index.db: tree]   ---> [a table of suggested tags (a preview)]
+                       [photo_index.db: tree]   ---> [suggestions kept in the library]
 ```
 
 - **`tagpup_cli.py` (CLI entry point)**: Unified Command Line Interface using `click` and `rich`.
@@ -216,48 +216,20 @@ Scans and indexes a photo library recursively: one or more directories, in one r
   - `--skip-faces`: Skip MTCNN face detection and FaceNet embedding extraction during indexing.
   - `--no-subfolders`: Only the photos directly in each DIRECTORY (`images.photos_in`): what sync queues for a folder the library holds, whose subfolders may be folders to review or ignored.
 
-#### 2. `suggest`
-Shows the tags TagPup would suggest for the photos of a folder, as a table. Nothing is written: no file, and no suggestions file (`--output` and the `write` command that read one were retired 2026-10-09); TagPup's Suggest keeps a folder's suggestions in the library and applies them.
-- **Usage**: `run.bat [global-options] suggest <DIRECTORY>`
-- **Options**:
-  - `--k INTEGER`: Number of nearest neighbors to consider (default: `15`).
-  - `--min-sim FLOAT`: Cosine similarity cutoff (default: `0.35`).
-  - `--add`: Add DIRECTORY to the library first when the library does not hold every folder of photos under it: the folder is recorded as added, as TagPup's Add does (`index` then reads its photos). Without it such a folder is refused, exit code 1, with a message naming the folder and the library: Suggest records faces and vectors on each photo's row, and a row makes its folder the library's -- kept in step, watched, its new files indexed (`tagpup.services.libraries.not_in`).
-
-#### 4. `search`
-Semantic natural language query against indexed visual vectors.
-- **Usage**: `run.bat [global-options] search <QUERY>`
-- **Options**:
-  - `--k INTEGER`: Number of search results to return (default: `10`).
-
-#### 5. `stats`
-Displays overall database metrics, unique tags count, unique people count, top tags, top people, and taxonomy coverage.
-- **Usage**: `run.bat [global-options] stats`
-
-#### 6. `inspect`
-Debugs and displays parsed metadata and raw read fields for a single photo file.
-- **Usage**: `run.bat inspect <PHOTO_PATH>`
-
-#### 7. `list-index`
-Lists all photo filenames currently stored in the index.
-- **Usage**: `run.bat [global-options] list-index`
-- **Options**:
-  - `--folder TEXT`: Filter list results to paths under this directory.
-
-#### 8. `remove`
+#### 2. `remove`
 Deletes a photo or folder's indexed vector and metadata from the database.
 - **Usage**: `run.bat [global-options] remove`
 - **Options**:
   - `--path TEXT`: Remove a specific image path from the index.
   - `--folder TEXT`: Remove all indexed images under this directory recursively.
 
-#### 9. `index-faces`
+#### 3. `index-faces`
 Manually scans photos and indexes face embeddings into the database.
 - **Usage**: `run.bat [global-options] index-faces <DIRECTORY>`
 - **Options**:
   - `--force`: Force re-detection of faces on already processed images.
 
-#### 10. `cluster-faces`
+#### 4. `cluster-faces`
 Runs self-tuning identity resolution to cluster face embeddings and assign names.
 - **Usage**: `run.bat [global-options] cluster-faces`
 - **Options**:
