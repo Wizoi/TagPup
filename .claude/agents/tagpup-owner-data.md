@@ -32,7 +32,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 4. `file_journal`: a photo file is planned, then `writing`, then `done` in the transaction that records its row; `unfinished` finds what a crash left.
 5. `derived.refresh_photos / record / prune / follow_tree / follow_nodes / rebuild_all` and `people.rebuild`: after any of them, in the writing transaction, the derived tables describe the photos; the caller commits. `tools/doctor.py --rebuild-derived` rebuilds the same rows in the same order.
 6. `snapshots.take / listed / restore` (three daily, one weekly, one monthly; restore snapshots first). `services.settings.of / change / stamp` (a change is journaled; a locked group needs acknowledgement).
-7. `store.roots` (`roots_for / to_row / from_row / sql_equals / sql_under`): with roots a path column holds `@root/relative`, converted only at the store boundary. Do not reach `store.roots._rows / _forget / _of_root` (`tagpup/store/checks.py` still does: a missing public accessor, do not add callers).
+7. `store.roots` (`roots_for / to_row / from_row / sql_equals / sql_under`): with roots a path column holds `@root/relative`, converted only at the store boundary. Do not reach `store.roots._rows / _forget / _of_root` (`logical(conn)` is the public read of a library's roots).
 
 ## Invariants and their guards
 | Invariant | Guard |
