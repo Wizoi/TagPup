@@ -177,12 +177,6 @@ class TestFolderFilterIsAFolderNotAPrefix(CliDatabaseCase):
         self.seed([(self.inside, self.inside), (self.sibling, self.sibling)])
         self.folder = os.path.join(self.tmp.name, "Photos")
 
-    def test_list_index_leaves_out_the_sibling_folder(self):
-        result = self.run_cli(["list-index", "--folder", self.folder])
-        self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("(1 matches)", result.output)
-        self.assertNotIn("sibling", result.output)
-
     def test_remove_folder_leaves_the_sibling_folder_alone(self):
         result = self.run_cli(["remove", "--folder", self.folder], input="YES\n")
         self.assertEqual(result.exit_code, 0, result.output)

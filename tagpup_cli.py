@@ -88,13 +88,11 @@ from tagpup.files import images as image_files
 from tagpup.core import library as libraries
 from tagpup.core.library import Library
 
-def get_runtime(read_only=False):
+def get_runtime():
     """The models a command runs (tagpup.runtime), from the settings of the library it is
     given: each is built the first time the command asks for it, and loaded the first
-    time it is used. `read_only` for a command that only looks (stats, list-index,
-    search): it reads the library's settings without stamping one that holds none, as
-    the MCP server's inspections and the doctor do -- a look was a journaled change."""
-    return Runtime(read_only=read_only)
+    time it is used."""
+    return Runtime()
 
 def _stamp(path):
     """(mtime, size) of the file now, or None when it cannot be read."""
@@ -104,25 +102,9 @@ def _stamp(path):
         return None
     return (stat.st_mtime, stat.st_size)
 
-def library_index(runtime, db_path, read_only=False):
-    """The library's photos, with their vectors under its CLIP model. `read_only` for a
-    command that only looks: the library is not migrated (docs/findings.md, #243)."""
-    return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)), read_only=read_only)
-
-def say_if_behind(photo_index):
-    """Tell the person a library a look did not migrate is behind this version of TagPup."""
-    if photo_index.behind:
-        console.print(f"[yellow]This library has not had {len(photo_index.behind)} of this version's"
-                      " migrations; a look does not apply them. Indexing it, or opening it in TagPup,"
-                      " brings it up to date.[/yellow]")
-
-def say_not_loaded(photo_index, hint=""):
-    """A look could not load the library: it is too far behind this version to be read (say so; the note of
-    say_if_behind came just before), or it holds no index (docs/findings.md, #297)."""
-    if photo_index.behind:
-        console.print("[bold red]Error:[/bold red] This library cannot be read until it is brought up to date.")
-    else:
-        console.print("[bold red]Error:[/bold red] No photo index found." + hint)
+def library_index(runtime, db_path):
+    """The library's photos, with their vectors under its CLIP model."""
+    return PhotoIndex(db_path=db_path, model=runtime.model_key(Library(db_path)))
 
 
 def get_exiftool_path(db_path, read_only=False) -> str:
@@ -1446,57 +1428,6 @@ def snapshots_restore(ctx, name, apply_):
     console.print("Restored %s from %s. The library as it was is %s: `snapshots restore %s --apply` puts it back."
                   % (library.name, name, result.details["before_restore"], result.details["before_restore"]),
                   markup=False)
-
-
-@cli.command("list-index")
-@click.option("--folder", default=None, help="Filter results to paths under this directory.")
-@click.pass_context
-def list_index(ctx, folder):
-    """List all photos currently stored in the index, optionally filtered by folder."""
-    runtime = get_runtime(read_only=True)
-
-    test_mode = ctx.obj.get("test", False)
-    cli_db = ctx.obj.get("db")
-    db_path = get_db_path(test_mode, cli_db)
-
-    photo_index = library_index(runtime, db_path, read_only=True)
-    loaded = photo_index.load()
-    say_if_behind(photo_index)
-    if not loaded:
-        say_not_loaded(photo_index)
-        return
-        
-    try:
-        # Filter paths and gather metadata
-        # paths.is_under, not startswith: C:\Photos2 starts with C:\Photos.
-        matches = [meta for meta in photo_index.records()
-                   if not folder or paths.is_under(meta["path"], folder)]
-
-        if not matches:
-            console.print("[yellow]No matching photos found in the index.[/yellow]")
-            return
-
-        table = Table(title=f"Indexed Photos Summary ({len(matches)} matches)")
-        table.add_column("Photo File", style="green")
-        table.add_column("Tags", style="magenta")
-        table.add_column("People", style="cyan")
-        table.add_column("Caption", style="yellow")
-
-        for meta in sorted(matches, key=lambda x: x["path"]):
-            filename = os.path.basename(meta["path"])
-            tags_str = ", ".join(meta.get("tags", [])) or "-"
-            people_str = ", ".join(meta.get("people", [])) or "-"
-            
-            captions = meta.get("captions", [])
-            caption_str = captions[0] if captions else "-"
-            if len(caption_str) > 50:
-                caption_str = caption_str[:47] + "..."
-
-            table.add_row(filename, tags_str, people_str, caption_str)
-
-        console.print(table)
-    finally:
-        photo_index.close()
 
 
 @cli.command("remove")
