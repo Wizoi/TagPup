@@ -29,12 +29,6 @@ Notifications can be missed, so the whole library is synced
   again then too (a root folder added in the settings is watched within RECHECK).
 The daily `sync` job stays as the safety net (tagpup.jobs.recurring).
 
-The photos a notification names as made, written or moved in are noted too, and handed
-to `recheck(library, photos)` before their folder's sync: a photo recorded damaged is read
-again then, whatever its stamp (tagpup.services.damaged_photos.check_again). A good copy
-laid over a damaged file can keep its modified time and its size, and the stamp alone
-would never tell.
-
 `busy()` is true while a sync it started runs: an update waits for it
 (tagpup.web.lifecycle). stop() stops the watches and waits for that sync to end; start()
 after a stop watches again, without the catch-up.
@@ -136,12 +130,8 @@ class Watcher:
     whether a file matters (a photo). The rest are the timings above, a test's shorter."""
 
     def __init__(self, libraries, folders, sync, concerns, debounce=DEBOUNCE, recheck=RECHECK, tick=TICK,
-                 clock=time.monotonic, observer=make_observer, max_watches=MAX_WATCHES, recent=None,
-                 written=None):
+                 clock=time.monotonic, observer=make_observer, max_watches=MAX_WATCHES, recent=None):
         self._libraries, self._folders, self._sync, self._concerns = libraries, folders, sync, concerns
-        #: written(library, photos): the photos a notification said were made, written or
-        #: moved in, before their folder's sync (tagpup.runtime.check_damaged).
-        self._written = written
         #: recent(library): was it synced whole lately? The catch-up at start is skipped
         #: for one that was -- a crash restart or an update need not walk it again.
         self._recent = recent or (lambda library: False)
@@ -154,8 +144,7 @@ class Watcher:
         #: subfolders, since a watch on a folder sees nothing of the folder's own rename.
         self._parents = {}
         self._parents_limited = False
-        #: library key -> {"library", "folders": {key: [folder, last noticed]}, "whole": time or None,
-        #: "files": {key: photo written}}.
+        #: library key -> {"library", "folders": {key: [folder, last noticed]}, "whole": time or None}.
         self._pending = {}
         self._syncing = 0
         self._stop = threading.Event()
@@ -274,7 +263,7 @@ class Watcher:
                            "syncing its libraries whole.")
             self._note_whole(libraries)
             return
-        folders, written = [], []
+        folders = []
         if event.is_directory:
             if event.event_type not in ("deleted", "moved"):
                 # A folder made: its files are notified one by one. A folder modified:
@@ -291,11 +280,6 @@ class Watcher:
             for path in (event.src_path, getattr(event, "dest_path", "")):
                 if path and self._concerns(path):
                     folders.append(os.path.dirname(path))
-            if event.event_type in ("created", "modified", "closed") and self._concerns(event.src_path):
-                written.append(event.src_path)
-            dest_path = getattr(event, "dest_path", "")
-            if event.event_type == "moved" and dest_path and self._concerns(dest_path):
-                written.append(dest_path)
             if event.event_type in ("deleted", "moved") and not self._concerns(event.src_path):
                 # Windows cannot say what a name that is gone was: a folder deleted or
                 # moved out comes as a file deleted. Its photos' rows are its parent's
@@ -317,13 +301,10 @@ class Watcher:
                 self._last_event[library.key] = heard
                 for folder in folders:
                     pending["folders"][paths.key(folder)] = [paths.stored(folder), now]
-                for path in written:
-                    pending["files"][paths.key(path)] = paths.stored(path)
 
     def _pending_for(self, library):
         """Under the lock."""
-        return self._pending.setdefault(library.key, {"library": library, "folders": {}, "whole": None,
-                                                      "files": {}})
+        return self._pending.setdefault(library.key, {"library": library, "folders": {}, "whole": None})
 
     def _note_whole(self, libraries):
         now = self._clock()
@@ -332,9 +313,8 @@ class Watcher:
                 self._pending_for(library)["whole"] = now
 
     def _due(self):
-        """[(library, folder or None, photos written)] whose notifications have settled,
-        taken off the list: the whole library, or each folder no pending folder of it is
-        under, each with the photos noted as written in it."""
+        """[(library, folder or None)] whose notifications have settled, taken off the
+        list: the whole library, or each folder no pending folder of it is under."""
         now = self._clock()
         due = []
         with self._lock:
@@ -342,10 +322,9 @@ class Watcher:
                 library = pending["library"]
                 if pending["whole"] is not None:
                     if now - pending["whole"] >= self.debounce:
-                        due.append((library, None, sorted(pending["files"].values(), key=paths.key)))
+                        due.append((library, None))
                         pending["whole"] = None
                         pending["folders"].clear()
-                        pending["files"].clear()
                     continue
                 folders = pending["folders"]
                 taken = []
@@ -362,11 +341,7 @@ class Watcher:
                     if folder in taken or any(paths.is_under(folder, parent) for parent in taken):
                         del folders[key]
                 for folder in taken:
-                    files = [path for key, path in pending["files"].items()
-                             if paths.same(os.path.dirname(path), folder) or paths.is_under(path, folder)]
-                    for path in files:
-                        pending["files"].pop(paths.key(path), None)
-                    due.append((library, folder, sorted(files, key=paths.key)))
+                    due.append((library, folder))
         return due
 
     # ---- The watcher's thread ------------------------------------------------------------
@@ -384,22 +359,17 @@ class Watcher:
                 except Exception:
                     logger.exception("Looking at the folders to watch failed")
                 next_look = self._clock() + self.recheck
-            for library, folder, written in self._due():
+            for library, folder in self._due():
                 if stop.is_set():
                     # Not synced now: the catch-up at the next start finds it.
                     break
-                self._run(library, folder, written)
+                self._run(library, folder)
 
-    def _run(self, library, folder, written=()):
+    def _run(self, library, folder):
         with self._lock:
             self._syncing += 1
             self._current = {"library": library.name, "folder": folder, "started": _now()}
         result = None
-        if written and self._written is not None:
-            try:
-                self._written(library, list(written))
-            except Exception:
-                logger.exception("Reading the photos written in %s again failed", library.name)
         try:
             result = self._sync(library, folder)
             what = folder if folder else "every folder"

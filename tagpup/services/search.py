@@ -337,7 +337,7 @@ class PhotoIndex:
         """The photos just removed leave nothing in the thumbnail cache (tagpup.services.thumbnails.sweep).
         The rows are gone and committed; a cache that cannot be swept holds files nothing will serve."""
         try:
-            from tagpup.services import thumbnails   # thumbnails reaches damaged_photos, which reaches this module
+            from tagpup.services import thumbnails   # imported when used
             thumbnails.sweep(Library(self.db_path))
         except Exception as why:
             index_log.warning("Could not clear the thumbnails of the photos removed: %s", why)

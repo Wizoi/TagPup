@@ -100,7 +100,6 @@ class TheDryRun(AdoptionCase):
         # Three folders of 14 photos, two photos beside them under no root.
         self.assertEqual({"rows": 44, "convert": 42, "already": 0, "outside": 2, "respelled": 0, "irreversible": 0,
                           "json": 42, "share_spelled": 0, "duplicates": 0}, tables["photos"])
-        self.assertEqual({"rows": 2, "convert": 2}, {k: tables["damaged_files"][k] for k in ("rows", "convert")})
         self.assertEqual(1, tables["added_folders"]["convert"])
         self.assertEqual(1, tables["suggestions"]["json"])
         self.assertEqual(["library.roots", "library.ignored"], result.details["rehearsal"]["settings"])
@@ -271,7 +270,7 @@ class WhatItDoes(AdoptionCase):
         listed = [entry for entry in self.history() if entry["operation"].startswith("roots adopt")]
         self.assertEqual(1, len(listed))
         self.assertEqual(("roots adopt: pictures", "applied"), (listed[0]["operation"], listed[0]["status"]))
-        self.assertEqual({"photos": 42, "suggestions": 0, "damaged_files": 2, "added_folders": 1, "change_files": 0},
+        self.assertEqual({"photos": 42, "suggestions": 0, "added_folders": 1, "change_files": 0},
                          listed[0]["summary"]["converted"])
 
     def test_a_new_backup_is_taken_first_every_time(self):
@@ -488,15 +487,14 @@ class Undoing(AdoptionCase):
         rehearsal = self.undo(apply=False)
         self.assertIsNone(rehearsal.refused, rehearsal.refused)
         self.assertEqual(self.history()[0]["summary"]["converted"], {"photos": 42, "suggestions": 0,
-                                                                     "damaged_files": 2, "added_folders": 1,
-                                                                     "change_files": 0})
-        self.assertEqual(45, rehearsal.attempted)
+                                                                     "added_folders": 1, "change_files": 0})
+        self.assertEqual(43, rehearsal.attempted)
         self.assertEqual(before, self.fingerprint())
 
     def test_the_undo_puts_every_row_back_as_it_was(self):
         result = self.undo()
         self.assertIsNone(result.refused, result.refused)
-        self.assertEqual(45, result.changed)
+        self.assertEqual(43, result.changed)
         self.assertEqual(self.before, self.side.dump(leave_out=NOT_COMPARED))
         self.assertEqual([], self.side.library_roots())
         self.assertEqual("undone", [e for e in self.history() if e["id"] == self.change][0]["status"])
@@ -515,7 +513,7 @@ class Undoing(AdoptionCase):
         rehearsal = self.undo(apply=False)
         self.assertIsNone(rehearsal.refused, rehearsal.refused)
         said = " ".join(rehearsal.details["rehearsal"]["notes"])
-        self.assertIn("returns 45 path(s) in the library's tables", said)
+        self.assertIn("returns 43 path(s) in the library's tables", said)
         self.assertIn("2 path(s) recorded in later changes' values", said)
         self.assertIn("can still be undone afterwards", said)
         self.assertIsNone(self.undo().refused)
@@ -569,9 +567,9 @@ class Undoing(AdoptionCase):
 
         runner = CliRunner()
         said = runner.invoke(cli, ["--db", self.side.db_path, "undo", str(self.change)]).output
-        self.assertIn("Rehearsed: 45 row(s)", said)
+        self.assertIn("Rehearsed: 43 row(s)", said)
         said = runner.invoke(cli, ["--db", self.side.db_path, "undo", str(self.change), "--apply"]).output
-        self.assertIn("Undid change %d: 45 row(s) written back" % self.change, said)
+        self.assertIn("Undid change %d: 43 row(s) written back" % self.change, said)
         self.assertEqual(self.before, self.side.dump(leave_out=NOT_COMPARED))
 
 
@@ -1170,7 +1168,7 @@ class TheCommandLine(AdoptionCase):
         said = self.run_cli("adopt", "--name", "pictures", "--address", rl.ADDRESS, "--location", self.side.pictures,
                             "--apply")
         self.assertEqual(0, said.exit_code, said.output)
-        self.assertIn("Adopted: 45 row(s) converted, change", said.output)
+        self.assertIn("Adopted: 43 row(s) converted, change", said.output)
         self.assertIn("Backup:", said.output)
         listed = self.run_cli().output
         self.assertIn("pictures", listed)

@@ -27,9 +27,9 @@ says so); the service answers that in a sentence.
 import collections
 import time
 
-from tagpup.core import paths, vocabulary
+from tagpup.core import vocabulary
 from tagpup.core.result import Refused
-from tagpup.store import damaged_files, db, derived, person_ids, schema, search_index
+from tagpup.store import db, derived, person_ids, schema, search_index
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 from tagpup.core.vocabulary import Ref
@@ -699,11 +699,6 @@ def photo_row(conn, photo_id):
                         " FROM photos p WHERE p.id = ?", (photo_id,)).fetchall()
     rows = store_roots.natives(conn, rows, 0, raw=(6,))
     return tuple(rows[0]) if rows else None
-
-
-def damaged(conn):
-    """{paths.key: store.damaged_files.Record} of every record of a damaged photo (a handful)."""
-    return {paths.key(each.path): each for each in damaged_files.every(conn)}
 
 
 # ---- A selection's tally ---------------------------------------------------------------------

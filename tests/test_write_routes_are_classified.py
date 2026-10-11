@@ -38,7 +38,6 @@ ALLOWED = {
     "/api/activity/jobs/run": "runs a recurring job now; the Activity page names the library in the body, so no route guard sees it: "
                               "the sync job refuses itself while names are given (runtime.sync, tested in test_name_faces_routes), "
                               "the others (snapshots, prune-journal) change no name, face or tag",
-    "/api/activity/attention/check": "re-reads what needs attention; changes no name, face, tag or file",
     "/api/activity/models/unload": "frees the models in memory; no data",
     "/api/photo/open": "opens the file in the viewer; no data",
     "/api/photo/open-explorer": "shows the file in Explorer; no data",
@@ -47,7 +46,6 @@ ALLOWED = {
     # Writes that touch nothing the plan or the grouping reads.
     "/api/databases/create": "makes another library",
     "/api/settings": "the library's settings; they apply to the next index or Suggest, not to names already read",
-    "/api/damaged-photos/check": "records which files cannot be read, in the damaged-photo marks only",
     "/api/sync/review/ignore": "marks a folder ignored in the review list; adds no photo (include does, and is guarded)",
     "/api/taxonomy/create": "adds a node to the tree; no face, photo or existing node changes",
     # The four the review found missing, decided from the code (the first three are not guarded; Undo and the rest now are).

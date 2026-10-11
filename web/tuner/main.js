@@ -1,7 +1,6 @@
 // The TagTuner page: start-up and wiring. Each feature is a module beside this one,
 // its state in state.js; every request goes through api.js, which puts the library
 // in front of it (web/common/api.js).
-import { showDamagedCount } from './common/damaged-count.js';
 import { wireFaceJobBanner } from './common/face-job-banner.js';
 import { wireRootsBanner } from './common/roots-banner.js';
 import { initDatabaseSelector } from './common/library.js';
@@ -86,8 +85,6 @@ document.addEventListener('DOMContentLoaded', () => {
     wireRootsBanner();
     // A bulk assignment of faces that stopped part-way (or runs in another window) is offered here (#907).
     wireFaceJobBanner({ changed: () => { fetchPhotos(); } });
-    // How many of the library's photos were found damaged, in the header.
-    showDamagedCount(document.getElementById('damaged-badge'));
 
     // ---- Start ------------------------------------------------------------
     // Last, deliberately: these read the library and pick up an index already running, which calls into

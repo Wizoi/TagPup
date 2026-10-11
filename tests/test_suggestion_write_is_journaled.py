@@ -45,13 +45,13 @@ class TheWrite(FilesCase):
         self.assertEqual(["Beach", "Relay"], self.indexed(self.b))
         self.assertEqual(captions, {path: field_of(path, "XMP:Description") for path in (self.a, self.b)})
 
-    def test_a_photo_found_damaged_is_skipped_and_said(self):
-        # Nothing is written into a photo found damaged (tagpup.services.libraries.
-        # leave_out_damaged): skipped, and returned with why.
-        from tagpup.services import damaged_photos
-        stat = os.stat(self.b)
-        damaged_photos.remember(self.library, [(self.b, (stat.st_mtime, stat.st_size), damaged_photos.INCOMPLETE,
-                                                "the last 70000 bytes are zeros", 70000)])
+    def test_a_photo_cut_short_is_skipped_and_said(self):
+        # Nothing is written into a photo whose file stops short (tagpup.services.file_changes.skip_cut_short):
+        # skipped, and returned with why.
+        with open(self.b, "rb") as handle:
+            whole = handle.read()
+        with open(self.b, "wb") as handle:
+            handle.write(whole[:-20])
         self.assertTrue(self.write())
         self.assertEqual(["Beach", "Relay"], keywords_of(self.b))
         self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(self.a))

@@ -89,8 +89,7 @@ def refuse_unwritable(result, photo_paths, full=False):
 
 def leave_out_unwritable(photo_paths):
     """(`photo_paths` but the unwritable ones, [(path, why)] of those left out): a bulk write
-    skips them and writes the rest (libraries.leave_out_damaged does for the photos a
-    library holds)."""
+    skips them and writes the rest."""
     found = dict(unwritable(photo_paths))
     return ([p for p in photo_paths if p not in found],
             [(path, "damaged, nothing is written to it: %s" % why) for path, why in found.items()])

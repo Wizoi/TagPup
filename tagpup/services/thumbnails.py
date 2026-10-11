@@ -19,12 +19,9 @@ a photo, 1.5-3 GB for photo_index), and nothing in it is the only copy of anythi
   the services that delete a photo or remove a folder: event-driven, as everything here is), and `sweep`,
   called by what removes photos in bulk, takes any that remain for a photo that is no longer there or is
   somewhere else.
-* **A damaged photo** (damaged_files: its record, while the file has the stamp it was found with) is
-  answered a placeholder without its file being decoded, and nothing is kept for it. One that does not decode
-  though no record says so is answered the same, and remembered in this process for as long as its
-  stamp does not change, so a damaged file is not decoded again for each of the thousand cards that
-  ask. Nothing is written to the library for it: recording it is the indexer's finding, and a false one
-  would refuse writes to a good photo.
+* **A damaged photo** (one that does not decode) is answered a placeholder, and nothing is kept for it. It is
+  remembered in this process for as long as its stamp does not change, so a damaged file is not decoded again for
+  each of the thousand cards that ask. Nothing is written to the library for it.
 * **A cache that cannot be written** (folder missing and not makeable, read-only, disk full) costs
   only the cache: the thumbnail is made and answered, not kept, and the first time is logged. A file that cannot
   be read is `Unavailable`, a sentence, never a traceback and never a placeholder that looks like a verdict.
@@ -35,11 +32,9 @@ import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from tagpup.core import paths
 from tagpup.core.result import NotFound
 from tagpup.files import images, shares, thumbs
-from tagpup.services import damaged_photos
-from tagpup.store import damaged_files, db
+from tagpup.store import db
 from tagpup.store import photos as store_photos
 from tagpup.store import roots as store_roots
 
@@ -156,7 +151,7 @@ def _make(root, photo_id, row_path, path, stamp):
             _remember_undecodable(key, UNREADABLE)
             return Thumb(thumbs.placeholder(), UNREADABLE)
         # The file changed while it was decoded: what was made is a picture of neither state, and is not kept.
-        again = damaged_photos.stamp_of(path)
+        again = shares.stamp_of(path)
         kept = False
         if again == stamp:
             try:
@@ -169,11 +164,11 @@ def _make(root, photo_id, row_path, path, stamp):
 
 def _file_stamp(path):
     """The file's (mtime, size), or None when it is not there; raises Unavailable for a share that is away
-    (answered at once while it is taken as away, damaged_photos.stamp_of) and for a file that cannot be read."""
-    stamp = damaged_photos.stamp_of(path)
-    if stamp is damaged_photos.UNANSWERED:
+    (answered at once while it is taken as away, shares.stamp_of) and for a file that cannot be read."""
+    stamp = shares.stamp_of(path)
+    if stamp is shares.UNANSWERED:
         raise Unavailable("The network share this photo is on is away just now: try again in a moment.")
-    if stamp is damaged_photos.CANNOT_READ:
+    if stamp is shares.CANNOT_READ:
         raise Unavailable("The photo's file cannot be read (it is there, but permissions or another program "
                           "refuse it): try again in a moment.")
     return stamp
@@ -201,9 +196,6 @@ def serve(library, photo_id):
             return Thumb(last, LAST_KNOWN)
         raise NotFound("The file of photo %d (%s) is not there, and no thumbnail of it was kept." % (
             photo_id, os.path.basename(row.path)))
-    if row.damaged is not None and row.damaged.kind != damaged_files.INCOMPLETE \
-            and damaged_photos.describes((row.damaged.mtime, row.damaged.size), stamp):
-        return Thumb(thumbs.placeholder(), DAMAGED)
     return _make(root, photo_id, row.row_path, row.path, stamp)
 
 
@@ -290,7 +282,7 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
     and the files, writes only the cache.
 
     Returns {"photos": looked at, "present": already cached, "to_make": without one, "made", "damaged": not
-    decoded (recorded damaged, or found not to), "missing": file not there, "failed": file not reachable,
+    decoded (found not to), "missing": file not there, "failed": file not reachable,
     "unwritable": made and not kept (the cache cannot be written), "away": the shares found away (each asked once, its photos
     not walked: "skipped_away" counts them), "stopped_unwritable": the first unwritable cache ended the run, "swept": entries of photos the library no longer
     holds, deleted (with --apply only), "bytes_cached": what the cache holds before, "bytes_made", "estimate": bytes the missing ones would take
@@ -304,7 +296,6 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
               "stopped_unwritable": False, "bytes_cached": bytes_cached, "bytes_made": 0, "estimate": 0, "stopped": False, "average": average}
     conn = _look(library)
     try:
-        recorded = {paths.key(each.path): each for each in damaged_files.every(conn)}
         away, stop = set(), threading.Event()
         after = 0
         with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -320,22 +311,17 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                     if share in away:
                         counts["skipped_away"] += 1   # asked once: not asked again for each of its photos
                         continue
-                    stamp = damaged_photos.stamp_of(path)
-                    if stamp is damaged_photos.UNANSWERED:
+                    stamp = shares.stamp_of(path)
+                    if stamp is shares.UNANSWERED:
                         away.add(share)
                         counts["away"].append(path.split("\\")[2] if path.startswith("\\") else share)
                         counts["skipped_away"] += 1
                         continue
-                    if stamp is damaged_photos.CANNOT_READ:
+                    if stamp is shares.CANNOT_READ:
                         counts["failed"] += 1
                         continue
                     if stamp is None:
                         counts["missing"] += 1
-                        continue
-                    record = recorded.get(paths.key(path))
-                    if record is not None and record.kind != damaged_files.INCOMPLETE \
-                            and damaged_photos.describes((record.mtime, record.size), stamp):
-                        counts["damaged"] += 1
                         continue
                     path_hash = _hash_of(row_path)
                     if os.path.isfile(thumbs.entry_path(root, photo_id, path_hash, *stamp)):

@@ -24,7 +24,7 @@ import roots_library as rl  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core import machine, paths  # noqa: E402
 from tagpup.store import db, faces, folders, inspection, journal  # noqa: E402
-from tagpup.store import added_folders, damaged_files, embeddings, file_journal  # noqa: E402
+from tagpup.store import added_folders, embeddings, file_journal  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 from tagpup.store import settings as store_settings  # noqa: E402
@@ -79,8 +79,6 @@ class WhatTheLibraryHolds(TwoLibraries):
         self.assertEqual([], self.plain.library_roots())
 
     def test_every_other_table_with_a_path_is_converted(self):
-        self.assertEqual({"@pictures/2024 Harbour/Cut short.jpg", "@pictures/2024 Regatta/Cut short.jpg"},
-                         set(self.rooted.raw_paths("damaged_files")))
         self.assertEqual(["@pictures/Added later"], self.rooted.raw_paths("added_folders"))
         if rl.EXIFTOOL:
             self.assertEqual(["@pictures/2024 Regatta/IMG_1001.jpg", "@pictures/2024 Regatta/IMG_1002.jpg"],
@@ -176,14 +174,6 @@ class EveryReadAnswersNative(TwoLibraries):
                     folders.ignored(conn))
         self.same(ask)
 
-    def test_damaged_files_come_in_the_order_they_always_did(self):
-        def ask(conn, side):
-            return ([r.path for r in damaged_files.every(conn)],
-                    [r.path for r in damaged_files.under(conn, side.pictures)],
-                    [r.path for r in damaged_files.under(conn, os.path.join(side.pictures, "2024 Harbour"))])
-        listed = self.same(ask)
-        self.assertEqual(sorted(listed[0], key=str.lower), listed[0])
-
     def test_suggestions_in_a_folder_carry_native_paths(self):
         found = self.same(lambda conn, side: suggestions.in_folder(conn, side.pictures))
         (path, entry), = found.items()
@@ -278,19 +268,11 @@ class EveryWriteConverts(unittest.TestCase):
         self.assertEqual(1, removed["photos"])
         self.assertEqual(1, removed["faces"])
 
-    def test_removing_a_folder_takes_its_rows_its_added_record_and_its_damaged_ones(self):
+    def test_removing_a_folder_takes_its_rows_and_its_added_record(self):
         folder = os.path.join(self.side.pictures, "2024 Regatta")
         removed = self.write(lambda conn: store_photos.remove_under(conn, folder))
         self.assertEqual(4, removed["photos_removed"])
         self.assertEqual([], [p for p in self.held() if p.startswith("@pictures/2024 Regatta")])
-        self.assertEqual(["@pictures/2024 Harbour/Cut short.jpg"], self.side.raw_paths("damaged_files"))
-
-    def test_a_damaged_file_is_recorded_as_its_row(self):
-        path = os.path.join(self.side.pictures, "2025", "Cut.jpg")
-        new = self.write(lambda conn: damaged_files.record(conn, path, (1.0, 5), "empty", "no bytes"))
-        self.assertTrue(new)
-        self.assertIn("@pictures/2025/Cut.jpg", self.side.raw_paths("damaged_files"))
-        self.assertFalse(self.write(lambda conn: damaged_files.record(conn, path, (1.0, 5), "empty", "no bytes")))
 
     def test_an_added_folder_is_recorded_as_its_row(self):
         self.write(lambda conn: added_folders.record(conn, os.path.join(self.side.pictures, "More", "Deeper")))
@@ -848,15 +830,6 @@ class TheHotLookupsUseTheirIndexes(unittest.TestCase):
         self.assertNotIn("SCAN faces", plan)
         self.assertNotIn("SCAN photos", plan)
         self.assertIn("SEARCH", plan)
-
-    def test_the_damaged_files_of_a_folder(self):
-        conn = self.conn()
-        try:
-            where, params = store_roots.sql_under(conn, "path", os.path.join(self.side.pictures, "2024 Harbour"))
-        finally:
-            conn.close()
-        self.assertNotIn("SCAN damaged_files", self.plan("SELECT path FROM damaged_files WHERE " + where, params))
-
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class OneBoundaryAndNoOther(unittest.TestCase):

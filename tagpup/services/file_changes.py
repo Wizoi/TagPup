@@ -56,7 +56,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from tagpup.core import fields, paths
-from tagpup.core.result import Result
+from tagpup.core.result import SKIPPED_DAMAGED, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, lock_owners, names
@@ -307,10 +307,6 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         raise
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
     return result
-
-
-#: details key: how many photos of a write were left out because their files do not open whole.
-SKIPPED_DAMAGED = "skipped_damaged"
 
 
 def skip_cut_short(result, path, why):

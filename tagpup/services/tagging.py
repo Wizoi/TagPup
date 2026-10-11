@@ -6,8 +6,8 @@ from tagpup.core import fields, paths, suggesting, validation, vocabulary
 from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, DAMAGED_PHOTOS, UNREADABLE_BASE_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, metadata, names
-from tagpup.services import damaged_photos, file_changes, file_only, libraries
+from tagpup.files import exiftool_session, field_values, metadata, names, shares
+from tagpup.services import file_changes, file_only, libraries
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.store import db, person_ids, photos, taxonomy
@@ -275,7 +275,7 @@ def leave_out_missing(photo_paths):
     missing: the write meets it itself, and stops at it as for any read or write error of a present file."""
     present, gone = [], []
     for path in photo_paths:
-        (gone if damaged_photos.stamp_of(path) is None else present).append(path)
+        (gone if shares.stamp_of(path) is None else present).append(path)
     return present, [(path, MISSING_WHY) for path in gone]
 
 
@@ -323,12 +323,9 @@ def _change_present(library, photo_paths, add, remove, exiftool_path, operation=
     """change_tags for photos whose files are there."""
     refused = _refused(len(photo_paths), None)
     held, loose = libraries.split(library, photo_paths)
-    if held and libraries.refuse_writes(refused, library, held, damaged_ok=True):
+    if held and libraries.refuse_writes(refused, library, held):
         return refused
-    # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    kept, left = libraries.leave_out_damaged(refused, library, held) if held else ([], [])
-    if kept is None:
-        return refused
+    kept, left = held, []
     add = [vocabulary.normalize(tag) for tag in add]
     done = None
     if held or not loose:
@@ -385,12 +382,9 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
         return _refused(len(changes), problem)
     refused = _refused(len(changes), None)
     held, loose = libraries.split(library, [path for path, (add, remove) in changes.items() if add or remove])
-    if held and libraries.refuse_writes(refused, library, held, damaged_ok=True):
+    if held and libraries.refuse_writes(refused, library, held):
         return refused
-    # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    kept, left = libraries.leave_out_damaged(refused, library, held) if held else ([], [])
-    if kept is None:
-        return refused
+    kept, left = held, []
 
     def plan_of(chosen):
         return [(path, list(changes[path][0]), changes[path][1]) for path in chosen]
@@ -595,15 +589,8 @@ def write_suggestions(library, writes, exiftool_path, nobackup=False):
     if problem:
         result.refuse(problem)
         return result
-    if libraries.refuse_writes(result, library, [path for path, _tags, _caption in writes], damaged_ok=True):
+    if libraries.refuse_writes(result, library, [path for path, _tags, _caption in writes]):
         return result
-    # A damaged photo is skipped, the rest written (libraries.leave_out_damaged).
-    kept, left = libraries.leave_out_damaged(result, library, [path for path, _tags, _caption in writes])
-    if kept is None:
-        return result
-    if left:
-        kept = {paths.key(path) for path in kept}
-        writes = [write for write in writes if paths.key(write[0]) in kept]
     # Who a bare name means, read once for the run, not once per photo.
     people = taxonomy.people_paths(library.path)
     # A photo named twice in the file is written once, with the tags of both.
@@ -622,7 +609,7 @@ def write_suggestions(library, writes, exiftool_path, nobackup=False):
             after.update(fields.caption_fields(caption))
         return file_changes.Plan(after=after, detail=(tags, caption))
 
-    # What was skipped as damaged is in the Result returned: its skips, and skipped_damaged.
-    return libraries.with_skipped(file_changes.write_fields(
+    # A photo cut short is in the Result returned: its skips, and skipped_damaged.
+    return file_changes.write_fields(
         library, "write suggestions", exiftool_path, [path for path, _tags, _caption in wanted.values()],
-        SUGGESTION_READ, plan_one, summary={"photos": len(wanted)}), left)
+        SUGGESTION_READ, plan_one, summary={"photos": len(wanted)})

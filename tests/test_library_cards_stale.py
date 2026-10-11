@@ -21,7 +21,8 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
-from tagpup.services import damaged_photos, library_view  # noqa: E402
+from tagpup.files import shares  # noqa: E402
+from tagpup.services import library_view  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
@@ -57,7 +58,7 @@ class Disk(unittest.TestCase):
             self.assertNotIn("stale", card)
 
     def test_view_looks_at_no_file(self):
-        with mock.patch.object(damaged_photos, "stamp_of", side_effect=AssertionError("a stat")):
+        with mock.patch.object(shares, "stamp_of", side_effect=AssertionError("a stat")):
             self.assertEqual(3, len(library_view.view(self.vl.library, "all")["cards"]))
 
     def test_a_row_nobody_stamped_is_not_called_changed_but_is_called_missing_when_its_file_is_gone(self):
@@ -69,8 +70,8 @@ class Disk(unittest.TestCase):
 
     def test_a_share_that_did_not_answer_gives_no_mark_and_a_file_that_cannot_be_read_gives_none(self):
         os.remove(self.vl.path_of(self.gone))
-        for answer in (damaged_photos.UNANSWERED, damaged_photos.CANNOT_READ):
-            with mock.patch.object(damaged_photos, "stamp_of", return_value=answer):
+        for answer in (shares.UNANSWERED, shares.CANNOT_READ):
+            with mock.patch.object(shares, "stamp_of", return_value=answer):
                 self.assertEqual({self.same: None, self.edited: None, self.gone: None}, self.marks())
 
     def test_a_share_found_away_costs_one_wait_for_the_whole_batch(self):
@@ -81,15 +82,15 @@ class Disk(unittest.TestCase):
         def bounded(location, call, seconds, away_seconds=None):
             calls.append(location)
             return "away", None
-        with mock.patch.object(damaged_photos, "_on_a_share", return_value=True), \
-                mock.patch.object(damaged_photos.shares, "bounded", bounded):
+        with mock.patch.object(shares, "on_a_network_drive", return_value=True), \
+                mock.patch.object(shares, "bounded", bounded):
             self.assertEqual({self.same: None, self.edited: None, self.gone: None}, self.marks())
         self.assertEqual(3, len(calls), "one bounded look for each card, each answered at once")
 
     def test_each_card_costs_one_stat_and_a_request_is_at_most_two_hundred(self):
         seen = []
-        real = damaged_photos._stat_state
-        with mock.patch.object(damaged_photos, "_stat_state", lambda path: (seen.append(path), real(path))[1]):
+        real = shares._stat_state
+        with mock.patch.object(shares, "_stat_state", lambda path: (seen.append(path), real(path))[1]):
             self.marks()
         self.assertEqual(3, len(seen))
         self.assertEqual(200, library_view.MAX_CARDS)
@@ -120,7 +121,7 @@ class TheRoute(unittest.TestCase):
     def test_a_good_file_has_no_stale_key_so_the_card_is_as_it_was(self):
         found = self.cards(self.a)
         self.assertNotIn("stale", found[self.a])
-        self.assertEqual({"id", "name", "path", "taken", "damaged", "damage", "thumb"}, set(found[self.a]))
+        self.assertEqual({"id", "name", "path", "taken", "thumb"}, set(found[self.a]))
 
     def test_two_hundred_cards_are_marked_in_one_request(self):
         ids = [self.vl.photo("Many", "p%d.jpg" % n, taken="2024:07:01 10:00:00") for n in range(200)]   # rows, no files

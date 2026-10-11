@@ -171,7 +171,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        family: photos, faces, people, person_ids, taxonomy, embeddings, suggestions, journal,
                        file_journal, settings, roots + adoption + root_rows, derived, search_index, folders,
                        library_view, snapshots, generations, locks, job_runs, sync_runs,
-                       added_folders, damaged_files, faces_pending, faces_detected, tree_scan, checks
+                       added_folders, faces_pending, faces_detected, tree_scan, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
                        thumbs, names, shares, lock_owners, recycle_bin, job_files
   ml/                  models: clip, faces, vector_index, grouping, and gpu (the card's turn)
@@ -254,7 +254,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 | Kind | Tables | Written by |
 |---|---|---|
 | File copy (the file is the truth) | `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`) | only after a file is read or written: indexer, `refresh_rows`, `record_tags_in_index` (`store/photos.py`) |
-| Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders`, `damaged_files` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
+| Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
 | Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `search_words`/`search_names` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `suggestions`, `faces_pending`, `faces_detected` | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py` |
 | Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs`, `sync_runs` | `store/schema.py`, `store/generations.py`, `store/job_runs.py`, `store/sync_runs.py` |
 | The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state) | `store/journal.py`, `store/file_journal.py` |

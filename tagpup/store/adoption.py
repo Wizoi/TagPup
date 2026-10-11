@@ -4,7 +4,7 @@ Opening a library never converts it (migration 18 only makes the empty `roots` t
 the owner's libraries stay as they are until they say so. `adopt` is what they say: it adds a
 root to the library and converts every path the library holds under it -- `photos.path` and the
 SourceFile inside `photos.raw_metadata`, `suggestions.raw`'s paths, `change_files.path` and
-`new_path`, `added_folders.path`, `damaged_files.path`, and the folders of the settings
+`new_path`, `added_folders.path`, and the folders of the settings
 `library.roots` and `library.ignored` -- in ONE transaction, under the library's write lock,
 and records ONE change of the journal, `roots adopt`, which History lists and `undo` reverses
 (`unadopt`: the same conversion the other way, by the machine's map).
@@ -92,7 +92,6 @@ TABLES = (
     ("suggestions", "photo_id", (), ("raw",)),
     ("change_files", "id", ("path", "new_path"), ()),
     ("added_folders", "path", ("path",), ()),
-    ("damaged_files", "path", ("path",), ()),
 )
 
 
@@ -322,7 +321,7 @@ def _simple_pass(conn, roots, name, apply, direction, table, key, columns, json_
             if converted != text:
                 new[column] = converted
                 counts.json += 1
-        if table in ("added_folders", "damaged_files"):
+        if table == "added_folders":
             _claim(seen, store_roots.path_order(new.get("path", found["path"])), "path" in new)
         if apply and new:
             conn.execute("UPDATE %s SET %s WHERE %s = ?" % (

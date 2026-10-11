@@ -17,7 +17,7 @@ import os
 
 from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import NotHeld
-from tagpup.store import added_folders, damaged_files, db, derived, embeddings, face_tags, faces, folders, people
+from tagpup.store import added_folders, db, derived, embeddings, face_tags, faces, folders, people
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 
@@ -730,7 +730,6 @@ def remove_under(conn, folder):
     # Out of the library: what was asked to be added there goes too, or a Suggest would
     # make it the library's again unasked.
     added_folders.forget_under(conn, folder)
-    damaged_files.forget_under(conn, folder)
     return dict(photos_removed=photos_removed, faces_removed=faces_removed,
                 manual_lost=manual, excluded_lost=excluded)
 
@@ -738,9 +737,8 @@ def remove_under(conn, folder):
 # ---- What the thumbnail cache reads -----------------------------------------------------
 
 #: A photo as the thumbnail cache asks for it: its id, its path as the row holds it (what the cache's
-#: entry is keyed by, so that a library moved to another place keeps its entries), its native path and its
-#: damaged_files record, if any.
-ThumbRow = collections.namedtuple("ThumbRow", "id row_path path damaged")
+#: entry is keyed by, so that a library moved to another place keeps its entries), and its native path.
+ThumbRow = collections.namedtuple("ThumbRow", "id row_path path")
 
 
 def thumb_row(conn, photo_id):
@@ -750,7 +748,7 @@ def thumb_row(conn, photo_id):
     if row is None:
         return None
     native = store_roots.from_row(conn, row[0])
-    return ThumbRow(photo_id, row[0], native, damaged_files.one(conn, native))
+    return ThumbRow(photo_id, row[0], native)
 
 
 def thumb_rows(conn, folder=None, after=0, limit=1000):

@@ -7,7 +7,8 @@ moment (`bounded`); one that did not answer in time leaves its thread to end whe
 daemon), takes the share as AWAY for AWAY_SECONDS -- by its drive, or its server and share, whichever of
 its folders was asked -- and no other look at it is started, on another thread, while the first still
 waits. A share that answered is not away. Two callers used to keep a cache each (the damaged photos'
-lists, and Roots' Verify), one of them unable to say away from missing; this is the one.
+lists, and Roots' Verify), one of them unable to say away from missing; this is the one. `stamp_of` is the look at one
+file that a page of cards, a thumbnail and a bulk edit's chunk make.
 """
 import logging
 import os
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 #: How long a share that did not answer in time is taken as away, in seconds.
 AWAY_SECONDS = 30.0
+
+#: How long a request waits to hear from one file on a network share, in seconds.
+SHARE_WAIT = 1.0
 
 #: {share key: when it did not answer in time (time.monotonic)}.
 _away = {}
@@ -101,3 +105,44 @@ def bounded(location, call, seconds, away_seconds=None):
     if "error" in box:
         return "error", box["error"]
     return "ok", box["value"]
+
+
+#: What stamp_of answers for a file on a share that did not answer in time.
+UNANSWERED = object()
+
+#: What stamp_of answers for a file that is there and cannot be read (permissions, a lock): not "not there".
+CANNOT_READ = object()
+
+
+def _root_answers(photo_path):
+    """Does the drive or share the path is on answer? Windows says "not found" at once for a server that is
+    asleep (WinError 53), a share name that is not there (67) and a drive letter that is not connected (3), the
+    same words it uses for a file that was deleted: a file is gone only when the place it was on is there."""
+    root = os.path.splitdrive(photo_path)[0]
+    if not root:
+        return True
+    return os.path.exists(root + os.sep)
+
+
+def _stat_state(photo_path):
+    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError, and for a file
+    "not found" on a drive or share that does not answer (it is not known to be gone)."""
+    try:
+        stat = os.stat(photo_path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None if _root_answers(photo_path) else CANNOT_READ
+    except OSError:
+        return CANNOT_READ
+    return (stat.st_mtime, stat.st_size)
+
+
+def stamp_of(photo_path):
+    """(mtime, size) of the file now; None when it is not there; CANNOT_READ when it is there and cannot be
+    read; UNANSWERED when it is on a share that did not answer within SHARE_WAIT (or is away). What a page's
+    request asks of one file, without waiting on a share gone away, and without taking a file it cannot read for
+    one that is gone. A share found away is answered UNANSWERED at once for AWAY_SECONDS and no second thread is
+    started while one still waits, so a page of cards on an away share costs one wait and not one for each."""
+    if not on_a_network_drive(photo_path):
+        return _stat_state(photo_path)
+    state, found = bounded(photo_path, lambda: _stat_state(photo_path), SHARE_WAIT, AWAY_SECONDS)
+    return found if state == "ok" else UNANSWERED

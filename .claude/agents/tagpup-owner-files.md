@@ -1,6 +1,6 @@
 ---
 name: tagpup-owner-files
-description: Owner of the Files and sync domain of TagPup -- every touch of a photo file (ExifTool reads and writes, rename, time shift, rotate, delete), the journaled file-write path, indexing a folder, sync and the folder watcher, following a renamed or moved file, shares that may not answer, and damaged photos. Review any change that reads or writes a photo file, indexes, syncs, watches, or compares a row with its file; also the person to ask who owns a concern about whether a row and its file tell the same story. Read-only.
+description: Owner of the Files and sync domain of TagPup -- every touch of a photo file (ExifTool reads and writes, rename, time shift, rotate, delete), the journaled file-write path, indexing a folder, sync and the folder watcher, following a renamed or moved file, and shares that may not answer. Review any change that reads or writes a photo file, indexes, syncs, watches, or compares a row with its file; also the person to ask who owns a concern about whether a row and its file tell the same story. Read-only.
 tools: Read, Grep, Glob, Bash
 model: fable
 ---
@@ -18,7 +18,7 @@ decide what a tag or person means (People), the journal's rules (Data; you call 
 Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved module is changed here in the same commit.
 - Files layer: `tagpup/files/exiftool_session.py`, `tagpup/files/metadata.py`, `tagpup/files/field_values.py`, `tagpup/files/identity.py`, `tagpup/files/images.py`, `tagpup/files/names.py`, `tagpup/files/recycle_bin.py`, `tagpup/files/shares.py`, `tagpup/files/lock_owners.py`, `tagpup/files/job_files.py`, `tagpup/files/thumbs.py`
 - Core: `tagpup/core/paths.py`, `tagpup/core/fields.py`, `tagpup/core/photo_meta.py`, `tagpup/core/renaming.py`, `tagpup/core/machine.py`, `tagpup/core/byte_lock.py`, `tagpup/core/dates.py`
-- Services: `tagpup/services/file_changes.py`, `tagpup/services/file_only.py`, `tagpup/services/sync.py`, `tagpup/services/photos.py`, `tagpup/services/refresh_rows.py`, `tagpup/services/relink_photos.py`, `tagpup/services/damaged_photos.py`, `tagpup/services/bulk_edit.py`, `tagpup/services/indexing.py`, `tagpup/services/folder_scope.py`
+- Services: `tagpup/services/file_changes.py`, `tagpup/services/file_only.py`, `tagpup/services/sync.py`, `tagpup/services/photos.py`, `tagpup/services/refresh_rows.py`, `tagpup/services/relink_photos.py`, `tagpup/services/bulk_edit.py`, `tagpup/services/indexing.py`, `tagpup/services/folder_scope.py`
 - Jobs: `tagpup/jobs/indexing.py`, `tagpup/jobs/watching.py`, `tagpup/jobs/bulk_edits.py`, `tagpup/jobs/verifying.py`
 - Store: `tagpup/store/photos.py`, `tagpup/store/folders.py`
 - The `index` command in `tagpup_cli.py` (a shell over the indexer that still holds its flow; the server's index job is a subprocess of it)
@@ -28,8 +28,8 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 ## The contract other domains rely on, and must not bypass
 1. A photo file is written only through `file_changes.write_fields` / `rename` (and `bulk_edit` on top): the plan is committed as `planned` before any file is touched; each file is re-read and a file that no longer holds what the plan read is a conflict, never overwritten; `writing`, then written, then its row and `done` in one transaction; the batch is read back and `changed` counts a file whose read-back differs (IPTC cuts a keyword at 64 bytes). A crash is settled at the next start by what the file holds (`settle_once`). Undo refuses a file that no longer holds what the change left.
 2. `file_changes.exclusively` makes plan, write and read-back one at a time per process, across libraries. It is not a cross-process lock: the CLI and the server can both write (decision 2026-10-02).
-3. Never a write into a damaged or possibly incomplete photo; never into a folder the library does not hold, except the unjournaled just-look path (`file_only`, owner decision, #527). Known exceptions to "only through the journaled path", to be named, not widened: rotate (`services.photos.rotate`), the DocumentID the indexer mints (`files/identity.py`, #310), `file_only`.
-4. Sync: a dry run writes nothing, not even a row; applied, its re-read and relinked rows are one journaled change; new files' folders are queued after, never indexed inline; **missing files are reported, never removed**; a ghost folder (gone, no rows under it) is only reported; damaged files are not queued again. Pairing is ordered evidence, ambiguity is held back, never guessed: name + size + modified time one to one (`sync.pair_by_stamp`), then DocumentID or the preserved name on the files left (`relink_photos.pair`), which checks the destination for existing rows.
+3. Never a write into a photo whose file stops short (asked of the file by each write, `field_values.read` with `validate`; nothing remembers a photo as damaged since 2026-10-11); never into a folder the library does not hold, except the unjournaled just-look path (`file_only`, owner decision, #527). Known exceptions to "only through the journaled path", to be named, not widened: rotate (`services.photos.rotate`), the DocumentID the indexer mints (`files/identity.py`, #310), `file_only`.
+4. Sync: a dry run writes nothing, not even a row; applied, its re-read and relinked rows are one journaled change; new files' folders are queued after, never indexed inline; **missing files are reported, never removed**; a ghost folder (gone, no rows under it) is only reported. Pairing is ordered evidence, ambiguity is held back, never guessed: name + size + modified time one to one (`sync.pair_by_stamp`), then DocumentID or the preserved name on the files left (`relink_photos.pair`), which checks the destination for existing rows.
 5. A row never claims more than was read: a row nobody read keeps `mtime` / `size` NULL; a partial write stamps only a row that described the file just before. A stamp is compared with `store.photos.describes` / `same_mtime`, never `==`.
 6. Reports name photos by id, never by path. A share that does not answer is not "missing": every look goes through `shares.bounded`. Every ExifTool command has a deadline and drains stderr (`ExifToolSession`).
 7. Others must not: call ExifTool, `os.rename`, `os.replace` or `shutil` on a photo; spell or compare a path by hand; write `photos.mtime / size` for a row they did not read; remove rows for missing files; start an index or sync of a folder outside `jobs/indexing` and the watcher; run anything automatic on the owner's files or rows.
@@ -41,12 +41,12 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | A photo file written through the journaled path; a click three times writes once | `tests/test_file_journal.py`, `tests/test_file_changes_one_at_a_time.py` |
 | A write reports what changed | `tests/test_changed_counts_what_changed.py` |
 | Check the destination before moving data into it | `tests/test_relink_checks_the_destination.py` |
-| Nothing written into a damaged photo | `tests/test_no_writes_to_damaged_photos.py`, `tests/test_damaged_photo_writes_never_fail_open.py` |
+| Nothing written into a photo cut short | `tests/test_no_writes_to_damaged_photos.py`, `tests/test_writes_refuse_cut_short_photos.py` |
 | A share that does not answer is not missing | `tests/test_unreachable_is_not_missing.py` |
 | Rows only in folders held or asked to add | `tests/test_writes_only_in_folders_held.py`, `tests/test_rows_only_in_folders_added.py` |
 | A row nobody read is never stamped | `tests/test_partial_writes_leave_rows_unread.py` |
 | Paths have one owner | `tests/test_paths_single_owner.py` |
-| Sync never removes, never writes a file; a damaged file is passed over | `tests/test_sync.py`, `tests/test_sync_passes_over_damaged_photos.py` |
+| Sync never removes, never writes a file | `tests/test_sync.py` |
 | The watcher syncs a moved folder, not a file gone | `tests/test_folder_watcher.py` |
 | Two libraries sharing a folder | `tests/test_scenario_two_libraries_share_a_folder.py` |
 | One answer to "the row describes the file" | none: the CLI `index` skip rule and `services/search.py` have their own comparison |

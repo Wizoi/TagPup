@@ -30,8 +30,8 @@ from dataclasses import dataclass, field
 
 from tagpup.core import dates, paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused, Result
-from tagpup.files import exiftool_session, job_files, recycle_bin
-from tagpup.services import damaged_photos, file_changes, file_only, libraries, library_view, tagging
+from tagpup.files import exiftool_session, job_files, recycle_bin, shares
+from tagpup.services import file_changes, file_only, libraries, library_view, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.store import file_journal, taxonomy
@@ -431,13 +431,13 @@ AWAY = "its folder could not be reached just now (a network share that did not a
 
 def _reachable(present, out):
     """`present` without the photos on a share that does not answer (each an error of `out`): a bounded stat of each file
-    (damaged_photos.stamp_of: a share is asked within a second, and one found away is answered at once for 30 seconds, so a
+    (shares.stamp_of: a share is asked within a second, and one found away is answered at once for 30 seconds, so a
     chunk of 25 waits once). Sent on, such a photo would cost ExifTool's whole deadline (five minutes) and then one more for each
     photo of the batch it is retried singly for. A file that is gone is no matter here (the write counts it missing) and one that
     cannot be read is the write's own error."""
     kept = []
     for photo_id, path in present:
-        if damaged_photos.stamp_of(path) is damaged_photos.UNANSWERED:
+        if shares.stamp_of(path) is shares.UNANSWERED:
             out.errors.append((photo_id, os.path.basename(path)[:MOST_TEXT], AWAY))
         else:
             kept.append((photo_id, path))
@@ -467,18 +467,16 @@ def _count(out, result, present, by_key):
 
 
 def _shift(library, photo_paths, minutes, exiftool_path, operation, et=None, on_planned=None):
-    """photos.shift_date_taken for a bulk job's chunk: a photo whose file is gone, or found damaged, is left out and counted
-    (the folder's shift refuses the whole batch for one damaged photo); one ExifTool cannot read is an error, not a skip;
+    """photos.shift_date_taken for a bulk job's chunk: a photo whose file is gone, or does not open whole, is left out and counted
+    (the writer skips a photo cut short); one ExifTool cannot read is an error, not a skip;
     and no record of each photo is read back for a page, which nobody is waiting to receive. Nothing is caught here: an
     exception is the job's to stop at."""
     refused = Result(attempted=len(photo_paths))
     present, gone = tagging.leave_out_missing(photo_paths)
     held, loose = libraries.split(library, present)
-    if held and libraries.refuse_writes(refused, library, held, damaged_ok=True):
+    if held and libraries.refuse_writes(refused, library, held):
         return refused
-    kept, left = libraries.leave_out_damaged(refused, library, held) if held else ([], [])
-    if kept is None:
-        return refused
+    kept, left = held, []
     writable, skipped = file_only.leave_out_unwritable(loose)
     plan_one = photo_actions.date_shift_plan(minutes, strict=True)
     journaled = file_changes.write_fields(library, operation, exiftool_path, kept, dates.SHIFTED_FIELDS, plan_one,

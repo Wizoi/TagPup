@@ -4,7 +4,7 @@ import { api } from './common/api.js';
 import { buildElement, replaceContent } from './common/dom.js';
 import { openImageZoom, wireImageZoom } from './common/image-zoom.js';
 import { attachPersonFaces } from './common/person-faces.js';
-import { baseName, isUnc, pathKey, samePath } from './common/paths.js';
+import { baseName, isUnc, samePath } from './common/paths.js';
 import { personLabelOf, personTitleOf, photoAlreadyHas, sortedTags } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { clearPhotoFaces, nameFaceAs, showPhotoFaces } from './face-boxes.js';
@@ -30,10 +30,9 @@ import {
     updateSaveButton
 } from './edits.js';
 import { renderFileList, scanFolder, showFolderView, updateListStats, updatePhotoPosition } from './folder.js';
-import { damageOf, showPhotoDamage } from './damaged.js';
 import { removeFromSelection } from './selected.js';
 import { applyPhotoStale } from './stale.js';
-import { cardDamage, fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
+import { fetchLibraryRecord, forgetPhoto, libraryIdOfPath, refetchCards } from './library-source.js';
 import { backToView, notePhoto, rememberView } from './view-left.js';
 
 // ---- Detected faces ----------------------------------------------------
@@ -206,14 +205,11 @@ function openPhoto(path) {
 }
 
 /**
- * Put a library photo's record in the panel: the page's only full record, and what the library records of its
- * damage, so the panel says why and asks for no picture of a file recorded unreadable.
+ * Put a library photo's record in the panel: the page's only full record.
  */
 function showLibraryRecord(lib, record) {
     state.folderPhotos = [record];
     lib.activeId = record.id;
-    const damage = record.damaged ? cardDamage(record) : null;
-    state.damagedPhotos = damage ? { [pathKey(record.path)]: { ...damage, path: record.path, found: 'by an earlier check' } } : {};
     showPhoto(record.path);
     notePhoto(record.id);
 }
@@ -305,14 +301,12 @@ export function showPhoto(path) {
 
     // Fetch photo data from local array
     const photo = state.folderPhotos.find(p => p.path === path);
-    showPhotoDamage(photo ? photo.path : null);
     // A photo whose file is gone is shown as the library holds it and cannot be edited (stale.js); any other is editable.
     applyPhotoStale(photo);
     if (!photo) return;
 
-    // Render values. A photo that cannot be read has no picture to ask for (damaged.js), nor has one whose file is gone.
-    const damage = damageOf(photo.path);
-    mainImage.src = (damage && !damage.indexed) || photo.missing ? '' : photoFileUrl(photo, 800);
+    // Render values. A photo whose file is gone has no picture to ask for.
+    mainImage.src = photo.missing ? '' : photoFileUrl(photo, 800);
     detailPath.textContent = photo.path;
     let dateVal = "Unknown";
     const shownDate = takenOf(photo) && parseExifDateToLocalDate(takenOf(photo));

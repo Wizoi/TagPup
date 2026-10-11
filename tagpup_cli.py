@@ -71,9 +71,7 @@ from tagpup.services import tags_from_faces as tags_from_faces_service
 from tagpup.services import tree_fill as tree_fill_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
-from tagpup.services import damaged_photos
 from tagpup.services import thumbnails
-from tagpup.core import runs as run_tags
 from tagpup.services import journal as library_journal
 from tagpup.services import snapshots as library_snapshots
 from tagpup.services import roots as library_roots
@@ -93,14 +91,6 @@ def get_runtime():
     given: each is built the first time the command asks for it, and loaded the first
     time it is used."""
     return Runtime()
-
-def _stamp(path):
-    """(mtime, size) of the file now, or None when it cannot be read."""
-    try:
-        stat = os.stat(path)
-    except OSError:
-        return None
-    return (stat.st_mtime, stat.st_size)
 
 def library_index(runtime, db_path):
     """The library's photos, with their vectors under its CLIP model."""
@@ -326,38 +316,19 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     pass
             images_to_process.append(path)
 
-    # A photo found damaged before, and unchanged since, is not read again: it would fail
-    # again (docs/findings.md, #407). Replaced or changed, it is read at once.
-    # --force-reembed reads them again all the same.
-    damaged_before = damaged_photos.records(Library(db_path))
-    passed_over = {} if force_reembed else damaged_photos.unreadable(damaged_before)
-    if passed_over:
-        still = []
-        for path in images_to_process:
-            stamp_then = passed_over.get(paths.key(path))
-            if stamp_then is not None and damaged_photos.describes(stamp_then, _stamp(path)):
-                continue
-            still.append(path)
-        if len(still) < len(images_to_process):
-            console.print(f"[yellow]Passed over {len(images_to_process) - len(still)} photo(s) found damaged before "
-                          f"and unchanged since; restore them from a backup (the Activity page lists them).[/yellow]")
-        images_to_process = still
-
-    # A photo whose faces are still to be detected -- indexed from a damaged file, whole
-    # now -- is indexed even with a vector: Suggest may have made one since
-    # (tagpup.store.faces_pending).
+    # A photo whose faces are still to be detected (tagpup.store.faces_pending) is indexed even with a vector:
+    # Suggest may have made one since.
     if not skip_faces:
         chosen = {paths.key(path) for path in images_to_process}
         again = []
-        for path in damaged_photos.faces_to_detect(Library(db_path)):
+        for path in face_records.faces_to_detect(Library(db_path)):
             if paths.key(path) in chosen or not os.path.exists(path):
                 continue
             if any(paths.same(os.path.dirname(path), directory)
                    or (not no_subfolders and paths.is_under(path, directory)) for directory in directories):
                 again.append(path)
         if again:
-            console.print(f"[cyan]Detecting the faces of {len(again)} photo(s) again: each was indexed from a "
-                          f"damaged copy.[/cyan]")
+            console.print(f"[cyan]Detecting the faces of {len(again)} photo(s) again.[/cyan]")
             images_to_process += again
             skipped_count -= len(again)
 
@@ -428,19 +399,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # photo's picture has decoded in full, never before (IdentityWriter).
     identity_writer = IdentityWriter(exiftool_path)
     unreadable, incomplete = [], []
-    # Recorded as found (tagpup.services.damaged_photos), each with the stamp its file had
-    # when it was read -- and only a file that kept it while it was read: one still being
-    # copied is read again when it has settled. A photo recorded before and read whole now
-    # is forgotten.
-    recorded_before = {paths.key(each.path): each for each in damaged_before}
-    found_by = (run_tags.current() or (None,))[-1]
 
-    def found_damaged(path, stamp, kind, detail, zeros):
-        if stamp is None or _stamp(path) != stamp:
-            logger.info(f"{path} changed while it was read; it is read again once it has settled.")
-            return
-        damaged_photos.remember(Library(db_path), [(path, stamp, kind, detail, zeros)], run=found_by)
-    
     # The index queue's Cancel, while this waits for the graphics card (tagpup.jobs.indexing).
     stop_file = os.environ.get(indexing_service.STOP_FILE)
     turn = None
@@ -487,20 +446,16 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 
             try:
                 read = {}
-                stamp = _stamp(path)
                 try:
                     # Reads the file once and decodes the whole picture; a vector kept from
                     # the file as it is was made by such a decode.
-                    # A photo recorded damaged is embedded again whatever vector is kept: it
-                    # may have been made from the damaged file, its stamp restored since.
-                    emb = embeddings.of(path, force_recompute=force_reembed or paths.key(path) in recorded_before,
+                    emb = embeddings.of(path, force_recompute=force_reembed,
                                         seen=lambda picture: read.update(
                         zeros=picture.info.get(image_files.ZERO_TAIL_INFO, 0)))
                 except image_files.Unreadable as damaged:
                     # Nothing is written into it: no identity, no row.
                     unreadable.append((path, damaged))
                     logger.info(f"Not indexed, and not written to: {path} does not decode: {damaged}")
-                    found_damaged(path, stamp, damaged.kind, damaged.detail, damaged.zero_tail)
                     locker.release(path)
                     continue
                 zeros = read["zeros"] if "zeros" in read else image_files.zero_tail_of(path)
@@ -509,17 +464,10 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                     incomplete.append((path, zeros))
                     logger.info(f"Possibly an incomplete copy, indexed and not written to: {path} ends in "
                                 f"{zeros} zero bytes")
-                    found_damaged(path, stamp, damaged_photos.INCOMPLETE,
-                                  "the last %d bytes are zeros" % zeros, zeros)
                 else:
                     # Decoded: only now may the photo be written to. The row recorded below
                     # takes the stamp the write left, and the vector with it.
                     identity_writer.give(meta, decoded=True)
-                    if paths.key(path) in recorded_before:
-                        # Read whole now: forgotten, and what was made of the damaged file
-                        # taken away -- its vectors, its faces unless decided -- before this
-                        # run records the photo afresh.
-                        damaged_photos.forget_to_reindex(Library(db_path), [recorded_before[paths.key(path)]])
                 
                 # Extract and save face embeddings in the same pass (cached in memory until parent photo is saved)
                 if face_processor:
@@ -802,9 +750,6 @@ def sync(ctx, folder, apply_):
     if counts.get("size_changed"):
         console.print("  %d of the changed file(s) changed SIZE: their vectors and face boxes may be of an older picture "
                       "(a keyword write changes the size too); they are left as they are." % counts["size_changed"])
-    if counts.get("unreadable_files"):
-        console.print("  %d photo(s) found damaged before, unchanged since, passed over: restore them from a"
-                      " backup (the Activity page lists them)." % counts["unreadable_files"])
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
         console.print("In step." if result.details["in_step"] else "Nothing changed. --apply brings it in step.")

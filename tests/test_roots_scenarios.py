@@ -33,7 +33,7 @@ from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.services import sync, tagging  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
-from tagpup.store import added_folders, damaged_files, db, folders, journal, suggestions  # noqa: E402
+from tagpup.store import added_folders, db, folders, journal, suggestions  # noqa: E402
 from tagpup.store import adoption, checks  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
@@ -66,21 +66,20 @@ class Twins(unittest.TestCase):
         return found[0]
 
     def seen(self, side):
-        """The library as its owner sees it: every photo and its tags, the damaged files, the
+        """The library as its owner sees it: every photo and its tags, the
         folders added and ignored, and the journal's names and states."""
         conn = db.connect(db.readonly_uri(side.db_path), uri=True)
         try:
             listing = sorted((path, tags) for path, _m, _s, tags, _p, _c, _r in store_photos.rows_under(
                 conn, side.base))
             held = sorted(folders.of(conn).listed())
-            damaged = [r.path for r in damaged_files.every(conn)]
             added = added_folders.every(conn)
             ignored = folders.ignored(conn)
         finally:
             conn.close()
         changes = [(e["operation"], e["status"], e["files"]) for e in journal.history(side.db_path, limit=50)
                    if not e["operation"].startswith(("migration", "roots adopt"))]
-        return {"photos": listing, "folders": held, "damaged": damaged, "added": added, "ignored": ignored,
+        return {"photos": listing, "folders": held, "added": added, "ignored": ignored,
                 "journal": changes}
 
     def same_seen(self):
@@ -91,7 +90,7 @@ class Twins(unittest.TestCase):
         native = [p for p in self.rooted.raw_paths() if not p.startswith("@")
                   and p.lower().startswith(self.rooted.pictures.lower() + os.sep)]
         self.assertEqual([], native)
-        for table, column in (("damaged_files", "path"), ("added_folders", "path"), ("change_files", "path"),
+        for table, column in (("added_folders", "path"), ("change_files", "path"),
                               ("change_files", "new_path")):
             held = [p for p in self.rooted.raw_paths(table, column) if p]
             self.assertEqual([], [p for p in held if p.lower().startswith(self.rooted.pictures.lower() + os.sep)],
@@ -244,26 +243,6 @@ class TheOwnersFlows(Twins):
                 conn.close()
         self.both(flow)
 
-    def test_a_damaged_file_is_recorded_listed_and_forgotten(self):
-        def flow(side):
-            path = os.path.join(side.pictures, "Trips", "2025 Coast", "Cut short too.jpg")
-            seen = []
-
-            def write(conn):
-                seen.append(damaged_files.record(conn, path, (2.0, 50), "truncated", "ends early"))
-                seen.append(damaged_files.record(conn, path, (2.0, 50), "truncated", "ends early"))
-                seen.append([r.path for r in damaged_files.under(conn, side.pictures)])
-                seen.append(damaged_files.forget(conn, [path]))
-            db.write_with_connection(side.db_path, write)
-            conn = db.connect(db.readonly_uri(side.db_path), uri=True)
-            try:
-                seen.append([r.path for r in damaged_files.every(conn)])
-            finally:
-                conn.close()
-            return seen
-        found = self.both(flow)
-        self.assertEqual([True, False], found[:2])
-
     def test_a_folder_is_added_and_asked_about(self):
         def flow(side):
             folder = os.path.join(side.pictures, "Trips", "New folder")
@@ -406,7 +385,7 @@ class NestedRootsAreRefused(unittest.TestCase):
             broken = checks.rooted_rows_convert(conn).count
         finally:
             conn.close()
-        self.assertEqual(18, broken, "17 photos and a damaged file")
+        self.assertEqual(17, broken, "17 photos")
         self.assertTrue([p for p in problems if "held under one root but lie under another" in p], problems)
 
     def test_verify_is_clean_when_nothing_is_nested(self):

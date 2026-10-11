@@ -27,7 +27,7 @@ from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import bulk_edits as bulk_jobs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
-from tagpup.services import bulk_edit, damaged_photos
+from tagpup.services import bulk_edit
 from tagpup.services import faces as face_actions
 from tagpup.services import file_changes, file_only
 from tagpup.services import libraries as library_actions
@@ -173,7 +173,7 @@ def _folder_indexer(library):
 def _scan_is_stale(library, folder):
     """The folder was indexed: its cached scan, kept since before its photos were read (or read again), describes it
     as it was -- even when clustering failed afterwards, since rows were written. Dropped, whoever queued the folder:
-    this route, a sync, the damaged-photo check (docs/findings.md, #341)."""
+    this route, a sync (docs/findings.md, #341)."""
     folders.of(library).pop(folder)
 
 
@@ -254,21 +254,6 @@ def folder_scan():
         photos = photo_actions.scan_folder(library, folder, state.exiftool(library))
         cache.put(folder, photos)
     return jsonify(_sorted(photos))
-
-
-@routes.get("/api/folder/damaged")
-def folder_damaged():
-    """The photos under the folder, at any depth, found damaged and not replaced since
-    (tagpup.services.damaged_photos), with their paths and why: the folder's notice and
-    its cards' marks. Their paths to this PC only, as the Activity page: another address is
-    answered an empty list, quietly -- the page asks as every folder opens."""
-    library = state.require()
-    folder = _wanted_path()
-    if not folder:
-        return responses.error(400, "Missing 'path' parameter")
-    if not security.from_this_pc(request.remote_addr):
-        return jsonify({"folder": paths.stored(folder), "photos": []})
-    return jsonify({"folder": paths.stored(folder), "photos": damaged_photos.listed(library, paths.stored(folder))})
 
 
 @routes.get("/api/folder/membership")
@@ -1191,7 +1176,7 @@ def _where(result):
 
 def _skipped_damaged(result):
     """What a bulk write's reply says of the photos it skipped as damaged
-    (tagpup.services.libraries.leave_out_damaged): {"skipped_damaged": n, "skipped":
+    (tagpup.services.file_changes.skip_cut_short): {"skipped_damaged": n, "skipped":
     [{"path", "why"}]}, the photos the page shows."""
     count = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
     # By what they say, not by position: a write of two parts (held photos and the others)

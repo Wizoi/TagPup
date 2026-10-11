@@ -329,25 +329,6 @@ describe("a change of size at a place in the list", () => {
   });
 });
 
-describe("marks that arrive after the cards were built", () => {
-  test("a damaged photo scrolled into view has its mark and no picture to ask for", async (t) => {
-    const bad = `${FOLDER}\\${name(300)}`;
-    const ctx = await load(t, {
-      routes: [["/api/folder/damaged", {
-        folder: FOLDER,
-        photos: [{ path: bad, name: name(300), folder: FOLDER, kind: "truncated", indexed: false, reason: "cut short",
-          detail: "", zero_tail: 0, size: 9, mtime: 1, found: "2026-09-28 10:00:00" }],
-      }]],
-    });
-    await wait(ctx.window, 60);
-    await ctx.scrollToRow(75);
-    const card = ctx.cardOf(300);
-    assert.ok(card.classList.contains("damaged"));
-    assert.equal(card.querySelector("img"), null);
-    assert.match(card.querySelector(".thumbnail-damaged-placeholder").textContent, /Can't be read/);
-  });
-});
-
 describe("a grid with a photo open over it", () => {
   /** Count what is given a picture inside the grid from now on. */
   const watchPictures = (ctx) => {

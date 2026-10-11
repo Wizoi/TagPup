@@ -10,7 +10,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tagpup.services import damaged_photos, tagging  # noqa: E402
+from tagpup.files import shares  # noqa: E402
+from tagpup.services import tagging  # noqa: E402
 from tagpup.web import app as web_app  # noqa: E402
 
 
@@ -20,30 +21,30 @@ def _not_found(_path):
 
 class AFileOnADriveThatDoesNotAnswer(unittest.TestCase):
     def test_a_drive_that_is_not_there_does_not_make_the_file_missing(self):
-        with mock.patch("tagpup.services.damaged_photos.os.stat", side_effect=_not_found), \
-                mock.patch("tagpup.services.damaged_photos.os.path.exists", return_value=False):
-            self.assertIs(damaged_photos.stamp_of("Q:\\Pictures\\a.jpg"), damaged_photos.CANNOT_READ)
+        with mock.patch("tagpup.files.shares.os.stat", side_effect=_not_found), \
+                mock.patch("tagpup.files.shares.os.path.exists", return_value=False):
+            self.assertIs(shares.stamp_of("Q:\\Pictures\\a.jpg"), shares.CANNOT_READ)
 
     def test_a_file_deleted_from_a_drive_that_answers_is_missing(self):
-        with mock.patch("tagpup.services.damaged_photos.os.stat", side_effect=_not_found), \
-                mock.patch("tagpup.services.damaged_photos.os.path.exists", return_value=True):
-            self.assertIsNone(damaged_photos.stamp_of("Q:\\Pictures\\a.jpg"))
+        with mock.patch("tagpup.files.shares.os.stat", side_effect=_not_found), \
+                mock.patch("tagpup.files.shares.os.path.exists", return_value=True):
+            self.assertIsNone(shares.stamp_of("Q:\\Pictures\\a.jpg"))
 
     def test_a_path_with_no_drive_is_judged_by_the_file_alone(self):
-        with mock.patch("tagpup.services.damaged_photos.os.stat", side_effect=_not_found):
-            self.assertIsNone(damaged_photos._stat_state("pictures/a.jpg"))
+        with mock.patch("tagpup.files.shares.os.stat", side_effect=_not_found):
+            self.assertIsNone(shares._stat_state("pictures/a.jpg"))
 
     def test_a_bulk_write_does_not_leave_such_a_photo_out_as_missing(self):
         paths = ["Q:\\Pictures\\a.jpg", "Q:\\Pictures\\b.jpg"]
-        with mock.patch("tagpup.services.damaged_photos.os.stat", side_effect=_not_found), \
-                mock.patch("tagpup.services.damaged_photos.os.path.exists", return_value=False):
+        with mock.patch("tagpup.files.shares.os.stat", side_effect=_not_found), \
+                mock.patch("tagpup.files.shares.os.path.exists", return_value=False):
             present, gone = tagging.leave_out_missing(paths)
         self.assertEqual((present, gone), (paths, []))
 
     def test_a_bulk_write_leaves_out_the_file_that_is_really_gone(self):
         paths = ["Q:\\Pictures\\a.jpg"]
-        with mock.patch("tagpup.services.damaged_photos.os.stat", side_effect=_not_found), \
-                mock.patch("tagpup.services.damaged_photos.os.path.exists", return_value=True):
+        with mock.patch("tagpup.files.shares.os.stat", side_effect=_not_found), \
+                mock.patch("tagpup.files.shares.os.path.exists", return_value=True):
             present, gone = tagging.leave_out_missing(paths)
         self.assertEqual(present, [])
         self.assertEqual([path for path, _ in gone], paths)

@@ -1,9 +1,9 @@
 """The photos whose faces are still to be detected: `faces_pending` (migration 17;
 docs/findings.md, #407).
 
-A photo indexed from a damaged file -- a possibly incomplete copy, grey below a line -- has
-its vectors and its undecided faces taken away once the file reads whole
-(tagpup.services.damaged_photos.forget_to_reindex), and its folder queued to be indexed.
+A photo indexed from a damaged file -- a possibly incomplete copy, grey below a line -- had
+its vectors and its undecided faces taken away once the file read whole, and its folder queued to be indexed
+(the damaged-photo handling that did so is gone, and nothing marks a photo now).
 But the indexer passes over a photo whose row describes its file and that has a vector,
 and Suggest makes a vector of any photo it looks at: between the two, the queued index
 skipped the photo and its faces were never detected. So the photo is marked here, and the

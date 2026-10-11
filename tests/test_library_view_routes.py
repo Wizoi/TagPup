@@ -22,7 +22,6 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images, thumbs  # noqa: E402
-from tagpup.services import damaged_photos  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import libraries as web_libraries  # noqa: E402
 from tagpup.web import roots_gate  # noqa: E402
@@ -208,9 +207,9 @@ class TheThumbnail(Routes):
             reply = self.thumb(wanted)
             self.assertIn(reply.status_code, (404, 400), wanted)
 
-    def test_a_damaged_photo_is_a_placeholder_and_is_not_cached(self):
-        stat = os.stat(self.vl.path_of(self.a))
-        damaged_photos.remember(self.vl.library, [(self.vl.path_of(self.a), (stat.st_mtime, stat.st_size), "truncated", "x", 0)])
+    def test_a_photo_that_does_not_decode_is_a_placeholder_and_is_not_cached(self):
+        with open(self.vl.path_of(self.a), "wb") as handle:
+            handle.write(b"this is not a picture at all")
         reply = self.thumb()
         self.assertEqual((200, "damaged", "no-cache"), (reply.status_code, reply.headers["X-TagPup-Thumb"],
                                                         reply.headers["Cache-Control"]))

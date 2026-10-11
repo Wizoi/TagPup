@@ -784,6 +784,16 @@ def replace_detected(conn, photo_path, detected, detector=None):
         conn.rollback()
 
 
+def faces_to_detect(library):
+    """The paths of the photos whose faces are still to be detected (store.faces_pending): the indexer detects them
+    whether or not they have a vector."""
+    conn = db.connect(db.readonly_uri(library.path), uri=True)
+    try:
+        return faces_pending.pending(conn)
+    finally:
+        conn.close()
+
+
 def record_batch(conn, batch, overwrite=False, detector=None):
     """Record the faces found in a batch of photos ({path: faces}) in one transaction.
 

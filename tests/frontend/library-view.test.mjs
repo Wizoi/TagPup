@@ -26,7 +26,7 @@ const FOLDER = "D:\\Library\\2020";
 
 const cardOf = (id) => ({
   id, name: `IMG_${id}.jpg`, path: `D:\\Library\\Photos\\IMG_${id}.jpg`, taken: "2020:01:01 10:00:00",
-  damaged: false, damage: null, thumb: `/api/photo-thumb?id=${id}&v=1600000000.0`,
+  thumb: `/api/photo-thumb?id=${id}&v=1600000000.0`,
 });
 const recordOf = (id) => photoRecord({
   id, filename: `IMG_${id}.jpg`, path: `D:\\Library\\Photos\\IMG_${id}.jpg`, tags: ["Trips/Coast"], people: [],
@@ -53,7 +53,6 @@ async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards,
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/membership", { photos_not_held: 0 })
-    .on("/api/folder/damaged", { photos: [] })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", { success: true })
     .on("/api/photo/delete", { success: true })
@@ -387,22 +386,6 @@ describe("the order and the cards, scrolled", () => {
     await ctx.release();
   });
 
-  test("damaged and incomplete photos are marked from the card, with no folder list", async (t) => {
-    const ctx = await load(t, {
-      onCards: (asked) => ({ cards: asked.map((id) => ({
-        ...cardOf(id), damaged: id === IDS[0] || id === IDS[1], damage: id === IDS[0] ? "truncated" : id === IDS[1] ? "incomplete" : null,
-      })) }),
-    });
-    const broken = ctx.cardById(IDS[0]);
-    assert.ok(broken.classList.contains("damaged"));
-    assert.equal(broken.querySelector("img"), null, "nothing to ask for");
-    assert.match(broken.textContent, /Can't be read/);
-    const incomplete = ctx.cardById(IDS[1]);
-    assert.ok(incomplete.classList.contains("damaged"));
-    assert.ok(incomplete.querySelector("img"), "an incomplete copy still has its picture");
-    assert.match(incomplete.textContent, /Incomplete/);
-    assert.equal(ctx.cardById(IDS[2]).classList.contains("damaged"), false);
-  });
 });
 
 describe("selecting in a view", () => {
