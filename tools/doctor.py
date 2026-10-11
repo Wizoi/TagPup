@@ -86,7 +86,6 @@ def report(db_path, show=0, out=print):
         nameless = checks.names_without_a_person(conn)
         at_the_top = checks.people_at_the_top(conn)
         under_a_person = checks.keywords_under_a_person(conn)
-        sharing = checks.people_sharing_a_leaf(conn)
         words = search_index.present(conn)
     finally:
         conn.close()
@@ -142,18 +141,12 @@ def report(db_path, show=0, out=print):
             "for the first time is made a node there; merge each into its branch in the library's tag view)" % len(at_the_top))
         for tag in sorted(at_the_top)[:show]:
             out("    %s" % tag)
-    for label, found in (("no person node", nameless.none), ("several person nodes", nameless.several)):
-        if found:
-            out("names with %s: %d, on %d row(s) of faces and photos' people (reported, not broken: they have no "
-                "person id, and none is guessed%s)" % (label, len(found), sum(found.values()),
-                                                      "; `tagpup_cli.py tree-fill` gives them nodes, except a name that a tag with tags under it already is" if found is nameless.none else ""))
-            for name, count in sorted(found.items(), key=lambda pair: (-pair[1], pair[0]))[:show]:
-                out("    %6d  %s" % (count, name))
-    if sharing:
-        out("people sharing a leaf: %d name(s), %d people (reported, not broken: two people called alike are asked for by path; "
-            "rename one by hand in TagTuner's Rename Person)" % (len(sharing), sum(len(tags) for tags in sharing.values())))
-        for leaf, tags in sorted(sharing.items())[:show]:
-            out("    %s" % "  |  ".join(tags))
+    if nameless.none:
+        out("names with no person node: %d, on %d row(s) of faces and photos' people (reported, not broken: they have no "
+            "person id, and none is guessed; `tagpup_cli.py tree-fill` gives them nodes, except a name that a tag with tags "
+            "under it already is)" % (len(nameless.none), sum(nameless.none.values())))
+        for name, count in sorted(nameless.none.items(), key=lambda pair: (-pair[1], pair[0]))[:show]:
+            out("    %6d  %s" % (count, name))
     if nameless.one:
         out("names one person is called whose rows are linked to nobody: %d, on %d face(s) decided by hand, %d other face(s) and %d "
             "listed person(s) (reported, not broken: nothing links them by itself, so they are on no person's page)"

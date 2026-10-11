@@ -8,7 +8,7 @@ saying whose.
 import collections
 import os
 
-from tagpup.core import paths, vocabulary
+from tagpup.core import paths
 from tagpup.store import derived, generations, people, person_ids, schema, search_index, taxonomy, tree_scan
 from tagpup.store import roots as store_roots
 
@@ -176,22 +176,12 @@ def listed_person_ids_out_of_step(conn):
 
 
 def names_without_a_person(conn):
-    """(names no person node is called: {name: rows}, names more than one is: {name: rows}, names only a
+    """(names no person node is called: {name: rows}, names only a
     branch is: {name: ([node ids], rows)}, names exactly one person is called whose rows are linked to nobody:
     {name: (id, faces by hand, other faces, listed)}) of faces and photos' people (person_ids.unresolved). Reported, not
     broken: none has an id, none is guessed, and the tree is the owner's to settle (the ambiguous person
     path, docs/findings.md, #27; a branch is not a person, #660)."""
     return person_ids.unresolved(conn)
-
-
-def people_sharing_a_leaf(conn):
-    """{leaf: [the tag paths of the people called so]} for each leaf more than one person node has (a pet and a person; the
-    same name in two groups). Reported, not broken: the owner renames one by hand (TagTuner's Rename Person), and a name typed
-    for either is asked "which one?" by path (owner, 2026-10-10). Counts in the doctor; the leaves and paths only with --show."""
-    sharing = {}
-    for _node_id, tag, name in person_ids.read(conn).listing:
-        sharing.setdefault(vocabulary.key(name), []).append(tag)
-    return {leaf: sorted(tags) for leaf, tags in sharing.items() if len(tags) > 1}
 
 
 def keywords_under_a_person(conn):
