@@ -1141,21 +1141,8 @@ def sync(ctx, folder, apply_):
         console.print("  %d folder(s) wholly gone, %d of them a whole root (an unplugged drive looks the same);"
                       " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))
         if counts["folders_gone"]:
-            console.print("  A folder renamed in Explorer looks the same: its rows are kept, and fixed by"
-                          " hand.")
-            if not result.details.get("folders_marked"):
-                console.print("  `folder-ids mark` (a dry run) gives each folder a hidden marker, so the next one "
-                              "renamed or moved is followed exactly.")
-    markers = result.details.get("folder_markers")
-    if markers:
-        counts_here = markers["counts"]
-        console.print("  %d marked folder(s) gone from disk: %d %s by their markers%s." % (
-            counts_here.get("gone", 0), counts_here.get("followed", 0), "followed" if apply_ else "to follow",
-            "".join([", %d left (the files there already have rows of their own: nothing was moved)" % counts_here["left"]
-                     if counts_here.get("left") else "",
-                     ", %d not found" % counts_here["not_found"] if counts_here.get("not_found") else ""])))
-        if markers["error"]:
-            console.print("  %s" % markers["error"], markup=False, soft_wrap=True)
+            console.print("  A folder renamed in Explorer looks the same: its rows are kept; rename it back "
+                          "by hand.")
     if counts["unreadable"]:
         console.print("  %d changed file(s) could not be read." % counts["unreadable"])
     if counts.get("size_changed"):

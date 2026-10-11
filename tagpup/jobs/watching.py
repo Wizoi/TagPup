@@ -249,8 +249,8 @@ class Watcher:
     def notice_parent(self, parent_key, event):
         """Note what `event`, from the watch on the parent `parent_key` of watched folders, says:
         only a watched folder renamed, moved or deleted matters, and its libraries are synced
-        whole -- its rows name a folder that is not there, and what follows is the owner's
-        (tagpup.services.folder_follow). Windows reports a folder gone as a file gone, so
+        whole -- its rows name a folder that is not there, which the sync reports as missing and the
+        owner renames back by hand. Windows reports a folder gone as a file gone, so
         is_directory is not asked."""
         if event.event_type not in ("moved", "deleted"):
             return
@@ -410,11 +410,6 @@ class Watcher:
                 return
             details = getattr(result, "details", {}) or {}
             counts = details.get("counts", {})
-            marks = (details.get("folder_markers") or {}).get("counts") or {}
-            if marks.get("left") or marks.get("not_found"):
-                logger.warning("Marked folders in %s not followed: %d left (the files there already have rows), %d "
-                               "not found; see `sync` for what to do.", library.name, marks.get("left", 0),
-                               marks.get("not_found", 0))
             if result.changed or details.get("queued") or counts.get("missing"):
                 logger.info("Synced %s in %s: %d row(s) changed, %d folder(s) queued to index, %d missing.",
                             what, library.name, result.changed, details.get("queued", 0), counts.get("missing", 0))
