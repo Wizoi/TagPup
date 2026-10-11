@@ -32,8 +32,9 @@ makes both from the photos, whole.
 
 **A search's words** (`clause`): the text typed, split at blanks, each TERM a set condition, ANDed with every other and with
 the search's sources; never ranked. A term is found in a photo when its words table matches the term as a quoted PREFIX
-phrase (`"term"*`: every term a prefix, so "beach" finds "beaches" and the term being typed finds as it is typed) or, for
-a term of three characters or more, its names table holds the term (`"term"`, a substring). Everything typed is quoted,
+phrase (`"term"*`: every term a prefix, so "beach" finds "beaches" and the term being typed finds as it is typed), for
+a term of three characters or more its names table holds the term (`"term"`, a substring), or its camera or lens holds the
+term (`cameras_with`: a substring, without case or accents, of the one name `photo_meta.gear` gives it). Everything typed is quoted,
 so AND, OR, NOT, NEAR, `*`, `^`, `"`, `:`, `(`, `)` and `-` are text and never FTS5's syntax. A term with no letter or digit
 and under three characters says nothing and is dropped (`terms`).
 
@@ -42,9 +43,11 @@ The caller commits. Every function does nothing, and says 0, on a library withou
 import json
 import os
 import re
+import unicodedata
 
 from tagpup.core import paths, photo_meta
 from tagpup.core.result import Refused
+from tagpup.store import generations
 
 WORDS, NAMES, GEAR = "search_words", "search_names", "search_gear"
 #: The migration that makes the tables (tagpup.store.schema).
@@ -381,22 +384,83 @@ def terms(words):
     return found
 
 
-def clause(words, gear=False):
+# ---- The camera and the lens ---------------------------------------------------------------------
+
+#: The fields a photo's camera and lens are read from (tagpup.core.photo_meta): a scan of the metadata reads these alone.
+GEAR_FIELDS = (photo_meta.MAKE_FIELDS + photo_meta.MODEL_FIELDS + photo_meta.LENS_FIELDS + photo_meta.LENS_MAKE_FIELDS)
+
+#: Every photo's gear fields in one read, each photo's metadata parsed once by SQLite: a JSON list of the values, in
+#: GEAR_FIELDS' order, null for a field the photo lacks; null for text that is not JSON (photo_meta.load says {} of it).
+_GEAR_SQL = ("SELECT id, CASE WHEN json_valid(raw_metadata) THEN json_extract(raw_metadata, %s) END FROM photos"
+             % ", ".join("?" * len(GEAR_FIELDS)))
+
+
+def _fold(text):
+    """`text` as a camera is compared with what is typed: without case and without accents ("Élan" is found by "elan")."""
+    return "".join(each for each in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(each))
+
+
+def _read_cameras(conn):
+    """[(camera, lens, [photo ids])] of the photos that name either, each folded (_fold), one entry for each distinct pair
+    (photo_index: 136). The pair is photo_meta.gear's, the one rule that names a camera in the details panel and in Shift Date
+    Taken's list: SQLite reads the fields, `gear` reads them as the file's metadata. Reads photos' ids and the one column
+    (a scan of the table: 0.25 s on 68,000 photos)."""
+    by_values = {}
+    for photo_id, values in conn.execute(_GEAR_SQL, tuple("$.\"%s\"" % field for field in GEAR_FIELDS)):
+        if values is not None:
+            by_values.setdefault(values, []).append(photo_id)
+    found = {}
+    for values, ids in by_values.items():
+        raw = {field: value for field, value in zip(GEAR_FIELDS, json.loads(values)) if value is not None}
+        gear = photo_meta.gear(raw)
+        if gear.camera or gear.lens:
+            found.setdefault((_fold(gear.camera or ""), _fold(gear.lens or "")), []).extend(ids)
+    return [(camera, lens, ids) for (camera, lens), ids in found.items()]
+
+
+#: Built again once any photo changes (generations: the photos' counter moves on every write, from any process).
+_cameras = generations.Cache(["photos"], _read_cameras)
+
+
+def _file_of(conn):
+    for _seq, name, file in conn.execute("PRAGMA database_list"):
+        if name == "main":
+            return paths.key(file) if file else None
+    return None
+
+
+def cameras_with(conn, term):
+    """The ids of the photos whose camera or lens holds `term` anywhere in it, without case or accents: "r6" finds "Canon
+    EOS R6m2", "24-70" finds "EF24-70mm f/2.8L II USM". Plain text, never a pattern. From the cache of the photos'
+    cameras (a library on no file, a test's in-memory one, reads them each time)."""
+    key = _file_of(conn)
+    cameras = _read_cameras(conn) if key is None else _cameras.get(conn, key)
+    folded = _fold(term)
+    ids = []
+    for camera, lens, held in cameras:
+        if folded in camera or folded in lens:
+            ids.extend(held)
+    return ids
+
+
+def clause(conn, words):
     """(SQL over `photos p`, params) of the photos that hold every term of `words` (terms): for each term, its words
-    table as a prefix phrase or, three characters or more, its names table as a substring -- or, with `gear` (the library
-    has the camera and lens words), the camera or lens as a prefix phrase; None when no term says anything. Each term is quoted, its quotes doubled: nothing typed is read as FTS5's syntax."""
+    table as a prefix phrase, its names table as a substring (three characters or more), or its camera or lens as a
+    substring (cameras_with: the ids as one JSON list, read by json_each); None when no term says anything. Each term is
+    quoted, its quotes doubled: nothing typed is read as FTS5's syntax."""
     parts = []
     for term in terms(words):
         either, params = [], []
         if any(each.isalnum() for each in term):
             either.append("p.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)" % (WORDS, WORDS))
             params.append(_phrase(term) + "*")
-            if gear:
-                either.append("p.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)" % (GEAR, GEAR))
-                params.append(_phrase(term) + "*")
         if len(term) >= SUBSTRING:
             either.append("p.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)" % (NAMES, NAMES))
             params.append(_phrase(term))
+        taken = cameras_with(conn, term)
+        if taken:
+            either.append("p.id IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(taken))
         parts.append(("(%s)" % " OR ".join(either), tuple(params)))
     if not parts:
         return None

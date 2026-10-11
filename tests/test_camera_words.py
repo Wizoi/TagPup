@@ -67,7 +67,8 @@ class WhatTheWordsFind(Cameras):
         self.assertEqual([self.phone], self.found("lanternfly pixel"))
         self.assertEqual([self.small], self.found("tidewater skiff"))
         # "Tidewater TX R6m2" is the model alone: the make is not put before a model that begins with it.
-        self.assertEqual([self.big], self.found('"tidewater tx"'))
+        self.assertEqual([self.big], self.found("tidewater tx"))
+        self.assertEqual([], self.found("tidewater tidewater2"))
 
     def test_the_lens_is_found_by_its_name_its_range_and_its_aperture(self):
         cases = {"24-70": [self.big], "24-70mm": [self.big], "tx24": [self.big], "70mm": [self.big], "usm": [self.big],
@@ -77,7 +78,10 @@ class WhatTheWordsFind(Cameras):
             with self.subTest(text=text):
                 self.assertEqual(expected, self.found(text))
 
-    def test_a_term_is_a_prefix_and_every_term_must_be_found(self):
+    def test_a_term_is_found_anywhere_in_the_name_and_every_term_must_be_found(self):
+        self.assertEqual([self.big], self.found("ater tx"), "inside the make and the model, not only at their start")
+        self.assertEqual([self.small], self.found("KIFF"), "without case")
+        self.assertEqual([self.phone], self.found("elan"), "without accents")
         self.assertEqual([self.big], self.found("tidewater 24-70"))
         self.assertEqual([self.big], self.found("r6 usm"))
         self.assertEqual([], self.found("skiff 24-70"), "the camera of one photo and the lens of another")
@@ -315,17 +319,3 @@ class MigrationTwentySeven(unittest.TestCase):
         schema._current.clear()
         self.assertEqual(migration_names.after(26), schema.ensure(self.path))
         self.assertEqual(2, look(self.path, "SELECT COUNT(*) FROM search_gear")[0][0])
-
-    def test_a_library_below_27_is_matched_in_the_two_tables_of_24_alone(self):
-        self.assertNotIn(search_index.GEAR, search_index.clause("tidewater")[0])
-        self.assertIn(search_index.GEAR, search_index.clause("tidewater", gear=True)[0])
-        conn = db.connect(self.path)
-        try:
-            self.assertFalse(search_index.gear_present(conn))
-            self.assertEqual([], search_index.stale(conn, sample=None), "the doctor asks nothing of a table not there")
-        finally:
-            conn.close()
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -203,7 +203,7 @@ def _words_clause(conn, words):
         if schema.version(conn) < search_index.MIGRATION:
             raise WordIndexComing()
         raise NoWordIndex()
-    return search_index.clause(words, gear=search_index.gear_present(conn))
+    return search_index.clause(conn, words)
 
 
 class _Reads:
