@@ -43,7 +43,6 @@ from flask import Blueprint, Response, abort, current_app, jsonify, request, sen
 from tagpup import config as tagpup_config
 from tagpup import logs
 from tagpup import runtime as runtimes
-from tagpup import supervisor
 from tagpup.core import library as libraries
 from tagpup.core import paths, runs
 from tagpup.jobs import indexing as indexing_jobs
@@ -170,23 +169,6 @@ def _stamp(seconds):
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(seconds)) if seconds else None
 
 
-def _supervisor_state():
-    """What the always-on process says in data/supervisor.json, less its server's token;
-    `alive` whether it runs now. None when none has run in this home."""
-    try:
-        state = supervisor.last_state()
-    except Exception:
-        state = None
-    if not state:
-        return None
-    shown = {key: value for key, value in state.items() if key not in ("server_token", "started")}
-    try:
-        shown["alive"] = supervisor.running() is not None
-    except Exception:
-        shown["alive"] = False
-    return shown
-
-
 def _int_arg(name, default, most):
     try:
         value = int(request.args.get(name, default))
@@ -265,8 +247,7 @@ def now():
                     "syncing": watching["syncing"] if watching else None,
                     "watching": bool(watching and watching["running"]),
                     "server": {"version": status["version"], "taking_work": status["taking_work"],
-                               "requests": status["requests"], "busy": status["busy"]},
-                    "supervisor": _supervisor_state()})
+                               "requests": status["requests"], "busy": status["busy"]}})
 
 
 # ---- The recurring jobs ------------------------------------------------------------------
@@ -505,24 +486,10 @@ def server():
     return jsonify({"models": _models(), "version": status["version"], "supervised": status["supervised"],
                     "taking_work": status["taking_work"], "busy": status["busy"],
                     "running_since": _stamp(lifecycle.started), "pid": os.getpid(),
-                    "background": background.names() if background is not None else [],
-                    "supervisor": _supervisor_state()})
+                    "background": background.names() if background is not None else []})
 
 
 # ---- What was done ---------------------------------------------------------------------------
-
-def _updates(limit):
-    """The always-on process's moves onto a new version, from the end of its log."""
-    found = logs.read("supervisor.log", limit=limit, text="moving it from")
-    if not found:
-        return []
-    entries = []
-    for record in found["records"]:
-        entries.append({"kind": "update", "library": None, "time": record["time"], "finished": None,
-                        "seconds": None, "what": record["message"].split("\n")[0], "outcome": "moved",
-                        "counts": {}, "id": None, "run": None, "error": None})
-    return entries
-
 
 @routes.get("/api/activity/timeline")
 def timeline():
@@ -541,10 +508,6 @@ def timeline():
                                                        if run["folders"] > 1 else ""),
                             "outcome": run["outcome"], "counts": {"folders": run["folders"]}, "id": None,
                             "run": run["run"], "error": run["message"] if run["outcome"] == "failed" else None})
-    try:
-        entries += _updates(limit)
-    except Exception as e:
-        logger.warning("Could not read the supervisor's log: %s", e)
     entries.sort(key=lambda entry: entry["time"] or "", reverse=True)
     children = _index_runs_of()
     for entry in entries[:limit]:

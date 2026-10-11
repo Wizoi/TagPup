@@ -42,10 +42,12 @@ from tagpup.jobs import naming_faces as naming_faces_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup import launcher
 from tagpup.services import libraries as library_actions
-from tagpup.supervisor import TOKEN_HEADER
 from tagpup.web import responses, security
 
 logger = logging.getLogger(__name__)
+
+#: The header a drain carries the token its Lifecycle was given in.
+TOKEN_HEADER = "X-TagPup-Supervisor"
 
 #: The header on a refusal while draining, which tells a page to wait and send again.
 UPDATING_HEADER = "X-TagPup-Updating"

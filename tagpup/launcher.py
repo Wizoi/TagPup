@@ -38,25 +38,27 @@ pages and bookmarks use, and two servers starting on one library run its migrati
 once -- so first the new version is checked to start at all (`starts`: its tagpup_web.py
 --help, every module the server imports); and when it does not answer once started, the
 old version is started again. A server run from a checkout, one of another installed
-folder, and the always-on process's are left alone; when the owner chose the always-on
-process, it is started (if it is not running) rather than a server of the install's own.
+folder, and the always-on process's are left alone.
 Two installs at once take turns (HANDOVER_LOCK); the second leaves the server to the first,
 which starts the version current.txt names when it starts it.
 """
 import http.client
 import json
+import logging
 import os
 import socket
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 
 from tagpup import config
-from tagpup import supervisor
 from tagpup.core import byte_lock
 from tagpup.core import library as libraries
 from tagpup.core import processes
+
+logger = logging.getLogger(__name__)
 
 #: Where the records are, when not the user's own folder (a test's home, a sandbox).
 ENV = "TAGPUP_SERVERS"
@@ -74,7 +76,7 @@ FROM_A_CHECKOUT = "checkout"
 OPEN, SERVE = "open", "serve"
 
 #: How long /api/server has to answer, and how many unanswered in a row mean it hangs
-#: (the supervisor's rule, closer together: the owner is waiting at the window).
+#: (closer together than a background process would: the owner is waiting at the window).
 HUNG_TIMEOUT = 20
 HUNG_TRIES = 3
 
@@ -101,9 +103,92 @@ END_WAIT = 30
 STARTING_WAIT = 60
 
 
+#: How the server exits when another already answers on its ports: not a crash.
+PORTS_TAKEN = 3
+
+#: The size at which a server's console output (an install's STARTED_LOG) is rotated as the
+#: next server starts.
+CONSOLE_LOG_MAX = 5 * 1024 * 1024
+
+
+# ---- Small files, and where the app is installed -----------------------------------------
+
+def default_installed():
+    """Where scripts/install_app.py installs the app: %LOCALAPPDATA%\\TagPup."""
+    return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "TagPup")
+
+
+def read_current(installed):
+    """The version current.txt names in the installed app's folder, or None."""
+    try:
+        with open(os.path.join(installed, "current.txt"), encoding="utf-8") as handle:
+            return handle.read().strip() or None
+    except OSError:
+        return None
+
+
+def console_python(python=None):
+    """python.exe beside `python` (or this interpreter): the server's, whose output goes
+    to a file."""
+    python = python or sys.executable
+    folder, name = os.path.split(python)
+    if name.lower() == "pythonw.exe" and os.path.exists(os.path.join(folder, "python.exe")):
+        return os.path.join(folder, "python.exe")
+    return python
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+#: How long a replace or a delete waits for a reader of the file to let go: on Windows a
+#: file another process has open cannot be replaced or deleted, and these are read by
+#: the launchers and the installer.
+READER_WAIT = 5.0
+
+
+def _while_read(action, path):
+    """`action()`, tried again while a reader holds `path` (PermissionError), for up to
+    READER_WAIT."""
+    deadline = time.monotonic() + READER_WAIT
+    while True:
+        try:
+            return action()
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
+def write_json(path, value):
+    """Write `value` whole or not at all: a reader never sees half a file."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".writing", "w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=1)
+    _while_read(lambda: os.replace(path + ".writing", path), path)
+
+
+def remove(path):
+    """Remove `path`: True if it went. One a reader holds past READER_WAIT is left, and
+    logged -- never raised."""
+    try:
+        _while_read(lambda: os.remove(path), path)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        logger.error("Could not remove %s (%s); trying again later.", os.path.basename(path), e)
+        return False
+
+
 def folder():
     """The folder the records are in: the user's own (TAGPUP_SERVERS overrides it)."""
-    return os.environ.get(ENV) or os.path.join(supervisor.default_installed(), "servers")
+    return os.environ.get(ENV) or os.path.join(default_installed(), "servers")
 
 
 def record_path(port):
@@ -120,15 +205,15 @@ def say_where(ports, version, token, supervised=False):
     found = {"pid": os.getpid(), "started": processes.started(os.getpid()), "ports": dict(ports),
              "version": version, "token": token, "supervised": bool(supervised)}
     for port in sorted(set(ports.values())):
-        supervisor.write_json(record_path(port), found)
+        write_json(record_path(port), found)
 
 
 def forget(ports):
     """The server's, as it stops: its records, and only its own."""
     for port in sorted(set(ports.values())):
-        found = supervisor.read_json(record_path(port))
+        found = read_json(record_path(port))
         if found and found.get("pid") == os.getpid():
-            supervisor.remove(record_path(port))
+            remove(record_path(port))
 
 
 # ---- Reading them ---------------------------------------------------------------------------
@@ -136,7 +221,7 @@ def forget(ports):
 def record(port):
     """The record of the live server that said it answers on `port`, or None: none, or its
     process has ended (a record left by a server ended without stopping)."""
-    found = supervisor.read_json(record_path(port))
+    found = read_json(record_path(port))
     if not processes.recorded_alive(found):
         return None
     if int(port) not in [value for value in (found.get("ports") or {}).values() if isinstance(value, int)]:
@@ -153,7 +238,7 @@ def clear_stale():
         return 0
     for name in names:
         path = os.path.join(folder(), name)
-        if name.endswith(".json") and not processes.recorded_alive(supervisor.read_json(path)) and supervisor.remove(path):
+        if name.endswith(".json") and not processes.recorded_alive(read_json(path)) and remove(path):
             removed += 1
     return removed
 
@@ -167,7 +252,7 @@ def running():
         return []
     for name in names:
         if name.endswith(".json"):
-            found = supervisor.read_json(os.path.join(folder(), name))
+            found = read_json(os.path.join(folder(), name))
             if processes.recorded_alive(found):
                 seen.setdefault(found["pid"], found)
     return list(seen.values())
@@ -225,9 +310,9 @@ def end(found, port, answering, wait=END_WAIT, sleep=time.sleep):
             return False
         sleep(0.2)
     for each in sorted(set((found.get("ports") or {}).values())):
-        left = supervisor.read_json(record_path(each))
+        left = read_json(record_path(each))
         if left and left.get("pid") == found.get("pid"):
-            supervisor.remove(record_path(each))
+            remove(record_path(each))
     return True
 
 
@@ -394,7 +479,7 @@ def _main_port(found):
 def server_command(python, code, ports):
     """The command line of the server of the code in `code` on `ports` ({"tagpup", "tuner"}),
     opening no page."""
-    command = [supervisor.console_python(python), os.path.join(code, "tagpup_web.py"), "--open", "none"]
+    command = [console_python(python), os.path.join(code, "tagpup_web.py"), "--open", "none"]
     for kind in ("tagpup", "tuner"):
         if kind in ports:
             command += ["--%s-port" % kind, str(int(ports[kind]))]
@@ -402,16 +487,14 @@ def server_command(python, code, ports):
 
 
 def _environment(home):
-    env = dict(os.environ, TAGPUP_HOME=home)
-    env.pop(supervisor.TOKEN, None)   # never the always-on process's child
-    return env
+    return dict(os.environ, TAGPUP_HOME=home)
 
 
 def starts(python, code, home):
     """Does the server of `code` start at all -- does its tagpup_web.py import every module
     the server needs, and answer --help? None when it does, else why not."""
     try:
-        done = processes.run([supervisor.console_python(python), os.path.join(code, "tagpup_web.py"), "--help"],
+        done = processes.run([console_python(python), os.path.join(code, "tagpup_web.py"), "--help"],
                              cwd=home, env=_environment(home), stdin=subprocess.DEVNULL, capture_output=True,
                              text=True, errors="replace", timeout=CHECK_WAIT)
     except (OSError, subprocess.SubprocessError) as e:
@@ -433,7 +516,7 @@ def start_server(python, code, home, ports):
     log_path = started_log(home)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     try:   # rotated as each starts, as the always-on process's console log is
-        if os.path.getsize(log_path) > supervisor.CONSOLE_LOG_MAX:
+        if os.path.getsize(log_path) > CONSOLE_LOG_MAX:
             os.replace(log_path, log_path + ".1")
     except OSError:
         pass
@@ -511,7 +594,7 @@ def hand_over(installed, python, home, say, sleep=time.sleep, clock=time.monoton
         say("Another install is handing the running server over; it starts the version installed last.")
         return True
     try:
-        current = supervisor.read_current(installed)
+        current = read_current(installed)
         replacing = [found for found in running() if kind_of(found, installed, current) == REPLACE]
         if replacing and not has_libraries(home):
             # --home defaults to the installer's own folder, a worktree's when an agent runs it:
@@ -526,7 +609,7 @@ def hand_over(installed, python, home, say, sleep=time.sleep, clock=time.monoton
 
 def _hand_over(found, installed, python, home, say, sleep, clock):
     old, ports, port = found.get("version"), dict(found.get("ports") or {}), _main_port(found)
-    new = supervisor.read_current(installed)
+    new = read_current(installed)
     back = os.path.join(installed, "current.txt")
     checking = clock()
     why = starts(python, os.path.join(installed, "versions", new), home)
@@ -543,14 +626,8 @@ def _hand_over(found, installed, python, home, say, sleep, clock):
             # Left running (make_way said why), or already the new version: a launch was quicker.
             status = ask(port, timeout=5)
             return bool(status) and status.get("version") == new
-        new = supervisor.read_current(installed) or new   # another install's, since
-        if supervisor.always_on(installed):
-            # The owner chose the always-on process: the launchers' way, it serves, never a server of ours.
-            if supervisor.running() is None:
-                say("Starting the always-on process, which serves %s." % new)
-                supervisor.start_in_background(installed, python)
-        else:
-            started = start_server(python, os.path.join(installed, "versions", new), home, ports)
+        new = read_current(installed) or new   # another install's, since
+        started = start_server(python, os.path.join(installed, "versions", new), home, ports)
         wait = start_wait(checked)
         say("Waiting for TagPup %s to import and start (importing alone took %.0f s; up to %d s)."
             % (new, checked, wait))

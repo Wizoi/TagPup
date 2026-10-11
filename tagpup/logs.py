@@ -167,7 +167,6 @@ FIRST_LOOK = 64 * 1024
 SOURCES = (
     (re.compile(r"^tagpup_web\.console$"), "Server console"),
     (re.compile(r"^tagpup_web$"), "Web server"),
-    (re.compile(r"^supervisor$"), "Always on (supervisor)"),
     (re.compile(r"^indexer-(.+)-(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)\d\d-\d+-\d+$"), "Indexer ({0}, {2}-{3} {4}:{5})"),
     (re.compile(r"^indexer-(.+)$"), "Indexer ({0})"),
     (re.compile(r"^tagpup_mcp$"), "MCP server"),

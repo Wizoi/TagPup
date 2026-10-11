@@ -31,8 +31,6 @@ const NOW = {
   syncing: { library: "harbour", folder: "D:\\Photos\\Regatta", started: "2026-09-26 10:00:01" },
   watching: true,
   server: { version: "20260926-090000-abc1234", taking_work: true, requests: 1, busy: [] },
-  supervisor: { state: "moving", why: "to 20260926-100000-def5678", alive: true,
-                update_refused: { said: "the installed version is newer than the checkout", since: "2026-09-26 08:00:00" } },
 };
 
 function job(name, reason, runs, extra = {}) {
@@ -84,9 +82,6 @@ const SNAPSHOTS = {
 const SERVER = {
   version: "20260926-090000-abc1234", supervised: true, taking_work: true, busy: [], running_since: "2026-09-26 09:00:00",
   pid: 4242, background: ["recurring jobs", "folder watcher"],
-  supervisor: { state: "running", why: null, alive: true, running_since: "2026-09-26 08:59:00", crashes: 1,
-                crash_window_minutes: 10, server_starts: 2, previous_version: "20260925-090000-0123456",
-                version: "20260926-090000-abc1234", update_refused: null },
 };
 
 const TIMELINE = {
@@ -110,7 +105,6 @@ const LOG_FILES = {
   levels: ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
   logs: [
     { name: "tagpup_web.log", program: "tagpup_web", source: "Web server", bytes: 20480, modified: 1, rotated: [] },
-    { name: "supervisor.log", program: "supervisor", source: "Always on (supervisor)", bytes: 2048, modified: 0, rotated: [] },
     { name: "indexer-harbour.log", program: "indexer-harbour", source: "Indexer (harbour)", bytes: 1024, modified: 0,
       rotated: [] },
   ],
@@ -155,8 +149,6 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.match(now.textContent, /Lakes/);
     assert.match(now.textContent, /running, 3 of 9/);
     assert.match(now.textContent, /snapshots/);
-    assert.match(now.textContent, /update waiting/);
-    assert.match(now.textContent, /update refused/);
     assert.match(now.textContent, /D:\\Photos\\Regatta/);
     assert.equal(document.getElementById("updated").textContent, "Updated 10:00:03");
   });
@@ -182,7 +174,7 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.match(unfolded[1].textContent, /changed 1/);
   });
 
-  test("Sync & watcher, Snapshots and Always on", async (t) => {
+  test("Sync & watcher, Snapshots and the server", async (t) => {
     const { document, window } = await open(t);
     await flush(window, 6);
     const sync = document.getElementById("sync-body");
@@ -198,8 +190,6 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.match(snapshots.textContent, /1 h/);
     const always = document.getElementById("server-body");
     assert.match(always.textContent, /20260926-090000-abc1234/);
-    assert.match(always.textContent, /1 in the last 10 minutes/);
-    assert.match(always.textContent, /from 20260925-090000-0123456 to 20260926-090000-abc1234/);
   });
 
   test("Recent activity, newest first, and More reads further back", async (t) => {
@@ -379,7 +369,7 @@ describe("Logs", () => {
     const { document, window } = await open(t, fake);
     await flush(window, 8);
     const tabs = [...document.querySelectorAll("#log-tabs .tab")];
-    assert.deepEqual(tabs.map((tab) => tab.dataset.log), ["tagpup_web.log", "supervisor.log", "indexer-harbour.log"]);
+    assert.deepEqual(tabs.map((tab) => tab.dataset.log), ["tagpup_web.log", "indexer-harbour.log"]);
     assert.ok(tabs[0].classList.contains("chosen"));
     const read = fake.urls().find((url) => url.startsWith("/api/activity/logs/tagpup_web.log?"));
     assert.ok(read, fake.urls().join("\n"));

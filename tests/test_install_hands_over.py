@@ -36,7 +36,6 @@ from free_port import free_port  # noqa: E402
 import install_app  # noqa: E402
 import tagpup_web  # noqa: E402
 from tagpup import launcher  # noqa: E402
-from tagpup import supervisor  # noqa: E402
 from tagpup.core import byte_lock, processes  # noqa: E402
 
 OLD, NEW = "20261006-093740-aaaaaaa", "20261006-103400-bbbbbbb"
@@ -285,18 +284,6 @@ class Choices(unittest.TestCase):
         self.assertIn("snapshots restore", said, "the way back is a snapshot, not current.txt")
         self.assertIn("start the newest TagPup", said)
 
-    def test_the_always_on_process_chosen_is_started_rather_than_a_server_of_the_installs(self):
-        self.drains = [{"drained": True}]
-
-        def start_in_background(installed, python=None):
-            self.port_held, self.serving = True, NEW
-        with mock.patch.object(supervisor, "always_on", return_value=True), \
-                mock.patch.object(supervisor, "running", return_value=None), \
-                mock.patch.object(supervisor, "start_in_background", side_effect=start_in_background) as background:
-            self.assertTrue(self.hand_over())
-        background.assert_called_once()
-        self.assertEqual([], self.started)
-
     def test_ctrl_c_while_it_waits_says_the_old_server_still_answers(self):
         with mock.patch.object(launcher, "make_way", side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
@@ -330,7 +317,7 @@ class TheServerBindsFirst(unittest.TestCase):
                 mock.patch.object(tagpup_web.web, "create_app") as create_app, \
                 mock.patch.object(tagpup_web.web, "serve") as serve:
             code = tagpup_web.main(["--tagpup-port", "7", "--tuner-port", "8"])
-        self.assertEqual(supervisor.PORTS_TAKEN, code)
+        self.assertEqual(launcher.PORTS_TAKEN, code)
         for began in (migrating, background, runtime, create_app, serve):
             began.assert_not_called()
 
@@ -346,14 +333,13 @@ class TheServerBindsFirst(unittest.TestCase):
         held.bind(("127.0.0.1", ports[1]))
         held.listen(5)
         env = dict(os.environ, TAGPUP_NO_JOBS="1", TAGPUP_NO_MODEL_WEIGHTS="1")
-        env.pop(supervisor.TOKEN, None)
         began = time.time()
         server = processes.start([sys.executable, os.path.join(WORKSPACE_DIR, "tagpup_web.py"), "--open", "none",
                                   "--tagpup-port", str(ports[0]), "--tuner-port", str(ports[1])],
                                  env=env, cwd=self.home.root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: server.poll() is None and processes.kill_tree(server.pid))
-        self.assertEqual(supervisor.PORTS_TAKEN, server.wait(timeout=120))
+        self.assertEqual(launcher.PORTS_TAKEN, server.wait(timeout=120))
         log = os.path.join(self.home.data, "logs", "tagpup_web.log")
         with open(log, encoding="utf-8", errors="replace") as handle:
             text = handle.read()
@@ -368,7 +354,7 @@ class TheReloadersChild(unittest.TestCase):
 
     def test_a_lost_bind_is_not_the_code_that_restarts_the_reloader(self):
         import reloader
-        self.assertNotEqual(supervisor.PORTS_TAKEN, reloader.RELOAD_EXIT_CODE)
+        self.assertNotEqual(launcher.PORTS_TAKEN, reloader.RELOAD_EXIT_CODE)
 
     def test_the_reloaders_child_binds_first_and_a_lost_bind_begins_nothing(self):
         home = own_home.for_test(self, prefix="reload_bind_")
@@ -380,7 +366,7 @@ class TheReloadersChild(unittest.TestCase):
                 mock.patch.object(tagpup_web.runtimes, "background") as background, \
                 mock.patch.object(tagpup_web.web, "serve") as serve:
             code = tagpup_web.main(["--reload", "--tagpup-port", "7", "--tuner-port", "8"])
-        self.assertEqual(supervisor.PORTS_TAKEN, code)
+        self.assertEqual(launcher.PORTS_TAKEN, code)
         for began in (migrating, background, serve):
             began.assert_not_called()
 
@@ -497,7 +483,6 @@ class ForReal(unittest.TestCase):
                                                "TAGPUP_WEB_NO_WARMUP": "1", "TAGPUP_WEB_RELOADED": "1"})
         environ.start()
         self.addCleanup(environ.stop)
-        os.environ.pop(supervisor.TOKEN, None)
         # A drain waits for a moment with no request: the test's servers have none to wait for.
         quiet = mock.patch.object(launcher, "QUIET", 1)
         quiet.start()
