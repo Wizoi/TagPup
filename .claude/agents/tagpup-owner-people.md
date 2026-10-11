@@ -64,7 +64,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 7. Does a response key a person by name where it could by id, or add a second key spelling? Add none.
 8. Could a group tag or a bucket be treated as a person? Is the bucket name read from its one owner?
 9. SQL on `faces` / `photo_people`: equality not `LIKE`, no function on the column, no BLOB unless used, `EXPLAIN QUERY PLAN` on `data/photo_index.db`, nothing in a per-item loop that answers the same each time.
-10. Which of the two matching matrices does it use (`identify.face_matches` / the strip's `named_embeddings_elsewhere`, #828)? Never a third.
+10. Which matching matrix does it use? Only the shared one (`identify.named_faces`, read through `identify.nearest_people`); never a second.
 11. Does the fixture come from `add_read` / `add_unread` or the page's own builder, and does it include a face that names a person and one that names none?
 12. Two processes (server and CLI), two libraries holding one folder, an older app still open: what does each leave behind?
 13. What does the owner see if it fails half-way, and does the count reported equal rows changed, not attempted?

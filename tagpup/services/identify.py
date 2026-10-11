@@ -352,34 +352,35 @@ def face_matches(library, face_id, named):
     finally:
         conn.close()
 
-    known_ids, known_people, embeddings_matrix = named()
-    if embeddings_matrix is None:
+    return [{"name": found.name, "person": everyone.of_id(found.id), "similarity": similarity,
+             "band": face_rules.band(similarity)}
+            for found, similarity in nearest_people(named(), target_emb, face_id)]
+
+
+def nearest_people(known, embedding, skip_id=None, limit=5):
+    """[(person, similarity)], the `limit` people most like `embedding`, best first, one entry a person, from `known`
+    (named_faces' ids, people and matrix). The one place that says who a face looks like: the boxes' list
+    (face_matches) and the strip's suggestion (tagpup.services.faces.panel) both read it.
+
+    The face `skip_id` is skipped rather than excluded from the matrix, which is shared and cannot be rebuilt per
+    face; a face is not a suggestion for itself."""
+    known_ids, known_people, matrix = known
+    if matrix is None:
         return []
-
-    similarities = np.dot(embeddings_matrix, target_emb)
-    sorted_indices = np.argsort(similarities)[::-1]
-
-    # The face itself is skipped rather than excluded from the matrix, which is shared
-    # and cannot be rebuilt per face; a face is not a suggestion for itself.
-    top_matches, seen = [], set()
-    for idx in sorted_indices:
-        if known_ids[idx] == face_id:
+    similarities = np.dot(matrix, embedding)
+    found, seen = [], set()
+    for idx in np.argsort(similarities)[::-1]:
+        if known_ids[idx] == skip_id:
             continue
-        found = known_people[idx]
-        key = person_ids.key_of(found.id, found.name)
+        person = known_people[idx]
+        key = person_ids.key_of(person.id, person.name)
         if key in seen:
             continue
         seen.add(key)
-        name = found.name
-        top_matches.append({
-            "name": name,
-            "person": everyone.of_id(found.id),
-            "similarity": float(similarities[idx]),
-            "band": face_rules.band(float(similarities[idx])),
-        })
-        if len(top_matches) >= 5:
+        found.append((person, float(similarities[idx])))
+        if len(found) >= limit:
             break
-    return top_matches
+    return found
 
 
 class UnnamedFaces:

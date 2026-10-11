@@ -20,6 +20,7 @@ import numpy as np
 
 from tagpup.core import clustering, paths, validation, vocabulary
 from tagpup.core.result import Conflict, NotFound, Refused, Result
+from tagpup.services import identify
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_files
 from tagpup.services import thumbnails
@@ -579,18 +580,16 @@ def _library_there(library):
 
 # ---- What TagPup's photo panel shows -------------------------------------------------------
 
-def panel(library, photo_path):
+def panel(library, photo_path, named):
     """The faces detected on one photo, for the strip under its details and the boxes over
     it: {"faces", "total", "unmatched", "size", "turned"}, each face with its box, area, name,
     the `person` that name is (tagpup.services.people), prob, exclusion, and for an unnamed one the
-    closest name elsewhere in the library (and `suggestion_person`, the same of it) and how alike. `size` is [width, height] of the pixels the boxes are in, or None, and `turned`
+    first of the people the boxes list (identify.nearest_people over `named`, the shared matrix: its
+    `known` function is read only if a face needs it) and `suggestion_person`, the same of it, and how alike. `size` is [width, height] of the pixels the boxes are in, or None, and `turned`
     says the photo declares an EXIF Orientation its boxes do not follow (photos.box_shape).
 
-    TagPup ran face recognition invisibly: the suggester matched faces and surfaced
-    only a name pill, so there was no way to see which face was unrecognised while
-    tagging. The similarity is to the nearest single resolved face of that person,
-    the measure TagTuner's suggestion list uses, so the two agree on how confident a
-    match looks. Below the value every screen offers a name from
+    The similarity is to the nearest single named face of that person, from the matrix
+    `/api/face-matches` reads, so the strip and the boxes cannot disagree (#828). Below the value every screen offers a name from
     (tagpup.core.clustering.is_offered) the nearest name is noise, not a candidate:
     it was 0.5 here, which two strangers in three reach (docs/findings.md, #75).
     Named first, then by confidence, then largest first: the faces needing attention
@@ -602,15 +601,8 @@ def panel(library, photo_path):
         if not rows:
             return {"faces": [], "total": 0, "unmatched": 0}
         everyone = person_ids.Directory.read(conn)
-        known_people, known_vectors = [], []
-        for person, emb in faces.named_embeddings_elsewhere(conn, photo_path):
-            vec = _unit(emb)
-            if vec is not None:
-                known_people.append(person)
-                known_vectors.append(vec)
     finally:
         conn.close()
-    known = np.array(known_vectors, dtype=np.float32) if known_vectors else None
 
     found = []
     for face_id, box_json, carried, prob, emb, excluded, reason in rows:
@@ -620,13 +612,12 @@ def panel(library, photo_path):
         except Exception:
             box = []
         suggestion = suggested = similarity = None
-        vec = _unit(emb) if known is not None and not excluded else None
-        if vec is not None:
-            sims = known @ vec
-            best = int(np.argmax(sims))
-            if clustering.is_offered(float(sims[best])):
-                suggested = known_people[best]
-                suggestion, similarity = suggested.name, round(float(sims[best]), 4)
+        if emb and name is None and not excluded:
+            for suggested, alike in identify.nearest_people(named(), np.frombuffer(emb, dtype=np.float32), face_id, 1):
+                if clustering.is_offered(alike):
+                    suggestion, similarity = suggested.name, round(alike, 4)
+                else:
+                    suggested = None
         found.append({
             "id": face_id, "box": box,
             "area": (box[2] - box[0]) * (box[3] - box[1]) if len(box) >= 4 else 0,
@@ -640,15 +631,6 @@ def panel(library, photo_path):
     return {"faces": found, "total": len(found),
             "unmatched": sum(1 for f in found if f["name"] is None and not f["excluded"]),
             **photo_files.box_shape(photo_path)}
-
-
-def _unit(embedding):
-    """A face's stored embedding as a unit vector, or None for an empty one."""
-    if not embedding:
-        return None
-    vec = np.frombuffer(embedding, dtype=np.float32)
-    norm = np.linalg.norm(vec)
-    return vec / norm if norm > 0 else None
 
 
 # ---- The faces detection finds ---------------------------------------------------------
