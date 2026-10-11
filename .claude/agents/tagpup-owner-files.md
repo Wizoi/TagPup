@@ -19,7 +19,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 - Files layer: `tagpup/files/exiftool_session.py`, `tagpup/files/metadata.py`, `tagpup/files/field_values.py`, `tagpup/files/identity.py`, `tagpup/files/images.py`, `tagpup/files/names.py`, `tagpup/files/recycle_bin.py`, `tagpup/files/shares.py`, `tagpup/files/lock_owners.py`, `tagpup/files/job_files.py`, `tagpup/files/thumbs.py`
 - Core: `tagpup/core/paths.py`, `tagpup/core/fields.py`, `tagpup/core/photo_meta.py`, `tagpup/core/renaming.py`, `tagpup/core/machine.py`, `tagpup/core/byte_lock.py`, `tagpup/core/dates.py`
 - Services: `tagpup/services/file_changes.py`, `tagpup/services/file_only.py`, `tagpup/services/sync.py`, `tagpup/services/photos.py`, `tagpup/services/refresh_rows.py`, `tagpup/services/relink_photos.py`, `tagpup/services/damaged_photos.py`, `tagpup/services/bulk_edit.py`, `tagpup/services/indexing.py`, `tagpup/services/folder_scope.py`
-- Jobs: `tagpup/jobs/indexing.py`, `tagpup/jobs/watching.py`, `tagpup/jobs/bulk_edits.py`, `tagpup/jobs/verifying.py`
+- Jobs: `tagpup/jobs/indexing.py`, `tagpup/jobs/watching.py`, `tagpup/jobs/bulk_edits.py`
 - Store: `tagpup/store/photos.py`, `tagpup/store/folders.py`
 - The `index` command in `tagpup_cli.py` (a shell over the indexer that still holds its flow; the server's index job is a subprocess of it)
 - Tables: `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`: the file copies), `folders`, `photo_folder`. Their journal and rebuild are Data's; roots as stored data are Data's.

@@ -22,7 +22,6 @@ import roots_library as rl  # noqa: E402
 import share_waits  # noqa: E402
 
 from tagpup import config  # noqa: E402
-from tagpup.core.result import Conflict  # noqa: E402
 from tagpup.files import shares  # noqa: E402
 from tagpup.services import damaged_photos, file_changes, inspect, roots_location, roots_verify, tagging  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
@@ -41,7 +40,7 @@ class Base(unittest.TestCase):
         self.assertIsNone(self.side.adopt().refused)
         self.library = self.side.library
         self.machine = roots_service.Machine(config.machine_roots, config.add_machine_root, config.machine_roots_path,
-                                             config.set_location, config.change_back)
+                                             config.set_location)
         self.copy = os.path.join(self.home.root, "Copy", "Pictures")
         shutil.copytree(self.side.pictures, self.copy, copy_function=shutil.copy2)
 
@@ -154,12 +153,6 @@ class ALibraryBehindTheSchema(Base):
     def behind(self):
         return mock.patch.object(store_job_runs, "claim", return_value=store_job_runs.Claim(why="behind"))
 
-    def test_verify_says_so_in_words(self):                                                   # #470
-        with self.behind(), self.assertRaises(Conflict) as why:
-            roots_location.begin_verify(self.library, "pictures")
-        self.assertIn("open it with TagPup or the CLI once so that it updates, then try again", str(why.exception))
-        self.assertNotIn("under way", str(why.exception))
-
     def test_a_move_says_so_in_words(self):                                                   # #470
         with self.behind():
             result = self.move(self.copy, apply=True)
@@ -188,11 +181,6 @@ class OnlyTheCurrentAndThePreviousPlace(unittest.TestCase):
     def test_going_to_the_previous_place_by_name_keeps_two(self):                             # #472
         config.set_location("pictures", self.places[1])
         config.set_location("pictures", self.places[0])
-        self.assertEqual([self.places[0], self.places[1]], list(config.machine_roots()["pictures"]))
-
-    def test_change_back_swaps_and_keeps_two(self):                                           # #472
-        config.set_location("pictures", self.places[1])
-        config.change_back("pictures")
         self.assertEqual([self.places[0], self.places[1]], list(config.machine_roots()["pictures"]))
 
     def test_a_place_older_than_that_is_no_longer_recognised(self):                           # #472

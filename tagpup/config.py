@@ -387,7 +387,7 @@ def _write_map(merged, path):
 def set_location(name, new_location, path=None, expected=None, must_exist=True):
     """Move root `name` on this machine to `new_location`: the new place first -- where a path is
     put from now on -- and the old places kept after it, so that every path stays recognised and
-    `change_back` is the reverse. Returns {"changed", "places", "previous"} (the places listed
+    Returns {"changed", "places", "previous"} (the places listed
     after and before, native); `changed` False, nothing written, when the root is at
     `new_location` already (a second click, a second tab that came after the first).
 
@@ -420,28 +420,6 @@ def set_location(name, new_location, path=None, expected=None, must_exist=True):
         # map still lists is a place a stale spelling is recognised by.
         places = [new_location] + before[:1]
 
-        merged = {each: list(listed) for each, listed in held.items()}
-        merged[folded] = places
-        _write_map(merged, path)
-        return {"changed": True, "places": places, "previous": before}
-
-
-def change_back(name, path=None, expected=None):
-    """Put root `name` back at the place it was before the last `set_location`: the first two
-    places swap. Returns what set_location does. Refused, nothing written, for a root with only
-    one place, and for the map having changed since the caller looked (`expected`: the first
-    place it saw). The disk is the caller's to ask (it may be away)."""
-    path = path or machine_roots_path()
-    folded = paths.root_name(name)
-    with _edit_lock(path):
-        held = _parse(_read_whole(path), path)
-        before = list(held.get(folded, ()))
-        if len(before) < 2:
-            raise MachineMapError("%s has no previous place on this machine to go back to" % folded)
-        if expected is not None and paths.key(before[0]) != paths.key(expected):
-            raise MachineMapError("The map has changed since you looked: %s is now at %s, not %s. Nothing was changed."
-                                  % (folded, before[0], expected))
-        places = [before[1], before[0]]
         merged = {each: list(listed) for each, listed in held.items()}
         merged[folded] = places
         _write_map(merged, path)

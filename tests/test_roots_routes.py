@@ -21,30 +21,11 @@ import roots_library as rl  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
-from tagpup.jobs import verifying  # noqa: E402
-from tagpup.store import job_runs as store_job_runs  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import roots_gate  # noqa: E402
 
 WINDOWS = os.name == "nt"
 LIBRARY = "photo_index"
-
-
-class SyncThread:
-    """A thread that runs when it is started and has ended when asked: the full Verify's job,
-    run in the request, so the test needs no thread and no wait."""
-
-    def __init__(self, target=None, name=None, daemon=None, args=(), kwargs=None):
-        self._target, self._args, self._kwargs = target, args, kwargs or {}
-
-    def start(self):
-        self._target(*self._args, **self._kwargs)
-
-    def join(self, timeout=None):
-        return None
-
-    def is_alive(self):
-        return False
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
@@ -61,7 +42,6 @@ class RootsRoutes(unittest.TestCase):
         self.app.testing = True
         self.client = self.app.test_client()
         roots_gate.forget(self.side.library)
-        self.addCleanup(verifying.forget, self.side.library)
 
     def get(self, path, **kwargs):
         return self.client.get("/%s%s" % (LIBRARY, path), **kwargs)
@@ -82,8 +62,8 @@ class TheList(RootsRoutes):
         self.assertEqual(("pictures", self.side.pictures, True, 18), (root["name"], root["active"], root["mapped"],
                                                                       root["rows"]))
         self.assertEqual("Tags and renames are written to files at %s." % self.side.pictures, root["writes_to"])
-        self.assertIsNone(root["verifying"])
-        self.assertIsNone(root["last_verify"])
+        self.assertNotIn("verifying", root)
+        self.assertNotIn("last_verify", root)
         self.assertEqual([], found["busy"])
 
     def test_a_library_with_no_roots_answers_cleanly(self):
@@ -92,18 +72,18 @@ class TheList(RootsRoutes):
         self.assertEqual(200, reply.status_code)
         found = reply.get_json()
         self.assertEqual([], found["roots"])
-        for path, body in (("/api/roots/verify", {"root": "pictures"}),
-                           ("/api/roots/change-location", {"root": "pictures", "location": self.copy}),
-                           ("/api/roots/change-back", {"root": "pictures"})):
-            answer = self.client.post("/plain" + path, data=json.dumps(body), content_type="application/json")
-            self.assertEqual(404, answer.status_code, path)
-            self.assertIn("no root called pictures", answer.get_json()["error"])
+        answer = self.client.post("/plain/api/roots/change-location", content_type="application/json",
+                                  data=json.dumps({"root": "pictures", "location": self.copy}))
+        self.assertEqual(404, answer.status_code)
+        self.assertIn("no root called pictures", answer.get_json()["error"])
         self.assertIsNotNone(plain)
 
+    def test_verify_and_change_back_are_gone(self):
+        for path in ("/api/roots/verify", "/api/roots/verify-cancel", "/api/roots/change-back"):
+            self.assertIn(self.post(path, {"root": "pictures"}).status_code, (404, 405), path)
+
     def test_it_answers_this_pc_only(self):
-        for method, path in (("get", "/api/roots"), ("post", "/api/roots/verify"),
-                             ("post", "/api/roots/change-location"), ("post", "/api/roots/change-back"),
-                             ("post", "/api/roots/verify-cancel")):
+        for method, path in (("get", "/api/roots"), ("post", "/api/roots/change-location")):
             reply = getattr(self.client, method)("/%s%s" % (LIBRARY, path), environ_overrides={"REMOTE_ADDR": "10.0.0.7"})
             self.assertEqual(403, reply.status_code, path)
 
@@ -112,64 +92,6 @@ class TheList(RootsRoutes):
             handle.write("{ nope")
         found = self.get("/api/roots").get_json()
         self.assertIn("machine_roots.json", found["problem"])
-
-
-class Verifying(RootsRoutes):
-    def test_a_sample_answers_in_the_request_and_is_remembered(self):
-        reply = self.post("/api/roots/verify", {"root": "pictures"})
-        found = reply.get_json()
-        self.assertEqual(200, reply.status_code, found)
-        self.assertEqual((18, 0, 0), (found["verify"]["matches"], found["verify"]["differs"],
-                                      found["verify"]["missing"]))
-        last = self.get("/api/roots").get_json()["roots"][0]["last_verify"]
-        self.assertEqual((18, "sample"), (last["checked"], last["mode"]))
-
-    def test_a_sample_of_another_place_does_not_touch_the_map(self):
-        before = open(config.machine_roots_path(), "rb").read()
-        found = self.post("/api/roots/verify", {"root": "pictures", "location": self.copy}).get_json()
-        self.assertEqual(18, found["verify"]["matches"])
-        self.assertEqual(before, open(config.machine_roots_path(), "rb").read())
-
-    def test_every_row_is_a_job_whose_progress_the_list_reports(self):
-        with mock.patch("tagpup.jobs.verifying.threading.Thread", SyncThread):
-            started = self.post("/api/roots/verify", {"root": "pictures", "all": True}).get_json()
-        self.assertTrue(started["started"])
-        status = self.get("/api/roots").get_json()["roots"][0]["verifying"]
-        self.assertEqual(("done", 18, 18), (status["state"], status["checked"], status["rows"]))
-        self.assertEqual("all", status["result"]["mode"])
-        self.assertEqual(0, status["result"]["not_in_library"])
-        entries = self.client.get("/api/activity/timeline").get_json()["entries"]
-        self.assertTrue(any(e["what"].startswith("verified root pictures") for e in entries), "the Activity page lists it")
-
-    def test_a_second_verify_while_one_runs_is_told_so(self):
-        from tagpup.services import roots_location
-        claim = roots_location.begin_verify(self.side.library, "pictures")
-        self.addCleanup(lambda: store_job_runs.finish(self.side.db_path, claim.run_id, "done", 1.0, {}))
-        reply = self.post("/api/roots/verify", {"root": "pictures"})
-        self.assertEqual(409, reply.status_code)
-        self.assertIn("under way already", reply.get_json()["error"])
-        reply = self.post("/api/roots/verify", {"root": "pictures", "all": True})
-        self.assertEqual(409, reply.status_code)
-        self.assertEqual("pictures" in verifying.status(self.side.library), False, "no run was begun")
-
-    def test_a_place_that_is_not_reachable_is_a_result_not_an_error(self):
-        letter = next(l + ":" for l in "QRSTUVWXYZ" if not os.path.exists(l + ":\\"))
-        reply = self.post("/api/roots/verify", {"root": "pictures", "location": letter + "\\Pictures"})
-        found = reply.get_json()
-        self.assertEqual(200, reply.status_code)
-        self.assertFalse(found["verify"]["reachable"])
-        self.assertEqual(0, found["verify"]["missing"])
-        self.assertIn("cannot be reached", found["verify"]["summary"])
-
-    def test_a_root_the_library_does_not_have_and_a_missing_name_are_sentences(self):
-        self.assertEqual(404, self.post("/api/roots/verify", {"root": "scans"}).status_code)
-        reply = self.post("/api/roots/verify", {})
-        self.assertEqual(400, reply.status_code)
-        self.assertIn("Missing root", reply.get_json()["error"])
-
-    def test_cancel_with_nothing_running_says_so(self):
-        found = self.post("/api/roots/verify-cancel", {"root": "pictures"}).get_json()
-        self.assertEqual((True, False), (found["success"], found["cancelled"]))
 
 
 class ChangingTheLocation(RootsRoutes):
@@ -212,7 +134,8 @@ class ChangingTheLocation(RootsRoutes):
         self.assertEqual(len(before), len(after))
         self.assertTrue(all(photo["path"].lower().startswith(self.copy.lower()) for photo in after), after[:1])
         self.assertEqual(200, self.get("/api/photo-file", query_string={"path": after[0]["path"]}).status_code)
-        self.post("/api/roots/change-back", {"root": "pictures", "dry_run": False})
+        self.post("/api/roots/change-location", {"root": "pictures", "location": self.side.pictures,
+                                                   "dry_run": False})
         again = self.get("/api/photos").get_json()
         self.assertTrue(all(photo["path"].lower().startswith(self.side.pictures.lower()) for photo in again))
 
@@ -258,14 +181,6 @@ class ChangingTheLocation(RootsRoutes):
         self.assertTrue(second["unchanged"])
         self.assertEqual([self.copy, self.side.pictures], self.places())
 
-    def test_change_back_after_the_old_place_was_deleted_is_a_sentence(self):
-        self.post("/api/roots/change-location", {"root": "pictures", "location": self.copy, "dry_run": False})
-        shutil.rmtree(self.side.pictures)
-        reply = self.post("/api/roots/change-back", {"root": "pictures", "dry_run": False})
-        self.assertEqual(400, reply.status_code)
-        self.assertIn("not there any more", reply.get_json()["error"])
-        self.assertEqual(self.copy, self.places()[0])
-
     def test_a_location_that_is_not_a_place_is_a_sentence(self):
         for location, word in (("Pictures", "absolute"), (os.path.join(self.home.root, "Nowhere"), "cannot be reached"),
                                (None, "absolute")):
@@ -299,13 +214,6 @@ class TwoLibrariesOnOneRoot(RootsRoutes):
         self.assertEqual(409, reply.status_code)
         self.assertIn("in second, which uses this root too", reply.get_json()["error"])
         self.assertEqual(before, open(config.machine_roots_path(), "rb").read())
-
-    def test_a_verify_in_one_is_not_shown_in_the_other(self):
-        with mock.patch("tagpup.jobs.verifying.threading.Thread", SyncThread):
-            self.post("/api/roots/verify", {"root": "pictures", "all": True})
-        self.assertEqual("done", self.get("/api/roots").get_json()["roots"][0]["verifying"]["state"])
-        self.assertIsNone(self.client.get("/second/api/roots").get_json()["roots"][0]["verifying"])
-        self.addCleanup(verifying.forget, self.second.library)
 
 
 class WhatAMachineThatDoesNotPlaceTheRootIsTold(RootsRoutes):

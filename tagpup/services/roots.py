@@ -30,13 +30,12 @@ class Machine:
     `add(name, location)` writes the root into it (True if written, False if it already places
     the root there), `path()` where the file is. tagpup.config's machine_roots,
     add_machine_root and machine_roots_path. `set_location(name, location, expected=, must_exist=)`
-    and `change_back(name, expected=)` move a root it already places (tagpup.config; TagTuner's
-    Roots, tagpup.services.roots_location); none where the entry point does not move roots."""
+    moves a root it already places (tagpup.config; TagTuner's Roots, tagpup.services.roots_location);
+    none where the entry point does not move roots."""
     roots: Callable
     add: Callable
     path: Callable
     set_location: Callable = None
-    change_back: Callable = None
 
 
 #: The library's roots were changed, by another process, while a run held them: what a pinned run
