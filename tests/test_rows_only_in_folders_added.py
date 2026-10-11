@@ -11,7 +11,7 @@ its other photos were indexed, and their Family/Work tags grew kr-track's tag tr
 Now ensure_row makes a row only in a folder the library holds, or when the folder is
 being added (tagpup.services.libraries.add, and the indexer). Every entry point that
 could make one is asked here: the Suggest route (409, naming the folder and the
-library), the CLI's suggest, the MCP server's write tools, and the adding routes of
+library), the MCP server's write tools, and the adding routes of
 both apps, which make the rows at once and queue the index.
 """
 import asyncio
@@ -25,7 +25,6 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
-from click.testing import CliRunner  # noqa: E402
 from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
@@ -43,7 +42,6 @@ from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 from tagpup.store import suggestions as store_suggestions  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
-from tagpup_cli import cli  # noqa: E402
 
 
 def make_photos(folder, *names):
@@ -248,29 +246,6 @@ class TagTunersAddFolder(Folders, unittest.TestCase):
         self.assertEqual(0, rows_under(library.path, self.lighthouse))
         self.assertIsNone(library_actions.not_in(library, self.lighthouse))
         self.assertEqual([self.lighthouse], indexed.folders)
-
-
-class TheCli(Folders, unittest.TestCase):
-    def setUp(self):
-        self.home = own_home.for_test(self)
-        self.db_path = self.home.library("harbour.db")
-        library_actions.create(self.db_path)
-        self.make(self.home.root, self.db_path)
-
-    def test_suggest_refuses_a_folder_the_library_does_not_hold(self):
-        result = CliRunner().invoke(cli, ["--db", self.db_path, "suggest", self.lighthouse])
-        self.assertEqual(1, result.exit_code, result.output)
-        self.assertIn("is not in harbour", " ".join(result.output.split()))
-        self.assertEqual(0, rows_under(self.db_path, self.lighthouse))
-
-    def test_suggest_adds_the_folder_when_asked(self):
-        # Stopped where the models would load: what is under test is the adding.
-        with mock.patch("tagpup_cli.library_index", side_effect=SystemExit(0)):
-            result = CliRunner().invoke(cli, ["--db", self.db_path, "suggest", self.lighthouse, "--add"])
-        self.assertEqual(0, result.exit_code, result.output)
-        self.assertIn("Added the folder to harbour", " ".join(result.output.split()))
-        self.assertEqual(0, rows_under(self.db_path, self.lighthouse))
-        self.assertIsNone(library_actions.not_in(Library(self.db_path), self.lighthouse))
 
 
 class TheMcpWriteTools(Folders, unittest.TestCase):
