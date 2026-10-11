@@ -165,13 +165,8 @@ class PhotoIndex:
     tagpup.services.faces': it held a wrapper for each.
     """
 
-    def __init__(self, db_path: str, model: Optional[str] = None, read_only: bool = False):
+    def __init__(self, db_path: str, model: Optional[str] = None):
         self.db_path = db_path
-        #: A look only (the CLI's stats, list-index and search): the library is opened
-        #: read-only and never migrated or created. `behind` names the migrations it
-        #: has not had, for the caller to say so (docs/findings.md, #243).
-        self.read_only = read_only
-        self.behind: List[str] = []
         #: Whose vectors are searched and written: a tagpup.store.embeddings.model_key,
         #: the model's the runtime runs (tagpup.runtime.Runtime.model_key). Vectors from
         #: other settings cannot be compared with a query embedded under these. None
@@ -220,14 +215,6 @@ class PhotoIndex:
 
     def _load_unlocked(self, vectors=True) -> bool:
         try:
-            if self.read_only:
-                if not os.path.exists(self.db_path):
-                    return False
-                self.behind = [m.name for m in schema.pending(self.db_path)]
-                if self.conn is None:
-                    self.conn = db.connect(db.readonly_uri(self.db_path), uri=True, timeout=30.0,
-                                           check_same_thread=False)
-                return self._read_rows(vectors)
             db_dir = os.path.dirname(self.db_path)
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
