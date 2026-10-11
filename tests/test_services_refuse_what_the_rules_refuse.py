@@ -144,9 +144,9 @@ class Tagging(PhotoCase):
         self.reading_only_what_is_asked({"XMP:Subject": ["Places/Harbour"], "EXIF:ImageDescription": "Relays"})
         self.assertEqual(self.save("Relays" + BELL).refused, CAPTION)
 
-    def test_the_clis_write(self):
+    def test_the_bulk_tags_write(self):
         session, _et = self.exiftool()
-        result = tagging.write_suggestions(self.lib.library, [(self.photo, ["Places|Dunes"], "")], "exiftool")
+        result = tagging.change_tags(self.lib.library, [self.photo], ["Places|Dunes"], [], "exiftool")
         self.assertEqual((result.refused, result.changed), (PIPE, 0))
         session.assert_not_called()
 

@@ -306,7 +306,9 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
     if problem:
         return _refused(len(photo_paths), problem)
     present, gone = leave_out_missing(photo_paths)
-    result = (_change_present(library, present, add, remove, exiftool_path, operation, stop_at_first_error, persons, et)
+    add = [vocabulary.normalize(tag) for tag in add]
+    result = (change_each(library, {path: (add, remove) for path in present}, exiftool_path, operation, persons=persons,
+                          et=et, stop_at_first_error=stop_at_first_error)
               if present else _refused(0, None))
     if not result.refused:
         result.attempted += len(gone)
@@ -316,37 +318,6 @@ def change_tags(library, photo_paths, add, remove, exiftool_path, operation=ADD_
     if not result.refused:
         follow_people(library, result)
     return result
-
-
-def _change_present(library, photo_paths, add, remove, exiftool_path, operation=ADD_TO_ALL, stop_at_first_error=True,
-                    persons=None, et=None):
-    """change_tags for photos whose files are there."""
-    refused = _refused(len(photo_paths), None)
-    held, loose = libraries.split(library, photo_paths)
-    if held and libraries.refuse_writes(refused, library, held):
-        return refused
-    kept, left = held, []
-    add = [vocabulary.normalize(tag) for tag in add]
-    done = None
-    if held or not loose:
-        done = libraries.with_skipped(_change_each(library, [(path, add, remove) for path in kept],
-                                                   exiftool_path, operation, persons=persons,
-                                                   stop_at_first_error=stop_at_first_error, et=et), left)
-    if not loose:
-        return file_only.combined(done, None)
-    # The photos of folders the library does not hold: their files only, in the same request
-    # (tagpup.services.file_only). After the others: a failure stops the run, as always.
-    if stop_at_first_error and done is not None and not done.ok:
-        done.attempted += len(loose)
-        for path in loose:
-            done.skip(path, "not written: an earlier photo failed")
-        return file_only.combined(done, None)
-    writable, skipped = file_only.leave_out_unwritable(loose)
-    files = libraries.with_skipped(
-        _change_each(library, [(path, add, remove) for path in writable], exiftool_path, operation,
-                     files_only=True, persons=persons, stop_at_first_error=stop_at_first_error, et=et)
-        if writable else _refused(0, None), skipped)
-    return file_only.combined(done, files)
 
 
 @roots_service.canonical_args("additions")
@@ -553,63 +524,3 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
     operation = "rename tag" if new else "remove tag"
     return file_changes.write_fields(library, operation, exiftool_path, [path for path, _t, _r in rows],
                                      KEYWORD_READ, plan_one, summary={"photos": len(rows)})
-
-
-#: What `write_suggestions` reads of each file: the keyword fields, and every field a
-#: caption is written to (tagpup.core.fields.caption_fields).
-SUGGESTION_READ = tuple(dict.fromkeys(KEYWORD_READ + tuple(fields.caption_fields(""))))
-
-
-@roots_service.canonical_args("writes")
-def write_suggestions(library, writes, exiftool_path, nobackup=False):
-    """Write each (path, tags, caption) of `writes` as one change of
-    photo files (tagpup.services.file_changes), which can be undone, each file's row told
-    what it holds as it is marked done.
-
-    The tags are added to what the file holds, in the file's order, as Add to all
-    selected adds them: whole paths only, people filed where the library's tree files
-    them. The caption, when there is one, is written to every caption field. A file
-    already holding both is left alone. The writer had its own ExifTool code that also
-    wrote every path's parts as loose keywords, wrote people bare, and never told the
-    index; then its writes were recorded nowhere, and undone only from the _original
-    copies ExifTool left beside each file (docs/findings.md, #266). Those are not made
-    any more: the journal is the way back, and `nobackup` is kept for callers that pass
-    it.
-
-    A photo that cannot be read or written is an error, and the next is tried; ExifTool
-    that cannot be started raises. changed: the files written. details: `change`.
-
-    A tag or a caption that may not be set refuses the whole run before anything is
-    written (tagpup.core.validation).
-    """
-    result = Result(attempted=len(writes))
-    problem = (validation.first_problem("tag", dict.fromkeys(t for _, tags, _ in writes for t in tags))
-               or refuse_under_people(library, [t for _, tags, _ in writes for t in tags])
-               or validation.first_problem("caption", (caption for _, _, caption in writes if caption)))
-    if problem:
-        result.refuse(problem)
-        return result
-    if libraries.refuse_writes(result, library, [path for path, _tags, _caption in writes]):
-        return result
-    # Who a bare name means, read once for the run, not once per photo.
-    people = taxonomy.people_paths(library.path)
-    # A photo named twice in the file is written once, with the tags of both.
-    wanted = {}
-    for path, tags, caption in writes:
-        _path, held_tags, held_caption = wanted.get(paths.key(path), (path, [], ""))
-        wanted[paths.key(path)] = (_path, list(dict.fromkeys(held_tags + list(tags))), caption or held_caption)
-
-    def plan_one(path, held):
-        _path, tags, caption = wanted[paths.key(path)]
-        after = {}
-        if tags:
-            merged = list(dict.fromkeys(list(_tags_held(held)) + tags))
-            after.update(_keywords_plan(vocabulary.resolve_people(merged, people)).after)
-        if caption:
-            after.update(fields.caption_fields(caption))
-        return file_changes.Plan(after=after, detail=(tags, caption))
-
-    # A photo cut short is in the Result returned: its skips, and skipped_damaged.
-    return file_changes.write_fields(
-        library, "write suggestions", exiftool_path, [path for path, _tags, _caption in wanted.values()],
-        SUGGESTION_READ, plan_one, summary={"photos": len(wanted)})

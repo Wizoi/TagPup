@@ -17,7 +17,6 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
@@ -27,7 +26,6 @@ from tagpup.core import fields  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.services import tagging  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
@@ -152,19 +150,6 @@ class ALibraryThatCannotBeRead(WriteCase):
         # Not a 409 sending the owner to Add a folder it holds, and no run, in memory or in the library.
         self.assertEqual(503, reply.status_code, reply.data)
         self.assertIn("nothing was started", reply.get_json()["error"])
-
-
-class TheWriteOfSuggestions(unittest.TestCase):
-    def test_refuses_suggestions_for_a_folder_the_library_does_not_hold(self):
-        home = own_home.for_test(self)
-        db_path = home.library("harbour.db")
-        library_actions.create(db_path)
-        photo = make_photo(os.path.join(home.root, "Share", "Lighthouse", "IMG_0001.jpg"))
-        before = stamp(photo)
-        result = tagging.write_suggestions(Library(db_path), [(photo, ["Trips/Lighthouse"], "")], "exiftool")
-        self.assertIn("is not in harbour", " ".join(result.refused.split()))
-        self.assertEqual(0, result.changed)
-        self.assertEqual(before, stamp(photo))
 
 
 if __name__ == "__main__":

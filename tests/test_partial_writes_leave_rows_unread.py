@@ -127,18 +127,6 @@ class PartialWritesOnAnUnreadRow(Photos):
         tagging.replace_tag(self.library, [path], "Activity/Sailing", "Activity/Kayaking", EXIFTOOL)
         self.assertUnread(path)
 
-    def test_writing_suggestions(self):
-        tagged = make_photo(self.folder, "e.jpg")
-        captioned = make_photo(self.folder, "f.jpg")
-        for path in (tagged, captioned):
-            self.suggested(path)
-        result = tagging.write_suggestions(
-            self.library, [(tagged, ["Activity/Sailing"], None), (captioned, [], "Harbour at dusk")], EXIFTOOL,
-            nobackup=True)
-        self.assertEqual((result.ok, result.changed), (True, 2))
-        self.assertUnread(tagged)
-        self.assertUnread(captioned)
-
     def test_rotating(self):
         path = make_photo(self.folder, "g.jpg")
         self.suggested(path)

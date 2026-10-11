@@ -35,7 +35,10 @@ class ReadFilesCase(FilesCase):
         return path
 
     def caption(self, photo_paths, caption):
-        return tagging.write_suggestions(self.library, [(path, [], caption) for path in photo_paths], EXIFTOOL)
+        # The page's save of one photo: its caption, the tags it holds already.
+        for path in photo_paths:
+            result = tagging.save_photo(self.library, path, caption, ["Beach"], None, EXIFTOOL, "")
+        return result
 
 
 class ANumber(ReadFilesCase):

@@ -1,4 +1,4 @@
-"""The write of suggested tags is one change of photo files, which undo
+"""The write of tags to a selection is one change of photo files, which undo
 reverses (docs/findings.md, #266).
 
 It wrote each photo through its own ExifTool session with no record of what the files
@@ -23,8 +23,7 @@ class TheWrite(FilesCase):
         self.a, self.b = self.make("a.jpg"), self.make("b.jpg", ["Beach", "Relay"])
 
     def write(self):
-        return not tagging.write_suggestions(
-            self.library, [(path, ["Activity/Rowing"], "") for path in (self.a, self.b)], EXIFTOOL).errors
+        return not tagging.change_tags(self.library, [self.a, self.b], ["Activity/Rowing"], [], EXIFTOOL).errors
 
     def test_is_a_change_that_undo_reverses(self):
         captions = {path: field_of(path, "XMP:Description") for path in (self.a, self.b)}
@@ -32,7 +31,7 @@ class TheWrite(FilesCase):
         self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(self.a))
         self.assertEqual(["Activity/Rowing", "Beach"], self.indexed(self.a))
         change = self.last_change()
-        self.assertEqual([("write suggestions", "applied")],
+        self.assertEqual([(tagging.ADD_TO_ALL, "applied")],
                          self.rows("SELECT operation, status FROM changes WHERE id = ?", (change,)))
         self.assertEqual(["done", "done"], self.states(change))
         self.assertEqual([], [name for name in os.listdir(self.folder) if name.endswith("_original")],
@@ -55,7 +54,7 @@ class TheWrite(FilesCase):
         self.assertTrue(self.write())
         self.assertEqual(["Beach", "Relay"], keywords_of(self.b))
         self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(self.a))
-        result = tagging.write_suggestions(self.library, [(self.b, ["Activity/Rowing"], "")], EXIFTOOL)
+        result = tagging.change_tags(self.library, [self.b], ["Activity/Rowing"], [], EXIFTOOL)
         self.assertEqual(1, result.details["skipped_damaged"])
         self.assertEqual([self.b], [path for path, _why in result.skipped])
 
