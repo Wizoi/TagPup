@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tagpup.services.search import PhotoIndex  # noqa: E402
-from face_rows import add_people  # noqa: E402
+from face_rows import add_face, add_people  # noqa: E402
 import tuner_client  # noqa: E402
 
 from tagpup.store import db  # noqa: E402
@@ -56,10 +56,9 @@ class TunerReads(unittest.TestCase):
         return path
 
     def face(self, photo_path, name=None, embedding=None, excluded=0, source=None):
-        face_id = self.conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name, name_source, excluded)"
-            " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 10, 10]', ?, ?, ?, ?)",
-            (photo_path, embedding if embedding is not None else vector(1), name, source, excluded)).lastrowid
+        # As the writers name a face: with the id of the one node called so (tests/face_rows.add_face).
+        face_id = add_face(self.conn, photo_path, embedding=embedding if embedding is not None else vector(1),
+                           name=name, name_source=source, excluded=excluded)
         self.conn.commit()
         return face_id
 

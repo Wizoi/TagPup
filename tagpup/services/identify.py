@@ -318,7 +318,7 @@ def photo_details(library, photo_path, named):
         # Excluded: the page counts a photo's unmatched faces from these, and an excluded
         # face is not one, as the list's counts say (docs/findings.md, #642, #655).
         found.append({"id": fid, "box": box, "name": fname,
-                      "person": everyone.of_row(carried.id, fname) if carried else None,
+                      "person": everyone.of_id(carried.id) if carried else None,
                       "max_similarity": max_sim, "excluded": bool(excluded)})
 
     return {
@@ -373,7 +373,7 @@ def face_matches(library, face_id, named):
         name = found.name
         top_matches.append({
             "name": name,
-            "person": everyone.of_row(found.id, name),
+            "person": everyone.of_id(found.id),
             "similarity": float(similarities[idx]),
             "band": face_rules.band(float(similarities[idx])),
         })

@@ -62,11 +62,10 @@ def directory(library):
         conn.close()
 
 
-def annotate(library, items, key="name", into="person"):
-    """`items` (dicts) each with the `person` their `key` names, for an answer built from rows that carry only a
-    name. Returns `items`. Read apart from the answer, so an answer a cache holds is not given what the tree said
-    when it was made: annotate a copy, after the cache."""
-    return directory(library).annotate(items, key, into)
+def annotate(library, items, into="person"):
+    """`items` (dicts) each with the `person` their `person_id` is. Returns `items`. Read apart from the answer, so an answer a
+    cache holds is not given what the tree said when it was made: annotate a copy, after the cache."""
+    return directory(library).annotate(items, into)
 
 
 def annotate_suggestions(library, status):
@@ -119,7 +118,7 @@ def with_counts(library):
     listed = []
     for ref, count in counted:
         name = ref.name
-        person = everyone.of_row(ref.id, name)
+        person = everyone.of_id(ref.id)
         tag_paths = [person["tag"]] if person and person["id"] is not None else filed.get(name, [])
         if tag_paths and all(vocabulary.hidden_by(path, hidden_tags) for path in tag_paths):
             continue

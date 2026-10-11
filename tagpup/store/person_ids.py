@@ -312,11 +312,10 @@ class Directory:
     by id, stage 2", "The wire"). A person is the whole tag path; the name is its leaf, shown and never the identity. Read once
     for one answer, from the tree as it stands now, and never kept: a rename in another process is what the next answer reads.
 
-    A row that names a person by ID (every answer that has the row's `tag_id`) gets `of_id`, exactly the person. A row that names
-    one by NAME alone gets `of_name`: the person when exactly one is called it, and None when none is -- a name no person tag has,
-    a group, a bucket such as Unknown Faces -- or when two are: a name alone cannot say which, so it is nobody's (the doctor flags
-    people sharing a leaf; a typed name two people have is asked "which one?" by path). `of_row` is the two: the id when the row
-    holds one."""
+    A row that names a person by ID (every answer that has the row's `tag_id`) gets `of_id`, exactly the person. A row with a name
+    and no id is NOT a person (owner, 2026-10-10): the leaf is never identity, so no row is given a person by its name. `of_name`
+    is for a name somebody TYPED or an external tool supplied: the person when exactly one is called it, None when none is or when
+    two are (a typed name two people have is asked "which one?" by path; the doctor flags people sharing a leaf)."""
 
     def __init__(self, nodes):
         self._records, self._by_key, self._by_tag, self._by_id = [], {}, {}, {}
@@ -345,11 +344,6 @@ class Directory:
         found = self._by_key.get(vocabulary.key(name))
         return dict(found[0]) if found and len(found) == 1 else None
 
-    def of_row(self, tag_id, name):
-        """The person a row of faces or photo_people is: by its id when it holds one that is a person, else by
-        its name (of_name)."""
-        return self.of_id(tag_id) or self.of_name(name)
-
     def of_tag(self, tag):
         """The person filed at the tag `tag`, or None."""
         found = self._by_tag.get(vocabulary.normalize(tag).lower()) if tag else None
@@ -363,11 +357,11 @@ class Directory:
             return self.of_tag(value)
         return self.of_name(value)
 
-    def annotate(self, items, key="name", into="person"):
-        """Give each dict of `items` a `person` beside the name it holds under `key` (None when it holds none, or a
-        name no person is called): the fields a page labels the person by. Returns `items`."""
+    def annotate(self, items, into="person"):
+        """Give each dict of `items` the `person` its `person_id` is (None when it holds none, or a node that is no person):
+        the fields a page labels the person by. A name alone gives nobody. Returns `items`."""
         for item in items:
-            item[into] = self.of_row(item.get("person_id"), item.get(key))
+            item[into] = self.of_id(item.get("person_id"))
         return items
 
 
