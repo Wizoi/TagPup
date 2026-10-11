@@ -222,9 +222,17 @@ describe("the Activity page draws each section from what the server says", () =>
     await flush(window, 6);
     assert.ok(fake.urls().length >= 7);
     for (const url of fake.urls().filter((each) => !each.includes("api/rules"))) {
-      assert.ok(url.startsWith("/api/activity/") || url.startsWith("/api/file-access/"),
-        `asked under a library, or not the Activity routes: ${url}`);
+      assert.ok(url.startsWith("/api/activity/"), `asked under a library, or not the Activity routes: ${url}`);
     }
+  });
+
+  test("it has no File access section and asks nothing of the deleted probes (a server without the route gives 404)", async (t) => {
+    const fake = server();
+    const { window } = await open(t, fake);
+    await flush(window, 6);
+    assert.equal(window.document.getElementById("file-access"), null);
+    assert.equal(window.document.querySelector('a[href="#file-access"]'), null);
+    assert.deepEqual(fake.urls().filter((url) => url.includes("file-access")), []);
   });
 });
 
