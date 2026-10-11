@@ -722,21 +722,8 @@ def _added_folders(conn):
 
 
 def _damaged_files(conn):
-    """The photo files found damaged: `damaged_files`, each file's path, the stamp it had
-    when found, how it is damaged, and when (tagpup.store.damaged_files; docs/findings.md,
-    #407). A photo that does not decode is not queued for the indexer again until its
-    file changes. Only adds a table, so it needs no backup.
-    """
-    conn.execute("CREATE TABLE IF NOT EXISTS damaged_files ("
-                 " path TEXT PRIMARY KEY COLLATE %s,"
-                 " mtime REAL NOT NULL,"
-                 " size INTEGER NOT NULL,"
-                 " kind TEXT NOT NULL,"
-                 " detail TEXT NOT NULL,"
-                 " zero_tail INTEGER NOT NULL DEFAULT 0,"
-                 " found TEXT NOT NULL,"
-                 " seen TEXT NOT NULL,"
-                 " run TEXT)" % paths.COLLATE)
+    """The photo files found damaged (`damaged_files`): nothing is made any more. A library that ran this migration when it
+    made the table holds it, empty, until migration 31 drops it."""
 
 
 def _faces_pending(conn):
@@ -868,17 +855,10 @@ def _person_indexes(conn):
     """The indexes a person is read by id with, and the table of names set aside (docs/ARCHITECTURE.md, "People by id,
     stage 2"; docs/findings.md, #1013): `idx_faces_tag` on faces(tag_id) and `idx_photo_people_tag` on
     photo_people(tag_id, photo_id) -- `WHERE tag_id = ?` scanned idx_faces_person (name, tag_id) whole and had no
-    index at all on photo_people -- and `name_review_dismissals`, empty: a name the owner set aside from the list of
-    names to review, until it holds more rows than `rows_seen`. No row of any table changes, so nothing is recorded
-    in the journal and no backup is needed; the table is new, so no change can have recorded a row of it."""
+    index at all on photo_people. (It also made `name_review_dismissals`, empty, which migration 31 drops: nothing is made
+    of it now.) No row of any table changes, so nothing is recorded in the journal and no backup is needed."""
     conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_tag ON faces(tag_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_photo_people_tag ON photo_people(tag_id, photo_id)")
-    # Nothing reads or writes this table since 2026-10-10 (the names to review went when every name was given a node); a later
-    # migration drops it. It stays so that a library at this version and a newer one still open.
-    conn.execute("CREATE TABLE IF NOT EXISTS name_review_dismissals ("
-                 " name_key TEXT PRIMARY KEY,"
-                 " rows_seen INTEGER NOT NULL,"
-                 " decided TEXT NOT NULL)")
 
 
 def _person_ids(conn):
@@ -939,6 +919,22 @@ def _camera_words(conn):
 DROPPED = ("search_gear", "photo_meta", "folder_ids", "library_identity")
 
 
+def _take_out_of_the_journal(conn, tables):
+    """Take the rows of `tables` out of the journal (they could not be undone once the tables are gone), and a change they
+    leave with no row and no file with them; any other change is untouched. Returns (rows taken, ids of changes taken)."""
+    marks = ",".join("?" * len(tables))
+    named = [change_id for (change_id,) in conn.execute(
+        "SELECT DISTINCT change_id FROM change_rows WHERE table_name IN (%s)" % marks, tables)]
+    rows = conn.execute("DELETE FROM change_rows WHERE table_name IN (%s)" % marks, tables).rowcount
+    emptied = []
+    for change_id in named:
+        if (not conn.execute("SELECT 1 FROM change_rows WHERE change_id = ? LIMIT 1", (change_id,)).fetchone()
+                and not conn.execute("SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone()):
+            conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
+            emptied.append(change_id)
+    return rows, emptied
+
+
 def _drop_unused(conn):
     """The tables nothing reads (docs/DATABASE.md; owner, 2026-10-10): `search_gear`, the FTS5 table of camera and lens words (a
     search reads the photos' metadata now: search_index.cameras_with), `photo_meta` (a table of each photo's rating, camera,
@@ -952,19 +948,28 @@ def _drop_unused(conn):
 
     The trigger that took a photo's rows of the derived tables named photo_meta, so it is made again without it, and the
     trigger of search_gear goes. One transaction (the runner's): a failure drops nothing."""
-    marked = [change_id for (change_id,) in conn.execute(
-        "SELECT DISTINCT change_id FROM change_rows WHERE table_name = 'folder_ids'")]
-    rows = conn.execute("DELETE FROM change_rows WHERE table_name = 'folder_ids'").rowcount
-    emptied = []
-    for change_id in marked:
-        if (not conn.execute("SELECT 1 FROM change_rows WHERE change_id = ? LIMIT 1", (change_id,)).fetchone()
-                and not conn.execute("SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone()):
-            conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
-            emptied.append(change_id)
+    rows, emptied = _take_out_of_the_journal(conn, ("folder_ids",))
     conn.execute("DROP TRIGGER IF EXISTS search_gear_goes_with_its_photo")
     conn.execute("DROP TRIGGER IF EXISTS derived_go_with_their_photo")
     conn.execute(DERIVED_GO_WITH_THEIR_PHOTO)
     for table in DROPPED:
+        conn.execute("DROP TABLE IF EXISTS %s" % table)
+    return {"journal rows taken out": rows, "changes taken out": len(emptied)}
+
+
+#: The tables migration 31 drops: the names set aside from the names to review, and the photo files found damaged. Both
+#: features are deleted (owner, 2026-10-11); all three live libraries held both empty and no recorded change named either.
+DROPPED_31 = ("name_review_dismissals", "damaged_files")
+
+
+def _drop_dismissals_and_damaged(conn):
+    """Migration 31: drops `name_review_dismissals` and `damaged_files`, which nothing reads or writes. Should a recorded change
+    name one of them (none does in a live library), its rows are taken out of the journal first, as migration 30 did for
+    `folder_ids`, since they could not be undone with the table gone. A library that never had them (made at the latest,
+    or behind 16 and 28, which make nothing now) loses nothing. One transaction (the runner's): a failure drops nothing.
+    Returns what it took, which the migration's own change records."""
+    rows, emptied = _take_out_of_the_journal(conn, DROPPED_31)
+    for table in DROPPED_31:
         conn.execute("DROP TABLE IF EXISTS %s" % table)
     return {"journal rows taken out": rows, "changes taken out": len(emptied)}
 
@@ -1192,18 +1197,21 @@ class SearchIndexAgrees(Check):
 
 
 class UnusedTablesGone(Check):
-    """Migration 30: the tables it drops (and the FTS5 table's shadows) are gone, the trigger that took a photo's rows of
+    """Migrations 30 and 31: the tables each drops (and the FTS5 table's shadows) are gone, the trigger that took a photo's rows of
     them is replaced by one that names none of them, and no recorded change names one of them: the journal's history is
     what the library can still undo."""
     name = "unused tables gone, and none named by the journal"
 
+    def __init__(self, tables, shadows=()):
+        self.tables, self.shadows = tuple(tables), tuple(shadows)
+
     def after(self, conn, migration, state):
         problems = ["%s is still there" % table for table in _tables_now(conn)
-                    if table in DROPPED or table.startswith(DROPPED[0] + "_")]
-        if _count_named(conn, DROPPED):
+                    if table in self.tables or table.startswith(self.shadows)]
+        if _count_named(conn, self.tables):
             problems.append("a recorded change still names a dropped table")
         for (sql,) in conn.execute("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND sql IS NOT NULL"):
-            problems += ["a trigger still names %s" % table for table in DROPPED if table in sql]
+            problems += ["a trigger still names %s" % table for table in self.tables if table in sql]
         return problems
 
 
@@ -1506,8 +1514,8 @@ MIGRATIONS = (
               ("added_folders",),
               (RowsKept(),) + STANDARD),
     Migration(16, "the photo files found damaged", _damaged_files, ADDITIVE,
-              "adds the damaged_files table, empty",
-              ("damaged_files",),
+              "makes nothing now (it made damaged_files, which migration 31 drops)",
+              (),
               (RowsKept(),) + STANDARD),
     Migration(17, "the photos whose faces are to be detected", _faces_pending, ADDITIVE,
               "adds the faces_pending table, empty",
@@ -1563,9 +1571,9 @@ MIGRATIONS = (
               (RowsKept(),) + STANDARD),
     Migration(28, "people read by id, and the names set aside", _person_indexes, ADDITIVE,
               "adds idx_faces_tag and idx_photo_people_tag, the indexes a person is read by id with, and "
-              "name_review_dismissals, empty; no row of any table changes, and a change journaled before it can "
-              "still be undone",
-              ("name_review_dismissals",),
+              "name_review_dismissals, empty, which migration 31 drops; no row of any table changes, and a change "
+              "journaled before it can still be undone",
+              (),
               (RowsKept(),) + STANDARD),
     Migration(29, "a person that faces name is not deleted", _person_tag_guard, ADDITIVE,
               "adds the trigger person_tag_not_deleted_while_named, which aborts the delete of a tag-tree node a face names, "
@@ -1578,13 +1586,19 @@ MIGRATIONS = (
               "one marker change of folder_ids out of its history; one full backup first",
               DROPPED,
               (RowsKept("photos", "faces", "tag_taxonomy", "photo_people", "photo_tags", "folders", "photo_folder",
-                        "suggestions", "settings", "roots"), UnusedTablesGone()) + STANDARD),
+                        "suggestions", "settings", "roots"), UnusedTablesGone(DROPPED, shadows=("search_gear_",))) + STANDARD),
+    Migration(31, "the names set aside and the damaged files", _drop_dismissals_and_damaged, DESTRUCTIVE,
+              "drops name_review_dismissals and damaged_files, empty in every live library, and takes the rows of any recorded "
+              "change that names them out of the journal; one full backup first",
+              DROPPED_31,
+              (RowsKept("photos", "faces", "tag_taxonomy", "photo_people", "photo_tags", "folders", "photo_folder",
+                        "suggestions", "settings", "roots"), UnusedTablesGone(DROPPED_31)) + STANDARD),
 )
 
 #: The migrations that only DROP tables nothing journaled names, and the tables each drops: they change no row a recorded
 #: change holds, so (like an ADDITIVE one that touches none) they block no undo of a change made before them
 #: (journal.schema_gap_blocker). Holds the declaration to what the migration drops: tests/test_unused_tables.py.
-ONLY_DROPS = {30: DROPPED}
+ONLY_DROPS = {30: DROPPED, 31: DROPPED_31}
 
 #: The columns a migration adds to a table the journal keys that the journal derives
 #: (derived when it added them) -- {version: {table: columns}}. Such a migration changes nothing an

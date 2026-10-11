@@ -94,7 +94,7 @@ def make_legacy(path, folder="D:/Harbour/Trip", rows=True):
                 for column, value in (("id", folder_id), ("path", where), ("marked", "2026-10-01 10:00:00")):
                     conn.execute("INSERT INTO change_rows (change_id, action, table_name, row_key, column_name, old, new)"
                                  " VALUES (?, 'insert', 'folder_ids', ?, ?, NULL, ?)", (change, json.dumps([folder_id]), column, value))
-        conn.execute("DELETE FROM schema_version WHERE version = 30")
+        conn.execute("DELETE FROM schema_version WHERE version >= 30")
         conn.commit()
     finally:
         conn.close()
@@ -149,7 +149,7 @@ class WhatItDrops(AtTwentyNine):
         self.assertEqual(counts, {table: query(self.path, "SELECT COUNT(*) FROM %s" % table)[0][0] for table in counts})
         self.assertEqual([], [name for name in names(self.path) if name in DROPPED or name.startswith("search_gear")])
         self.assertNotIn("search_gear_goes_with_its_photo", names(self.path, "trigger"))
-        self.assertEqual(30, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
+        self.assertEqual(31, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
 
     def test_a_photo_deleted_afterwards_takes_its_derived_rows_and_the_trigger_names_no_dropped_table(self):
         make_legacy(self.path)
@@ -175,7 +175,7 @@ class WhatItDrops(AtTwentyNine):
         self.assertFalse(set(migration.touches) & names(self.path), "and none is there after")
         self.assertFalse(set(migration.touches) & set(journal.KEYS), "none is a table a change may write")
         self.assertFalse(set(migration.touches) & set(journal.DERIVED))
-        self.assertEqual({30: DROPPED}, schema.ONLY_DROPS)
+        self.assertEqual({30: DROPPED, 31: schema.DROPPED_31}, schema.ONLY_DROPS)
 
     def test_a_library_with_empty_tables_and_one_without_them_migrate_the_same(self):
         make_legacy(self.path, rows=False)
@@ -187,7 +187,7 @@ class WhatItDrops(AtTwentyNine):
         self.assertEqual([], schema.ensure(again.path))
         conn = db.connect(again.path)
         try:
-            conn.execute("DELETE FROM schema_version WHERE version = 30")
+            conn.execute("DELETE FROM schema_version WHERE version >= 30")
             conn.commit()
         finally:
             conn.close()
@@ -207,10 +207,10 @@ class TheJournal(AtTwentyNine):
         self.migrate()
         self.assertEqual(0, query(self.path, "SELECT COUNT(*) FROM changes WHERE operation = 'mark_folders'")[0][0])
         self.assertEqual(rows - 6, query(self.path, "SELECT COUNT(*) FROM change_rows")[0][0], "its rows, and no other")
-        self.assertEqual(changes, query(self.path, "SELECT COUNT(*) FROM changes")[0][0], "one taken, the migration's own added")
+        self.assertEqual(changes + 1, query(self.path, "SELECT COUNT(*) FROM changes")[0][0], "one taken, the two migrations' own added")
         self.assertEqual([], query(self.path, "SELECT 1 FROM change_rows WHERE table_name IN (?, ?, ?, ?)", DROPPED))
         self.assertEqual([], query(self.path, "SELECT 1 FROM change_rows WHERE change_id NOT IN (SELECT id FROM changes)"))
-        recorded = query(self.path, "SELECT operation, schema_version, status, summary FROM changes ORDER BY id DESC LIMIT 1")[0]
+        recorded = query(self.path, "SELECT operation, schema_version, status, summary FROM changes WHERE operation LIKE 'migration 30%' ORDER BY id DESC LIMIT 1")[0]
         self.assertEqual(("migration 30: the tables nothing reads", 29, "applied"), recorded[:3])
         summary = json.loads(recorded[3])
         self.assertEqual("destructive", summary["kind"])
@@ -284,7 +284,7 @@ class HowItFails(AtTwentyNine):
                                 "photo_meta": query(self.path, "SELECT COUNT(*) FROM photo_meta")[0][0]})
         self.assertEqual(1, len(backups(self.path)), "the copy was taken first, and is the way back")
         self.assertEqual(after(29), self.migrate(), "the next open does it")
-        self.assertEqual(30, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
+        self.assertEqual(31, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
 
     def test_a_check_that_fails_rolls_it_all_back(self):
         make_legacy(self.path)
@@ -321,7 +321,7 @@ class HowItFails(AtTwentyNine):
             schema._current.clear()
             with self.assertRaises(schema.NewerLibrary) as refused:
                 schema.ensure(self.path)
-        self.assertEqual((30, 29), (refused.exception.found, refused.exception.known))
+        self.assertEqual((31, 29), (refused.exception.found, refused.exception.known))
 
     def test_a_snapshot_from_before_it_is_migrated_again_when_opened(self):
         make_legacy(self.path)

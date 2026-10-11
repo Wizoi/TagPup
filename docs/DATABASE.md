@@ -176,6 +176,8 @@ The migrations applied to this library, one row each, in order (`tagpup.store.sc
 
 **Migration 30** (destructive, one full backup first; owner, 2026-10-10): drops the four tables nothing reads -- `search_gear` (the camera and lens words, an FTS5 table, with its shadow tables and trigger), `photo_meta` (each photo's rating, camera, size and place: no reader), `folder_ids` and `library_identity` (the ids the folder markers carried) -- and takes the journal's one `mark_folders` change of `folder_ids` (each live library held one) out of its history with its rows, so no recorded change names a dropped table; every other change is untouched and still undoable (`schema.ONLY_DROPS`, `journal.schema_gap_blocker`). The trigger that took a deleted photo's derived rows is made again without `photo_meta`. A search finds a camera or lens in the photos' metadata (`search_index.cameras_with`). An app older than this migration refuses the migrated library (`NewerLibrary`, the newer-library guard above); the installed build already has the guard and its 2 s recheck. A server already serving when the library is migrated may fail one write that lands inside that window with `no such table: photo_meta` (rolled back, nothing written) before it refuses; the hand-over ends the old server before the new one migrates, and the 503 shows meanwhile. A snapshot of a library from before 30 is restored with this version and migrated up again on opening. The `.tagpup` marker files stay on disk. `name_review_dismissals` stays: the names-to-review list is still there.
 
+**Migration 31** (destructive, one full backup first; owner, 2026-10-11): drops `name_review_dismissals` (made by 28; the names to review went when every name was given a node) and `damaged_files` (made by 16; the damaged-photo handling is deleted). Both were empty in all three live libraries and no recorded change named either; should one, its rows are taken out of the journal first, as 30 did (a change left empty goes). Migrations 16 and 28 make nothing of them now, so a library behind them reaches 31 without them. `schema.ONLY_DROPS` lists 31, so every change made before it is still undoable. An app older than 31 refuses the migrated library (`NewerLibrary`). `faces_pending` is kept. The migration is pure deletion: no row of any other table changes.
+
 **Migration 29** (stage 2, part B; additive, triggers only, no row changes, no backup): `person_tag_not_deleted_while_named` aborts the DELETE of a `tag_taxonomy` node a face names (`faces.tag_id`, by `idx_faces_tag`), whichever connection deletes it, and `generation_faces_update` also fires on `tag_id`.
 
 Each migration declares its kind (ARCHITECTURE.md, phase 7.5) and runs in one transaction with the checks it names, rolled back when one fails (`schema.CheckFailed`). An additive one takes no backup and may change no row that was there; a data-changing one records every row it changes in the journal, as a change named `migration N: name`; a destructive one -- dropping a column or a table, rebuilding a table, losing information -- takes one full backup first. Every run is a row of `changes`, whatever its kind.
@@ -277,21 +279,6 @@ The folders the library was asked to add (`tagpup.store.added_folders`, migratio
 | `subfolders` | INTEGER | NOT NULL | 1 when the folders under it were added with it, which covers every folder below; 0 when the folder alone was, which covers none of them: `index --no-subfolders`, which sync runs for the new files of a folder the library holds. A later add with its subfolders sets it to 1; one without never sets it back. |
 | `added` | TEXT | NOT NULL | Local time it was added, `YYYY-MM-DD HH:MM:SS`. |
 
-### 18. `damaged_files` Table
-UNUSED since 2026-10-11 (migration 16 made it; the handling that wrote and read it is deleted, and a migration drops it): nothing writes or reads it, and the three live libraries held no row in it. It held the photo files the indexer found damaged, each with the stamp its file had when it was read. Whether a photo's file opens is asked of the file now: the write that would put metadata into it reads it whole first (`tagpup.files.field_values.read`, `validate`), and `tools/doctor.py` counts the photos whose file fails to open.
-
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `path` | TEXT | PRIMARY KEY, compared as paths are (`NOCASE` on Windows) | The file, as `photos.path` holds a path: native (`paths.stored`), or `@<root>/...` in a library with a root. |
-| `mtime` | REAL | NOT NULL | The file's modified time when it was read and found damaged. |
-| `size` | INTEGER | NOT NULL | The file's size then, in bytes. |
-| `kind` | TEXT | NOT NULL | How: `truncated`, `zero-filled`, `all zeros`, `empty`, `not an image`, `damaged` (the picture does not decode; `tagpup.files.images.DAMAGE`), or `incomplete` (it decodes, and ends in zero bytes). |
-| `detail` | TEXT | NOT NULL | What the decoder said, without the path. |
-| `zero_tail` | INTEGER | NOT NULL, DEFAULT 0 | How many zero bytes the file ends in, when 64 KiB or more. |
-| `found` | TEXT | NOT NULL | Local time it was first found with this stamp, `YYYY-MM-DD HH:MM:SS`. |
-| `seen` | TEXT | NOT NULL | Local time it was last found so. |
-| `run` | TEXT | | The run of the indexer that found it (`tagpup.core.runs`), or NULL. |
-
 ### 19. `faces_pending` Table
 The photos whose faces are still to be detected (`tagpup.store.faces_pending`, migration 17; findings #407). Nothing marks a photo here now (the damaged-photo handling that did is deleted, 2026-10-11; the three live libraries held no mark). A photo indexed from a damaged file -- a possibly incomplete copy -- had its vectors and its undecided faces taken away once its file read whole, and was marked here: the indexer detects its faces whether or not it has a vector by then (Suggest makes one), where it would otherwise pass over a photo whose row describes its file and that has a vector. Recording the faces detected in it -- by the indexer or by Suggest -- clears the mark; a mark whose photo is gone is read as none (a photo's id is never handed out again), so deleting a photo takes nothing the journal must account for. `tools/doctor.py` and the Activity page count the marks, so one no index has cleared -- a sync that queued nothing -- is seen. Not journaled, as indexing is not.
 
@@ -363,15 +350,6 @@ The photos whose faces were detected (`tagpup.store.faces_detected`, migration 2
 | `size` | INTEGER | | The file's size then, in bytes. |
 | `found` | INTEGER | NOT NULL | How many faces it found. |
 | `at` | TEXT | NOT NULL | Local time it was recorded, `YYYY-MM-DD HH:MM:SS`. |
-
-### 27. `name_review_dismissals` Table
-Unused since 2026-10-10 (migration 28 made it for the names-to-review list, which went when every name was given a node: ARCHITECTURE.md, "Every tag has an id"). Nothing reads or writes it and it is empty in the three libraries; a later migration drops it. It stays so that a library at this version and a newer one still open.
-
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `name_key` | TEXT | PRIMARY KEY | The name as names are compared (`vocabulary.key`: trimmed, without case). |
-| `rows_seen` | INTEGER | NOT NULL | How many rows of faces and photos' people held the name when it was set aside. |
-| `decided` | TEXT | NOT NULL | Local time it was set aside, `YYYY-MM-DD HH:MM:SS`. |
 
 ---
 
