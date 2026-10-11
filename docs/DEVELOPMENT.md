@@ -36,7 +36,7 @@ libraries, which hold their own settings -- stays where it is. Saving a file in 
 running. To update, install again; the two versions before stay, and `current.txt`
 names the one the launchers start.
 
-**Logs are in `data/logs/`**: `tagpup.log`, `tagtuner.log` and `runner.log`, one per
+**Logs are in `data/logs/`**: `tagpup.log` and `tagtuner.log`, one per
 program, rotating at 5 MB and keeping five old files. They hold everything the console
 shows, plus every request slower than a second (`slow: GET /api/... took 2.31s`) and
 every request that failed, with its traceback. Look there before reproducing a report.
