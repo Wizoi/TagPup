@@ -43,9 +43,6 @@ class FakeTaxonomy:
     def expand_tag(self, tag):
         return [tag]
 
-    def find_person_path(self, name):
-        return "People/" + name
-
     def person_paths(self, name):
         return ["People/" + name]
 

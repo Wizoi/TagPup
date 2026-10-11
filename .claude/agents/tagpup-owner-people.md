@@ -33,7 +33,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 ## The contract other domains rely on, and must not bypass
 1. One door in: `person_ids.resolve / target` (through `services.people.resolve`) takes an id, a tag path or a typed name and returns a `Person` or raises (`StalePerson`, `AmbiguousPerson` naming the paths so the picker can ask, `GroupNotPerson`, `PersonInUse`, `PersonHasNoChildren`). Nobody else writes `faces.name / tag_id` or `photo_people`.
 2. One door out: a person goes over the wire as the id of their node; `/api/people-faces` and `/api/people-face-samples` are keyed `id:<id>` alone. Pages read people through `PeopleDirectory` in `web/common/vocabulary.js`.
-3. One door for text: `tagpup/core/vocabulary.py` and `web/common/vocabulary.js` (`leafOf`, `rootOf`, `samePerson`, `photoAlreadyHas`); in Python also `taxonomy.find_person_path`. No hand split of a tag, no hand-built `People/<name>`.
+3. One door for text: `tagpup/core/vocabulary.py` and `web/common/vocabulary.js` (`leafOf`, `rootOf`, `samePerson`, `photoAlreadyHas`); in Python also `taxonomy.person_paths`. No hand split of a tag, no hand-built `People/<name>`.
 4. A face write that names someone settles the photo's keyword (`face_people`: tag first, then face) and a bulk write calls `record_tags_in_index()`; a tree edit refuses before it writes any file and takes the lock before it reads.
 5. Who a face is, and whether its name looks right, is decided only in `core/clustering`. Face roots and the buckets (Unknown Faces, Ungrouped, Excluded) are named once, by the tree and `vocabulary`.
 6. Others must not: compare a photo's people by name, key a dict by a name where a row has an id, offer a group tag as a person, load the face model outside `Runtime.gpu_turn`, or run SQL on `faces` with `LIKE`, a function on the column or `SELECT *`.
@@ -64,7 +64,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 7. Does a response key a person by name where it could by id, or add a second key spelling? Add none.
 8. Could a group tag or a bucket be treated as a person? Is the bucket name read from its one owner?
 9. SQL on `faces` / `photo_people`: equality not `LIKE`, no function on the column, no BLOB unless used, `EXPLAIN QUERY PLAN` on `data/photo_index.db`, nothing in a per-item loop that answers the same each time.
-10. Which of the two matching matrices does it use (`identify.face_matches` / the strip's `named_embeddings_elsewhere`, #828)? Never a third.
+10. Which matching matrix does it use? Only the shared one (`identify.named_faces`, read through `identify.nearest_people`); never a second.
 11. Does the fixture come from `add_read` / `add_unread` or the page's own builder, and does it include a face that names a person and one that names none?
 12. Two processes (server and CLI), two libraries holding one folder, an older app still open: what does each leave behind?
 13. What does the owner see if it fails half-way, and does the count reported equal rows changed, not attempted?

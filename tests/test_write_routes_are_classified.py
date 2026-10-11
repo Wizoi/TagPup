@@ -1,6 +1,6 @@
 """Every route that writes is classified against "Name faces from tags" (docs/INVARIANTS.md; Integration-and-apps review 2026-10-09, C13).
 
-While the naming job writes names (or groups the faces of the whole library), the writes its plan and grouping would be written over
+While the naming job writes names the writes its plan would be written over
 are answered 409 (tagpup.web.name_faces_routes.GUARDED, and TagTuner's own through tuner_routes.clustering_refusal). The list was
 kept by hand, and four routes were missing from it. Now a new POST route fails here until it is guarded, or listed below with the
 reason it need not be. The naming apply is itself guarded against the rows it read (journal `expect` on the face's name, tag and
@@ -42,7 +42,7 @@ ALLOWED = {
     "/api/photo/open-explorer": "shows the file in Explorer; no data",
     "/api/server/drain": "the update's own; the job is work a drain waits for (lifecycle.long_work)",
     "/api/server/resume": "the update's own",
-    # Writes that touch nothing the plan or the grouping reads.
+    # Writes that touch nothing the plan reads.
     "/api/databases/create": "makes another library",
     "/api/settings": "the library's settings; they apply to the next index or Suggest, not to names already read",
     "/api/sync/review/ignore": "marks a folder ignored in the review list; adds no photo (include does, and is guarded)",

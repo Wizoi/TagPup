@@ -738,17 +738,6 @@ class TagTaxonomy:
                 found.add(path)
         return sorted(found)
 
-    def find_person_path(self, name: str) -> Optional[str]:
-        """The one existing people path whose last segment is this name.
-
-        None when nobody is filed under the name, and also when two people paths end in
-        it: this returned the first path it met in a set, so which of the two a
-        suggestion named could change from one run to the next (docs/findings.md, #27).
-        A caller that must know whether the name is filed at all asks person_paths.
-        """
-        paths = self.person_paths(name)
-        return paths[0] if len(paths) == 1 else None
-
     def find_by_leaf(self, name: str) -> Optional[str]:
         """The one existing path whose last segment is this name.
 

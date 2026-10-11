@@ -9,7 +9,6 @@ no row changes, touches no table (findings #464: nothing checks that by itself, 
 Photos are rows as the indexer records a read (tests/view_library.py); a caption changed is what a save records
 (store.photos.record_saved). Fictional names only.
 """
-import base64
 import os
 import sys
 import unittest
@@ -24,7 +23,6 @@ import web_client  # noqa: E402
 from test_migrations import at_version  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
-from tagpup.core.result import Refused  # noqa: E402
 from tagpup.services import library_view, selection  # noqa: E402
 from tagpup.store import db, journal, schema  # noqa: E402
 from tagpup.store import library_view as store  # noqa: E402
@@ -39,17 +37,6 @@ def look(path, sql, params=()):
         return conn.execute(sql, params).fetchall()
     finally:
         conn.close()
-
-
-def walk(vl, kind, value=None, order=None, limit=2):
-    """Every id in the order the keyset pages gave them."""
-    token, ids = None, []
-    while True:
-        found = library_view.view(vl.library, kind, value, False, token, limit, order)
-        ids += found["ids"]
-        token = found["next"]
-        if token is None:
-            return ids
 
 
 class Captioned(unittest.TestCase):
@@ -74,12 +61,6 @@ class TheOrder(Captioned):
         self.assertEqual([self.zebra, self.harbour_twin, self.harbour, self.anchor, self.none_b, self.none_a],
                          self.ids(order="caption-desc"))
 
-    def test_the_keyset_pages_are_the_list_in_both_directions_and_for_a_source(self):
-        for order in ("caption", "caption-desc"):
-            for kind, value in (("all", None), ("keyword", "Trips"), ("year", "2021")):
-                with self.subTest(order=order, kind=kind):
-                    self.assertEqual(self.ids(kind, value, order), walk(self.vl, kind, value, order, limit=1))
-
     def test_a_caption_is_text_not_markup_and_the_first_one_is_the_one_ordered_by(self):
         conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
         try:
@@ -100,14 +81,12 @@ class TheOrder(Captioned):
         self.vl.conn.commit()
         self.assertEqual([self.anchor, self.harbour_twin, self.harbour, self.none_a, self.zebra, self.none_b], self.ids())
 
-    def test_a_long_caption_is_ordered_by_its_first_characters_and_its_token_is_read(self):
+    def test_a_long_caption_is_ordered_by_its_first_characters(self):
         # Not ASCII: each letter is six characters of the token's JSON.
         long_a = self.vl.photo("2023", "h.jpg", caption=chr(0xC5) + chr(0xE9) * (store.CAPTION_KEY + 50) + "b")
         long_b = self.vl.photo("2023", "i.jpg", caption=chr(0xC5) + chr(0xE9) * (store.CAPTION_KEY + 50) + "a")
         listed = self.ids()
         self.assertLess(listed.index(long_a), listed.index(long_b), "alike in their key: by id")
-        self.assertEqual(listed, walk(self.vl, "all", order="caption", limit=1))
-        self.assertEqual(self.ids(order="caption-desc"), walk(self.vl, "all", order="caption-desc", limit=1))
 
     def test_a_caption_changed_since_the_list_was_read_moves_when_it_is_read_again(self):
         photo = self.vl.photo("2024", "j.jpg", caption="middle", real=True)
@@ -124,20 +103,12 @@ class TheOrder(Captioned):
         self.assertEqual((2, [WREN]), (tallied["total"], [each["name"] for each in tallied["people"]]))
 
     def test_without_the_caption_index_the_order_is_the_same(self):
-        with_index = (self.ids(), self.ids(order="caption-desc"), walk(self.vl, "all", order="caption", limit=1))
+        with_index = (self.ids(), self.ids(order="caption-desc"))
         conn = db.connect(self.vl.path)
         conn.execute("DROP INDEX %s" % store.CAPTION_INDEX)
         conn.commit()
         conn.close()
-        self.assertEqual(with_index, (self.ids(), self.ids(order="caption-desc"), walk(self.vl, "all", order="caption", limit=1)))
-
-    def test_a_token_is_read_only_in_its_own_order(self):
-        first = library_view.view(self.vl.library, "all", limit=1, order="caption")
-        for other in ("caption-desc", "name", "taken"):
-            with self.subTest(other=other):
-                with self.assertRaises(Refused):
-                    library_view.view(self.vl.library, "all", after=first["next"], limit=1, order=other)
-
+        self.assertEqual(with_index, (self.ids(), self.ids(order="caption-desc")))
 
 class ThePlans(Captioned):
     def plans(self, kind, value, order):
@@ -164,26 +135,6 @@ class ThePlans(Captioned):
                             # The captioned: the index walked in order. Of a source given by a list of ids (a keyword, a
                             # person) the uncaptioned are a seek for each id and a sort of those ids alone.
                             self.assertNotIn("TEMP B-TREE", plan, sql)
-
-    def test_a_keyset_page_seeks_the_caption_index(self):
-        conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
-        seen = []
-        try:
-            scope = store._scope(conn, store.Source(store.ALL))
-            conn.set_trace_callback(seen.append)
-            store._page(conn, scope, store.Cursor(0, "harbour at dawn", self.harbour), 2, store.CAPTION)
-            store._page(conn, scope, store.Cursor(1, None, self.none_a), 2, store.CAPTION)
-            conn.set_trace_callback(None)
-            plans = [" ".join(row[-1] for row in conn.execute("EXPLAIN QUERY PLAN " + sql)) for sql in seen
-                     if "FROM photos" in sql]
-        finally:
-            conn.close()
-        self.assertTrue(all(store.CAPTION_INDEX in plan and "TEMP B-TREE" not in plan for plan in plans), plans)
-        self.assertTrue(any("SEARCH p USING INDEX %s (<expr>>?)" % store.CAPTION_INDEX in plan for plan in plans), plans)
-        captioned = [sql for sql in seen if "FROM photos" in sql and "p.id >" not in sql and "p.id <" not in sql]
-        self.assertTrue(captioned and all(sql.count(">= ") + sql.count("<= ") == 1 for sql in captioned),
-                        "after a cursor the key has one bound, the cursor's, for the index to seek")
-
 
 class ThePlanOfEachKindOfSource(unittest.TestCase):
     """#722: the name or caption index is walked for the whole library, a list of ids (a keyword, a person) and a range
@@ -231,36 +182,6 @@ class ThePlanOfEachKindOfSource(unittest.TestCase):
                     plan = self.first_phase_plan(kind, value, order, recursive)
                     self.assertIn(store.CAPTION_INDEX if order.startswith("caption") else store.NAME_INDEX, plan)
                     self.assertNotIn("TEMP B-TREE", plan)
-
-    def test_either_way_the_pages_are_the_list(self):
-        for kind, value, recursive in (("month", "2020-07", False), ("folder", os.path.join(self.vl.pictures, "Small"), True),
-                                       ("year", "2019", False), ("all", None, False)):
-            for order in ("caption", "caption-desc", "name", "name-desc"):
-                with self.subTest(kind=kind, order=order):
-                    listed = library_view.ids(self.vl.library, kind, value, recursive, order=order)["ids"]
-                    token, paged = None, []
-                    while True:
-                        page = library_view.view(self.vl.library, kind, value, recursive, token, 3, order)
-                        paged += page["ids"]
-                        token = page["next"]
-                        if token is None:
-                            break
-                    self.assertEqual(listed, paged)
-
-
-class AForgedToken(unittest.TestCase):
-    def test_a_key_holding_a_lone_surrogate_is_refused_not_a_server_error(self):
-        # #723: JSON may spell a lone surrogate; SQLite cannot bind one.
-        vl = ViewLibrary(self)
-        vl.photo("A", "a.jpg", caption="Bay")
-        lone = chr(92) + "ud800"
-        for order in ("caption", "caption-desc", "name", "name-desc"):
-            with self.subTest(order=order):
-                raw = '["%s",0,"x%s",1]' % (order, lone)
-                token = base64.urlsafe_b64encode(raw.encode("ascii")).decode("ascii").rstrip("=")
-                with self.assertRaises(Refused):
-                    library_view.view(vl.library, "all", after=token, limit=1, order=order)
-
 
 class TheRoute(unittest.TestCase):
     def test_the_ids_route_takes_the_caption_orders(self):

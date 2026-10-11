@@ -27,7 +27,6 @@ from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import bulk_edit
-from tagpup.services import faces as face_actions
 from tagpup.services import file_changes, file_only
 from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
@@ -542,21 +541,6 @@ def folder_rename_photos():
 
 
 # ---- One photo ---------------------------------------------------------------------------
-
-@routes.get("/api/photo-faces")
-def photo_faces():
-    """Faces detected on one photo, with the best identity guess for each
-    (tagpup.services.faces.panel)."""
-    library = state.require()
-    photo_path = _wanted_path()
-    if not photo_path:
-        return responses.error(400, "Missing 'path' parameter")
-    try:
-        return jsonify(face_actions.panel(library, photo_path))
-    except Exception as e:
-        logger.error("Error listing faces for %s: %s", photo_path, e)
-        return responses.error(500, str(e))
-
 
 @routes.get("/api/face-crop")
 def face_crop():

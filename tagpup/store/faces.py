@@ -895,15 +895,6 @@ def in_photo_for_panel(conn, photo_path):
                 " FROM faces WHERE " + where + " ORDER BY id", params).fetchall()]
 
 
-def named_embeddings_elsewhere(conn, photo_path):
-    """(Ref, embedding) of every named, unexcluded face in any photo but this one: who a
-    face in it might be."""
-    where, params = _on_photo(conn, photo_path)
-    return [(Ref(tag_id, name), embedding) for tag_id, name, embedding in conn.execute(
-        "SELECT tag_id, name, embedding FROM faces"
-        " WHERE name IS NOT NULL AND excluded = 0 AND NOT (" + where + ")", params).fetchall()]
-
-
 def photos_with_faces(conn):
     """The photo paths, as stored, that have any face row."""
     return {photo_path for (photo_path,) in store_roots.natives(conn, conn.execute(

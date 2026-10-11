@@ -1,7 +1,7 @@
 """docs/findings.md, #994: the routes of "Name faces from tags" with "Only this folder", served alike by both apps.
 
 Flask's test client over one library (tests/test_name_faces_routes.py's RoutesCase): the plan the question shows is the
-folder's, Yes writes it and nothing outside the folder, grouping is refused for a folder, a folder with no photo is refused with
+folder's, Yes writes it and nothing outside the folder, a folder with no photo is refused with
 the sentence, and the choice's counts are given.
 """
 import os
@@ -38,7 +38,7 @@ class StartingForAFolder(FolderRoutes):
         status = self.asking(kind, folder=self.run, only_folder=True)
         self.assertTrue(status["only_folder"])
         self.assertEqual(2, status["plan"]["faces"], "the two photos under Run, none of the folder beside it")
-        answered = self.apps[kind].post(CONFIRM, json={"job": status["job"], "group": False})
+        answered = self.apps[kind].post(CONFIRM, json={"job": status["job"]})
         self.assertEqual(200, answered.status_code, answered.get_json())
         self.join(status["job"])
         self.assertEqual((WREN, WREN), (self.name_of(self.inside), self.name_of(self.deeper)))
@@ -65,16 +65,7 @@ class StartingForAFolder(FolderRoutes):
 
     def test_only_this_folder_must_be_exactly_true(self):
         status = self.asking("tuner", folder=self.run, only_folder="yes")
-        self.assertFalse(status["only_folder"], "anything but true is the whole library, as group is")
-
-    def test_grouping_is_refused_for_a_folder_and_the_question_stays_open(self):
-        status = self.asking("tuner", folder=self.run, only_folder=True)
-        answer = self.apps["tuner"].post(CONFIRM, json={"job": status["job"], "group": True})
-        self.assertEqual(400, answer.status_code)
-        self.assertIn("cannot be limited to a folder", answer.get_json()["error"])
-        self.assertIsNone(self.name_of(self.inside))
-        self.assertEqual(200, self.apps["tuner"].post(CONFIRM, json={"job": status["job"], "group": False}).status_code)
-        self.join(status["job"])
+        self.assertFalse(status["only_folder"], "anything but true is the whole library")
 
     def test_a_question_for_the_other_scope_is_told_so_with_that_question(self):
         whole = self.asking("tuner")

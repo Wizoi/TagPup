@@ -11,9 +11,14 @@ What the page adds is the photo's person tag: choosing a person for a face write
 the page's own save of the photo's keywords, and then names the face here, so that the tag and the
 face agree. No route here writes a keyword.
 """
-from flask import Blueprint, request
+import logging
 
-from tagpup.web import face_routes, state, tuner_routes
+from flask import Blueprint, jsonify, request
+
+from tagpup.services import faces as face_actions
+from tagpup.web import face_routes, responses, state, tuner_routes
+
+logger = logging.getLogger(__name__)
 
 routes = Blueprint("photo_faces", __name__)
 
@@ -23,6 +28,21 @@ def refuse_writes_while_clustering():
     if request.method != "POST":
         return None
     return tuner_routes.clustering_refusal(state.current())
+
+
+@routes.get("/api/photo-faces")
+def photo_faces():
+    """Faces detected on one photo, with the best identity guess for each
+    (tagpup.services.faces.panel), from the matrix of named faces the boxes' list reads."""
+    library = state.require()
+    photo_path = request.args.get("path")   # as Flask decoded it, once (docs/findings.md, #32)
+    if not photo_path:
+        return responses.error(400, "Missing 'path' parameter")
+    try:
+        return jsonify(face_actions.panel(library, photo_path, face_routes.named(library)))
+    except Exception as e:
+        logger.error("Error listing faces for %s: %s", photo_path, e)
+        return responses.error(500, str(e))
 
 
 routes.add_url_rule("/api/face/match", view_func=face_routes.face_match, methods=["POST"])
