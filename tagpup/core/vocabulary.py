@@ -201,6 +201,12 @@ def hidden_by(tag, hidden):
 #: and they disagreed with the tree and with each other (docs/findings.md, #66).
 NEW_LIBRARY_FACE_ROOT = "People"
 
+
+def is_filing_root(tag):
+    """Is `tag` the face root a new library is given? Empty, it is where people are filed, not a person called People: the
+    one top-level face node with nothing under it that is not a person (owner, 2026-10-10)."""
+    return key(tag) == NEW_LIBRARY_FACE_ROOT.lower()
+
 #: The root a photo's activities are filed under: the caption puts them after its people.
 ACTIVITY_ROOT = "Activity"
 
@@ -370,6 +376,10 @@ class PeopleVocabulary:
         left out of `by_keyword`). The tree's roots only: a root it does not flag holds no faces."""
         roots = {name.lower().strip() for name in root_names if name}
         groups = {keyword_key(tag) for tag in group_tags if tag and SEPARATOR in tag}
+        # A root with tags under it is a category (People, Family), not a person; a root with none is a person
+        # of the top level (owner, 2026-10-10).
+        categories = {keyword_key(tag) for tag in group_tags if tag and SEPARATOR not in tag} | {NEW_LIBRARY_FACE_ROOT.lower()}
+        categories |= {keyword_key(segments(row[-2])[0]) for row in face_rows if len(row[-2:]) == 2 and SEPARATOR in row[-2]}
         by_keyword, ids, names = {}, {}, {}
         called = collections.Counter()   # how many people each bare name has
         for row in face_rows:
@@ -377,9 +387,9 @@ class PeopleVocabulary:
             node_id, tag, name = (None,) + tuple(row) if len(row) == 2 else tuple(row)
             if tag and keyword_key(tag) in groups:
                 continue
-            # A face ROOT (People, Family, Pets, ...) is a category, not a person, so
+            # A face ROOT with tags under it (People, Family, Pets, ...) is a category, not a person, so
             # a photo tagged plainly "Family" must not gain a name.
-            if name and name.lower() in roots and "/" not in tag:
+            if name and name.lower() in roots and "/" not in tag and keyword_key(tag) in categories:
                 continue
             # The first row to match a keyword by either spelling wins, as it did
             # when this was a scan in row order.

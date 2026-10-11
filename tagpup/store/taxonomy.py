@@ -76,6 +76,16 @@ def people_roots(conn):
         "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name}
 
 
+def top_level_people(conn):
+    """The tags of the people directly under the tree's root: face nodes at the top with nothing under them (owner,
+    2026-10-10: a person is a node marked as one with no node under it, wherever it sits)."""
+    if not tree_exists(conn):
+        return []
+    return [tag for (tag,) in conn.execute(
+        "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND parent_id IS NULL AND id NOT IN"
+        " (SELECT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL)") if tag and not vocabulary.is_filing_root(tag)]
+
+
 def people_filing(db_path):
     """How the library's tree files people, read once: ({lowercased leaf: [every path under a
     people root ending in it]}, [the people roots' names as the tree spells them]). A library
@@ -95,6 +105,8 @@ def people_filing(db_path):
                 continue   # a group of people is not filed as a person (#986)
             if "/" in tag_path and vocabulary.key(vocabulary.root_of(tag_path)) in roots:
                 found.setdefault(vocabulary.key(vocabulary.leaf_of(tag_path)), []).append(tag_path)
+        for tag_path in top_level_people(conn):
+            found.setdefault(vocabulary.key(tag_path), []).append(tag_path)
         return {leaf: sorted(each) for leaf, each in found.items()}, sorted(roots.values())
     finally:
         conn.close()
@@ -105,8 +117,10 @@ def _read_people_paths(conn):
     people root, leaving out anyone filed in two places."""
     roots = people_roots(conn)
     mapping, groups = {}, set(group_tags(conn))
+    top = set(top_level_people(conn))
     for tag_path in tags(conn):
-        if tag_path in groups or "/" not in tag_path or vocabulary.key(vocabulary.root_of(tag_path)) not in roots:
+        if tag_path in groups or (tag_path not in top and (
+                "/" not in tag_path or vocabulary.key(vocabulary.root_of(tag_path)) not in roots)):
             continue   # a group of people is not a person to file under (#986)
         leaf = vocabulary.key(vocabulary.leaf_of(tag_path))
         mapping[leaf] = None if leaf in mapping and mapping[leaf] != tag_path else tag_path
@@ -328,7 +342,7 @@ def refuse_child_of_person(conn, tag):
         return
     for above in reversed(vocabulary.lineage(tag)[:-1]):
         node = conn.execute("SELECT id, has_face FROM tag_taxonomy WHERE tag = ?", (above,)).fetchone()
-        if not node or not node[1] or "/" not in above:
+        if not node or not node[1]:
             continue
         if conn.execute("SELECT 1 FROM tag_taxonomy WHERE parent_id = ? LIMIT 1", (node[0],)).fetchone():
             return   # a group already: the tag goes under a group
@@ -702,7 +716,8 @@ class TagTaxonomy:
         default = vocabulary.NEW_LIBRARY_FACE_ROOT
         if default.lower() in roots:
             return spelled.get(default.lower(), default)
-        flagged = sorted(spelled[r] for r in roots if r in spelled)
+        grown = {vocabulary.key(vocabulary.root_of(path)) for path in self.paths if "/" in path}   # a root with nodes under it
+        flagged = sorted(spelled[r] for r in roots if r in spelled and r in grown)
         return flagged[0] if flagged else default
 
     def people_parent(self) -> str:

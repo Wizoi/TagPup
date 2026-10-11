@@ -1,10 +1,10 @@
 """People by the id of their node in the tag tree: the one door a person goes through
 (docs/ARCHITECTURE.md, "Identity by id", stage 1, and "People by id, stage 2").
 
-A person is a node of the tree with `has_face` set that is not a root (a root holding faces is a
-category, as vocabulary.PeopleVocabulary reads it) and has no node under it: a branch tag cannot be a
-person *(owner, 2026-10-04; docs/findings.md, #660)*, it is a GROUP of people (Family/Thackeray beside
-Family/Thackeray/Sam), and a group is never put on a photo as a person (rule b, `resolve`).
+A person is a node of the tree with `has_face` set and no node under it, wherever it sits -- directly under the
+tree's root too (owner, 2026-10-10, "every tag has an id"): a branch tag cannot be a person *(owner, 2026-10-04;
+docs/findings.md, #660)*, it is a GROUP of people (Family/Thackeray beside Family/Thackeray/Sam, or the root People
+beside People/Sam), and a group is never put on a photo as a person (rule b, `resolve`).
 
 **The id is the person.** `faces.tag_id` and `photo_people.tag_id` hold the node a row means, and
 everything that groups, counts or joins "this person" reads the id. The name beside it
@@ -158,8 +158,8 @@ class People:
         parents = set(parents)
         for node_id, tag, name in sorted(nodes):
             self.node_names[node_id] = name
-            if not tag or vocabulary.SEPARATOR not in tag:
-                continue   # a root: a category of people, not a person
+            if not tag or (node_id not in parents and vocabulary.is_filing_root(tag)):
+                continue   # a new library's empty People is where people are filed
             leaf = vocabulary.key(name)
             if not leaf:
                 continue
