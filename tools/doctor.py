@@ -43,7 +43,6 @@ from tagpup import runtime  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.store import checks, db, derived, embeddings, people, person_ids, schema, search_index  # noqa: E402
-from tagpup.store import folder_ids  # noqa: E402
 
 
 def _refuse_newer(db_path):
@@ -88,7 +87,6 @@ def report(db_path, show=0, out=print):
         to_review = checks.names_to_review(conn)
         sharing = checks.people_sharing_a_leaf(conn)
         words = search_index.present(conn)
-        identity, marked = folder_ids.identity(conn), folder_ids.count(conn)
     finally:
         conn.close()
 
@@ -102,15 +100,6 @@ def report(db_path, show=0, out=print):
             broken += 1
             for example in check.examples[:show]:
                 out("    %s" % example)
-    if identity:
-        # The library's identifier is in the markers of its folders (`folder-ids mark`): a second library file
-        # carrying it is a copy, and two libraries answering to one line would follow each other's folders.
-        twins = folder_ids.twins(db_path, identity)
-        out("%-48s %s" % ("library identity, %d folder(s) marked" % marked,
-                          "ok" if not twins else "carried by %d other library file(s): %s" % (len(twins), ", ".join(twins))))
-        if twins:
-            broken += 1
-            out("    a copy of this library kept for a trial: `folder-ids mark` refuses both until one is given up")
     out("")
     if words:
         out(search_index.LIMITS + " (#752).")
