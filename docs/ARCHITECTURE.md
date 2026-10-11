@@ -180,7 +180,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        identities, identify, indexing, sync, refresh_rows, relink_photos,
                        roots*, settings, journal, file_changes, bulk_edit, selection,
                        library_view, search, suggester, suggestions, snapshots, thumbnails, tree_fill,
-                       faces_from_tags, tags_from_faces, face_people, inspect, activity, file_access, maintenance
+                       faces_from_tags, tags_from_faces, face_people, inspect, activity, maintenance
   jobs/                background work: indexing queue, suggestions, bulk_edits, face_assignments,
                        naming_faces, identify, verifying, watching, recurring
   web/                 one Flask app per page from one factory (app.py), *_routes.py by concern, security,
