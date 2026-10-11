@@ -2779,9 +2779,7 @@ body.just-looking #faces-strip {
     height: 10px;
 }
 
-.bulk-strip-eta,
-.bulk-strip-counts,
-.bulk-strip-foot {
+.bulk-strip-counts {
     color: var(--text-muted);
 }
 

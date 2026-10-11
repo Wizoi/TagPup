@@ -21,7 +21,6 @@ import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.jobs import bulk_edits  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -41,7 +40,6 @@ class CutShortPhotos(unittest.TestCase):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
-        self.addCleanup(bulk_edits.forget, self.vl.library)
         patcher = mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -62,14 +60,11 @@ class CutShortPhotos(unittest.TestCase):
         return held if isinstance(held, list) else [held]
 
     def test_a_bulk_tag_write_skips_them_and_writes_the_others(self):
-        reply = self.client.post("/library/api/library/bulk/start", json={
+        reply = self.client.post("/library/api/library/bulk-edit", json={
             "op": "tags", "selection": ALL, "params": {"add": ["Trips/Coast"], "remove": []}})
         self.assertEqual(200, reply.status_code, reply.get_json())
-        handle = reply.get_json()["job"]
-        bulk_edits._held(self.vl.library)[handle].thread.join(120)
-        done = self.client.get("/library/api/library/bulk/status", query_string={"job": handle}).get_json()
-        self.assertEqual(("done", 3, 2, 0), (done["state"], done["changed"], done["skipped_damaged"],
-                                             done["error_count"]))
+        done = reply.get_json()
+        self.assertEqual((3, 2, 0), (done["changed"], done["skipped_damaged"], done["error_count"]))
         for path in self.whole:
             self.assertEqual(["Trips/Coast"], self.keywords(path))
         for path in (self.cut, self.half):

@@ -24,7 +24,6 @@ from tagpup import runtime as runtimes
 from tagpup.core import fields, paths, vocabulary
 from tagpup.core.library import picker_name
 from tagpup.core.result import Conflict, NotFound, Refused
-from tagpup.jobs import bulk_edits as bulk_jobs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import bulk_edit
@@ -760,12 +759,6 @@ def library_selection_delete_check():
         return responses.error(500, str(e))
 
 
-def _job_id(text):
-    """The id of a bulk job a request names (digits only, as a photo id is), else None."""
-    text = text or ""
-    return int(text) if text.isascii() and text.isdigit() and len(text) <= 18 else None
-
-
 def _bulk_reply(why):
     """The reply for what a bulk route's service refused: a sentence, never a traceback; None for anything else."""
     if isinstance(why, Conflict):
@@ -773,13 +766,14 @@ def _bulk_reply(why):
     return _view_error(why)
 
 
-@routes.post("/api/library/bulk/start")
-def library_bulk_start():
-    """Begin a bulk edit of a selection of photos by id, as a job with progress and a cancel (phase 9d-1,
-    tagpup.jobs.bulk_edits): `{"op": "tags"|"people"|"delete", "selection": SELECTION, "params": {...}}` answers
-    `{"job"}`.
-    The edit is read and checked first (a tag the rules refuse, a person filed in two places), then the selection
-    is resolved on the server; nothing is written by the request itself."""
+@routes.post("/api/library/bulk-edit")
+def library_bulk_edit():
+    """Edit a selection of photos by id, in this request (tagpup.services.bulk_edit): `{"op": "tags"|"people"|"delete",
+    "selection": SELECTION, "params": {...}}` answers when it is done, with what each photo came to: `changed`, `unchanged`,
+    `skipped_missing`, `skipped_damaged`, `error_count` and the first 50 `errors`. At most 5,000 photos (a selection of more
+    is refused, nothing read); about a twentieth of a second each, so a large one takes minutes and the page says so.
+    The edit is read and checked first (a tag the rules refuse, a person filed in two places), then the selection is resolved
+    on the server, then written as one journaled change; it goes on to its end if the page stops waiting."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
     library = state.require()
@@ -787,78 +781,22 @@ def library_bulk_start():
     body = body if isinstance(body, dict) else {}
     try:
         edit = bulk_edit.prepare(library, body.get("op"), body.get("params", {}))
-        chosen = selection_service.read(library, body.get("selection"))
-        resolved = selection_service.resolve(library, chosen)
+        resolved = selection_service.resolve(library, selection_service.read(library, body.get("selection")))
         # A delete deletes exactly the photos its question named, or nothing (#691).
         bulk_edit.refuse_if_changed(edit, resolved.ids, selection_service.token_of)
-        job = bulk_jobs.start(library, edit, resolved.ids, state.exiftool(library),
-                              after_write=lambda: forget_scans(library))
+        try:
+            out = bulk_edit.run(library, edit, resolved.ids, state.exiftool(library))
+        finally:
+            forget_scans(library)       # the cached scans of folders say what the photos held before
     except (Refused, NotFound, Conflict, paths.RootsError) as why:
         return _bulk_reply(why)
     except Exception as e:
-        logger.error("Error starting a bulk edit: %s", e, exc_info=True)
-        return responses.error(500, str(e))
-    return jsonify({"success": True, "job": job.handle, "op": edit.op, "total": len(resolved.ids),
-                    "requested": resolved.requested, "missing": resolved.missing, "excluded": resolved.excluded})
-
-
-@routes.get("/api/library/bulk/status")
-def library_bulk_status():
-    """How a bulk edit is getting on (tagpup.jobs.bulk_edits.status): state, counts of what changed, the first 50 errors and
-    the time left, from memory; a job this process did not run (it was restarted) is read from the library's record of the run."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
-    library = state.require()
-    job = _job_id(request.args.get("job"))
-    if job is None:
-        return responses.error(400, "job must be a whole number.")
-    try:
-        found = bulk_jobs.status(library, job)
-        if found is None:
-            return responses.error(404, "There is no bulk edit %d in this library." % job)
-        return jsonify({"success": True, **found})
-    except (Refused, NotFound, Conflict, paths.RootsError) as why:
-        return _bulk_reply(why)
-    except Exception as e:
-        logger.error("Error reading a bulk edit: %s", e, exc_info=True)
-        return responses.error(500, str(e))
-
-
-@routes.get("/api/library/bulk/current")
-def library_bulk_current():
-    """The bulk edit a page opening the library should show again (phase 9d-2, tagpup.jobs.bulk_edits.current): the one
-    running, else the latest that stopped part-way; `{"job": status or null}`. A page that was closed, reloaded or left for
-    another library asks it as it opens, and picks the strip up where it was."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
-    library = state.require()
-    try:
-        return jsonify({"success": True, "job": bulk_jobs.current(library)})
-    except (Refused, NotFound, Conflict, paths.RootsError) as why:
-        return _bulk_reply(why)
-    except Exception as e:
-        logger.error("Error reading the current bulk edit: %s", e, exc_info=True)
-        return responses.error(500, str(e))
-
-
-@routes.post("/api/library/bulk/cancel")
-def library_bulk_cancel():
-    """Ask a bulk edit to stop after the chunk it is writing (tagpup.jobs.bulk_edits.cancel): its status, `cancelling` true
-    while it is running; one that has finished is no error."""
-    if (refusal := _this_pc_only()) is not None:
-        return refusal
-    library = state.require()
-    body = request.get_json(silent=True)
-    job = _job_id(str(body.get("job", "")) if isinstance(body, dict) else "")
-    if job is None:
-        return responses.error(400, "job must be a whole number.")
-    try:
-        return jsonify({"success": True, **bulk_jobs.cancel(library, job)})
-    except (Refused, NotFound, Conflict, paths.RootsError) as why:
-        return _bulk_reply(why)
-    except Exception as e:
-        logger.error("Error cancelling a bulk edit: %s", e, exc_info=True)
-        return responses.error(500, str(e))
+        # Not the text of the exception: it can name a path. The photos written before it keep the edit (History lists them).
+        logger.error("Error in a bulk edit: %s", e, exc_info=True)
+        return responses.error(500, "The bulk edit stopped (%s); the server's log says why. Photos already written keep the "
+                                    "edit: make it again to do the rest." % type(e).__name__)
+    return jsonify({"success": True, "op": edit.op, "total": len(resolved.ids), "requested": resolved.requested,
+                    "missing": resolved.missing, "excluded": resolved.excluded, **out.reply()})
 
 
 @routes.get("/api/photo-thumb")
@@ -994,16 +932,15 @@ def photo_delete():
 
 
 #: The most photos one bulk write names (bulk tags, Smart Rename): a request over it is refused before anything is
-#: written. A write of that many runs under the global file-changes lock with no progress, no cancel and no undo
-#: of its own; a job for more arrives with the editing stage (docs/ARCHITECTURE.md, phase 9d; findings #535).
+#: written. A write of that many runs under the global file-changes lock, one request that answers when it is done; the library
+#: view's edit of a selection has the same limit (tagpup.services.selection.MAX_SELECTED).
 BULK_LIMIT = 5000
 
 
 def _too_many(count):
     """The 400 for a bulk write naming more than BULK_LIMIT photos, else None."""
     if count > BULK_LIMIT:
-        return responses.error(400, "Narrow the selection: bulk edits over %d photos arrive with the editing stage. "
-                                    "%d were named." % (BULK_LIMIT, count))
+        return responses.error(400, "Select up to {:,} photos at a time ({:,} were named).".format(BULK_LIMIT, count))
     return None
 
 

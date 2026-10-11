@@ -1,4 +1,4 @@
-"""Delete of a library view's selection (#674): a bulk job of op `delete` (tagpup.jobs.bulk_edits, tagpup.services.bulk_edit) that
+"""Delete of a library view's selection (#674): a bulk edit of op `delete` (POST /api/library/bulk-edit, tagpup.services.bulk_edit) that
 deletes each photo as the folder view's Delete does (tagpup.services.photos.delete), and the question's answer before it -- how many,
 and how many with no Recycle Bin (POST /api/library/selection/delete-check, tagpup.services.selection.where_deleted).
 
@@ -19,7 +19,6 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import recycle_bin  # noqa: E402
-from tagpup.jobs import bulk_edits  # noqa: E402
 from tagpup.services import bulk_edit, selection  # noqa: E402
 
 REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
@@ -36,7 +35,6 @@ class Delete(unittest.TestCase):
         patcher = mock.patch("tagpup.files.exiftool_session.ExifToolSession", self.files.session)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.addCleanup(bulk_edits.forget, self.library)
         self.sent = []
         self.binless = set()          # folders (paths.key) with no Recycle Bin: a share, as far as the test says
         self.gate = None
@@ -67,18 +65,14 @@ class Delete(unittest.TestCase):
         return paths.stored(os.path.join(self.vl.pictures, name))
 
     def start(self, selection_body, params=None, expect=200):
-        """Start a delete as the page does: asked first (delete-check), then started with the answer's token. `params`: sent as
-        they are."""
+        """Delete as the page does: asked first (delete-check), then sent with the answer's token; the reply is the edit's, when it is
+        done. `params`: sent as they are."""
         if params is None:
             params = {"token": self.check(selection_body)["token"]}
-        reply = self.client.post("/library/api/library/bulk/start", json={"op": "delete", "selection": selection_body,
-                                                                         "params": params})
+        reply = self.client.post("/library/api/library/bulk-edit", json={"op": "delete", "selection": selection_body,
+                                                                        "params": params})
         self.assertEqual(expect, reply.status_code, reply.get_json())
         return reply.get_json()
-
-    def finish(self, handle):
-        bulk_edits._held(self.library)[handle].thread.join(60)
-        return self.client.get("/library/api/library/bulk/status", query_string={"job": handle}).get_json()
 
     def check(self, selection_body, expect=200, **kwargs):
         reply = self.client.post("/library/api/library/selection/delete-check", json={"selection": selection_body}, **kwargs)
@@ -94,8 +88,8 @@ class Deleting(Delete):
     def test_a_selection_across_folders_goes_to_the_bin_and_its_rows_go_with_the_files(self):
         chosen = self.coast[:3] + self.lakes[:2]
         paths_of = [self.vl.path_of(photo_id) for photo_id in chosen]
-        done = self.finish(self.start({"ids": chosen})["job"])
-        self.assertEqual(("done", 5, 5, 0, 0), (done["state"], done["total"], done["changed"], done["skipped_missing"], done["error_count"]))
+        done = self.start({"ids": chosen})
+        self.assertEqual((5, 5, 0, 0), (done["total"], done["changed"], done["skipped_missing"], done["error_count"]))
         self.assertEqual([], self.held(chosen), "the rows went with the files")
         self.assertFalse([path for path in paths_of if os.path.exists(path)])
         self.assertEqual(sorted(paths.key(path) for path in paths_of), sorted(paths.key(path) for path in self.sent))
@@ -105,20 +99,20 @@ class Deleting(Delete):
 
     def test_the_whole_library_less_the_excluded_leaves_exactly_the_excluded(self):
         kept = [self.coast[0], self.lakes[4]]
-        done = self.finish(self.start({"source": {"kind": "all"}, "excluded": kept})["job"])
+        done = self.start({"source": {"kind": "all"}, "excluded": kept})
         self.assertEqual(33, done["changed"])
         self.assertEqual(kept, self.held(self.coast + self.lakes))
 
     def test_a_file_gone_already_is_counted_missing_and_its_row_stays_for_sync_to_report(self):
         os.remove(self.vl.path_of(self.coast[1]))
-        done = self.finish(self.start({"ids": self.coast[:3]})["job"])
+        done = self.start({"ids": self.coast[:3]})
         self.assertEqual((2, 1, 0), (done["changed"], done["skipped_missing"], done["error_count"]))
         self.assertEqual([self.coast[1]], self.held(self.coast[:3]))
 
     def test_a_folder_with_no_recycle_bin_goes_through_this_pcs_and_nothing_is_deleted_for_good_694(self):
         self.binless.add(paths.key(self.folder("2023 Lakes")))
         lakes = [self.vl.path_of(photo_id) for photo_id in self.lakes]
-        done = self.finish(self.start({"ids": self.coast[:2] + self.lakes})["job"])
+        done = self.start({"ids": self.coast[:2] + self.lakes})
         self.assertEqual((7, 0), (done["changed"], done["error_count"]))
         self.assertEqual([], self.held(self.coast[:2] + self.lakes))
         sent = {paths.key(path) for path in self.sent}
@@ -131,7 +125,7 @@ class Deleting(Delete):
         asked = self.check({"ids": self.coast[:2]})
         self.assertEqual(0, asked["through_this_pc"])
         self.binless.add(paths.key(self.folder("2024 Coast")))     # a drive mounted, a link, since the question
-        done = self.finish(self.start({"ids": self.coast[:2]}, {"token": asked["token"]})["job"])
+        done = self.start({"ids": self.coast[:2]}, {"token": asked["token"]})
         self.assertEqual((2, 0), (done["changed"], done["error_count"]))
         sent = {paths.key(path) for path in self.sent}
         self.assertTrue(all(paths.key(recycle_bin.mirror_of(self.folder(os.path.join("2024 Coast", "c%02d.jpg" % n)))) in sent
@@ -140,7 +134,7 @@ class Deleting(Delete):
     def test_a_copy_that_cannot_be_made_keeps_the_photo_and_its_row(self):
         self.binless.add(paths.key(self.folder("2023 Lakes")))
         with mock.patch("tagpup.files.recycle_bin.shutil.copy2", side_effect=OSError("the share went away")):
-            done = self.finish(self.start({"ids": self.lakes[:2]})["job"])
+            done = self.start({"ids": self.lakes[:2]})
         self.assertEqual((0, 2), (done["changed"], done["error_count"]))
         self.assertIn("left where it is", done["errors"][0]["why"])
         self.assertEqual(self.lakes[:2], self.held(self.lakes[:2]))
@@ -152,17 +146,16 @@ class Deleting(Delete):
         refused = self.start(ALL, {"token": asked["token"]}, expect=409)
         self.assertIn("changed since you were asked", refused["error"])
         self.assertEqual([], self.sent, "nothing deleted")
-        self.assertEqual({}, bulk_edits._held(self.library), "nothing begun")
+        self.assertEqual(0, bulk_edit.running(self.library), "nothing begun")
         self.assertTrue(os.path.exists(self.vl.path_of(fresh)))
         # Asked again, the question names 36 and the delete deletes exactly those.
-        done = self.finish(self.start(ALL)["job"])
+        done = self.start(ALL)
         self.assertEqual((36, 36), (done["total"], done["changed"]))
 
     def test_a_photo_that_leaves_the_selection_refuses_too_and_one_outside_it_does_not(self):
         asked = self.check({"source": {"kind": "year", "value": "2024"}})
         self.vl.photo("2023 Lakes", "late.jpg", taken="2023:05:01 10:00:00", real=True, size=(16, 16))   # not in 2024
-        done = self.finish(self.start({"source": {"kind": "year", "value": "2024"}},
-                                      {"token": asked["token"]})["job"])
+        done = self.start({"source": {"kind": "year", "value": "2024"}}, {"token": asked["token"]})
         self.assertEqual(30, done["changed"])
         asked = self.check({"ids": self.lakes})
         os.remove(self.vl.path_of(self.lakes[0]))
@@ -185,7 +178,7 @@ class Deleting(Delete):
             os.remove(path)
             return True
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
-            done = self.finish(self.start({"ids": self.coast[:3]})["job"])
+            done = self.start({"ids": self.coast[:3]})
         self.assertEqual((2, 1), (done["changed"], done["error_count"]))
         self.assertEqual([self.coast[1]], self.held(self.coast[:3]))
 
@@ -197,29 +190,10 @@ class Deleting(Delete):
         self.assertEqual(self.coast[:1], self.held(self.coast[:1]))
         with mock.patch.object(selection, "MAX_SELECTED", 10):
             refused = self.start(ALL, {"token": "0" * 64}, expect=400)
-        self.assertIn("at most", refused["error"])
+        self.assertIn("Select up to 10 photos at a time", refused["error"])
         self.assertEqual([], self.sent)
 
-    def test_cancel_stops_after_the_chunk_under_way(self):
-        reached, release = threading.Event(), threading.Event()
-        calls = []
-
-        def gate():
-            calls.append(1)
-            if len(calls) == 2:
-                reached.set()
-                release.wait(30)
-        self.gate = gate
-        self.addCleanup(release.set)
-        handle = self.start({"ids": self.coast})["job"]          # 30 photos: two chunks of 25 and 5
-        self.assertTrue(reached.wait(30))
-        self.client.post("/library/api/library/bulk/cancel", json={"job": handle})
-        release.set()
-        done = self.finish(handle)
-        self.assertEqual(("cancelled", 25), (done["state"], done["changed"]))
-        self.assertEqual(self.coast[25:], self.held(self.coast))
-
-    def test_while_a_delete_runs_another_bulk_edit_is_refused_and_a_second_delete_too(self):
+    def test_while_a_delete_is_written_another_bulk_edit_is_refused_and_a_second_delete_too(self):
         reached, release = threading.Event(), threading.Event()
 
         def gate():
@@ -227,25 +201,24 @@ class Deleting(Delete):
             release.wait(30)
         self.gate = gate
         self.addCleanup(release.set)
-        handle = self.start({"ids": self.coast[:2]})["job"]
+        token = self.check({"ids": self.coast[:2]})["token"]
+        first = []
+        thread = threading.Thread(target=lambda: first.append(self.app.test_client().post("/library/api/library/bulk-edit", json={
+            "op": "delete", "selection": {"ids": self.coast[:2]}, "params": {"token": token}}).status_code))
+        thread.start()
         self.assertTrue(reached.wait(30))
         self.assertIn("already running", self.start({"ids": self.lakes}, expect=409)["error"])
-        tags = self.client.post("/library/api/library/bulk/start", json={"op": "tags", "selection": ALL, "params": {"add": ["Trips/Coast"]}})
+        tags = self.client.post("/library/api/library/bulk-edit", json={"op": "tags", "selection": ALL, "params": {"add": ["Trips/Coast"]}})
         self.assertEqual(409, tags.status_code)
-        self.assertIn("bulk delete", tags.get_json()["error"])
+        self.assertEqual(self.lakes, self.held(self.lakes), "the refused delete deleted nothing")
         release.set()
-        self.assertEqual("done", self.finish(handle)["state"])
+        thread.join(60)
+        self.assertEqual([200], first)
+        self.assertEqual([], self.held(self.coast[:2]))
 
-    def test_the_activity_record_names_no_photo(self):
-        done = self.finish(self.start({"ids": self.coast[:2]})["job"])
-        self.assertEqual("done", done["state"])
-        what = self.vl.rows("SELECT changed FROM job_runs WHERE job = ? ORDER BY id DESC LIMIT 1", bulk_edits.JOB)[0][0]
-        self.assertIn("bulk delete", what)
-        self.assertNotIn("c00", what)
-
-    def test_the_edit_says_what_it_does_without_a_name(self):
-        self.assertEqual("delete the files to the Recycle Bin (through this PC's where their place has none)",
-                         bulk_edit.prepare(self.library, "delete", {"token": "a" * 64}).describe())
+    def test_the_edit_is_one_request_with_no_run_to_poll(self):
+        self.start({"ids": self.coast[:2]})
+        self.assertEqual([], self.vl.rows("SELECT id FROM job_runs"))
 
 
 class Asking(Delete):
@@ -273,7 +246,7 @@ class Asking(Delete):
 
     def test_over_the_bulk_cap_this_pc_only_and_nonsense(self):
         with mock.patch.object(selection, "MAX_SELECTED", 10):
-            self.assertIn("at most", self.check(ALL, expect=400)["error"])
+            self.assertIn("Select up to 10 photos at a time", self.check(ALL, expect=400)["error"])
         self.check({"ids": self.coast[:1]}, expect=403, environ_overrides=REMOTE)
         for body in (None, {"ids": "x"}, {"source": {"kind": "nope"}}):
             with self.subTest(body=body):

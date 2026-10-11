@@ -30,7 +30,7 @@ import {
 import { clearSelection } from './selected.js';
 import { positionOf, pushEntry } from './history-entries.js';
 import { backArrived, backToView, bestEffortScroll, forgetViewLeft, leavePhotoPlace, onPhotoPlace, photoPlaceMoved, saveScroll } from './view-left.js';
-import { attachBulk, lockBulkControls } from './bulk-job.js';
+import { lockBulkControls } from './bulk-run.js';
 import { forgetBanner } from './library-banner.js';
 import { clearSyncInfo, loadSyncInfo } from './sync-state.js';
 import {
@@ -272,8 +272,7 @@ function beginView(spec, history, scrollTop) {
         return;
     }
     loadSyncInfo();            // when the library was last in step with its folders
-    lockBulkControls();        // a bulk edit that is running keeps the view's edit controls off
-    attachBulk();              // a bulk edit started elsewhere (another tab, before a reload) shows in the strip
+    lockBulkControls();        // a bulk edit that is being written keeps the view's edit controls off
     loadLibraryIds(lib).then(replaced => {
         if (lib !== state.library) return;
         if (!replaced) {
@@ -388,7 +387,7 @@ export function refreshLibraryView() {
 }
 
 /**
- * A Delete of the selection has ended (bulk-job.js, #674): the view's order is read again, so the deleted photos leave it, its
+ * A Delete of the selection has ended (bulk-run.js, #674): the view's order is read again, so the deleted photos leave it, its
  * total and the selection; and the photo open in the details panel, if it was one of them, is closed onto the grid -- its file
  * is gone. Resolves whether the order was read again.
  */

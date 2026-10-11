@@ -55,11 +55,11 @@ class OnlyWhatReallyChangedIsFollowed(Case):
         self.assertEqual((WREN, "manual"), self.row(on_lacks)[:2], "a hand-named face of a photo that never held the tag was unnamed")
         self.assertEqual([{"id": on_has, "name": WREN}], reply["unnamed_faces"])
 
-    def test_the_bulk_edit_job_is_held_to_the_same(self):
+    def test_the_bulk_edit_is_held_to_the_same(self):
         has, on_has, lacks, on_lacks = self.photos()
         ids = [row[0] for row in self.look("SELECT id FROM photos ORDER BY id")]
         edit = bulk_edit.prepare(self.library, bulk_edit.TAGS, {"remove": [PEOPLE + WREN]})
-        out = bulk_edit.run_chunk(self.library, edit, ids, "exiftool", "bulk tags 1")
+        out = bulk_edit.run(self.library, edit, ids, "exiftool")
         self.assertEqual(1, out.changed)
         self.assertEqual((None, "manual"), self.row(on_has)[:2])
         self.assertEqual((WREN, "manual"), self.row(on_lacks)[:2])

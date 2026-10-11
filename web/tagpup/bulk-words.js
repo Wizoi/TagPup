@@ -1,7 +1,7 @@
-// TagPup's page: what a bulk edit of a library view says -- the question before it, the line while it runs, the sentence when it
-// ends -- as plain functions of numbers and names, so each can be read and tested without a page (docs/ARCHITECTURE.md, phase 9d-2).
+// TagPup's page: what a bulk edit of a library view says -- the question before it, the line while it is written, the sentence when it
+// is done -- as plain functions of numbers and names, so each can be read and tested without a page (docs/ARCHITECTURE.md).
 
-/** Photos a second the page assumes of a bulk edit until the job reports its own pace: about what 9d-1 measured, 15 to 23. */
+/** Photos a second the page assumes of a bulk edit: 9d-1 measured 15 to 23, and a write now reads each file to its end (about 53 ms a photo). */
 export const ASSUMED_PER_SECOND = 15;
 
 /**
@@ -17,9 +17,6 @@ export const DELETE_PER_SECOND = 15;
  * the question says "at least".
  */
 export const COPY_BYTES_PER_SECOND = 200 * 1024 * 1024;
-
-/** A bulk edit over more photos than this is asked about twice. */
-export const ASK_TWICE_ABOVE = 5000;
 
 /** `1 photo`, `3,412 photos`. */
 export function photosOf(count) {
@@ -85,8 +82,8 @@ export function deleteQuestion(where, count) {
     const through = Math.min((where && where.through_this_pc) || 0, count);
     const seconds = count / DELETE_PER_SECOND + (through ? ((where && where.copy_bytes) || 0) / COPY_BYTES_PER_SECOND : 0);
     const takes = through ? `at least ${howLong(Math.max(seconds, 60))} (copies from a share take as long as the share does)` : howLong(seconds);
-    const job = ` It takes ${takes} and runs as a job you can watch and cancel; while it runs, `
-        + 'saving a photo elsewhere waits for the photos being deleted at that moment. It cannot be undone in TagPup.';
+    const job = ` It takes ${takes}; TagPup is busy until it is done, and saving a photo elsewhere waits for the photos being deleted `
+        + 'at that moment. It cannot be undone in TagPup.';
     if (!through) {
         const bin = count === 1 ? 'The file goes to the Recycle Bin, where it can be restored.' : 'The files go to the Recycle Bin, where they can be restored.';
         return `${head} ${bin}${rows}${job}`;
@@ -114,28 +111,21 @@ export function confirmSentence(desc, count) {
         + `It cannot be undone as one step; ${desc.reverse}.`;
 }
 
-/** The second question over ASK_TWICE_ABOVE photos. */
-export function secondQuestion(count) {
-    return `This is ${photosOf(count)}. Continue?`;
-}
-
-/** The line of counts under the bar: what the job has done to the photos so far. */
+/** The line of counts: what the edit did to the photos. */
 export function countsLine(job) {
     return `${job.op === 'delete' ? 'deleted' : 'changed'} ${(job.changed || 0).toLocaleString()} · unchanged ${(job.unchanged || 0).toLocaleString()} · `
         + `missing ${(job.skipped_missing || 0).toLocaleString()} · damaged ${(job.skipped_damaged || 0).toLocaleString()} · `
         + `errors ${(job.error_count || 0).toLocaleString()}`;
 }
 
-/** The time left: the job's own, or one at ASSUMED_PER_SECOND until it has made some. '' when nothing is left to say. */
-export function etaText(job) {
-    if (!job || job.state !== 'running') return '';
-    const left = Math.max(0, (job.total || 0) - (job.done || 0));
-    const seconds = typeof job.eta_seconds === 'number' ? job.eta_seconds : left / ASSUMED_PER_SECOND;
-    return `${howLong(seconds)} left`;
+/** What the strip and the status line say while an edit is written: what it does, to how many, how long it takes, that it finishes on its own. */
+export function writingSentence(desc, count) {
+    return `${phrase(desc, 'verb', count)}: writing the files takes ${howLong(count / ASSUMED_PER_SECOND)}. `
+        + 'The edit finishes even if this page is closed.';
 }
 
-/** The sentence a finished job ends in: what was done and what was left out, and the errors, counted. */
-export function summarySentence(job, desc) {
+/** The sentence an edit ends in: what was done and what was left out, and the errors, counted. */
+export function endedSentence(job, desc) {
     const done = (job.changed || 0);
     const parts = [];
     if (desc) parts.push(phrase(desc, 'past', done));
@@ -145,43 +135,21 @@ export function summarySentence(job, desc) {
     const damaged = job.skipped_damaged || 0;
     if (damaged) parts.push(`${damaged.toLocaleString()} damaged ${damaged === 1 ? 'was' : 'were'} skipped`);
     const same = job.unchanged || 0;
-    if (same) {
-        parts.push(job.op === 'time_shift'
-            ? `${same.toLocaleString()} with no Date Taken ${same === 1 ? 'was' : 'were'} left as ${same === 1 ? 'it was' : 'they were'}`
-            : `${same.toLocaleString()} already ${same === 1 ? 'was' : 'were'} as asked`);
-    }
+    if (same) parts.push(`${same.toLocaleString()} already ${same === 1 ? 'was' : 'were'} as asked`);
     const errors = job.error_count || 0;
     parts.push(`${errors.toLocaleString()} ${errors === 1 ? 'error' : 'errors'}`);
     return `${parts.join('; ')}.`;
 }
 
-/** What the strip says of a job that has ended, in one sentence: the summary for a finished one, the server's own for the rest. */
-export function endedSentence(job, desc) {
-    if (job.state === 'done') return summarySentence(job, desc);
-    const message = job.message || `The bulk edit ${job.state}.`;
-    return `${message} ${summarySentence(job, desc)}`;
-}
-
-/**
- * Is a 409 sentence the server's "another bulk edit is running" (both of its sentences say "already running")? Any other refusal -- the
- * library not brought up to date, an edit that could not be set up -- is not, and offers no way to a job that is not there. The server
- * sends no code with the sentence, so the page tells the kinds apart by those words.
- */
-export function isRunningRefusal(sentence) {
-    return /already running/i.test(String(sentence || ''));
-}
-
-/** The note that a job took more photos than were picked: the how-many always, the way out only while it can still be used. */
-export function widenedSentence({ took, picked }, running) {
-    const how = `TagPup took ${took.toLocaleString()} photos but ${picked.toLocaleString()} were selected: ${(took - picked).toLocaleString()} more `
+/** The note that an edit took more photos than were picked: photos came into the view since it was read. */
+export function widenedSentence({ took, picked }) {
+    return `TagPup took ${took.toLocaleString()} photos but ${picked.toLocaleString()} were selected: ${(took - picked).toLocaleString()} more `
         + 'came into this view since it was read.';
-    return running ? `${how} Cancel stops it after the photos being written now; the photos already written keep the edit.` : how;
 }
 
-/** The name the strip gives a job: what it does, or -- for one found again after a reload -- its kind. */
+/** The name the strip gives an edit: what it does, to how many photos. */
 export function titleOf(job, desc) {
     if (desc) return phrase(desc, 'verb', job.total || 0);
     if (job.op === 'delete') return `Delete ${photosOf(job.total || 0)}`;
-    const kind = { tags: 'tags', people: 'people', time_shift: 'Date Taken' }[job.op];
-    return `Bulk edit of ${kind || 'photos'} (${photosOf(job.total || 0)})`;
+    return `Bulk edit of ${job.op === 'people' ? 'people' : 'tags'} (${photosOf(job.total || 0)})`;
 }

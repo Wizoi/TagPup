@@ -1,7 +1,7 @@
 """Every module that starts background work is waited for by the update's drain, or says why it need not be
 (docs/INVARIANTS.md; Integration-and-apps review 2026-10-09, C14).
 
-`tagpup.web.lifecycle.long_work` is the list a drain refuses to end the server beside: a Suggest run, an index, a bulk edit, the
+`tagpup.web.lifecycle.long_work` is the list a drain refuses to end the server beside: a Suggest run, an index, the
 naming of faces, an assignment of faces, the startup migrations. It was a hand list, and a new job joined it only if somebody
 remembered. A module under tagpup/jobs or tagpup/services that starts a thread, or has a `running()` of its own, fails here until
 `long_work` asks it, or it is listed below with the reason a drain need not wait for it.
@@ -22,6 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOT_WAITED_FOR = {
     "tagpup.jobs.recurring": "the recurring jobs and the idle release run on tagpup.runtime.Background, which a drain stops and waits for (Lifecycle.busy)",
     "tagpup.jobs.watching": "the folder watcher is one of Background's tasks, stopped by the drain the same way",
+    "tagpup.services.bulk_edit": "an edit of a selection is a request, not background work: the gate counts it in flight and a drain waits for it, never interrupting a write",
 }
 
 
@@ -72,7 +73,7 @@ class EveryJobIsWaitedFor(unittest.TestCase):
 
     def test_the_scan_sees_the_jobs_long_work_names_today(self):
         asked = asked_by_long_work()
-        for name in ("tagpup.jobs.suggestions", "tagpup.jobs.indexing", "tagpup.jobs.bulk_edits", "tagpup.jobs.naming_faces",
+        for name in ("tagpup.jobs.suggestions", "tagpup.jobs.indexing", "tagpup.jobs.naming_faces",
                      "tagpup.jobs.face_assignments", "tagpup.services.libraries"):
             self.assertIn(name, asked)
 

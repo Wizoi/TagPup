@@ -58,7 +58,7 @@ export function wireRenameAndTimeShift() {
         }
 
         if (state.selectedThumbnails.length > BULK_LIMIT) {
-            alert(`Narrow the selection: bulk edits over ${BULK_LIMIT} photos arrive with the editing stage.`);
+            alert(`Select up to ${BULK_LIMIT.toLocaleString()} photos at a time.`);
             return;
         }
         if (!confirm(`Are you sure you want to smart-rename the ${state.selectedThumbnails.length} selected photos?`)) {

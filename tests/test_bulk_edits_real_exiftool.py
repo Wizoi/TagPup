@@ -1,6 +1,6 @@
 """A bulk edit through the real ExifTool and real JPEGs: tags added and taken off (tests/test_bulk_edits.py stands ExifTool in for everything else).
 
-The routes are Flask's test client; the job runs on its thread and the test joins it. Photos are small JPEGs written with
+The route is Flask's test client; the edit is written when the request returns. Photos are small JPEGs written with
 Pillow and ExifTool, rows as the indexer records them. Fictional names only.
 """
 import os
@@ -15,7 +15,6 @@ import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.jobs import bulk_edits  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 TAKEN = "2024:07:04 10:00:00"
@@ -30,7 +29,6 @@ class RealFiles(unittest.TestCase):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
-        self.addCleanup(bulk_edits.forget, self.vl.library)
         patcher = mock.patch("tagpup.web.state.exiftool", return_value=EXIFTOOL)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -45,11 +43,9 @@ class RealFiles(unittest.TestCase):
             self.paths.append(path)
 
     def run_job(self, op, params, selection=ALL):
-        reply = self.client.post("/library/api/library/bulk/start", json={"op": op, "selection": selection, "params": params})
+        reply = self.client.post("/library/api/library/bulk-edit", json={"op": op, "selection": selection, "params": params})
         self.assertEqual(200, reply.status_code, reply.get_json())
-        handle = reply.get_json()["job"]
-        bulk_edits._held(self.vl.library)[handle].thread.join(120)
-        return self.client.get("/library/api/library/bulk/status", query_string={"job": handle}).get_json()
+        return reply.get_json()
 
     def read(self, path, *fields):
         with ExifToolSession(executable=EXIFTOOL) as et:
@@ -57,7 +53,7 @@ class RealFiles(unittest.TestCase):
 
     def test_tags_are_added_and_removed_in_the_files_and_the_rows(self):
         done = self.run_job("tags", {"add": ["Trips/Coast"], "remove": ["Old/Stuff"]})
-        self.assertEqual(("done", self.PHOTOS, 0), (done["state"], done["changed"], done["error_count"]))
+        self.assertEqual((self.PHOTOS, 0), (done["changed"], done["error_count"]))
         for path in self.paths:
             held = self.read(path, "XMP:Subject")["XMP:Subject"]
             self.assertEqual(["Trips/Coast"], held if isinstance(held, list) else [held])
@@ -70,7 +66,7 @@ class RealFiles(unittest.TestCase):
         with open(self.paths[3], "wb") as handle:
             handle.write(b"not a picture at all")
         done = self.run_job("tags", {"add": ["Trips/Coast"]})
-        self.assertEqual(("done", self.PHOTOS - 1, 1), (done["state"], done["changed"], done["error_count"] + done["skipped_damaged"]))
+        self.assertEqual((self.PHOTOS - 1, 1), (done["changed"], done["error_count"] + done["skipped_damaged"]))
 
 
 if __name__ == "__main__":

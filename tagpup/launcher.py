@@ -14,7 +14,7 @@ it was, and the owner ended old servers by hand to reach the version installed. 
   (GET /api/server). The version being launched: its page is opened. The always-on
   process's: left to it, which moves it at its next quiet moment. Any other -- older,
   newer, or one run from a checkout (no version) -- is asked to drain with the record's
-  token: refused while a Suggest run, an index, a bulk edit or the startup migrations run,
+  token: refused while a Suggest run, an index or the startup migrations run,
   which the launcher waits out, saying so, with the running page opened meanwhile; once
   drained (nothing in flight, nothing running, nothing new taken), it is ended, and the
   launcher serves in its place.

@@ -132,7 +132,7 @@ describe("counting what the selection carries", () => {
     await ctx.settle(700);
     assert.equal(tallies(ctx).length, 0);
     assert.match(listText(ctx, "selection-tags-list"), /Not counted: see the note above\./);
-    assert.match(el(ctx, "selection-note").textContent, /30,000 photos are selected/);
+    assert.equal(el(ctx, "selection-note").textContent, "Select up to 5,000 photos at a time (30,000 are selected).");
   });
 
   test("the whole library may be counted: more than a job takes is no limit to a tally", async (t) => {

@@ -1,7 +1,6 @@
-"""One bulk edit, and the one chunk of it a job writes at a time (docs/ARCHITECTURE.md, phase 9d-1; the job is
-tagpup.jobs.bulk_edits).
+"""One bulk edit of a library view's selection: read and checked up front, then written in one request (docs/ARCHITECTURE.md).
 
-An EDIT is what is done to every photo of a selection:
+An EDIT is what is done to every photo of a selection (at most selection.MAX_SELECTED, 5,000):
 
 * `tags`: add some tags and take some off, `{"add": [...], "remove": [...]}`;
 * `people`: add and take off people, `{"add": [...], "remove": [...], "add_ids": [...], "remove_ids": [...]}`: a person_id is the
@@ -12,24 +11,35 @@ An EDIT is what is done to every photo of a selection:
 * `delete`: send each photo's file to the Recycle Bin and forget its row, faces and thumbnail, as the folder view's Delete
   does it (tagpup.services.photos.delete, the one owner: not journaled, as that is not; a photo whose place has no Recycle Bin
   goes through this PC's, #694), `{"token": text}` -- the token of the photos the question named (selection.where_deleted: the
-  start is refused when the selection no longer resolves to exactly them, #691).
+  request is refused when the selection no longer resolves to exactly them, #691).
 
-`prepare` reads and checks one up front and refuses with a sentence, before a photo is touched. `run_chunk` does it to a few
-photos: each id is resolved to its row's path NOW (a photo renamed meanwhile is found by id, one deleted is skipped and
-counted), and the whole chunk is read, planned and written under the one lock of changes of photo files, by the machinery a
-single save and Add to all selected use: the held photos as one journaled change, the photos of folders the library does not
-hold to their files only, each file read again before its write and a file another program changed meanwhile reported as a
-conflict and never overwritten. An edit never replaces a list: it adds and removes against each file's OWN tags.
+`prepare` reads and checks one up front and refuses with a sentence, before a photo is touched. `run` does it to the photos,
+synchronously: each id is resolved to its row's path NOW (a photo deleted since is skipped and counted), and the whole of it is
+read, planned and written under the one lock of changes of photo files, by the machinery a single save and Add to all selected
+use (tagging.change_tags): the held photos as ONE journaled change named for the edit ("bulk tags"), the photos of folders the
+library does not hold to their files only, each file read again before its write and a file another program changed meanwhile
+reported as a conflict and never overwritten. An edit never replaces a list: it adds and removes against each file's OWN tags.
 
-What a chunk reports is what CHANGED (a file written and read back), not what was attempted.
+**Interrupted.** The request runs to its end on the server whether or not the page waits: a closed tab or a lost connection
+changes nothing. The change is planned in the journal before the first file is written and each file is recorded as it is
+written, so a process that dies part-way leaves the files done and the rest planned, which the next change of photo files
+settles (file_changes.settle); History lists what was written. Nothing is resumed: an edit made again changes nothing a photo
+already holds, and a delete asks its question afresh.
+
+**One at a time** in a library, in this process: a second request is a Conflict naming the first (the lock of changes of photo
+files would only make it wait, minutes). Another process's writes meet the stamp check: a file changed between the read and the
+write is a conflict, not overwritten.
+
+What `run` reports is what CHANGED (a file written and read back), not what was attempted.
 """
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
-from tagpup.files import exiftool_session, job_files, recycle_bin, shares
+from tagpup.files import exiftool_session, recycle_bin, shares
 from tagpup.services import file_changes, libraries, library_view, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -44,21 +54,19 @@ OPS = (TAGS, PEOPLE, DELETE)
 #: The most tags, or people, one edit adds, and the same of what it takes off.
 MOST_NAMED = 200
 
-#: How long one ExifTool command of a chunk may take, in seconds. The session's own is 300: a share that went away in the middle
-#: of a chunk would cost that, and a chunk is 25 photos. A chunk's worst case is about this, counted as errors.
-CHUNK_TIMEOUT = 60
+#: How long one ExifTool command may take, in seconds (the session's own default). One command reads up to 200 photos, scanning
+#: each to its end; a share that went away mid-run costs this once: the session then stays dead (ChunkSession) and every file
+#: after is an error at once.
+COMMAND_TIMEOUT = exiftool_session.DEFAULT_TIMEOUT
 
-#: The longest a photo's name or a reason is kept, in characters (what a status and a state file carry of an error).
+#: The longest a photo's name or a reason is kept, in characters.
 MOST_TEXT = 200
 
-#: What the journal calls the changes of a job (History's `operation`): the work's own name, then the job, so that the
-#: files a job wrote are found by it (tagpup.store.file_journal.photo_ids_done).
+#: Errors a reply names (file and why); the rest are counted.
+MOST_ERRORS = 50
+
+#: What the journal calls the change of an edit (History's `operation`).
 OPERATIONS = {TAGS: "bulk tags", PEOPLE: "bulk people", DELETE: "bulk delete"}
-
-
-def operation_of(op, job):
-    """The journal's name for the changes job `job` makes of kind `op`: exact, so a job's files are found by equality."""
-    return "%s (job %d)" % (OPERATIONS[op], job)
 
 
 @dataclass
@@ -70,18 +78,6 @@ class Edit:
     remove: list = field(default_factory=list)
     persons: list = field(default_factory=list)
     token: str = ""
-
-    def describe(self):
-        """What it does, in words that name no tag or person (a record the Activity page lists, which can be read over a
-        shoulder): "add 2 and remove 1 tag"."""
-        if self.op == DELETE:
-            return "delete the files to the Recycle Bin (through this PC's where their place has none)"
-        parts = []
-        if self.add:
-            parts.append("add %d" % len(self.add))
-        if self.remove:
-            parts.append("remove %d" % len(self.remove))
-        return "%s %s" % (" and ".join(parts), "person(s)" if self.op == PEOPLE else "tag(s)")
 
 
 # ---- Reading one -----------------------------------------------------------------------------
@@ -175,28 +171,35 @@ def _people(library, add, remove, add_ids=(), remove_ids=()):
     return Edit(PEOPLE, add=list(dict.fromkeys(tags)), remove=list(dict.fromkeys(taken)), persons=list(dict.fromkeys(persons)))
 
 
-# ---- Doing one chunk of it ----------------------------------------------------------------------
+# ---- Doing it ---------------------------------------------------------------------------------
 
 @dataclass
 class Outcome:
-    """What one chunk did, counted by outcome: every id of the chunk is exactly one of `changed` (a file written and read
-    back), `unchanged` (read, and holding what it was to hold, or with nothing to change: no Date Taken to shift),
-    `skipped_missing` (no row, or its file is gone), `skipped_damaged`, or an entry of `errors` -- (id, file name, why)."""
+    """What an edit did, counted by outcome: every id is exactly one of `changed` (a file written and read back), `unchanged`
+    (read, and holding what it was to hold), `skipped_missing` (no row, or its file is gone), `skipped_damaged`, or an entry of
+    `errors` -- (id, file name, why)."""
     changed: int = 0
     unchanged: int = 0
     skipped_missing: int = 0
     skipped_damaged: int = 0
     errors: list = field(default_factory=list)
-    #: Why the whole chunk was refused (a share holding a recorded-damaged photo did not answer, the roots changed), or None.
+    #: Why the whole write was refused (a share holding a recorded-damaged photo did not answer, the roots changed), or None.
     refused: str = None
 
     @property
     def total(self):
         return self.changed + self.unchanged + self.skipped_missing + self.skipped_damaged + len(self.errors)
 
+    def reply(self):
+        """The numbers and the first MOST_ERRORS errors, for the page."""
+        return {"changed": self.changed, "unchanged": self.unchanged, "skipped_missing": self.skipped_missing,
+                "skipped_damaged": self.skipped_damaged, "error_count": len(self.errors),
+                "errors": [{"id": photo_id, "name": str(name)[:MOST_TEXT], "why": str(why)[:MOST_TEXT]}
+                           for photo_id, name, why in self.errors[:MOST_ERRORS]]}
+
 
 class ChunkSession:
-    """The ExifTool session of one chunk, which stays dead once a command has timed out: pyexiftool starts its process again on
+    """The ExifTool session of one edit, which stays dead once a command has timed out: pyexiftool starts its process again on
     the next command, and that command would wait its own deadline for a share that is not coming back. Every command after a
     timeout answers the same ExifToolTimeout at once, so the files after it are errors in the time it takes to say so."""
 
@@ -220,9 +223,34 @@ class ChunkSession:
         return command
 
 
-def run_chunk(library, edit, ids, exiftool_path, operation):
-    """Do `edit` to the photos `ids` (a few: a job takes 25), and say what became of each (Outcome). An exception that
-    escapes is not one photo's -- ExifTool that cannot start, a library that cannot be read -- and stops the job."""
+_running = set()      # {library.key}: the libraries with an edit under way in this process
+_guard = threading.Lock()
+
+
+def running(library=None):
+    """How many edits are under way in this process (the library's, or every one's)."""
+    with _guard:
+        return int(library.key in _running) if library is not None else len(_running)
+
+
+def run(library, edit, ids, exiftool_path):
+    """Do `edit` to the photos `ids` (resolved, in order, at most selection.MAX_SELECTED) and say what became of each (Outcome).
+    Conflict, nothing done, when an edit is under way in the library. An exception that escapes is not one photo's -- ExifTool
+    that cannot start, a library that cannot be read; the photos written before it keep the edit, in the journal."""
+    if not ids:
+        raise Refused("The selection holds no photos.")
+    with _guard:
+        if library.key in _running:
+            raise Conflict("A bulk edit is already running in %s. Wait for it to finish." % library.name)
+        _running.add(library.key)
+    try:
+        return _write(library, edit, list(ids), exiftool_path)
+    finally:
+        with _guard:
+            _running.discard(library.key)
+
+
+def _write(library, edit, ids, exiftool_path):
     conn = library_view.opened(library)
     try:
         found = store.paths_of(conn, ids)
@@ -237,22 +265,21 @@ def run_chunk(library, edit, ids, exiftool_path, operation):
         return _delete(library, edit, present, out)
     by_key = {paths.key(path): photo_id for photo_id, path in present}
     chosen = [path for _photo_id, path in present]
-    # The chunk's own ExifTool, with a deadline of its own and started before the lock is asked for. The whole chunk then runs
+    # The edit's own ExifTool session, with a deadline of its own and started before the lock is asked for. All of it then runs
     # under the one lock: the files are read, checked for being gone, planned and written without another change of photo files
-    # between (the route of the folder view does the same around a bulk write). Left to write_fields, each write would start a
-    # session with the default deadline of five minutes.
-    with exiftool_session.ExifToolSession(executable=exiftool_path, timeout=CHUNK_TIMEOUT) as session:
+    # between (the route of the folder view does the same around a bulk write).
+    with exiftool_session.ExifToolSession(executable=exiftool_path, timeout=COMMAND_TIMEOUT) as session:
         et = ChunkSession(session)
         with file_changes.exclusively():
             result = tagging.change_tags(
-                library, chosen, edit.add, edit.remove, exiftool_path, operation=operation, stop_at_first_error=False,
+                library, chosen, edit.add, edit.remove, exiftool_path, operation=OPERATIONS[edit.op], stop_at_first_error=False,
                 persons={paths.key(path): set(edit.persons) for path in chosen} if edit.persons else None, et=et)
     _count(out, result, present, by_key)
     return out
 
 
 def _cannot_keep(present):
-    """{photo id: why} of the photos of a chunk that go through this PC, when this PC cannot keep their copies; {} when it can."""
+    """{photo id: why} of the photos that go through this PC, when this PC cannot keep their copies; {} when it can."""
     bins, through, largest = {}, [], 0
     for photo_id, path in present:
         folder = paths.key(os.path.dirname(path))
@@ -351,13 +378,7 @@ def _count(out, result, present, by_key):
     out.unchanged = max(0, len(present) - out.changed - gone - damaged - (len(out.errors) - away))
 
 
-# ---- What an older version left ----------------------------------------------------------------
-
-def sweep(library, now=None):
-    """Let go of the records (state, list of photos) an older version kept of its bulk edits, once they are old
-    (tagpup.files.job_files.sweep). Nothing writes them now."""
-    job_files.sweep(library.bulk_jobs, now)
-
+# ---- Whose run is it ---------------------------------------------------------------------------
 
 def is_this_process(owner):
     """Is `owner` ('host:pid:start', as a run names its process) this process?"""

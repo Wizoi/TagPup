@@ -180,7 +180,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        roots*, settings, journal, file_changes, bulk_edit, selection,
                        library_view, search, suggester, suggestions, snapshots, thumbnails, tree_fill,
                        faces_from_tags, tags_from_faces, face_people, inspect, activity, maintenance
-  jobs/                background work: indexing queue, suggestions, bulk_edits, face_assignments,
+  jobs/                background work: indexing queue, suggestions, face_assignments,
                        naming_faces, identify, watching, recurring
   web/                 one Flask app per page from one factory (app.py), *_routes.py by concern, security,
                        lifecycle, libraries, state, responses
@@ -209,8 +209,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
   warmed on a thread, released after an idle period; each library's job runners; `begin`/`gpu_turn` take the
   card's turn. Services and jobs are given models; they never build one.
 - **Background jobs** run through one runner per library (`tagpup.jobs`): the index queue (an indexing child
-  process, via the CLI's `index`), Suggest runs, bulk edits by photo id (started again, never resumed; one journaled change per
-  chunk), face assignments, Name faces from tags, Identify caches. **Recurring jobs**
+  process, via the CLI's `index`), Suggest runs, face assignments, Name faces from tags, Identify caches. **Recurring jobs**
   (`tagpup.jobs.recurring`: snapshots, sync, pruning the journal) are run by the web server only; the
   folder **watcher** syncs a folder when it changes. Event-driven first: a schedule is only for safety.
 - **The graphics card**: one process at a time on the machine has a model on it (`tagpup.ml.gpu.Card`, a byte

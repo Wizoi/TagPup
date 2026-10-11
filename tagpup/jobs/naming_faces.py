@@ -51,7 +51,6 @@ import time
 
 from tagpup.core import paths, runs
 from tagpup.core.result import Conflict, NotFound, Refused
-from tagpup.jobs import bulk_edits
 from tagpup.services import bulk_edit
 from tagpup.services import faces as face_service
 from tagpup.services import faces_from_tags, folder_scope, identities, search
@@ -416,20 +415,9 @@ def _waiting(library):
 
 
 def other_work(library):
-    """Why not now, as sentences, from what this module can see: a bulk edit of the library's photos here, or in another
-    process (its claim in the library). [] when none."""
-    said = []
-    if bulk_edits.running(library):
-        said.append("a bulk edit is running")
-    else:
-        try:
-            last = runs_service.latest(library).get((bulk_edits.JOB, library.name), (None, None))[0]
-        except Exception as problem:
-            logger.warning("Could not read the running jobs of %s: %s", library.name, problem)
-            last = None
-        if last is not None and last.outcome == runs_service.RUNNING and bulk_edit.process_alive(last.owner):
-            said.append("a bulk edit is running in another TagPup process")
-    return said
+    """Why not now, as sentences, from what this module can see: a bulk edit of the library's photos under way here.
+    [] when none."""
+    return ["a bulk edit is running"] if bulk_edit.running(library) else []
 
 
 def _refuse_if_working(library):

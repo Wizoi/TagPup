@@ -711,7 +711,7 @@ def settle(library, exiftool_path, operation=None):
     journal afterwards (tagpup.services.bulk_edit.unsettled).
 
     `operation` names changes whose owner is not asked after: the caller holds the claim
-    that nothing carries that operation out (a bulk job's resume, which holds the library's
+    that nothing carries that operation out (a face assignment's resume, which holds the library's
     claim), so one left by an error of THIS process, still alive, is its to finish. An undo
     under way is never taken over this way: a resume has no business finishing it."""
     finished = 0

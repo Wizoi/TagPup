@@ -1,10 +1,10 @@
 // TagPup's page: the edits of a library view's selection -- Add tag, Add person, the pills' Remove and Apply, Delete -- each
-// asked of the owner by name and count, and started as a bulk JOB (bulk-job.js) with the selection BY ID (selected.js). The folder
+// asked of the owner by name and count, and written in one request (bulk-run.js) with the selection BY ID (selected.js). The folder
 // view's bulk writes are selection.js's and are not touched: a path, 5,000 of them, one request.
 //
 // What is asked is what is sent: the selection is read BEFORE the question and the request carries that, whatever is clicked while a
-// question or a placement dialog is open. A limit of the request (more than 20,000 ids, more than 200,000 photos) is said in a sentence
-// before anything is asked of the server. Smart Rename and Shift Date Taken are Organize's, not a view's (#669).
+// question or a placement dialog is open. A limit of the request (more than 5,000 photos, or a selection too scattered to name) is said
+// in a sentence before anything is asked of the server. Smart Rename and Shift Date Taken are Organize's, not a view's (#669).
 import { api } from './common/api.js';
 import { tagProblem } from './common/vocabulary.js';
 import { state } from './state.js';
@@ -12,10 +12,8 @@ import { bulkAddPeopleInput, bulkAddTagsInput } from './elements.js';
 import { setStatus } from './status.js';
 import { resolveTagOrPerson, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { selectionCount, selectionRequest } from './selected.js';
-import { BUSY_SENTENCE, bulkBusy, startBulk } from './bulk-job.js';
-import {
-    ASK_TWICE_ABOVE, confirmSentence, deleteQuestion, describeDelete, describeTags, photosOf, secondQuestion
-} from './bulk-words.js';
+import { BUSY_SENTENCE, bulkBusy, runBulk } from './bulk-run.js';
+import { confirmSentence, deleteQuestion, describeDelete, describeTags, photosOf } from './bulk-words.js';
 
 /** The selection, as a request, and how many photos it is; or null, the owner told why not (nothing is asked of the server). */
 function readSelection() {
@@ -33,16 +31,15 @@ function readSelection() {
     return { selection: asked.body, count: selectionCount() };
 }
 
-/** The question before a write: the first names it and the count; a large one is asked about a second time. */
+/** The question before a write: it names the edit, the count and how long it takes. */
 function confirmed(desc, count) {
-    if (!confirm(confirmSentence(desc, count))) return false;
-    return count <= ASK_TWICE_ABOVE || confirm(secondQuestion(count));
+    return confirm(confirmSentence(desc, count));
 }
 
 /**
  * Add the tags (or people) typed in the panel to the selection. The names are checked first, all or nothing, the text stays to be
  * corrected; then the question; and only then is a name resolved -- resolving may make a node of the tag tree, and a question
- * refused makes none. Resolves true when a job began.
+ * refused makes none. Resolves true when the edit was written.
  */
 export async function addTypedToSelection(isPeople) {
     const input = isPeople ? bulkAddPeopleInput : bulkAddTagsInput;
@@ -70,7 +67,7 @@ export async function addTypedToSelection(isPeople) {
             if (found) resolved.push(found);
         }
         if (!resolved.length) return false;
-        started = await startBulk({ op, selection: picked.selection, params: { add: resolved, remove: [] },
+        started = await runBulk({ op, selection: picked.selection, params: { add: resolved, remove: [] },
             desc: describeTags({ op, add: resolved }), picked: picked.count });
     } finally {
         state.bulk.asking = false;
@@ -101,7 +98,7 @@ export async function editByPill({ kind, name, remove, person = null }) {
     state.bulk.asking = true;
     try {
         if (!confirmed(desc, picked.count)) return false;
-        const started = await startBulk({ op, selection: picked.selection, params, desc, picked: picked.count });
+        const started = await runBulk({ op, selection: picked.selection, params, desc, picked: picked.count });
         return started.ok;
     } finally {
         state.bulk.asking = false;
@@ -110,23 +107,18 @@ export async function editByPill({ kind, name, remove, person = null }) {
 
 /**
  * Delete the selection of a library view (#674): the photos' files go to the Recycle Bin -- or for good, on a share or a drive with
- * none -- and their rows leave the library, each as the folder view's Delete does it (the server's photos.delete), as a bulk JOB:
- * progress, Cancel, one at a time (bulkBusy, lockBulkControls). The selection is read first (a limit is said, nothing asked); then
+ * none -- and their rows leave the library, each as the folder view's Delete does it (the server's photos.delete), in one request
+ * (bulk-run.js), one edit at a time (bulkBusy, lockBulkControls). The selection is read first (a limit is said, nothing asked); then
  * the server is asked where the files would go (POST /api/library/selection/delete-check, one answer a folder); then the question
- * names the server's count of the photos, how long it takes and whether any are deleted for good, and over ASK_TWICE_ABOVE it is
- * asked again. What is sent is what was asked: the selection as read, the answer's `token` -- the server refuses the start, nothing
- * begun, when the selection no longer resolves to exactly those photos (#691) -- and the folders the question named as having no
- * Recycle Bin (#694: nothing is deleted for good; those go through this PC's, and the question says so and where they restore to). Rapid clicks ask once (`state.bulk.asking`). `again`: the
- * strip's Start again of a delete, `{selection, count}` of the one stopped, asked about afresh exactly as a click is (never sent as
- * it was). Resolves true when a job began.
+ * names the server's count of the photos, how long it takes and whether any are deleted for good. What is sent is what was asked: the
+ * selection as read, the answer's `token` -- the server refuses the request, nothing deleted, when the selection no longer resolves to
+ * exactly those photos (#691) -- and the folders the question named as having no Recycle Bin (#694: nothing is deleted for good; those
+ * go through this PC's, and the question says so and where they restore to). Rapid clicks ask once (`state.bulk.asking`). Resolves true
+ * when the edit was written.
  */
-export async function deleteSelection(again = null) {
+export async function deleteSelection() {
     if (state.bulk.asking) return false;
-    if (again && bulkBusy()) {
-        alert(BUSY_SENTENCE);
-        return false;
-    }
-    const picked = again ? { selection: again.selection, count: again.count } : (state.library ? readSelection() : null);
+    const picked = state.library ? readSelection() : null;
     if (!picked) return false;
     state.bulk.asking = true;
     try {
@@ -157,13 +149,11 @@ export async function deleteSelection(again = null) {
             return false;
         }
         if (!confirm(deleteQuestion(where, count))) return false;
-        if (count > ASK_TWICE_ABOVE && !confirm(secondQuestion(count))) return false;
         const desc = describeDelete(where, count);
-        const started = await startBulk({ op: 'delete', selection: picked.selection,
-            params: { token: where.token },
-            desc, picked: count });
+        const started = await runBulk({ op: 'delete', selection: picked.selection, params: { token: where.token }, desc, picked: count });
         return started.ok;
     } finally {
         state.bulk.asking = false;
     }
 }
+

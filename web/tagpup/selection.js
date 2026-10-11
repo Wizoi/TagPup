@@ -440,7 +440,7 @@ function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], wr
  */
 export function confirmBulkWrite(what, count) {
     if (count > BULK_LIMIT) {
-        alert(`Narrow the selection: bulk edits over ${BULK_LIMIT} photos arrive with the editing stage. ${count.toLocaleString()} are selected.`);
+        alert(`Select up to ${BULK_LIMIT.toLocaleString()} photos at a time (${count.toLocaleString()} are selected).`);
         return false;
     }
     if (count > BULK_CONFIRM_ABOVE) return confirm(`${what} ${count.toLocaleString()} photos?`);
@@ -507,7 +507,7 @@ export function removeTagFromAllSelected(tagOrTags, isPerson) {
 
 // Bulk Editing operations
 export async function bulkAddPeopleToSelection() {
-    // A library view's selection is photo ids and its edit a job (bulk-edit.js); a folder's is paths and a request.
+    // A library view's selection is photo ids and its edit one request (bulk-edit.js, bulk-run.js); a folder's is paths and a request.
     if (state.library) return addTypedToSelection(true);
     if (state.selectedThumbnails.length === 0) return;
     const val = bulkAddPeopleInput.value.trim();

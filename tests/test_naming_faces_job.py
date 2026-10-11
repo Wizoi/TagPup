@@ -527,19 +527,10 @@ class WhatMustFinishFirst(Case789):
 
     def test_a_bulk_edit_in_this_process_refuses_it(self):
         self.seed()
-        with mock.patch.object(naming_faces.bulk_edits, "running", return_value=1):
+        with mock.patch.object(naming_faces.bulk_edit, "running", return_value=1):
             with self.assertRaises(Conflict) as raised:
                 naming_faces.start(self.library)
         self.assertIn("bulk edit", str(raised.exception))
-
-    def test_a_bulk_edit_in_another_process_refuses_it(self):
-        self.seed()
-        claim = runs_service.claim(self.library, naming_faces.bulk_edits.JOB, self.library.name, 1.0)
-        self.assertTrue(claim)
-        with mock.patch.object(naming_faces.bulk_edit, "process_alive", return_value=True):
-            with self.assertRaises(Conflict) as raised:
-                naming_faces.start(self.library)
-        self.assertIn("another TagPup process", str(raised.exception))
 
     def test_another_process_holding_the_job_refuses_it(self):
         self.seed()

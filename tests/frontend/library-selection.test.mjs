@@ -28,13 +28,13 @@ async function bigView(t, n = 68000, search = "?view=all") {
 }
 
 describe("Select all, and what is left out of it", () => {
-  test("68,000 photos selected, 3 excluded by a click each: the source and 3 ids are what a request carries", async (t) => {
-    const ctx = await bigView(t);
+  test("5,003 photos selected, 3 excluded by a click each: the source and 3 ids are what a request carries", async (t) => {
+    const ctx = await bigView(t, 5003);
     const requests = ctx.server.calls.length;
     ctx.document.getElementById("btn-select-all-thumbnails").click();
     assert.equal(ctx.server.calls.length, requests, "Select all asks nothing");
     for (const id of [3, 5, 7]) click(ctx.window, ctx.cardById(id).querySelector(".thumbnail-checkbox"));
-    assert.equal(countText(ctx), "Selected: 67,997");
+    assert.equal(countText(ctx), "Selected: 5,000");
     assert.deepEqual([...ctx.state.library.sel.excluded].sort((a, b) => a - b), [3, 5, 7]);
     const asked = ctx.selected.selectionRequest();
     assert.equal(asked.ok, true);
@@ -72,7 +72,7 @@ describe("a range", () => {
     assert.ok(Date.now() - began < 500, "a loop over ids");
     assert.equal(ctx.selectedIds().length, 20000);
     assert.equal(ctx.cardsAsked.length, before, "no card request");
-    assert.equal(ctx.selected.selectionRequest().ok, true, "exactly the limit");
+    assert.equal(ctx.selected.tallyRequest().ok, true, "exactly the limit of a list");
   });
 
   test("a range of an unselecting Shift-click takes the photos off", async (t) => {
@@ -116,53 +116,56 @@ describe("Invert", () => {
 });
 
 describe("what a request cannot carry is said before any request", () => {
-  test("30,000 picked in a view of 68,000: neither 30,000 ids nor all but 38,000; the note says so", async (t) => {
+  test("30,000 picked in a view of 68,000: an edit takes 5,000, a count neither 30,000 ids nor all but 38,000; the note says the first", async (t) => {
     const ctx = await bigView(t, 68000);
     ctx.module("selected.js").setIdRange(0, 29999, true);
     ctx.module("selection.js").updateSelectedThumbnailsCount();
     const asked = ctx.selected.selectionRequest();
     assert.equal(asked.ok, false);
-    assert.match(asked.sentence, /30,000 photos are selected and 38,000 are not/);
-    assert.match(asked.sentence, /20,000/);
+    assert.equal(asked.sentence, "Select up to 5,000 photos at a time (30,000 are selected).");
     assert.ok(!note(ctx).classList.contains("hidden"));
     assert.equal(note(ctx).textContent, asked.sentence);
+    const counted = ctx.selected.tallyRequest();
+    assert.equal(counted.ok, false);
+    assert.match(counted.sentence, /30,000 photos are selected and 38,000 are not/);
+    assert.match(counted.sentence, /20,000/);
   });
 
   test("more than 20,000 excluded from a Select all of 68,000 is the same", async (t) => {
     const ctx = await bigView(t, 68000);
     ctx.document.getElementById("btn-select-all-thumbnails").click();
     ctx.module("selected.js").setIdRange(0, 20000, false);
-    const asked = ctx.selected.selectionRequest();
+    const asked = ctx.selected.tallyRequest();
     assert.equal(asked.ok, false);
     assert.match(asked.sentence, /47,999 photos are selected and 20,001 are not/);
   });
 
-  test("a range of 60,000 in 68,000 is sent the other way round: the source and the 8,000 left out", async (t) => {
+  test("a range of 60,000 in 68,000 is counted the other way round: the source and the 8,000 left out", async (t) => {
     const ctx = await bigView(t, 68000);
     ctx.module("selected.js").setIdRange(0, 59999, true);
-    const asked = ctx.selected.selectionRequest();
+    const asked = ctx.selected.tallyRequest();
     assert.equal(asked.ok, true);
     assert.equal(asked.body.source.kind, "all");
     assert.equal(asked.body.excluded.length, 8000);
     assert.equal(asked.body.excluded[0], 60001);
   });
 
-  test("a Select all minus 50,000 of 68,000 is sent as the 18,000 ids that are left", async (t) => {
+  test("a Select all minus 50,000 of 68,000 is counted as the 18,000 ids that are left", async (t) => {
     const ctx = await bigView(t, 68000);
     ctx.document.getElementById("btn-select-all-thumbnails").click();
     ctx.module("selected.js").setIdRange(0, 49999, false);
-    const asked = ctx.selected.selectionRequest();
+    const asked = ctx.selected.tallyRequest();
     assert.equal(asked.ok, true);
     assert.equal(asked.body.ids.length, 18000);
     assert.equal(asked.body.ids[0], 50001);
   });
 
-  test("more than 200,000 selected is refused with the limit", async (t) => {
+  test("more than 5,000 selected is refused with the limit", async (t) => {
     const ctx = await loadViewPage(t, { search: "?view=all", ids: range(300), onIds: () => ({ source: {}, total: 250000, ids: range(300), complete: false }) });
     ctx.document.getElementById("btn-select-all-thumbnails").click();
     const asked = ctx.module("selected.js").selectionRequest();
     assert.equal(asked.ok, false);
-    assert.match(asked.sentence, /250,000 photos are selected; a bulk edit takes at most 200,000/);
+    assert.equal(asked.sentence, "Select up to 5,000 photos at a time (250,000 are selected).");
   });
 });
 

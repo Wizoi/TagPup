@@ -62,18 +62,13 @@
             </div>
         </header>
 
-        <!-- A bulk edit of the library's photos, running or just ended (web/tagpup/bulk-job.js, bulk-strip.js): what it does, how
-             far it has got, what it changed, Cancel. It belongs to the library, not to the view or the folder that is open. -->
+        <!-- The bulk edit of the library's photos, while it is written and when it is done (web/tagpup/bulk-run.js, bulk-strip.js): what
+             it does, to how many, what it changed. It belongs to the library, not to the view or the folder that is open. -->
         <section id="bulk-strip" class="bulk-strip hidden" aria-label="Bulk edit">
             <div class="bulk-strip-row">
                 <strong id="bulk-strip-title" class="bulk-strip-title"></strong>
-                <progress id="bulk-strip-bar" class="bulk-strip-bar" max="100" value="0" aria-label="How far the bulk edit has got"></progress>
-                <span id="bulk-strip-progress" class="bulk-strip-progress"></span>
-                <span id="bulk-strip-eta" class="bulk-strip-eta"></span>
+                <progress id="bulk-strip-bar" class="bulk-strip-bar" max="100" aria-label="The bulk edit is being written"></progress>
                 <span class="bulk-strip-actions">
-                    <button id="btn-bulk-cancel" type="button" class="btn btn-secondary btn-sm">Cancel</button>
-                    <button id="btn-bulk-again" type="button" class="btn btn-primary btn-sm hidden">Start again</button>
-                    <button id="btn-bulk-show" type="button" class="btn btn-primary btn-sm hidden">Show it</button>
                     <button id="btn-bulk-dismiss" type="button" class="btn btn-secondary btn-sm hidden">Dismiss</button>
                 </span>
             </div>
@@ -83,11 +78,8 @@
                 <summary id="bulk-strip-errors-summary"></summary>
                 <ul id="bulk-strip-error-list" class="bulk-strip-error-list"></ul>
             </details>
-            <div class="bulk-strip-foot">
-                <a href="/activity/" target="_blank" rel="noopener">Shown on the Activity page too</a>
-            </div>
         </section>
-        <!-- Said to a screen reader at coarse steps (the start, each tenth, the end), never each second. Outside the strip, which is
+        <!-- Said to a screen reader when the edit starts and when it ends. Outside the strip, which is
              hidden until the first thing is said: a live region that appears with its first words is often not read. -->
         <div id="bulk-strip-live" class="visually-hidden" role="status" aria-live="polite"></div>
 
@@ -372,7 +364,7 @@
                                         <button id="btn-details-toggle" type="button" class="btn btn-secondary btn-sm details-toggle" aria-expanded="false" aria-controls="folder-selection-sidebar" title="Show or hide the Selection Details panel">Details</button>
                                         <button id="btn-select-all-thumbnails" class="btn btn-secondary btn-sm">Select All</button>
                                         <button id="btn-select-none-thumbnails" class="btn btn-secondary btn-sm">Select None</button>
-                                        <!-- In a library view only: delete the selected photos, files and rows, as a job (web/tagpup/bulk-edit.js, #674). -->
+                                        <!-- In a library view only: delete the selected photos, files and rows (web/tagpup/bulk-edit.js, #674). -->
                                         <button id="btn-delete-selection" type="button" class="btn btn-danger btn-sm hidden" title="Delete the selected photos: their files go to the Recycle Bin (for good where there is none, and you are asked first) and their rows leave the library">🗑️ Delete</button>
                                         <span id="selected-thumbnails-count" class="selected-count-label">Selected: 0</span>
                                     </div>
