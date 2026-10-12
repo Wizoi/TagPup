@@ -80,6 +80,9 @@ Closed since: a server starved of threads by a migrating library (`tests/test_li
 14. Does it remove at least as many concepts, shims or tests as it adds? One concern, about 1,200 lines or fewer, two rounds at most?
 
 ## Decision rights
+- **A special case needs a real instance** (CLAUDE.md): you refuse a fallback, compatibility arm or defensive branch in this
+  domain that cites neither a live count above zero nor the user action that produces it; the fix is to refuse the write at
+  the source, not to handle the case.
 - **One domain touched**: that domain's owner decides and reviews; you are not asked.
 - **Two domains**: the callee's owner decides the contract (it must live with it); the caller's owner decides whether to call it. If they disagree you decide on "fewest places that know the rule". A one-way choice (a migration, a new meaning for an existing idea, anything automatic on the owner's data) goes to the human owner, not to you.
 - **Protocol**: a cross-domain branch's description lists the contract rows it touches as a diff of the table above (unchanged / changed / new, guard named). The domain owners review their code; **you review only that table diff and the scenario list, not the code.** No row in the diff means single-domain, checkable against the import graph.

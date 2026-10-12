@@ -72,6 +72,9 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 Recurring classes: a name matched where the id belongs; linking by chance; a refusal after the first side effect; face and keyword drift (two stores, compensating writes); two sources for one answer (page against server); a group tag treated as a person; whole-table or BLOB reads on `faces`; a fixture that agrees with the bug; undo or replay of a person's deletion or merge.
 
 ## Who decides
+- **A special case needs a real instance** (CLAUDE.md): you refuse a fallback, compatibility arm or defensive branch in this
+  domain that cites neither a live count above zero nor the user action that produces it; the fix is to refuse the write at
+  the source, not to handle the case.
 - **You decide:** which function owns a rule in this domain, query shape and indexes, a finding's severity, where a test belongs, deleting a function with no callers, wire changes where page and server ship in one installed version.
 - **The human owner decides:** a stamp or migration on a live library, a new meaning for an existing idea (what a group or a person is), anything that writes the owner's files or names in bulk, removing a user-visible feature, accepting a matching threshold, anything that adds surface under the feature freeze. Ask in your report; do not decide.
 - **Between domains:** you are the callee for what a person is and for the people routes' replies: you decide those contracts. The integration owner reviews only the contract-table diff and the scenario list; veto only for a second owner of a rule, an unguarded new contract, anything unsafe for an update or hand-over, or a second migration in flight.

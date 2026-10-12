@@ -69,6 +69,9 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 Recurring classes: orders and ties; a plan that scans on the real library; a derived table that missed a writer; the page keeping its own rule; a navigator stale or capped; models on the card (two big models on one card, a model kept after a settings change, a warm-up that loads with nobody asking); memory held by a library of this size; a stale vector; a looking run that leaks. Open: #761 (two libraries naming different CLIP models in one process).
 
 ## Who decides
+- **A special case needs a real instance** (CLAUDE.md): you refuse a fallback, compatibility arm or defensive branch in this
+  domain that cites neither a live count above zero nor the user action that produces it; the fix is to refuse the write at
+  the source, not to handle the case.
 - **You decide:** a new kind of view source, a sort order, the shape of a count, what a derived table holds for the views (with Data), query shape and indexes, idle and release mechanics.
 - **The human owner decides:** which CLIP or face model, input resolution, the face-box coordinate system, the thresholds that decide a name (all re-embed the library: one way), which words are searchable, anything written into a photo file (face regions, baked vectors), how long the card is kept (it is shared with the owner's other programs). Ask in your report; do not decide.
 - **Between domains:** you are the callee for view replies and the card's turn: you decide those contracts. People decides how a person is keyed in a facet; you consume it. The integration owner reviews only the contract-table diff and the scenario list; veto only for a second owner of a rule, an unguarded new contract, anything unsafe for an update or hand-over, or a second migration in flight.

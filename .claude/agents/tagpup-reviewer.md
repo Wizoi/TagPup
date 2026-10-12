@@ -132,6 +132,12 @@ exits, `subprocess` quoting, MAX_PATH); errors swallowed on paths where losing d
 silent; a return value ignored; a status dict that can be left at "running" forever
 on an exception; unbounded growth of an in-memory cache keyed per folder/per db.
 
+### 9. A case nobody can produce
+For every new or kept fallback, compatibility arm, 'old row' branch or defensive path ask: which user action, through the
+real writers, makes this case, and how many rows of it are in the live libraries (counted read-only)? None of either is a
+finding (low, or wrong if it adds a second rule for the same value): delete the branch and refuse the write at the source.
+A test that builds the case by hand is not an instance. An owner decision that rules the class out ends the question.
+
 ## Report
 
 Rank by severity. For each finding:
