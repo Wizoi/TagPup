@@ -2,7 +2,6 @@
 // its state in state.js; every request goes through api.js, which puts the library
 // in front of it (web/common/api.js).
 import { wireBatchStrip } from './common/batch-strip.js';
-import { wireFaceJobBanner } from './common/face-job-banner.js';
 import { wireRootsBanner } from './common/roots-banner.js';
 import { initDatabaseSelector } from './common/library.js';
 import { loadRules } from './common/validate.js';
@@ -84,8 +83,6 @@ document.addEventListener('DOMContentLoaded', () => {
     wireNameFaces();
     // A library whose root this computer does not place says so, at the top of the page.
     wireRootsBanner();
-    // A bulk assignment of faces that stopped part-way (or runs in another window) is offered here (#907).
-    wireFaceJobBanner({ changed: () => { fetchPhotos(); } });
 
     // The strip of the batches of photo files (a rename of a person or a tag rewrites photos); it asks once, so a reload shows one going.
     wireBatchStrip();

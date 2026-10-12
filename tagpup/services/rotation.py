@@ -57,7 +57,11 @@ def follower(row, state):
     was, now = (row.before, row.after) if forward else (row.after, row.before)
     direction = direction_between(was.get(FIELD), now.get(FIELD))
     turn = None
-    if direction:
+    if not forward and row.turned:
+        # Taken out of its change after it was done (file_changes._read_back): exactly the turn that was made, back.
+        done, width, height = row.turned
+        turn = ("right" if done == "left" else "left", height, width)
+    elif direction:
         try:
             width, height, oriented = images.shown_size(row.path)
         except Exception as problem:
@@ -71,4 +75,5 @@ def follower(row, state):
     def follow(conn):
         embeddings.forget(conn, row.path)
         row.followed = faces.turn_boxes_in(conn, row.path, *turn) if turn else 0
+        row.turned = turn if forward else None
     return follow

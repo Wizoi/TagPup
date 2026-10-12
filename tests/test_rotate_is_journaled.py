@@ -178,6 +178,19 @@ class TheFaceBoxesTurnWithTheFile(RotationCase):
         self.undo(first.details["change"])
         self.assertEqual((self.boxes(), orientation_of(path)), ([BOX], None))
 
+    def test_a_file_that_holds_its_old_orientation_after_the_write_has_its_boxes_turned_back(self):
+        path = self.make("scan.tif", fmt="TIFF", orientation=1)
+        self.face(path)
+
+        def the_write_did_not_take(step):
+            if step == "file written":
+                set_orientation(path, 1)
+
+        with mock.patch.object(file_changes, "_reached", side_effect=the_write_did_not_take):
+            self.rotate(path, "left")
+        # Taken out of its change (read back holding what it held): the boxes the done turned go back in the same transaction.
+        self.assertEqual((orientation_of(path), self.boxes()), (1, [BOX]))
+
     def test_a_jpegs_boxes_stay_where_the_stored_pixels_are(self):
         path = self.make("a.jpg")
         self.face(path)

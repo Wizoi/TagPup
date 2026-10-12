@@ -111,12 +111,9 @@ export const state = {
     reexamining: null,
 
     assignUndoTimer: null,
-    // The server's job behind the last assign / ignore the Undo bar offers ({ job, kind }): its Undo is one undo of the faces AND
-    // the photo files it wrote (/api/faces/job/undo).
-    lastAssignJob: null,
-    // The server's job behind the last assign / ignore the Undo bar offers ({ job, kind }): its Undo is one undo of the faces AND
-    // the photo files it wrote (/api/faces/job/undo).
-    lastAssignJob: null,
+    // The change of the journal behind the last assign / ignore the Undo bar offers ({ change, kind }): History's undo of it puts
+    // back the faces AND the photo files it wrote (/api/history/<change>/undo). None when no photo was written (nameless faces).
+    lastAssignChange: null,
 
     allTags: [],
     tagBuckets: {},

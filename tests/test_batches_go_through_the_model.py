@@ -32,6 +32,12 @@ BATCHES = {
     "/api/taxonomy/delete-confirm": "the tag tree's rewrite: no cap, a batch",
     "/api/tags/merge": "the tag tree's rewrite: no cap, a batch",
     "/api/person/rename": "the tag tree's rewrite: no cap, a batch",
+    "/api/faces/match-bulk": "face_assignment.run: one batch, the photos' faces written in the transaction that marks each file done; "
+                             "refused over the cap saying so",
+    "/api/faces/unmatch-bulk": "face_assignment.run: one batch (faces with no name to take off touch no photo)",
+    "/api/folder/automatch": "face_assignment.run: Re-examine's guesses are one batch",
+    "/api/faces/exclude": "bulk (Exclude selected, Ignore cluster): face_assignment.run, one batch; one face's photo otherwise "
+                          "(face_people.write_tags)",
 }
 
 #: Routes that reach write_fields for one photo, or a few at a time (tagpup.services.face_people writes batches.CHUNK photos a change).
@@ -39,8 +45,6 @@ SMALL = {
     "/api/photo/save-metadata": "one photo",
     "/api/face/match": "one face's photo",
     "/api/face/unmatch": "one face's photo",
-    "/api/faces/exclude": "the photos of the faces named, a chunk at a time (face_people.write_tags)",
-    "/api/faces/job/undo": "an assignment's undo is the journal's, a chunk at a time; face assignments fold into the batch model next",
     "/api/photo/automatch": "one photo",
     "/api/photo/unmatch-all": "one photo",
     "/api/photo/rotate": "one photo; photos.rotate_photos takes any number through the same claim and chunks (no route sends more)",

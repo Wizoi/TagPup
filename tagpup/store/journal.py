@@ -882,6 +882,16 @@ def record(conn, operation, changes, summary=None, schema_version=None):
     return change_id
 
 
+def record_rows(conn, change_id, changes):
+    """Add `changes` (RowChanges of tables in KEYS) to the rows of change `change_id`, in the caller's transaction: a change of photo
+    files that also writes rows (tagpup.store.face_batches) records them as the plan reads them. The rows are written by the caller,
+    when the file's step is done, not here."""
+    for change in changes:
+        if change.table not in KEYS:
+            raise ValueError("%s is not a table a change records" % change.table)
+    _record(conn, change_id, changes)
+
+
 #: What the journal calls the face rows a tree edit changed (taxonomy.delete_branch with force; people.merge_person).
 PERSON_DELETED = "person deleted (force): faces unnamed"
 PERSON_MERGED = "person merged: faces renamed"

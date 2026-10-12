@@ -63,7 +63,7 @@ def _answer(result, change_id):
               "attempted": result.attempted, "changed": result.changed, "refused": result.refused,
               "errors": [{"what": what, "why": why} for what, why in result.errors],
               "differences": list(rehearsal.get("differences") or []),
-              "would_put_back": rehearsal.get("rows", 0)}
+              "would_put_back": rehearsal.get("rows", 0), "faces_left": result.details.get("faces_left", 0)}
     if not result.ok:
         answer["error"] = result.message()
     return answer

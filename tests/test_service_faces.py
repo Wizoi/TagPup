@@ -130,19 +130,20 @@ class NamingAFace(FacesCase):
 
 
 class NamingFacesInBulk(FacesCase):
+    """What a bulk assignment decides before it writes (nameable), and what naming does to a photo's people."""
+
     def test_each_photo_lists_the_person(self):
         """docs/findings.md, #42."""
         first, second = self.photo("a.jpg", people=["Ada Pembrook"]), self.photo("b.jpg")
         ids = [self.face(first), self.face(second)]
-        result = faces.name_faces(self.lib.library, ids, "Wren Halloway")
-        self.assertEqual((result.details["matched"], result.details["matched_ids"]), (2, ids))
+        db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name(conn, ids, "Wren Halloway"))
         self.assertEqual(self.people(first), ["Ada Pembrook", "Wren Halloway"])
         self.assertEqual(self.people(second), ["Wren Halloway"])
 
     def test_an_excluded_face_is_skipped_and_said_to_be(self):
         photo = self.photo("a.jpg")
         named, excluded = self.face(photo), self.face(self.photo("b.jpg"), excluded=1)
-        result = faces.name_faces(self.lib.library, [named, excluded], "Wren Halloway")
+        result = faces.nameable(self.lib.library, [named, excluded], "Wren Halloway")
         self.assertEqual((result.details["matched_ids"], result.details["skipped_excluded"]),
                          ([named], [excluded]))
         self.assertIsNone(self.face_row(excluded)[0])
@@ -150,14 +151,13 @@ class NamingFacesInBulk(FacesCase):
     def test_two_faces_in_one_photo_are_refused(self):
         photo = self.photo("a.jpg")
         ids = [self.face(photo), self.face(photo)]
-        self.assertIn("Multiple selected faces", faces.name_faces(self.lib.library, ids, "Wren Halloway").refused)
+        self.assertIn("Multiple selected faces", faces.nameable(self.lib.library, ids, "Wren Halloway").refused)
         self.assertEqual([self.face_row(i)[0] for i in ids], [None, None])
 
     def test_faces_already_this_person_are_nothing_to_do(self):
         face = self.face(self.photo("a.jpg"), name="Wren Halloway")
-        result = faces.name_faces(self.lib.library, [face], "Wren Halloway")
-        self.assertEqual((result.changed, result.details["matched"]), (0, 0))
-        self.assertNotIn("fingerprints", result.details)
+        result = faces.nameable(self.lib.library, [face], "Wren Halloway")
+        self.assertEqual(result.details["matched_ids"], [])
 
 
 class TakingNamesOff(FacesCase):
@@ -167,12 +167,6 @@ class TakingNamesOff(FacesCase):
         self.assertEqual(self.people(photo), ["Wren Halloway"])
         self.assertEqual(faces.unname_face(self.lib.library, face).changed, 1)
         self.assertEqual((self.face_row(face), self.people(photo)), ((None, "manual", 0), []))
-
-    def test_undo_leaves_the_faces_unreviewed(self):
-        photo = self.photo("a.jpg")
-        face = self.face(photo, name="Wren Halloway", source="manual")
-        faces.unname_faces(self.lib.library, [face], undo=True)
-        self.assertEqual(self.face_row(face), (None, None, 0))
 
     def test_every_face_in_a_photo(self):
         photo = self.photo("a.jpg", people=["Kit Morrow"])

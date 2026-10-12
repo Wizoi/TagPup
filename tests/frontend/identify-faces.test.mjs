@@ -62,7 +62,8 @@ async function openPerson(t, faces) {
     .on("/api/faces/exclude", { success: true, excluded: faces.length })
     .on("/api/faces/restore", { success: true, restored: faces.length })
     .on("/api/faces/unmatch-bulk", { success: true })
-    .on("/api/faces/match-bulk", { success: true, matched: faces.length });
+    .on("/api/faces/match-bulk", { success: true, matched: faces.length, change: 31 })
+    .on("/api/history/31/undo", { success: true, changed: faces.length, errors: [] });
   const { window, document } = await loadApp("tagtuner", {
     server,
     url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
@@ -495,6 +496,22 @@ describe("accepting a suggestion in one click", () => {
     assert.ok(!bar.classList.contains("hidden"), "no undo was offered");
     assert.match(document.getElementById("assign-undo-text").textContent,
                  /Assigned 3 faces to Emory Kade/);
+  });
+
+  test("undo is the journal's undo of the change that assigned them, and unmatches nobody", async (t) => {
+    const { document, window, server } = await accept(t);
+    document.getElementById("btn-assign-undo").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+
+    assert.deepEqual(server.lastBody("/api/history/31/undo"), { apply: true });
+    assert.equal(server.lastBody("/api/faces/unmatch-bulk"), undefined, "faces were called nobody");
+  });
+
+  test("undoing clears the offer, so it cannot be applied twice", async (t) => {
+    const { document, window } = await accept(t);
+    document.getElementById("btn-assign-undo").click();
+    await new Promise((r) => window.setTimeout(r, 40));
+    assert.ok(document.getElementById("assign-undo-bar").classList.contains("hidden"));
   });
 
   test("it can be dismissed without undoing", async (t) => {

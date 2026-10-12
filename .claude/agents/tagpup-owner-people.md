@@ -16,10 +16,10 @@ machinery (Data; you call it), the indexer, or how a page lays out a grid.
 
 ## Scope
 Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved module is changed here in the same commit.
-- Store: `tagpup/store/person_ids.py`, `tagpup/store/people.py`, `tagpup/store/faces.py`, `tagpup/store/face_tags.py`, `tagpup/store/embeddings.py`, `tagpup/store/taxonomy.py` (its people half: filing roots, person paths, `ensure_node`, `refuse_child_of_person`)
+- Store: `tagpup/store/person_ids.py`, `tagpup/store/people.py`, `tagpup/store/faces.py`, `tagpup/store/face_tags.py`, `tagpup/store/face_batches.py`, `tagpup/store/embeddings.py`, `tagpup/store/taxonomy.py` (its people half: filing roots, person paths, `ensure_node`, `refuse_child_of_person`)
 - Core and models: `tagpup/core/vocabulary.py`, `tagpup/core/clustering.py`, `tagpup/ml/grouping.py`
-- Services: `tagpup/services/people.py`, `tagpup/services/faces.py`, `tagpup/services/face_people.py`, `tagpup/services/face_assignment.py`, `tagpup/services/faces_from_tags.py`, `tagpup/services/tags_from_faces.py`, `tagpup/services/person_tags.py`, `tagpup/services/identify.py`, `tagpup/services/identities.py`, `tagpup/services/tree_fill.py`, `tagpup/services/duplicate_faces.py`, `tagpup/services/tags.py` (rename and merge of a person)
-- Jobs: `tagpup/jobs/identify.py`, `tagpup/jobs/naming_faces.py`, `tagpup/jobs/face_assignments.py`
+- Services: `tagpup/services/people.py`, `tagpup/services/faces.py`, `tagpup/services/face_people.py`, `tagpup/services/face_assignment.py`, `tagpup/services/face_batch.py`, `tagpup/services/faces_from_tags.py`, `tagpup/services/tags_from_faces.py`, `tagpup/services/person_tags.py`, `tagpup/services/identify.py`, `tagpup/services/identities.py`, `tagpup/services/tree_fill.py`, `tagpup/services/duplicate_faces.py`, `tagpup/services/tags.py` (rename and merge of a person)
+- Jobs: `tagpup/jobs/identify.py`, `tagpup/jobs/naming_faces.py`
 - Routes: `tagpup/web/face_routes.py`, `tagpup/web/name_faces_routes.py`, `tagpup/web/photo_face_routes.py`, `tagpup/web/taxonomy_routes.py` (the people routes of `tagpup/web/tuner_routes.py` are shared with Integration)
 - Pages: `web/common/vocabulary.js`, `web/common/name-faces.js`, `web/common/person-choice.js`, `web/common/person-faces.js`, `web/tuner/people.js`, `web/tuner/new-person.js`, `web/tuner/assign.js`, `web/tuner/faces-strip.js`, `web/tuner/review.js`, `web/tuner/reexamine.js`, `web/tuner/name-faces.js`, `web/tagpup/face-boxes.js`, `web/tagpup/selection-panel.js`, `web/tagpup/name-faces.js`
 - Tables: `faces`, `photo_people`, `tag_taxonomy` (the tree), `embeddings`/`face_crops` for faces. Their rebuild is Data's.
@@ -52,14 +52,14 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | A person tag removed unnames the face; a keyword write keeps face names | `tests/test_taking_a_person_off_unnames_the_face.py`, `tests/test_face_names_survive_keyword_writes.py` |
 | A face has a photo row | `tests/test_every_face_has_a_photo_row.py` |
 | A write path resolves by id, never by a name matched by chance | none: found by review twice; ask it |
-| A bulk path that names or unnames a face settles the photo keyword | none (open: #892, #893, #894) |
+| A bulk path that names or unnames a face settles the photo keyword: a bulk assignment is one change of photo files whose faces are written in the transaction that marks each file done | `tests/test_bulk_faces_and_tags.py`, `tests/test_face_writes_go_through_the_assignment.py` (no other service or job writes who a face is) |
 
 ## Review checklist (ask in this order)
 1. Does every new read or write of a person take an id or call `resolve`, never compare a name or leaf? Where a typed name enters, does two matches ask which one by path, and is that tested?
 2. Does anything link a `NULL tag_id` row on a name match? Only `target`, `link_added` and the owner may.
 3. Is every refusal evaluated before the first file or row is written, with the transaction taken before the tree is read? Is there a test that asserts nothing was written?
 4. When a face is named, unnamed or excluded, what happens to the photo's keyword, `photo_people` and the index? Is it the same function the single-photo path uses?
-5. For many photos: is it a job (plan, resume, journal, undo), is an undo's tag removal limited to what the apply wrote, does a cancel or crash leave a resumable state?
+5. For many photos: is it the one batch (`face_assignment.run`: the faces recorded in the plan, written with each file, a face written only where it is still what the plan read), does a cancel leave earlier photos whole and later ones untouched, does a crash settle forward with both, does History's undo restore exactly what the change wrote?
 6. Does a page convert a name to a tag, build `People/...` or choose a people root itself? It must call `vocabulary.js`, or better the server.
 7. Does a response key a person by name where it could by id, or add a second key spelling? Add none.
 8. Could a group tag or a bucket be treated as a person? Is the bucket name read from its one owner?

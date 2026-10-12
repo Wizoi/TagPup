@@ -52,7 +52,7 @@ from tagpup.ml import gpu
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces
 from tagpup.jobs import recurring, watching
-from tagpup.services import file_changes, indexing, search
+from tagpup.services import face_assignment, file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
 from tagpup.services import suggester as suggestions
 from tagpup.services import sync as sync_service
@@ -71,6 +71,7 @@ def library_settings(library):
     files need ExifTool, which only the library's settings say where to find."""
     settings = library_settings_service.of(library)
     file_changes.settle_once(library, tagpup_config.exiftool_path(settings.exiftool))
+    face_assignment.forget_old_jobs(library)
     return settings
 
 

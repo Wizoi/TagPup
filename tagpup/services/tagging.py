@@ -441,6 +441,21 @@ def _tags_held(held):
     return vocabulary.extract_tags({field: held.get(field) for field in fields.TAG_SOURCE_FIELDS})
 
 
+def keywords_planner(library, edit):
+    """The `plan_one` of a write of keywords (file_changes.write_fields) whose photos each get their own change: `edit(path, held)`
+    gives the (tags to add, tags to take off) for a photo that holds the tags `held`. Each write replaces the photo's whole keyword
+    set, in the file's order with what is added after (a set's order changed from run to run, and a file holding every tag already
+    was written again for its order), people resolved to the tags they are filed under."""
+    people = taxonomy.people_paths(library.path)
+
+    def plan_one(path, held):
+        held_tags = list(_tags_held(held))
+        add, remove = edit(path, held_tags)
+        tags = [tag for tag in dict.fromkeys(held_tags + list(add)) if tag not in set(remove)]
+        return _keywords_plan(vocabulary.resolve_people(tags, people))
+    return plan_one
+
+
 def _change_each(library, plan, exiftool_path, operation, files_only=False, persons=None, stop_at_first_error=True,
                  et=None):
     """Write each photo in `plan` -- (path, tags to add, tags to take off) -- as one change
@@ -465,20 +480,16 @@ def _change_each(library, plan, exiftool_path, operation, files_only=False, pers
     is left out -- by the id of their node (two people called alike are two: vocabulary.names_same_person) --
     read from the file here, under the lock, as the page leaves out one the photo already has.
     """
-    people = taxonomy.people_paths(library.path)
     known = taxonomy.people_vocabulary(library.path) if persons else None
     wanted = {paths.key(path): (add, remove) for path, add, remove in plan}
 
-    def plan_one(path, held):
+    def edit(path, held_tags):
         add, remove = wanted[paths.key(path)]
-        held_tags = list(_tags_held(held))
         mine = (persons or {}).get(paths.key(path), ())
-        add = [tag for tag in add
-               if not (tag in mine and any(vocabulary.names_same_person(known, tag, there) for there in held_tags))]
-        # In the file's order, what is added after: a set's order changed from run to
-        # run, and a file holding every tag already was written again for its order.
-        tags = [tag for tag in dict.fromkeys(held_tags + list(add)) if tag not in set(remove)]
-        return _keywords_plan(vocabulary.resolve_people(tags, people))
+        return [tag for tag in add
+                if not (tag in mine and any(vocabulary.names_same_person(known, tag, there) for there in held_tags))], remove
+
+    plan_one = keywords_planner(library, edit)
 
     if files_only:
         return file_only.write_fields(exiftool_path, [path for path, _a, _r in plan], KEYWORD_READ, plan_one,
