@@ -63,7 +63,9 @@ class Case(unittest.TestCase):
         self.path = self.home.library("library.db")
         self.library = Library(self.path)
         self.folder = os.path.join(self.home.root, "Pictures")
+        self.plant_tree()
 
+    def plant_tree(self):
         def tree(conn):
             with people.tree_edit(conn):
                 taxonomy.add_path(conn, "People", root_has_face=1)

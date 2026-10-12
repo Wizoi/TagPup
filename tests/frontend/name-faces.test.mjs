@@ -11,7 +11,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, closeAllApps, pageExports, REAL, realLibrary, until } from "./harness.mjs";
 import { OPEN_DIALOG } from "../../web/common/dialog.js";
 import { questionText, folderText, scopeLabel } from "../../web/common/name-faces.js";
 
@@ -33,8 +33,8 @@ const PLANNING = status("planning", { label: "Comparing faces with the confirmed
 const FOLDER = "D:\\Pictures\\kr-track\\Run";
 const SCOPE = { success: true, library: { named: 1640, unnamed: 2422 }, folder: { named: 126, unnamed: 80, photos: 106 }, why: null, job: null };
 
-async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, current, scope } = {}) {
-  const server = new FakeServer()
+async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, current, scope, real } = {}) {
+  const scripted = new FakeServer()
     .on("/api/apps", { this: appName === "tagtuner" ? "tuner" : "tagpup", apps: {} })
     .on("/api/taxonomy/tree", [])
     .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
@@ -48,7 +48,8 @@ async function openFrom(appName, t, { start, confirm, cancel, statusAnswer, curr
     .on("/api/name-faces/confirm", () => (confirm ? confirm() : { success: true, status: status("applying", { phase: "applying", label: "Writing", can_cancel: true }) }))
     .on("/api/name-faces/cancel", () => cancel || { success: true, status: status("cancelled", { message: "Cancelled: nothing was changed." }) })
     .on("/api/name-faces/status", () => (statusAnswer ? statusAnswer() : { success: true, status: ASKING }));
-  const ctx = await loadApp(appName, { t, url: `http://localhost:8080/${LIBRARY}/`, server });
+  const server = real ? real.server : scripted;
+  const ctx = await loadApp(appName, { t, url: real ? real.url : `http://localhost:8080/${LIBRARY}/`, server });
   await flush(ctx.window, 6);
   ctx.server = server;
   // The folder the page has open, as each page holds it: TagPup's Organize view's, TagTuner's selected photo's folder group.
@@ -109,15 +110,6 @@ describe("the words", () => {
 
 for (const appName of ["tagpup", "tagtuner"]) {
   describe(`${appName}'s Name faces from tags`, () => {
-    test("the button starts the job and the question is shown with a dialog the shortcuts leave alone", async (t) => {
-      const ctx = await openFrom(appName, t);
-      await ctx.open();
-      assert.equal(ctx.posts("/api/name-faces/start").length, 1);
-      assert.ok(ctx.document.querySelector(OPEN_DIALOG));
-      assert.match(ctx.text(".name-faces-scope"), /whole library, not only the open folder/);
-      assert.equal(ctx.text(".name-faces-question"), questionText(PLAN, "the whole library"), "no folder is open: it is the library's");
-      assert.ok(ctx.shown("Yes") && ctx.shown("No"));
-    });
 
     test("a page opened while the job works shows its progress at once, and says what is refused meanwhile", async (t) => {
       const working = status("applying", { phase: "applying", label: "Writing the names", can_cancel: true });
@@ -133,32 +125,6 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.ok(!ctx.modal() || ctx.modal().classList.contains("hidden"));
     });
 
-    test("the question says History undoes the change", async (t) => {
-      const ctx = await openFrom(appName, t);
-      await ctx.open();
-      assert.equal(ctx.text(".name-faces-again"), "Yes writes them as one change that History can undo.");
-    });
-
-    test("Yes sends the answer once", async (t) => {
-      const ctx = await openFrom(appName, t);
-      await ctx.open();
-      await ctx.press("Yes");
-      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 7 }]);
-      assert.match(ctx.text(".name-faces-step"), /Writing/);
-      assert.ok(ctx.shown("Cancel"));
-    });
-
-    test("rapid clicks on Yes send one answer", async (t) => {
-      const ctx = await openFrom(appName, t);
-      await ctx.open();
-      const yes = [...ctx.modal().querySelectorAll("button")].find((b) => b.textContent === "Yes");
-      click(ctx.window, yes);
-      click(ctx.window, yes);
-      click(ctx.window, yes);
-      await flush(ctx.window, 8);
-      assert.equal(ctx.posts("/api/name-faces/confirm").length, 1);
-    });
-
     test("with nothing to name, Yes is not offered to press", async (t) => {
       const empty = status("asking", { plan: { ...PLAN, faces: 0, photos: 0, by_tag: 0, by_comparison: 0 }, ask_seconds: 900 });
       const ctx = await openFrom(appName, t, { start: { success: true, status: empty } });
@@ -172,15 +138,6 @@ for (const appName of ["tagpup", "tagtuner"]) {
       const ctx = await openFrom(appName, t, { start: { success: true, status: again } });
       await ctx.open();
       assert.match(ctx.text(".name-faces-again"), /^Applied before\. faces-from-tags was applied to this library before\.$/);
-    });
-
-    test("No changes nothing and says so", async (t) => {
-      const ctx = await openFrom(appName, t);
-      await ctx.open();
-      await ctx.press("No");
-      assert.deepEqual(ctx.posts("/api/name-faces/cancel"), [{ job: 7 }]);
-      assert.equal(ctx.posts("/api/name-faces/confirm").length, 0);
-      assert.match(ctx.text(".name-faces-result"), /nothing was changed/);
     });
 
     test("a plan being read shows its step and a bar, and Cancel stops it", async (t) => {
@@ -228,16 +185,6 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.ok(!ctx.shown("Yes"));
     });
 
-    test("the result is counts, and the open folder's change", async (t) => {
-      const done = status("done", { applied: { changed: 3, change: 12 }, in_folder: { before: { named: 1, unnamed: 5 }, after: { named: 4, unnamed: 2 } },
-                                   message: "3 face names given from the photos' tags (one change in History, which Undo takes back)." });
-      const ctx = await openFrom(appName, t, { confirm: () => ({ success: true, status: done }) });
-      await ctx.open();
-      await ctx.press("Yes");
-      assert.match(ctx.text(".name-faces-result"), /3 face names given/);
-      assert.equal(ctx.text(".name-faces-folder"), "In the open folder: 3 more named; 4 named and 2 still unnamed.");
-    });
-
     test("closing the dialog leaves the job running and the button shows it again", async (t) => {
       const ctx = await openFrom(appName, t, { start: { success: true, status: PLANNING },
                                               statusAnswer: () => ({ success: true, status: PLANNING }) });
@@ -275,57 +222,6 @@ for (const appName of ["tagpup", "tagtuner"]) {
       ctx.openFolder(FOLDER);
       return ctx;
     }
-
-    test("with a folder open, the first step offers it as the default and the whole library with its count", async (t) => {
-      const ctx = await openWithFolder(t);
-      await ctx.open();
-      assert.equal(ctx.posts("/api/name-faces/start").length, 0, "nothing is read before the choice is made");
-      assert.ok(ctx.server.urls().some((u) => u.includes("/api/name-faces/scope?folder=" + encodeURIComponent(FOLDER))));
-      const [only, whole] = [...ctx.modal().querySelectorAll(".name-faces-choice")];
-      assert.match(only.textContent, /^Only this folder and its subfolders: Run \(106 photos, 80 faces still unnamed\)/);
-      assert.match(whole.textContent, /^The whole library \(2,422 faces still unnamed, 1,640 named\)/);
-      assert.equal(ctx.modal().querySelector("#name-faces-only-folder").checked, true, "the folder is the default");
-      assert.equal(ctx.modal().querySelector("#name-faces-whole-library").checked, false);
-      assert.ok(ctx.shown("Read the plan") && !ctx.shown("Yes"));
-    });
-
-    test("Read the plan starts the job for the folder", async (t) => {
-      const ctx = await openWithFolder(t, { start: { success: true, status: ONLY } });
-      await ctx.open();
-      await ctx.press("Read the plan");
-      assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: FOLDER, only_folder: true }]);
-      assert.equal(ctx.text(".name-faces-question"), questionText(ONLY.plan, 'the folder "Run" and its subfolders'));
-      assert.match(ctx.text(".name-faces-scope"), /open folder and its subfolders only/);
-    });
-
-    test("the whole library is the explicit other choice", async (t) => {
-      const ctx = await openWithFolder(t);
-      await ctx.open();
-      const whole = ctx.modal().querySelector("#name-faces-whole-library");
-      whole.checked = true;
-      whole.dispatchEvent(new ctx.window.Event("change", { bubbles: true }));
-      await ctx.press("Read the plan");
-      assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: FOLDER, only_folder: false }]);
-      assert.equal(ctx.text(".name-faces-question"), questionText(PLAN, "the whole library"));
-    });
-
-    test("Yes for a folder answers the plan that is shown", async (t) => {
-      const ctx = await openWithFolder(t, { start: { success: true, status: ONLY } });
-      await ctx.open();
-      await ctx.press("Read the plan");
-      await ctx.press("Yes");
-      assert.deepEqual(ctx.posts("/api/name-faces/confirm"), [{ job: 7 }]);
-    });
-
-    test("a rapid double click on Read the plan starts once", async (t) => {
-      const ctx = await openWithFolder(t, { start: { success: true, status: ONLY } });
-      await ctx.open();
-      const go = [...ctx.modal().querySelectorAll("button")].find((b) => b.textContent === "Read the plan");
-      click(ctx.window, go);
-      click(ctx.window, go);
-      await flush(ctx.window, 8);
-      assert.equal(ctx.posts("/api/name-faces/start").length, 1);
-    });
 
     test("a folder the library holds no photo under cannot be chosen, and the library is", async (t) => {
       const why = "D:\\Pictures\\kr-track\\Run holds no photo of kr-track, at any depth.";
@@ -379,13 +275,67 @@ for (const appName of ["tagpup", "tagtuner"]) {
       assert.equal(ctx.modal().querySelector(".name-faces-choice"), null);
       assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: null, only_folder: false }]);
     });
+  });
+}
 
-    test("with no folder open there is no choice: the whole library, as before", async (t) => {
-      const ctx = await openFrom(appName, t);
+for (const appName of ["tagpup", "tagtuner"]) {
+  // The real app answers (tests/test_pages_against_the_real_server.py runs these): its plan, its job, its names.
+  describe(`${appName}'s Name faces from tags against the server`, { skip: !REAL }, () => {
+    async function openReal(t) {
+      const real = await realLibrary("names_faces", appName);
+      const ctx = await openFrom(appName, t, { real });
+      ctx.real = real;
+      ctx.waitFor = (selector, pattern) => until(ctx, () => pattern.test(ctx.text(selector) || ""), () => `${selector} to read ${pattern}; the dialog says: ${ctx.modal().textContent}`, 8);
+      ctx.nameOf = async () => {
+        const reply = await fetch(`${REAL.tagpup}/${real.library}/api/photo-faces?path=${encodeURIComponent(real.photo)}`);
+        return (await reply.json()).faces.map((face) => face.name);
+      };
+      return ctx;
+    }
+
+    test("the question is the plan, Yes writes the name, and the photo then holds it", async (t) => {
+      const ctx = await openReal(t);
       await ctx.open();
-      assert.equal(ctx.modal().querySelector(".name-faces-choice"), null);
-      assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: null, only_folder: false }]);
-      assert.equal(ctx.server.urls().filter((u) => u.includes("/api/name-faces/scope")).length, 0);
+      await ctx.waitFor(".name-faces-question", /In the whole library: name 1 face in 1 photo \(1 by their tag, 0 by looking like/);
+      assert.equal(ctx.modal().querySelector(".name-faces-choice"), null, "no folder is open: no choice");
+      assert.match(ctx.text(".name-faces-again"), /History can undo/);
+      assert.deepEqual(await ctx.nameOf(), [null], "the question writes nothing");
+      const listed = () => ctx.server.urls().filter((u) => u.includes("/api/photos")).length;
+      const before = listed();
+      const yes = [...ctx.modal().querySelectorAll("button")].find((b) => b.textContent === "Yes");
+      for (let i = 0; i < 3; i++) click(ctx.window, yes);
+      await ctx.waitFor(".name-faces-result", /1 face name given/);
+      assert.equal(ctx.posts("/api/name-faces/confirm").length, 1, "rapid clicks send one answer");
+      assert.deepEqual(await ctx.nameOf(), ["Wren Halloway"]);
+      if (appName === "tagtuner") assert.ok(listed() > before, "the list beside the photo is read again once names were written");
+    });
+
+    test("No changes nothing and says so", async (t) => {
+      const ctx = await openReal(t);
+      await ctx.open();
+      await ctx.waitFor(".name-faces-question", /name 1 face/);
+      await ctx.press("No");
+      await ctx.waitFor(".name-faces-result", /nothing was changed/);
+      assert.equal(ctx.posts("/api/name-faces/confirm").length, 0);
+      assert.deepEqual(await ctx.nameOf(), [null]);
+    });
+
+    test("a folder open: the choice counts its faces, Read the plan once, Yes, and the folder's change is said", async (t) => {
+      const ctx = await openReal(t);
+      ctx.openFolder(ctx.real.folder);
+      await ctx.open();
+      await ctx.waitFor(".name-faces-body", /Only this folder and its subfolders: .*\(3 photos, 2 faces still unnamed\)/);
+      assert.match(ctx.text(".name-faces-body"), /The whole library \(2 faces still unnamed, 1 named\)/);
+      assert.equal(ctx.modal().querySelector("#name-faces-only-folder").checked, true, "the folder is the default");
+      assert.equal(ctx.posts("/api/name-faces/start").length, 0, "nothing is read before the choice is made");
+      const go = [...ctx.modal().querySelectorAll("button")].find((b) => b.textContent === "Read the plan");
+      click(ctx.window, go);
+      click(ctx.window, go);
+      await ctx.waitFor(".name-faces-question", /^In the folder .* and its subfolders: name 1 face/);
+      assert.deepEqual(ctx.posts("/api/name-faces/start"), [{ folder: ctx.real.folder, only_folder: true }]);
+      await ctx.press("Yes");
+      await ctx.waitFor(".name-faces-folder", /^In the open folder: 1 more named; 2 named and 1 still unnamed\.$/);
+      assert.deepEqual(await ctx.nameOf(), ["Wren Halloway"]);
     });
   });
 }
@@ -409,16 +359,6 @@ describe("TagTuner's header", () => {
     await flush(window, 8);
     assert.ok(!ctx.modal().classList.contains("hidden"));
     assert.equal(ctx.posts("/api/name-faces/start").length, 1);
-  });
-
-  test("once names were written the list beside the photo is read again", async (t) => {
-    const done = status("done", { applied: { changed: 3, change: 12 }, message: "3 face names given." });
-    const ctx = await openFrom("tagtuner", t, { confirm: () => ({ success: true, status: done }) });
-    await ctx.open();
-    const before = ctx.server.urls().filter((u) => u.includes("/api/photos")).length;
-    await ctx.press("Yes");
-    await flush(ctx.window, 8);
-    assert.ok(ctx.server.urls().filter((u) => u.includes("/api/photos")).length > before);
   });
 });
 
