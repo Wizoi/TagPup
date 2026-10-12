@@ -13,7 +13,8 @@ import { setStatus } from './status.js';
 import { resolveTagOrPerson, updatePeopleDatalist, updateTagsDatalist } from './tags.js';
 import { selectionCount, selectionRequest } from './selected.js';
 import { BUSY_SENTENCE, bulkBusy, runBulk } from './bulk-run.js';
-import { confirmSentence, deleteQuestion, describeDelete, describeTags, photosOf } from './bulk-words.js';
+import { photosOf } from './common/batch-strip.js';
+import { confirmSentence, deleteQuestion, describeDelete, describeTags } from './bulk-words.js';
 
 /** The selection, as a request, and how many photos it is; or null, the owner told why not (nothing is asked of the server). */
 function readSelection() {

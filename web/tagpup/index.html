@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="common/settings-dialog.css">
     <link rel="stylesheet" href="common/history-dialog.css">
     <link rel="stylesheet" href="common/name-faces.css">
+    <link rel="stylesheet" href="common/batch-strip.css">
     <link rel="stylesheet" href="common/roots-banner.css">
     <link rel="stylesheet" href="common/image-zoom.css">
     <link rel="stylesheet" href="common/person-faces.css">
@@ -61,27 +62,6 @@
                 <button id="btn-undo" class="btn btn-secondary btn-sm" disabled>&#8630; Undo</button>
             </div>
         </header>
-
-        <!-- The bulk edit of the library's photos, while it is written and when it is done (web/tagpup/bulk-run.js, bulk-strip.js): what
-             it does, to how many, what it changed. It belongs to the library, not to the view or the folder that is open. -->
-        <section id="bulk-strip" class="bulk-strip hidden" aria-label="Bulk edit">
-            <div class="bulk-strip-row">
-                <strong id="bulk-strip-title" class="bulk-strip-title"></strong>
-                <progress id="bulk-strip-bar" class="bulk-strip-bar" max="100" aria-label="The bulk edit is being written"></progress>
-                <span class="bulk-strip-actions">
-                    <button id="btn-bulk-dismiss" type="button" class="btn btn-secondary btn-sm hidden">Dismiss</button>
-                </span>
-            </div>
-            <div id="bulk-strip-counts" class="bulk-strip-counts"></div>
-            <div id="bulk-strip-message" class="bulk-strip-message"></div>
-            <details id="bulk-strip-errors" class="bulk-strip-errors hidden">
-                <summary id="bulk-strip-errors-summary"></summary>
-                <ul id="bulk-strip-error-list" class="bulk-strip-error-list"></ul>
-            </details>
-        </section>
-        <!-- Said to a screen reader when the edit starts and when it ends. Outside the strip, which is
-             hidden until the first thing is said: a live region that appears with its first words is often not read. -->
-        <div id="bulk-strip-live" class="visually-hidden" role="status" aria-live="polite"></div>
 
         <!-- Main Content Area -->
         <main class="app-content">

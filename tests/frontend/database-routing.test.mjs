@@ -46,7 +46,7 @@ for (const app of ["tagpup", "tagtuner"]) {
       assert.ok(apiCalls.length > 0, "the app made no absolute API calls");
       for (const url of apiCalls) {
         assert.ok(
-          url.startsWith("/kr-track/api/"),
+          url.startsWith("/kr-track/api/") || url.startsWith("/api/activity/"),     // the batches of every library: the strip
           `request escaped the database prefix: ${url}`
         );
       }
@@ -58,7 +58,7 @@ for (const app of ["tagpup", "tagtuner"]) {
 
       for (const url of server.urls().filter((u) => u.startsWith("/"))) {
         assert.ok(
-          url.startsWith("/photo_index/api/"),
+          url.startsWith("/photo_index/api/") || url.startsWith("/api/activity/"),
           `request went to the wrong database: ${url}`
         );
       }

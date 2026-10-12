@@ -1,5 +1,6 @@
-// TagPup's page: what a bulk edit of a library view says -- the question before it, the line while it is written, the sentence when it
-// is done -- as plain functions of numbers and names, so each can be read and tested without a page (docs/ARCHITECTURE.md).
+// TagPup's page: what a bulk edit of a library view asks before it is written, and the words it names itself in, as plain functions
+// of numbers and names. How it goes and how it ends is the shared strip's (web/common/batch-strip.js).
+import { howLong, photosOf } from './common/batch-strip.js';
 
 /** Photos a second the page assumes of a bulk edit: 9d-1 measured 15 to 23, and a write now reads each file to its end (about 53 ms a photo). */
 export const ASSUMED_PER_SECOND = 15;
@@ -18,36 +19,16 @@ export const DELETE_PER_SECOND = 15;
  */
 export const COPY_BYTES_PER_SECOND = 200 * 1024 * 1024;
 
-/** `1 photo`, `3,412 photos`. */
-export function photosOf(count) {
-    return `${count.toLocaleString()} ${count === 1 ? 'photo' : 'photos'}`;
-}
-
-/** How long `seconds` is, roughly, as a person says it after "takes": `about 3 minutes`, `less than a minute`, `about 1 hour 5 minutes`. */
-export function howLong(seconds) {
-    const minutes = Math.round(seconds / 60);
-    if (minutes < 1) return 'less than a minute';
-    if (minutes < 60) return `about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
-    const hours = Math.floor(minutes / 60);
-    const rest = minutes % 60;
-    const hourText = `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
-    return rest ? `about ${hourText} ${rest} ${rest === 1 ? 'minute' : 'minutes'}` : `about ${hourText}`;
-}
-
-/** What the edit is, in words: `{ op, verb, past, what, prep, reverse }` for Add or Remove of tags or people. */
+/** What the edit is, in words: `{ op, verb, past, what, prep }` for Add or Remove of tags or people. */
 export function describeTags({ op, add = [], remove = [] }) {
-    const people = op === 'people';
     const names = (add.length ? add : remove).join(', ');
-    const noun = (add.length ? add : remove).length === 1 ? (people ? 'person' : 'tag') : (people ? 'people' : 'tags');
     if (add.length && remove.length) {
-        return { op, verb: 'Change', past: 'Changed', what: `${add.join(', ')} and ${remove.join(', ')}`, prep: 'on',
-            reverse: 'take them back off or put them back' };
+        return { op, verb: 'Change', past: 'Changed', what: `${add.join(', ')} and ${remove.join(', ')}`, prep: 'on' };
     }
     if (add.length) {
-        return { op, verb: 'Add', past: 'Added', what: names, prep: 'to',
-            reverse: people ? 'remove the person to reverse it' : `remove the ${noun} to reverse it` };
+        return { op, verb: 'Add', past: 'Added', what: names, prep: 'to' };
     }
-    return { op, verb: 'Remove', past: 'Removed', what: names, prep: 'from', reverse: `add the ${noun} again to reverse it` };
+    return { op, verb: 'Remove', past: 'Removed', what: names, prep: 'from' };
 }
 
 /** "Delete 3,412 photos", "Added Trips/Coast to 1 photo": the words of `desc` for `count` photos, `form` 'verb' or 'past'. */
@@ -108,48 +89,10 @@ export function deleteQuestion(where, count) {
 export function confirmSentence(desc, count) {
     const head = `${desc.verb} ${desc.what} ${desc.prep} ${photosOf(count)}?`;
     return `${head} This changes the photo files and takes ${howLong(count / ASSUMED_PER_SECOND)}. `
-        + `It cannot be undone as one step; ${desc.reverse}.`;
+        + 'History lists it as one change and can undo it.';
 }
 
-/** The line of counts: what the edit did to the photos. */
-export function countsLine(job) {
-    return `${job.op === 'delete' ? 'deleted' : 'changed'} ${(job.changed || 0).toLocaleString()} · unchanged ${(job.unchanged || 0).toLocaleString()} · `
-        + `missing ${(job.skipped_missing || 0).toLocaleString()} · damaged ${(job.skipped_damaged || 0).toLocaleString()} · `
-        + `errors ${(job.error_count || 0).toLocaleString()}`;
-}
-
-/** What the strip and the status line say while an edit is written: what it does, to how many, how long it takes, that it finishes on its own. */
-export function writingSentence(desc, count) {
-    return `${phrase(desc, 'verb', count)}: writing the files takes ${howLong(count / ASSUMED_PER_SECOND)}. `
-        + 'The edit finishes even if this page is closed.';
-}
-
-/** The sentence an edit ends in: what was done and what was left out, and the errors, counted. */
-export function endedSentence(job, desc) {
-    const done = (job.changed || 0);
-    const parts = [];
-    if (desc) parts.push(phrase(desc, 'past', done));
-    else parts.push(job.op === 'delete' ? `Deleted ${photosOf(done)}` : `Bulk edit: ${photosOf(done)} changed`);
-    const missing = job.skipped_missing || 0;
-    if (missing) parts.push(`${missing.toLocaleString()} missing on disk ${missing === 1 ? 'was' : 'were'} skipped`);
-    const damaged = job.skipped_damaged || 0;
-    if (damaged) parts.push(`${damaged.toLocaleString()} damaged ${damaged === 1 ? 'was' : 'were'} skipped`);
-    const same = job.unchanged || 0;
-    if (same) parts.push(`${same.toLocaleString()} already ${same === 1 ? 'was' : 'were'} as asked`);
-    const errors = job.error_count || 0;
-    parts.push(`${errors.toLocaleString()} ${errors === 1 ? 'error' : 'errors'}`);
-    return `${parts.join('; ')}.`;
-}
-
-/** The note that an edit took more photos than were picked: photos came into the view since it was read. */
-export function widenedSentence({ took, picked }) {
-    return `TagPup took ${took.toLocaleString()} photos but ${picked.toLocaleString()} were selected: ${(took - picked).toLocaleString()} more `
-        + 'came into this view since it was read.';
-}
-
-/** The name the strip gives an edit: what it does, to how many photos. */
-export function titleOf(job, desc) {
-    if (desc) return phrase(desc, 'verb', job.total || 0);
-    if (job.op === 'delete') return `Delete ${photosOf(job.total || 0)}`;
-    return `Bulk edit of ${job.op === 'people' ? 'people' : 'tags'} (${photosOf(job.total || 0)})`;
+/** What an edit that is done says first: "Added Trips/Coast to 3 photos", "Deleted 2 photos to the Recycle Bin". */
+export function doneWords(desc, count) {
+    return phrase(desc, 'past', count);
 }

@@ -181,6 +181,19 @@ function fetchThroughAnUpdate(url, options, started = Date.now(), updating = fal
     });
 }
 
+/** Requests that write (not GET or HEAD) in flight now; every change is announced on the document as `tagpup:writes` (web/common/batch-strip.js). */
+let writesOut = 0;
+
+function sendTracked(url, options) {
+    if (onlyReads(options)) return fetchThroughAnUpdate(url, options);
+    const count = (by) => {
+        writesOut += by;
+        if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('tagpup:writes', { detail: { writes: writesOut } }));
+    };
+    count(1);
+    return fetchThroughAnUpdate(url, options).finally(() => count(-1));
+}
+
 /**
  * The server's Response to `path` under the page's library. With no library in the
  * URL only the picker's routes are asked: every other one needs a library, and a page
@@ -191,7 +204,7 @@ function apiFetch(path, options) {
     if (!pageLibrary() && url.startsWith('/api/') && !askableWithoutALibrary(url)) {
         return Promise.reject(new Error('No library is open'));
     }
-    return fetchThroughAnUpdate(url, options);
+    return sendTracked(url, options);
 }
 
 /** The reply's JSON, whatever its status: callers read `success` and `error` from it. */
@@ -214,7 +227,7 @@ function siteFetch(path, options) {
     } catch (err) {
         return Promise.reject(err);
     }
-    return fetchThroughAnUpdate(url, options);
+    return sendTracked(url, options);
 }
 
 /** How often a page asks whether the server is back, after an /api/ image failed. */

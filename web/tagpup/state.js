@@ -141,12 +141,9 @@ export const state = {
     // `key` the selection (the view's token and the selection's version) it was asked for, `asked` the number of the request whose
     // answer counts, `data` the answer.
     tally: { status: 'idle', key: '', asked: 0, timer: 0, controller: null, data: null, message: '' },
-    // The bulk edit of the library's photos the page is showing (bulk-run.js, bulk-strip.js): `running` while its request is out,
-    // `request` what was sent ({ op, desc, picked }), `result` what the server answered (the counts and the first 50 errors),
-    // `problem` ({ title, sentence }) when it did not go through or the answer did not come, `notice` ({ took, picked }) when it took
-    // more photos than were picked, `asking` while an edit's question or placement dialog is open (a second click on Add does not
-    // ask again).
-    bulk: { running: false, request: null, result: null, problem: null, notice: null, asking: false },
+    // The bulk edit of the library's photos (bulk-run.js): `running` while its request is out, `asking` while an edit's question or
+    // placement dialog is open (a second click on Add does not ask again). The strip that shows it is web/common/batch-strip.js.
+    bulk: { running: false, asking: false },
     // The photo write queue's entries, for its status (write-queue.js): each
     // { id, label, status: waiting | writing | done | failed, error, at, retry }.
     // batchTotal and batchSettled count the writes since the queue was last empty.

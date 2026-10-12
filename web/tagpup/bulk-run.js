@@ -1,12 +1,12 @@
 // TagPup's page: an edit of the library view's selection -- Add tag, Add person, a pill's Remove or Apply, Delete -- written in ONE
 // request that answers when every photo is done (POST /api/library/bulk-edit; docs/ARCHITECTURE.md). Up to 5,000 photos, about a twentieth
-// of a second each: the page says so while it waits, with the count, in the strip under the header, and keeps the view's edit controls
-// off until the answer comes. There is nothing to poll, cancel or find again: the server finishes the edit whether the page waits or not.
+// of a second each: while the request is out the shared strip shows how far the server has got, with Cancel (web/common/batch-strip.js),
+// and the view's edit controls stay off until the answer comes. The server finishes the edit whether the page waits or not.
 //
-// How it fails. A refusal (the server's sentence: a tag the rules forbid, a selection that changed, an edit already under way) or an
-// error says so and nothing more is assumed. An answer that does not come (the connection dropped, the server restarted) says that the
-// edit may still be going on or may be written: it does not retry, since an edit made again changes nothing a photo holds already but a
-// Delete asks its question afresh. A selection over 5,000 is said before anything is asked of the server (selected.js).
+// How it fails. A refusal (the server's sentence: a tag the rules forbid, a selection that changed, an edit already under way, one
+// stopped as asked) or an error says so and nothing more is assumed. An answer that does not come (the connection dropped, the server
+// restarted) says that the edit may still be going on or may be written: it does not retry, since an edit made again changes nothing a
+// photo holds already but a Delete asks its question afresh. A selection over 5,000 is said before anything is asked of the server.
 import { api } from './common/api.js';
 import { samePath } from './common/paths.js';
 import { upper } from './hooks.js';
@@ -16,8 +16,8 @@ import { setStatus } from './status.js';
 import { forgetFolderCaches } from './cache.js';
 import { hasUnsavedEdits } from './edits.js';
 import { refreshHeldCards } from './library-source.js';
-import { renderBulkStrip, say, wireBulkStrip } from './bulk-strip.js';
-import { endedSentence, widenedSentence, writingSentence } from './bulk-words.js';
+import { endedSentence, photosOf, showEnded } from './common/batch-strip.js';
+import { doneWords } from './bulk-words.js';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -28,11 +28,6 @@ export function bulkBusy() {
 
 /** The sentence a disabled bulk control says, as its tooltip. */
 export const BUSY_SENTENCE = 'A bulk edit is being written (see the strip at the top). Wait for it to finish.';
-
-function repaint() {
-    renderBulkStrip();
-    lockBulkControls();
-}
 
 /**
  * While an edit is written, the controls of a library view that would start another are disabled with a tooltip saying why (the
@@ -86,14 +81,11 @@ function refreshAfterWrites(op) {
 }
 
 /** Something that stopped the edit, or left its outcome unknown: said in the status line and in the strip. */
-function failed(sentence, title) {
-    const bulk = state.bulk;
-    bulk.running = false;
-    bulk.result = null;
-    bulk.problem = { title, sentence };
-    repaint();
+function failed(sentence) {
+    state.bulk.running = false;
+    lockBulkControls();
+    showEnded({ text: sentence, problem: true });
     setStatus('error', sentence, { transient: false });
-    say(sentence);
 }
 
 /**
@@ -105,13 +97,8 @@ export async function runBulk({ op, selection, params, desc, picked }) {
     const bulk = state.bulk;
     if (bulkBusy()) return { ok: false, why: BUSY_SENTENCE };
     bulk.running = true;
-    bulk.result = null;
-    bulk.problem = null;
-    bulk.request = { op, desc, picked };
-    repaint();
-    const sentence = writingSentence(desc, picked);
-    setStatus('busy', sentence, { transient: false });
-    say(sentence);
+    lockBulkControls();
+    setStatus('busy', `${desc.verb} ${desc.what} ${desc.prep} ${photosOf(picked)}...`, { transient: false });
     let res;
     let body;
     try {
@@ -119,42 +106,27 @@ export async function runBulk({ op, selection, params, desc, picked }) {
         body = await res.json().catch(() => ({}));
     } catch (err) {
         const why = `TagPup did not answer (${err.message}). The edit may still be being written, or may be written already: look at the photos before making it again.`;
-        failed(why, 'The answer did not come');
+        failed(why);
         return { ok: false, why };
     }
     if (!res.ok || !body.success) {
         const why = (body && body.error) || `TagPup answered ${res.status}`;
-        failed(why, 'The edit did not go through');
+        failed(why);
         // A refusal before anything was written changes nothing; the error of a write that stopped part-way may have.
         if (res.status >= 500) refreshAfterWrites(op);
         return { ok: false, why };
     }
     bulk.running = false;
-    bulk.problem = null;
-    bulk.result = { ...body, op };
-    if (body.total > picked && selection && selection.source) bulk.notice = { took: body.total, picked };
-    else bulk.notice = null;
-    repaint();
-    const ended = endedSentence(bulk.result, desc);
-    const bad = (body.error_count || 0) > 0;
-    setStatus(bad ? 'error' : 'ready', ended, { transient: false });
-    say(ended);
-    if (bulk.notice) say(widenedSentence(bulk.notice));
+    lockBulkControls();
+    // Photos came into the view since it was read: the server took more than were picked.
+    const wider = body.total > picked && selection && selection.source
+        ? ` TagPup took ${body.total.toLocaleString()} photos but ${picked.toLocaleString()} were selected: ${(body.total - picked).toLocaleString()} more came into this view since it was read.` : '';
+    // A batch stopped as asked answers with the server's own sentence on each photo it left: N of M, and the change in History.
+    const stopped = (body.errors || []).find(each => String(each.why).startsWith('Stopped as asked'));
+    const ended = stopped ? stopped.why : endedSentence(doneWords(desc, body.changed || 0), body) + wider;
+    const errors = body.error_count || 0;
+    showEnded({ text: ended, problem: errors > 0, errors: stopped ? [] : body.errors, errorCount: stopped ? 0 : errors });
+    setStatus(errors > 0 ? 'error' : 'ready', ended, { transient: false });
     if (body.changed || body.unchanged || body.skipped_missing) refreshAfterWrites(op);
     return { ok: true, total: body.total };
-}
-
-/** Take the strip away (an edit being written cannot be dismissed). */
-export function dismissBulk() {
-    const bulk = state.bulk;
-    if (bulk.running) return;
-    bulk.result = null;
-    bulk.problem = null;
-    bulk.notice = null;
-    bulk.request = null;
-    repaint();
-}
-
-export function wireBulk() {
-    wireBulkStrip({ dismiss: dismissBulk });
 }

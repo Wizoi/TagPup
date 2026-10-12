@@ -527,9 +527,7 @@ function postRenamePerson(oldName, newName, personId = null) {
         alert(problem);
         return;
     }
-    if (btnRenamePerson) btnRenamePerson.disabled = true;
-    const originalText = btnRenamePerson.textContent;
-    btnRenamePerson.textContent = '✏️ Renaming...';
+    if (btnRenamePerson) btnRenamePerson.disabled = true;      // how far a long rename has got is the shared strip's (batch-strip.js)
 
     api.fetch('/api/person/rename', {
         method: 'POST',
@@ -574,10 +572,7 @@ function postRenamePerson(oldName, newName, personId = null) {
         personGone(err.status);
     })
     .finally(() => {
-        if (btnRenamePerson) {
-            btnRenamePerson.disabled = false;
-            btnRenamePerson.textContent = originalText;
-        }
+        if (btnRenamePerson) btnRenamePerson.disabled = false;
     });
 }
 

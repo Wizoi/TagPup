@@ -1,5 +1,5 @@
 /**
- * Editing the selection of a library view (web/tagpup/bulk-edit.js, bulk-run.js, bulk-strip.js, bulk-words.js; docs/ARCHITECTURE.md):
+ * Editing the selection of a library view (web/tagpup/bulk-edit.js, bulk-run.js, bulk-words.js; the strip is web/common/batch-strip.js; docs/ARCHITECTURE.md):
  * Add tag, Add person and the pills' Remove and Apply each ask first, by name and count, and then write in ONE request that answers
  * when every photo is done, with the selection BY ID -- the source and the few ids excluded, never 5,000 ids or paths. While the
  * request is out the page says what is being written, to how many and for how long, and the view's edit controls are off. A limit
@@ -10,18 +10,22 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { closeAllApps, click } from "./harness.mjs";
 import { loadViewPage, pageErrors } from "./view-page.mjs";
+import fs from "node:fs";
 
 afterEach(() => {
   closeAllApps();
   assert.deepEqual(pageErrors(), [], "the page raised an error");
 });
 
+/** The replies the real routes make (tests/test_batch_strip_replies.py). */
+const served = JSON.parse(fs.readFileSync(new URL("./fixtures/batches.json", import.meta.url), "utf8"));
 const range = (n, from = 1) => Array.from({ length: n }, (_, i) => from + i);
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const el = (ctx, id) => ctx.document.getElementById(id);
 const edits = (ctx) => ctx.server.calls.filter((call) => call.url.includes("/api/library/bulk-edit"));
 const status = (ctx) => el(ctx, "status-text").textContent;
-const text = (ctx, id) => el(ctx, id).textContent.replace(/\s+/g, " ").trim();
+const strip = (ctx) => ctx.document.querySelector(".batch-strip");
+const sentence = (ctx) => strip(ctx).querySelector(".batch-strip-sentence").textContent;
 
 async function view(t, n, options = {}) {
   const ctx = await loadViewPage(t, { search: "?view=all", ids: range(n), ...options });
@@ -47,7 +51,7 @@ describe("Add tag to a selection of a library view", () => {
     el(ctx, "btn-select-all-thumbnails").click();
     for (const id of [3, 5, 7]) click(ctx.window, ctx.cardById(id).querySelector(".thumbnail-checkbox"));
     await addTag(ctx);
-    assert.deepEqual(ctx.questions, ["Add Trips/Lighthouse to 5,000 photos? This changes the photo files and takes about 6 minutes. It cannot be undone as one step; remove the tag to reverse it."],
+    assert.deepEqual(ctx.questions, ["Add Trips/Lighthouse to 5,000 photos? This changes the photo files and takes about 6 minutes. History lists it as one change and can undo it."],
       "one question, however many photos");
     assert.equal(edits(ctx).length, 1);
     const body = plain(edits(ctx)[0].body);
@@ -56,10 +60,7 @@ describe("Add tag to a selection of a library view", () => {
     assert.deepEqual(body.selection, { source: { kind: "all", value: null, recursive: false }, excluded: [3, 5, 7] });
     assert.ok(!("ids" in body.selection) && !("paths" in body.selection), "never 5,000 ids or paths");
     assert.ok(!ctx.server.calls.some((call) => call.url.includes("/api/photos/bulk-tags")), "not the folder's route");
-    assert.ok(!el(ctx, "bulk-strip").classList.contains("hidden"));
-    assert.match(el(ctx, "bulk-strip-title").textContent, /Add Trips\/Lighthouse to 5,000 photos/, "the server's count of the photos it found");
-    assert.equal(el(ctx, "bulk-strip-message").textContent, "Added Trips/Lighthouse to 5,000 photos; 0 errors.");
-    assert.equal(text(ctx, "bulk-strip-counts"), "changed 5,000 · unchanged 0 · missing 0 · damaged 0 · errors 0");
+    assert.equal(sentence(ctx), "Added Trips/Lighthouse to 5,000 photos; 0 errors.", "the server's count of the photos it found");
   });
 
   test("rapid clicks on Add (and Enter): one question and one request", async (t) => {
@@ -77,7 +78,7 @@ describe("Add tag to a selection of a library view", () => {
     const ctx = await view(t, 400);
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
     await addTag(ctx);
-    assert.deepEqual(ctx.questions, ["Add Trips/Lighthouse to 1 photo? This changes the photo files and takes less than a minute. It cannot be undone as one step; remove the tag to reverse it."]);
+    assert.deepEqual(ctx.questions, ["Add Trips/Lighthouse to 1 photo? This changes the photo files and takes less than a minute. History lists it as one change and can undo it."]);
     assert.deepEqual(plain(edits(ctx)[0].body.selection), { ids: [2] });
   });
 
@@ -88,7 +89,7 @@ describe("Add tag to a selection of a library view", () => {
     await addTag(ctx);
     assert.equal(edits(ctx).length, 0);
     assert.equal(el(ctx, "bulk-add-tags-input").value, "Trips/Lighthouse");
-    assert.ok(el(ctx, "bulk-strip").classList.contains("hidden"));
+    assert.equal(strip(ctx).hidden, true);
   });
 
   test("the selection edited after it was read changes nothing that was asked: the request is what the question named", async (t) => {
@@ -127,7 +128,7 @@ describe("Add tag to a selection of a library view", () => {
     await addTag(ctx);
     assert.equal(el(ctx, "bulk-add-tags-input").value, "Trips/Lighthouse");
     assert.match(status(ctx), /A tag cannot be both added/);
-    assert.equal(el(ctx, "bulk-strip-title").textContent, "The edit did not go through");
+    assert.match(sentence(ctx), /A tag cannot be both added/);
     assert.equal(el(ctx, "btn-bulk-add-tags").disabled, false, "the controls are back");
     ctx.bulk.edit = { total: 1, changed: 1 };
     ctx.server.routes.shift();
@@ -137,25 +138,19 @@ describe("Add tag to a selection of a library view", () => {
 });
 
 describe("while it is written, and when it is done", () => {
-  test("the strip and the status line say what is written, to how many, and for how long; the controls are off until the answer", async (t) => {
+  test("the status line says what is written and to how many; the controls are off until the answer", async (t) => {
     const ctx = await view(t, 400);
     ctx.hold.bulkEdit = true;
     el(ctx, "btn-select-all-thumbnails").click();
     await addTag(ctx);
-    const saying = "Add Trips/Lighthouse to 400 photos: writing the files takes less than a minute. The edit finishes even if this page is closed.";
-    assert.equal(status(ctx), saying);
-    assert.equal(el(ctx, "bulk-strip-message").textContent, saying);
-    assert.equal(el(ctx, "bulk-strip-title").textContent, "Add Trips/Lighthouse to 400 photos...");
-    assert.ok(el(ctx, "bulk-strip-bar").getAttribute("value") === null, "a bar with no value: it does not pretend to know how far");
-    assert.equal(el(ctx, "btn-bulk-dismiss").classList.contains("hidden"), true);
+    assert.equal(status(ctx), "Add Trips/Lighthouse to 400 photos...");
     assert.equal(el(ctx, "btn-bulk-add-tags").disabled, true);
     assert.equal(el(ctx, "btn-bulk-add-people").disabled, true);
     assert.match(el(ctx, "btn-bulk-add-tags").title, /A bulk edit is being written/);
     ctx.held.splice(0).forEach((each) => each.release());
     await ctx.settle(60);
     assert.equal(el(ctx, "btn-bulk-add-tags").disabled, false);
-    assert.equal(el(ctx, "btn-bulk-dismiss").classList.contains("hidden"), false);
-    assert.equal(text(ctx, "bulk-strip-message"), "Added Trips/Lighthouse to 400 photos; 0 errors.");
+    assert.equal(sentence(ctx), "Added Trips/Lighthouse to 400 photos; 0 errors.");
   });
 
   test("a done edit reads what changed again: the caches, the navigator's counts, the cards and the tally", async (t) => {
@@ -177,9 +172,9 @@ describe("while it is written, and when it is done", () => {
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
     el(ctx, "btn-select-all-thumbnails").click();
     await addTag(ctx);
-    assert.equal(text(ctx, "bulk-strip-message"), "Added Trips/Lighthouse to 340 photos; 60 errors.");
-    assert.equal(text(ctx, "bulk-strip-errors-summary"), "60 errors: the first 50 are listed");
-    const rows = [...ctx.document.querySelectorAll("#bulk-strip-error-list li")];
+    assert.equal(sentence(ctx), "Added Trips/Lighthouse to 340 photos; 60 errors.");
+    assert.equal(strip(ctx).querySelector("summary").textContent, "60 errors: the first 50 are listed");
+    const rows = [...strip(ctx).querySelectorAll(".batch-strip-errors li")];
     assert.equal(rows.length, 51);
     assert.equal(rows[0].textContent, "IMG_1.jpg — its folder could not be reached just now");
     assert.equal(rows[50].textContent, "10 more, not listed");
@@ -191,7 +186,7 @@ describe("while it is written, and when it is done", () => {
     ctx.bulk.edit = { total: 100, changed: 90, unchanged: 4, skipped_missing: 3, skipped_damaged: 3 };
     el(ctx, "btn-select-all-thumbnails").click();
     await addTag(ctx);
-    assert.equal(text(ctx, "bulk-strip-message"),
+    assert.equal(sentence(ctx),
       "Added Trips/Lighthouse to 90 photos; 3 missing on disk were skipped; 3 damaged were skipped; 4 already were as asked; 0 errors.");
   });
 
@@ -200,7 +195,7 @@ describe("while it is written, and when it is done", () => {
     ctx.bulk.edit = { total: 403, changed: 403 };
     el(ctx, "btn-select-all-thumbnails").click();
     await addTag(ctx);
-    assert.equal(text(ctx, "bulk-strip-message"),
+    assert.equal(sentence(ctx),
       "Added Trips/Lighthouse to 403 photos; 0 errors. TagPup took 403 photos but 400 were selected: 3 more came into this view since it was read.");
   });
 
@@ -211,7 +206,7 @@ describe("while it is written, and when it is done", () => {
     await addTag(ctx);
     assert.equal(edits(ctx).length, 1, "not sent again");
     assert.match(status(ctx), /TagPup did not answer \(.*connection reset.*\)\. The edit may still be being written, or may be written already: look at the photos before making it again\./);
-    assert.equal(el(ctx, "bulk-strip-title").textContent, "The answer did not come");
+    assert.match(sentence(ctx), /^TagPup did not answer/);
     assert.equal(el(ctx, "btn-bulk-add-tags").disabled, false);
     pageErrors();
   });
@@ -224,7 +219,7 @@ describe("while it is written, and when it is done", () => {
     await addTag(ctx);
     assert.match(status(ctx), /^The bulk edit stopped \(RuntimeError\)/);
     assert.ok(ctx.navigatorAsked.length >= navigator);
-    assert.equal(el(ctx, "bulk-strip-title").textContent, "The edit did not go through");
+    assert.match(sentence(ctx), /^The bulk edit stopped/);
   });
 
   test("Dismiss takes the strip away and the focus goes to the grid", async (t) => {
@@ -232,9 +227,9 @@ describe("while it is written, and when it is done", () => {
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
     ctx.bulk.edit = { total: 1, changed: 1 };
     await addTag(ctx);
-    assert.ok(!el(ctx, "bulk-strip").classList.contains("hidden"));
-    click(ctx.window, el(ctx, "btn-bulk-dismiss"));
-    assert.ok(el(ctx, "bulk-strip").classList.contains("hidden"));
+    assert.equal(strip(ctx).hidden, false);
+    click(ctx.window, [...strip(ctx).querySelectorAll("button")].find((button) => button.textContent === "Dismiss"));
+    assert.equal(strip(ctx).hidden, true);
   });
 });
 
@@ -243,10 +238,10 @@ describe("what a request cannot carry is said before it is made", () => {
     const ctx = await view(t, 6000);
     ctx.module("selected.js").setIdRange(0, 5000, true);
     await addTag(ctx);
-    assert.deepEqual(ctx.alerts, ["Select up to 5,000 photos at a time (5,001 are selected)."]);
+    assert.deepEqual(ctx.alerts, [served.over_the_cap.body.error], "the page says what the server would");
     assert.equal(ctx.questions.length, 0);
     assert.equal(edits(ctx).length, 0);
-    assert.ok(el(ctx, "bulk-strip").classList.contains("hidden"));
+    assert.equal(strip(ctx).hidden, true);
   });
 
   test("exactly 5,000 is sent", async (t) => {
@@ -310,14 +305,22 @@ describe("only one bulk edit at a time", () => {
     assert.equal(el(ctx, "btn-bulk-add-tags").disabled, false);
   });
 
-  test("the server's 409 (another is being written) shows its sentence in the strip", async (t) => {
+  test("the server's 409 (the line of batches is full) shows its sentence in the strip", async (t) => {
     const ctx = await view(t, 400);
     click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
-    ctx.server.first("/api/library/bulk-edit", { error: "A bulk edit is already running in photo_index. Wait for it to finish." }, { status: 409 });
+    ctx.server.first("/api/library/bulk-edit", served.queue_full.body, { status: served.queue_full.status });
     await addTag(ctx);
-    assert.equal(el(ctx, "bulk-strip-message").textContent, "A bulk edit is already running in photo_index. Wait for it to finish.");
-    assert.equal(el(ctx, "bulk-strip-title").textContent, "The edit did not go through");
-    assert.ok(!el(ctx, "btn-bulk-dismiss").classList.contains("hidden"));
+    assert.equal(sentence(ctx), served.queue_full.body.error);
+  });
+
+  test("a batch stopped as asked: the reply's own sentence (N of M, the change in History) is the strip's, not 35 errors", async (t) => {
+    const ctx = await view(t, 400);
+    click(ctx.window, ctx.cardById(2).querySelector(".thumbnail-checkbox"));
+    ctx.bulk.edit = served.stopped_reply;
+    await addTag(ctx);
+    assert.equal(sentence(ctx), served.stopped_reply.errors[0].why);
+    assert.equal(strip(ctx).querySelector("details"), null);
+    assert.match(status(ctx), /^Stopped as asked after 25 of 60 photos/);
   });
 
   test("the folder view's own bulk controls are never disabled by it", async (t) => {
@@ -328,7 +331,6 @@ describe("only one bulk edit at a time", () => {
     assert.equal(el(ctx, "btn-bulk-add-tags").disabled, true);
     ctx.module("library-view.js").closeLibraryView();
     assert.equal(el(ctx, "btn-bulk-add-tags").disabled, false, "a folder's bulk write is another route");
-    assert.ok(!el(ctx, "bulk-strip").classList.contains("hidden"), "the edit is the library's: its strip stays");
     ctx.held.splice(0).forEach((each) => each.release());
     await ctx.settle(40);
   });
@@ -348,7 +350,7 @@ describe("a pill of the tally", () => {
     assert.deepEqual(pills.map((pill) => pill.textContent.replace(/[^\w\/() ]/g, "").trim()), ["Old/Stuff (1)", "Trips/Coast (3)"], "alphabetical");
     pills[1].querySelector(".selection-summary-chip-remove").click();
     await ctx.settle(60);
-    assert.match(ctx.questions[0], /^Remove Trips\/Coast from 399 photos\? .* add the tag again to reverse it\.$/);
+    assert.match(ctx.questions[0], /^Remove Trips\/Coast from 399 photos\? .* History lists it as one change and can undo it\.$/);
     const body = plain(edits(ctx)[0].body);
     assert.equal(body.op, "tags");
     assert.deepEqual(body.params, { add: [], remove: ["Trips/Coast"] });

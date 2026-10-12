@@ -14,6 +14,7 @@ afterEach(() => {
 });
 
 const el = (ctx, id) => ctx.document.getElementById(id);
+const stripSentence = (ctx) => ctx.document.querySelector(".batch-strip-sentence").textContent;
 
 describe("#668: the button beside Library is Organize", () => {
   test("it says Organize, and its tooltip says what Organize is for: one folder on disk", async (t) => {
@@ -202,7 +203,7 @@ describe("#674: Delete of a view's selection", () => {
     assert.deepEqual(plain(start.body), { op: "delete", selection: { ids: [2, 5, 9] }, params: { token: "t-three" } },
       "the token of the photos the question named");
     assert.ok(!calls(ctx, "/api/photo/delete").length, "never the one-photo route, once a photo");
-    assert.equal(el(ctx, "bulk-strip-title").textContent, "Delete 3 photos to the Recycle Bin");
+    assert.match(stripSentence(ctx), /^Deleted 3 photos to the Recycle Bin;/);
   });
 
   test("some on a share with no Recycle Bin: the question says they go through this PC, how much, and where they restore to (#694)", async (t) => {
@@ -282,9 +283,7 @@ describe("#674: Delete of a view's selection", () => {
     await ctx.settle(40);
     assert.equal(el(ctx, "btn-delete-selection").disabled, true);
     assert.match(el(ctx, "btn-delete-selection").title, /A bulk edit is being written/);
-    assert.match(el(ctx, "status-text").textContent, /^Add Trips\/Coast to 1 photo: writing the files takes less than a minute\./);
-    assert.ok(!el(ctx, "bulk-strip").classList.contains("hidden"));
-    assert.equal(el(ctx, "btn-bulk-dismiss").classList.contains("hidden"), true, "a write under way is not dismissed");
+    assert.match(el(ctx, "status-text").textContent, /^Add Trips\/Coast to 1 photo\.\.\./);
     await ctx.module("bulk-edit.js").deleteSelection();
     assert.equal(calls(ctx, "/selection/delete-check").length, 0);
     ctx.held.splice(0).forEach((each) => each.release());
@@ -304,8 +303,7 @@ describe("#674: Delete of a view's selection", () => {
     await ctx.settle(100);
     assert.equal(ctx.state.library.total, 37);
     assert.deepEqual(ctx.selectedIds(), [], "the deleted are no longer selected");
-    assert.equal(el(ctx, "bulk-strip-message").textContent, "Deleted 3 photos to the Recycle Bin; 0 errors.");
-    assert.match(el(ctx, "bulk-strip-counts").textContent, /^deleted 3 /);
+    assert.equal(stripSentence(ctx), "Deleted 3 photos to the Recycle Bin; 0 errors.");
   });
 
   test("the photo open in the details panel was deleted: the panel closes onto the grid when the edit is done", async (t) => {
@@ -358,9 +356,7 @@ describe("#691-#693: a Delete deletes exactly what its question named", () => {
     for (const id of [2, 5, 9]) pick(ctx, id);
     click(ctx.window, el(ctx, "btn-delete-selection"));
     await ctx.settle(80);
-    assert.match(el(ctx, "bulk-strip-message").textContent, /The selection changed since you were asked/);
-    assert.equal(el(ctx, "bulk-strip-title").textContent, "The edit did not go through");
-    assert.ok(!el(ctx, "btn-bulk-dismiss").classList.contains("hidden"));
+    assert.match(stripSentence(ctx), /The selection changed since you were asked/);
     assert.equal(el(ctx, "btn-delete-selection").disabled, false, "the controls are back");
   });
 
