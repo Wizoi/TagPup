@@ -169,18 +169,19 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        machine, result, per_library, processes, byte_lock, idle, runs, gpu_turns, photo_meta
   store/               the only SQL. db (connections, locks), schema (migrations), one module per table or
                        family: photos, faces, people, person_ids, taxonomy, embeddings, suggestions, journal,
-                       file_journal, settings, roots + roots_check + root_rows, derived, search_index, folders,
+                       file_journal, face_batches, settings, roots + roots_check + root_rows, derived, search_index, folders,
                        library_view, snapshots, generations, locks, job_runs, sync_runs,
                        added_folders, faces_pending, faces_detected, tree_scan, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
-                       thumbs, names, shares, lock_owners, recycle_bin, job_files
+                       thumbs, names, shares, lock_owners, recycle_bin
   ml/                  models: clip, faces, vector_index, grouping, and gpu (the card's turn)
   services/            one function per user action; the only code that writes: tagging, tags, people, faces,
                        identities, identify, indexing, sync, refresh_rows, relink_photos,
                        roots*, settings, journal, file_changes, batches, bulk_edit, selection,
                        library_view, search, suggester, suggestions, snapshots, thumbnails, tree_fill,
-                       faces_from_tags, tags_from_faces, face_people, inspect, activity, maintenance
-  jobs/                background work: indexing queue, suggestions, face_assignments,
+                       faces_from_tags, tags_from_faces, face_people, face_assignment + face_batch, inspect, activity,
+                       maintenance
+  jobs/                background work: indexing queue, suggestions,
                        naming_faces, identify, watching, recurring
   web/                 one Flask app per page from one factory (app.py), *_routes.py by concern, security,
                        lifecycle, libraries, state, responses
@@ -209,7 +210,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
   warmed on a thread, released after an idle period; each library's job runners; `begin`/`gpu_turn` take the
   card's turn. Services and jobs are given models; they never build one.
 - **Background jobs** run through one runner per library (`tagpup.jobs`): the index queue (an indexing child
-  process, via the CLI's `index`), Suggest runs, face assignments, Name faces from tags, Identify caches. **Recurring jobs**
+  process, via the CLI's `index`), Suggest runs, Name faces from tags, Identify caches. **Recurring jobs**
   (`tagpup.jobs.recurring`: snapshots, sync, pruning the journal) are run by the web server only; the
   folder **watcher** syncs a folder when it changes. Event-driven first: a schedule is only for safety.
 - **The graphics card**: one process at a time on the machine has a model on it (`tagpup.ml.gpu.Card`, a byte
@@ -278,6 +279,16 @@ A tag or person rename (no cap) rewrites every photo first and moves the tree af
 `batches.listing` and `/api/activity/now` / `/api/activity/batches` show the batches running (read from the journal, so another
 process's too) and waiting. `tests/test_batches_go_through_the_model.py` names every route that reaches `write_fields`.
 A rotation is one of these changes too (`photos.rotate_photos`, field `EXIF:Orientation`): the face boxes a TIFF turns and the vectors it makes stale are written by `services/rotation.py` in the transaction that marks the file `done`, whether forward, settled after a crash, or in an undo, so file and boxes cannot disagree.
+A bulk assignment of faces is one of these changes too (owner, 2026-10-11): Assign, Unmatch, Exclude selected, Ignore cluster and Re-examine
+(`services/face_assignment.py`) are decided and refused as a whole, then written as ONE change whose file step is the person's tag written
+or taken off, and whose photos' faces follow it. Each face is recorded in the plan's own transaction as a row of the journal's `change_rows`
+(its decision columns as the plan read them and as they are to be: `store/face_batches.py`), and `services/face_batch.py` writes them in
+the transaction that marks the photo's file `done` (or `undone`, from History): forward, settled after a crash, or undone, so a photo and its
+faces never disagree. A face is written only where it is still what the plan read (a face somebody named or ruled out since is left and
+said) and is put back only where it is still what the change left. A photo that holds the person already is in the change all the same (only
+its faces are written). Faces that carry no name write no photo, are written by the faces' own write after the batch, and are not in the
+change. No job of its own: no plan file, no resume, no Undo of the whole job; the claim, queue, cap (5,000 photos that need their files looked
+at, whatever the faces), Cancel, the strip, the hand-over and History's undo are the batch's.
 **One strip shows them on both pages** (`web/common/batch-strip.js`; `api.js` announces a page's write requests as `tagpup:writes`): it asks
 `/api/activity/batches` once when a page opens (so a reload shows a batch still going) and every 1.5 s while the page has a write out or a
 batch is listed, and draws this page's library's rows: the operation, the files handled of the total from the journal's counts, the time left
