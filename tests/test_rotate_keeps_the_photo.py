@@ -260,8 +260,7 @@ class TestTheRotateRoute(unittest.TestCase):
                              (face_before.size, face_before.tobytes()), direction)
 
     def test_a_failed_rotation_is_reported(self):
-        with mock.patch("tagpup.files.metadata.rotate_image_file",
-                               side_effect=RuntimeError("the file now says 1")):
+        with mock.patch("tagpup.files.field_values.write", side_effect=RuntimeError("the file now says 1")):
             status, reply = self.rotate("left")
         self.assertEqual(status, 500)
         self.assertIn("the file now says 1", reply["error"])

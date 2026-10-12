@@ -133,12 +133,13 @@ def write(et, photo_path, values):
     params, clear = {}, []
     for field, value in values.items():
         texts = fields.field_values(value)
+        named = fields.WRITTEN_AS.get(field, field)
         if not texts:
             clear.append("-%s=" % field)
         elif fields.read_key(field) in fields.LIST_FIELDS or len(texts) > 1:
-            params[field] = list(texts)
+            params[named] = list(texts)
         else:
-            params[field] = texts[0]
+            params[named] = texts[0]
 
     def command(extra, keep):
         # `keep`: fields the write does not set, written as they hold in the same command

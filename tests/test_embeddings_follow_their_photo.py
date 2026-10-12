@@ -13,6 +13,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+import fake_exiftool  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.services import photos as photo_actions  # noqa: E402
@@ -99,9 +100,8 @@ class Vectors(unittest.TestCase):
             conn.close()
 
     def test_a_rotation_takes_the_vectors_away(self):
-        with mock.patch("tagpup.files.images.shown_size", return_value=(40, 30, False)), \
-                mock.patch("tagpup.files.metadata.rotate_image_file", return_value=6):
-            photo_actions.rotate(self.lib.library, self.photo, "right", "exiftool")
+        fake_exiftool.standing_in(self).hold(self.photo, EXIF__Orientation=1)
+        self.assertEqual(1, photo_actions.rotate(self.lib.library, self.photo, "right", "exiftool").changed)
         self.assertIsNone(self.stored())
 
     def test_a_rename_keeps_them(self):

@@ -66,7 +66,7 @@ from tagpup.core.result import SKIPPED_DAMAGED, Conflict, Refused, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, lock_owners, names
-from tagpup.services import batches
+from tagpup.services import batches, rotation
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, embeddings, file_journal, journal, photos, schema
 
@@ -381,6 +381,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
                                   wrote=wrote, now=now)
             if outcome == "done":
                 result.changed += 1
+                if isinstance(detail, dict) and row.followed:
+                    detail["faces_turned"] = row.followed
                 written[path] = detail
                 continue
             result.fail(path, why)
@@ -453,9 +455,13 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None):
             stat = os.stat(row.path)
         except OSError:
             stat = None
+    # What a rotation brings besides the field (its face boxes, its vectors) goes in the same transaction as `done`.
+    follow = rotation.follower(row, state)
 
     def work(conn):
         photos.follow_fields(conn, row.path, values, stat, stamp)
+        if follow is not None:
+            follow(conn)
         if after is not None:
             file_journal.set_after(conn, row.id, after)
         file_journal.set_state(conn, row.id, state)

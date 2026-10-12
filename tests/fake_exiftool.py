@@ -127,8 +127,9 @@ class Files:
             for field in params or []:
                 if field.startswith("-") and field.endswith("="):
                     held.pop(fields.read_key(field[1:-1]), None)
+            answered_as = {written: read for read, written in fields.WRITTEN_AS.items()}
             for field, value in (tags or {}).items():
-                held[fields.read_key(field)] = value
+                held[fields.read_key(answered_as.get(field, field))] = value
 
     def execute(self, *args):
         held = self.fields.setdefault(paths.key(args[-1]), {})
