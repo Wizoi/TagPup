@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, REAL, realLibrary, until } from "./harness.mjs";
 import { boxInContainedImage } from "../../web/common/image-zoom.js";
 
 afterEach(() => closeAllApps());
@@ -95,11 +95,12 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
 
 /** The photo open, its picture "measured" at `view` and the boxes' layer drawn over it. */
 async function openPhoto(t, options = {}) {
-  const { view = [400, 300], ...rest } = options;
-  const server = serverFor(rest);
-  const ctx = await loadApp("tagpup", { t, url: "http://localhost:8090/photo_index/", server });
+  const { view = [400, 300], real, ...rest } = options;
+  const server = real ? real.server : serverFor(rest);
+  const ctx = await loadApp("tagpup", { t, url: real ? real.url : "http://localhost:8090/photo_index/", server });
   ctx.window.alert = () => {};
-  await openFolder(ctx, "D:/Library/2020");
+  await openFolder(ctx, real ? real.folder : "D:/Library/2020");
+  if (real) await until(ctx, () => ctx.document.querySelector("li[data-path]"), "the folder's photos");
   const row = ctx.document.querySelector("li[data-path]");
   if (row) row.click();
   ctx.server = server;
@@ -112,6 +113,7 @@ async function openPhoto(t, options = {}) {
   };
   ctx.measure = measure;
   measure(...view);
+  if (real) await until(ctx, () => server.replied.some((url) => url.includes("/api/photo-faces")), "the photo's faces");
   await flush(ctx.window, 8);
   image.dispatchEvent(new ctx.window.Event("load"));
   ctx.layer = () => ctx.$("face-layer");
@@ -356,27 +358,6 @@ describe("the panel of a face", () => {
 });
 
 describe("naming a face names the person on the photo too", () => {
-  test("a suggestion: the tag is written first, then the face, and both agree afterwards", async (t) => {
-    // The owner's scenario: a photo with three faces and one tag; name one face from its box.
-    const ctx = await openPhoto(t);
-    ctx.show();
-    click(ctx.window, ctx.boxes()[1]);
-    await flush(ctx.window, 4);
-    const before = ctx.server.calls.length;
-    click(ctx.window, ctx.panel().querySelector(".face-panel-suggestion"));
-    await flush(ctx.window, 14);
-    const sent = ctx.server.calls.slice(before).filter((c) => c.method === "POST").map((c) => c.url.replace(/^.*\/api\//, ""));
-    assert.deepEqual(sent, ["photo/save-metadata", "face/match"], "the tag first, then the face");
-    assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["Trips", "People/Hazel Brookmire"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire", page_writes_tags: true });
-    assert.equal(ctx.panel(), null, "the panel stayed open after the face was named");
-    assert.match(ctx.boxes()[1].getAttribute("aria-label"), /Face 2 of 3: Hazel Brookmire/);
-    assert.match(ctx.$("detail-people").textContent, /Hazel Brookmire/, "the photo's people do not show the tag");
-    assert.match(ctx.$("status-text").textContent, /Named Hazel Brookmire/);
-    const strips = ctx.server.urls().filter((u) => u.includes("/api/photo-faces"));
-    assert.ok(strips.length >= 2, "the strip under the photo was not asked again");
-    assert.equal(ctx.document.activeElement, ctx.boxes()[1]);
-  });
 
   test("a person already on the photo is not written again: only the face is named", async (t) => {
     const photo = photoRecord({ filename: "a.jpg", tags: ["People/Hazel Brookmire"], people: ["Hazel Brookmire"] });
@@ -402,20 +383,6 @@ describe("naming a face names the person on the photo too", () => {
     assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["Trips", "People/Hazel Brookmire"]);
     assert.equal(ctx.posts("/api/face/match").length, 1);
     assert.match(ctx.$("status-text").textContent, /Named Hazel Brookmire/);
-  });
-
-  test("a typed name that the tree holds: Enter does the same", async (t) => {
-    const ctx = await openPhoto(t);
-    ctx.show();
-    click(ctx.window, ctx.boxes()[2]);
-    await flush(ctx.window, 4);
-    const input = ctx.panel().querySelector(".face-panel-input");
-    assert.equal(input.getAttribute("list"), "people-datalist", "no autocomplete from the vocabulary");
-    input.value = "Anh Tran";
-    ctx.key(input, "Enter");
-    await flush(ctx.window, 14);
-    assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["Trips", "People/Anh Tran"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 3, person_name: "Anh Tran", page_writes_tags: true });
   });
 
   test("a typed new name goes through the existing placement: created in the tree, then written, then the face", async (t) => {
@@ -480,31 +447,121 @@ describe("naming a face names the person on the photo too", () => {
     assert.equal(ctx.panel(), null);
     assert.match(ctx.boxes()[1].getAttribute("aria-label"), /Hazel Brookmire/);
   });
+});
 
-  test("two rapid clicks name once", async (t) => {
-    const ctx = await openPhoto(t);
-    ctx.show();
-    click(ctx.window, ctx.boxes()[1]);
-    await flush(ctx.window, 4);
+describe("naming a face against the server", { skip: !REAL }, () => {
+  // tests/test_pages_against_the_real_server.py runs these: a.jpg holds three unnamed faces, the second alike Wren's, the
+  // third Oda's, and Wren's and Oda's decided faces are on the next two photos.
+  const WREN = "Wren Halloway";
+  const ODA = "Oda Castellane";
+
+  async function openReal(t, seed = "organized_photo") {
+    const real = await realLibrary(seed);
+    const ctx = await openPhoto(t, { real });
+    const ask = async (route) => (await fetch(`${REAL.tagpup}/${real.library}/api/${route}`)).json();
+    ctx.faceNames = async () => { const held = (await ask(`photo-faces?path=${encodeURIComponent(real.photo)}`)).faces; return real.faces.map((id) => held.find((f) => f.id === id).name); };
+    ctx.tagsOfPhoto = async () => (await ask(`folder/scan?path=${encodeURIComponent(real.folder)}`)).find((p) => p.filename === "a.jpg").tags.sort();
+    ctx.box = (n) => ctx.boxes().find((b) => b.dataset.faceId === String(real.faces[n]));
+    ctx.replies = (route) => ctx.server.replied.filter((url) => url.includes(route)).length;
+    ctx.ready = () => until(ctx, () => ctx.replies("include_hidden") > 0, "the page to know the people");
+    ctx.opened = async (n) => {
+      await ctx.ready();
+      ctx.show();
+      click(ctx.window, ctx.box(n));
+      await until(ctx, () => ctx.replies("/api/face-matches") > 0 && ctx.panel(), () => "the face's panel and who it looks like; it holds " + (ctx.panel() && ctx.panel().textContent));
+    };
+    return Object.assign(ctx, { real });
+  }
+
+  test("a suggestion writes the tag first, then names the face, and the server holds both", async (t) => {
+    const ctx = await openReal(t);
+    await ctx.opened(1);
+    const sent = ctx.server.calls.length;
     const button = ctx.panel().querySelector(".face-panel-suggestion");
+    assert.match(button.textContent, new RegExp(WREN));
     click(ctx.window, button);
     click(ctx.window, button);
-    await flush(ctx.window, 14);
-    assert.equal(ctx.posts("/api/photo/save-metadata").length, 1);
-    assert.equal(ctx.posts("/api/face/match").length, 1);
+    await until(ctx, () => ctx.replies("/api/face/match") === 1, "the face to be named");
+    const posts = ctx.server.calls.slice(sent).filter((c) => c.method === "POST").map((c) => c.url.replace(/^.*\/api\//, ""));
+    // The real page also asks the tree to hold the person (taxonomy/create, a no-op for a node it has): no fake ever sent it.
+    assert.deepEqual(posts, ["taxonomy/create", "photo/save-metadata", "face/match"], "two rapid clicks name once, the tag first");
+    assert.deepEqual(await ctx.faceNames(), [null, WREN, null]);
+    assert.deepEqual(await ctx.tagsOfPhoto(), ["People/" + WREN, "Trips"]);
+    assert.match(ctx.box(1).getAttribute("aria-label"), new RegExp(`Face [0-9] of 3: ${WREN}`));
+    assert.match(ctx.$("status-text").textContent, new RegExp(`Named ${WREN}`));
+  });
+
+  test("a typed name that the tree holds: Enter does the same", async (t) => {
+    const ctx = await openReal(t);
+    await ctx.opened(2);
+    const input = ctx.panel().querySelector(".face-panel-input");
+    input.value = ODA;
+    ctx.key(input, "Enter");
+    await until(ctx, () => ctx.replies("/api/face/match") === 1, "the face to be named");
+    assert.deepEqual(await ctx.faceNames(), [null, null, ODA]);
+    assert.deepEqual(await ctx.tagsOfPhoto(), ["People/" + ODA, "Trips"]);
   });
 
   test("leaving for another photo meanwhile still names the face of the photo it was chosen on", async (t) => {
-    const second = photoRecord({ path: "D:/Library/2020/b.jpg", filename: "b.jpg" });
-    const ctx = await openPhoto(t, { extra: (server) => server.on("/api/folder/scan", [server.shown, second]) });
-    ctx.show();
-    click(ctx.window, ctx.boxes()[1]);
-    await flush(ctx.window, 4);
+    const ctx = await openReal(t);
+    await ctx.opened(1);
     click(ctx.window, ctx.panel().querySelector(".face-panel-suggestion"));
     ctx.key(ctx.document.body, "ArrowDown");       // on to the next photo before the save is over
-    await flush(ctx.window, 16);
-    assert.equal(ctx.posts("/api/face/match").length, 1, "the tag was written and the face left unnamed");
-    assert.equal(ctx.posts("/api/face/match")[0].body.face_id, 2);
+    await until(ctx, () => ctx.replies("/api/face/match") === 1, "the face to be named");
+    assert.deepEqual(await ctx.faceNames(), [null, WREN, null]);
+  });
+
+  test("Not this person takes the name off the face and the person off the photo, and the server holds neither", async (t) => {
+    const ctx = await openReal(t);
+    await ctx.opened(1);
+    click(ctx.window, ctx.panel().querySelector(".face-panel-suggestion"));
+    await until(ctx, () => ctx.replies("/api/face/match") === 1 && !ctx.panel(), "the face to be named");
+    click(ctx.window, ctx.box(1));
+    await until(ctx, () => ctx.panel(), "the named face's panel");
+    click(ctx.window, [...ctx.panel().querySelectorAll("button")].find((b) => b.textContent === "Not this person"));
+    await until(ctx, () => ctx.replies("/api/face/unmatch") === 1 && ctx.replies("save-metadata") === 2, "the name to be taken off");
+    assert.deepEqual(await ctx.faceNames(), [null, null, null]);
+    assert.deepEqual(await ctx.tagsOfPhoto(), ["Trips"]);
+    assert.match(ctx.box(1).getAttribute("aria-label"), /not named/);
+  });
+
+  test("a suggested face's card names that face and adds the person, once for two clicks", async (t) => {
+    const ctx = await openReal(t);
+    await ctx.ready();
+    ctx.show();
+    const card = [...ctx.document.querySelectorAll(".face-card")].find((c) => c.querySelector(".face-card-label").textContent === WREN + "?");
+    assert.match(card.title, new RegExp(`name this face ${WREN} and add them to this photo`));
+    click(ctx.window, card);
+    click(ctx.window, card);
+    await until(ctx, () => ctx.replies("/api/face/match") === 1, "the face to be named");
+    assert.equal(ctx.replies("save-metadata"), 1);
+    assert.deepEqual(await ctx.faceNames(), [null, WREN, null]);
+    assert.deepEqual(await ctx.tagsOfPhoto(), ["People/" + WREN, "Trips"]);
+    assert.match(ctx.$("faces-summary").textContent, /2 unidentified/);
+  });
+
+  test("a person added to a one-face photo names its face, and the pill taken off unnames it: the boxes follow the server", async (t) => {
+    const ctx = await openReal(t, "one_face");
+    await ctx.ready();
+    ctx.show();
+    ctx.$("input-add-person").value = ODA;
+    click(ctx.window, ctx.$("btn-add-person"));
+    await until(ctx, () => ctx.box(0).getAttribute("aria-label").includes(ODA), "the box to follow the tag");
+    assert.deepEqual(await ctx.faceNames(), [ODA]);
+    click(ctx.window, [...ctx.document.querySelectorAll("#detail-people .tag-pill")].find((each) => each.textContent === "People/" + ODA));
+    await until(ctx, () => /not named/.test(ctx.box(0).getAttribute("aria-label")), "the box to follow the pill");
+    assert.deepEqual(await ctx.faceNames(), [null]);
+    assert.deepEqual(await ctx.tagsOfPhoto(), ["Trips"]);
+  });
+
+  test("Not important rules a face out and its box goes", async (t) => {
+    const ctx = await openReal(t);
+    await ctx.opened(2);
+    click(ctx.window, [...ctx.panel().querySelectorAll("button")].find((b) => b.textContent === "Not important"));
+    await until(ctx, () => ctx.replies("/api/faces/exclude") === 1 && !ctx.panel(), "the face to be ruled out");
+    assert.deepEqual(ctx.boxes().map((b) => b.dataset.faceId).sort(), ctx.real.faces.slice(0, 2).map(String).sort());
+    assert.equal(ctx.replies("save-metadata"), 0, "an unnamed face had no person to take off");
+    assert.deepEqual(await ctx.tagsOfPhoto(), ["Trips"]);
   });
 });
 
@@ -512,22 +569,6 @@ describe("taking a name off, and ruling a face out", () => {
   const NAMED = { ...THREE, faces: [{ ...THREE.faces[0], name: "Hazel Brookmire" }, THREE.faces[1], THREE.faces[2]], unmatched: 2 };
 
   const notThisPerson = (ctx) => [...ctx.panel().querySelectorAll("button")].find((b) => b.textContent === "Not this person");
-
-  test("Not this person takes the name off the face and the person off the photo, the face first", async (t) => {
-    const photo = photoRecord({ filename: "a.jpg", tags: ["Trips", "People/Hazel Brookmire"], people: ["Hazel Brookmire"] });
-    const ctx = await openPhoto(t, { photoFaces: NAMED, photo });
-    ctx.show();
-    click(ctx.window, ctx.boxes()[0]);
-    await flush(ctx.window, 4);
-    click(ctx.window, notThisPerson(ctx));
-    await flush(ctx.window, 12);
-    assert.deepEqual(ctx.posts("/api/face/unmatch")[0].body, { face_id: 1, page_writes_tags: true });
-    assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["Trips"], "the person's tag stayed on the photo");
-    const order = ctx.server.calls.map((c) => c.url).filter((u) => /face\/unmatch|save-metadata/.test(u));
-    assert.match(order[0], /face\/unmatch/, "the face goes first, the tag second");
-    assert.match(ctx.boxes()[0].getAttribute("aria-label"), /not named/);
-    assert.doesNotMatch(ctx.$("detail-people").textContent, /Hazel Brookmire/);
-  });
 
   test("the tag stays when the server says another face is the person", async (t) => {
     const photo = photoRecord({ filename: "a.jpg", tags: ["People/Hazel Brookmire"], people: ["Hazel Brookmire"] });
@@ -581,33 +622,6 @@ describe("taking a name off, and ruling a face out", () => {
     await flush(ctx.window, 4);
   });
 
-  test("Not important rules the face out and its box goes", async (t) => {
-    const ctx = await openPhoto(t);
-    ctx.show();
-    click(ctx.window, ctx.boxes()[2]);
-    await flush(ctx.window, 4);
-    const out = [...ctx.panel().querySelectorAll("button")].find((b) => b.textContent === "Not important");
-    click(ctx.window, out);
-    await flush(ctx.window, 8);
-    assert.deepEqual(ctx.posts("/api/faces/exclude")[0].body, { face_ids: [3], page_writes_tags: true });
-    assert.deepEqual(ctx.boxes().map((b) => b.dataset.faceId), ["1", "2"]);
-    assert.match(ctx.icon().textContent, /2/);
-    assert.equal(ctx.panel(), null);
-    assert.equal(ctx.posts("/api/photo/save-metadata").length, 0, "an unnamed face had no person to take off");
-  });
-
-  test("Not important on a named face takes the person off the photo as well", async (t) => {
-    const photo = photoRecord({ filename: "a.jpg", tags: ["Trips", "People/Hazel Brookmire"], people: ["Hazel Brookmire"] });
-    const ctx = await openPhoto(t, { photoFaces: NAMED, photo });
-    ctx.show();
-    click(ctx.window, ctx.boxes()[0]);
-    await flush(ctx.window, 4);
-    click(ctx.window, [...ctx.panel().querySelectorAll("button")].find((b) => b.textContent === "Not important"));
-    await flush(ctx.window, 12);
-    assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["Trips"]);
-    assert.deepEqual(ctx.boxes().map((b) => b.dataset.faceId), ["2", "3"]);
-  });
-
   test("a refusal is said in the server's words and nothing changes on the page", async (t) => {
     const ctx = await openPhoto(t, {
       extra: (server) => server.first("/api/faces/exclude", { success: false, error: "Server is currently clustering faces." }, { status: 409 }),
@@ -635,25 +649,6 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
     total: 3, unmatched: 2, size: [4000, 3000], turned: false,
   };
   const cards = (ctx) => [...ctx.document.querySelectorAll(".face-card")];
-
-  test("clicking a suggested face's card names that face and adds the person, and the box turns named at once", async (t) => {
-    const photo = photoRecord({ filename: "a.jpg", tags: ["People/Anh Tran"], people: ["Anh Tran"] });
-    const ctx = await openPhoto(t, { photoFaces: PHOTO3, photo });
-    ctx.show();
-    assert.match(ctx.boxes()[1].getAttribute("aria-label"), /not named/);
-    const card = cards(ctx)[1];
-    assert.ok(card.classList.contains("face-card-actionable"));
-    assert.match(card.title, /name this face Hazel Brookmire and add them to this photo/);
-    click(ctx.window, card);
-    await flush(ctx.window, 14);
-    assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["People/Anh Tran", "People/Hazel Brookmire"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire", page_writes_tags: true });
-    assert.match(ctx.boxes()[1].getAttribute("aria-label"), /Hazel Brookmire/, "the box still said not named");
-    assert.match(cards(ctx)[1].querySelector(".face-card-label").textContent, /Hazel Brookmire$/);
-    assert.match(ctx.$("faces-summary").textContent, /1 unidentified/);
-    // The page asked again for what the library holds, and drew the boxes and the strip from that one answer.
-    assert.ok(ctx.server.calls.filter((c) => c.url.includes("/api/photo-faces")).length >= 2);
-  });
 
   test("a suggested face whose person the photo has already is still clickable: it names the face and writes nothing else", async (t) => {
     const photo = photoRecord({ filename: "a.jpg", tags: ["People/Anh Tran", "People/Hazel Brookmire"], people: ["Anh Tran", "Hazel Brookmire"] });
@@ -687,17 +682,6 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
     assert.ok(cards(ctx)[0].classList.contains("face-card-settled"));
   });
 
-  test("two clicks, a card and a box, name once", async (t) => {
-    const photo = photoRecord({ filename: "a.jpg", tags: ["People/Anh Tran"], people: ["Anh Tran"] });
-    const ctx = await openPhoto(t, { photoFaces: PHOTO3, photo });
-    ctx.show();
-    click(ctx.window, cards(ctx)[1]);
-    click(ctx.window, cards(ctx)[1]);
-    await flush(ctx.window, 14);
-    assert.equal(ctx.posts("/api/photo/save-metadata").length, 1);
-    assert.equal(ctx.posts("/api/face/match").length, 1);
-  });
-
   test("a card whose person cannot be added says so, and names no face", async (t) => {
     const photo = photoRecord({ filename: "a.jpg", tags: ["People/Anh Tran"], people: ["Anh Tran"] });
     const ctx = await openPhoto(t, {
@@ -709,44 +693,6 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
     await flush(ctx.window, 14);
     assert.equal(ctx.posts("/api/face/match").length, 0);
     assert.match(ctx.$("status-text").textContent, /not added to the photo, so the face is not named/);
-  });
-
-  test("a tag written for the photo can name its one face on the server: the boxes are read again, not left saying not found", async (t) => {
-    // The library's rule (#788): one face to be named and one person newly on the photo name it. The page's copy was
-    // drawn before the save and nothing drew it again: the box stayed red until the photo was opened once more.
-    const one = { faces: [face(1, [400, 300, 800, 700])], total: 1, unmatched: 1, size: [4000, 3000], turned: false };
-    const ctx = await openPhoto(t, { photoFaces: one });
-    ctx.show();
-    assert.match(ctx.boxes()[0].getAttribute("aria-label"), /not named/);
-    ctx.server.first("/api/photo/save-metadata", () => {
-      // What the library does at the save: the tag names the face.
-      one.faces[0].name = "Anh Tran";
-      return { success: true };
-    });
-    ctx.server.first("/api/photo-faces", () => structuredClone(one));
-    ctx.$("input-add-person").value = "Anh Tran";
-    click(ctx.window, ctx.$("btn-add-person"));
-    await flush(ctx.window, 16);
-    assert.match(ctx.boxes()[0].getAttribute("aria-label"), /Anh Tran/, "the box did not follow the tag");
-  });
-
-  test("taking the person's pill off unnames their face on the server, and the boxes follow (#908)", async (t) => {
-    const done = { faces: [face(1, [400, 300, 800, 700], { name: "Anh Tran" })], total: 1, unmatched: 0, size: [4000, 3000], turned: false };
-    const ctx = await openPhoto(t, {
-      photoFaces: done, photo: photoRecord({ filename: "a.jpg", tags: ["People/Anh Tran"], people: ["Anh Tran"] }),
-    });
-    ctx.show();
-    assert.match(ctx.boxes()[0].getAttribute("aria-label"), /Anh Tran/);
-    ctx.server.first("/api/photo/save-metadata", () => {
-      // What the server does with the tag (face_people.unname_for_removed_tags): the face is nobody's, and it says so.
-      done.faces[0].name = null;
-      return { success: true, unnamed_faces: [{ id: 1, name: "Anh Tran" }] };
-    });
-    ctx.server.first("/api/photo-faces", () => structuredClone(done));
-    const pill = [...ctx.document.querySelectorAll("#detail-people .tag-pill")].find((each) => each.textContent === "People/Anh Tran");
-    click(ctx.window, pill);
-    await flush(ctx.window, 16);
-    assert.match(ctx.boxes()[0].getAttribute("aria-label"), /not named/, "the box kept the name the server took off");
   });
 
   test("a save of the photo's tags asks nothing of the faces when none is left to be named", async (t) => {

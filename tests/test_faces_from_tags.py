@@ -58,7 +58,11 @@ def at(degrees):
 class Case(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self)
-        self.path = self.home.library("harbour.db")
+        self.make_library(self.home.library("harbour.db"))
+
+    def make_library(self, path):
+        """The library at `path`, with the tree these tests name people in."""
+        self.path = path
         schema.ensure(self.path)
         self.library = Library(self.path)
         self.folder = os.path.join(os.path.dirname(self.path), "Pictures")

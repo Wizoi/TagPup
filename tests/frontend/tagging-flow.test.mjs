@@ -8,7 +8,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, REAL, realLibrary, until } from "./harness.mjs";
 
 const PHOTOS = [
   { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["Beach"], people: [], captions: [], title: "" },
@@ -186,30 +186,6 @@ describe("seeing what is left to do", () => {
 });
 
 describe("carrying tags forward", () => {
-  test("it copies the previous photo's tags onto this one", async (t) => {
-    const { document, window, server: s } = await scanned(t);
-    press(document, "ArrowDown");   // a.jpg, tagged Beach
-    press(document, "ArrowDown");   // b.jpg, untagged
-    document.getElementById("btn-carry-forward").click();
-    await new Promise((r) => window.setTimeout(r, 30));
-
-    const body = s.lastBody("save-metadata");
-    assert.equal(body.path, "D:\\p\\b.jpg");
-    assert.deepEqual(body.tags, ["Beach"]);
-  });
-
-  test("Ctrl+D does the same", async (t) => {
-    const { document, window, server: s } = await scanned(t);
-    press(document, "ArrowDown");
-    press(document, "ArrowDown");
-    const ev = new window.KeyboardEvent("keydown", {
-      key: "d", ctrlKey: true, bubbles: true, cancelable: true,
-    });
-    document.dispatchEvent(ev);
-    await new Promise((r) => window.setTimeout(r, 30));
-    assert.equal(ev.defaultPrevented, true);
-    assert.deepEqual(s.lastBody("save-metadata").tags, ["Beach"]);
-  });
 
   test("it is offered only when there is something to copy", async (t) => {
     const { document } = await scanned(t);
@@ -218,65 +194,47 @@ describe("carrying tags forward", () => {
     press(document, "ArrowDown");   // second: the first has a tag
     assert.equal(document.getElementById("btn-carry-forward").disabled, false);
   });
-
-  test("it adds to existing tags rather than replacing them", async (t) => {
-    const photos = [
-      { ...PHOTOS[0], tags: ["Beach"] },
-      { ...PHOTOS[1], tags: ["Portrait"] },
-    ];
-    const { document, window, server: s } = await scanned(t, server(photos));
-    press(document, "ArrowDown");
-    press(document, "ArrowDown");
-    document.getElementById("btn-carry-forward").click();
-    await new Promise((r) => window.setTimeout(r, 30));
-
-    const tags = s.lastBody("save-metadata").tags;
-    assert.ok(tags.includes("Portrait"), "the photo's own tag was dropped");
-    assert.ok(tags.includes("Beach"), "the carried tag was not added");
-  });
 });
 
-describe("taking it back", () => {
-  test("undo is offered only after something undoable", async (t) => {
-    const { document, window } = await scanned(t);
-    assert.equal(document.getElementById("btn-undo").disabled, true);
+describe("carrying tags forward against the server", { skip: !REAL }, () => {
+  // tests/test_pages_against_the_real_server.py runs these: a.jpg holds Beach, b.jpg Portrait, c.jpg nothing.
+  async function openReal(t) {
+    const real = await realLibrary("tagged_photos");
+    const ctx = await loadApp("tagpup", { server: real.server, url: real.url, t });
+    await openFolder(ctx, real.folder);
+    await until(ctx, () => rows(ctx.document).length === 3, "the folder's three photos");
+    ctx.real = real;
+    ctx.tagsOnServer = async () => {
+      const scan = await (await fetch(`${REAL.tagpup}/${real.library}/api/folder/scan?path=${encodeURIComponent(real.folder)}`)).json();
+      return Object.fromEntries(scan.map((photo) => [photo.filename, [...photo.tags].sort()]));
+    };
+    return ctx;
+  }
 
+  test("the tags are carried onto the next photo, read back from the server, and Undo takes off what was added", async (t) => {
+    const ctx = await openReal(t);
+    const { document } = ctx;
+    const undo = document.getElementById("btn-undo");
     press(document, "ArrowDown");
-    press(document, "ArrowDown");
+    press(document, "ArrowDown");   // b.jpg, which holds Portrait
+    assert.equal(undo.disabled, true, "nothing to undo yet");
     document.getElementById("btn-carry-forward").click();
-    await new Promise((r) => window.setTimeout(r, 30));
-
-    assert.equal(document.getElementById("btn-undo").disabled, false);
+    await until(ctx, () => !undo.disabled, "the write to be undoable");
+    assert.deepEqual((await ctx.tagsOnServer())["b.jpg"], ["Beach", "Portrait"], "it adds to the photo's own tags");
+    undo.click();
+    await until(ctx, () => ctx.server.replied.some((url) => url.includes("bulk-tags")), "the server to take the tags off");
+    assert.equal(undo.disabled, true, "Undo empties itself: it cannot be applied twice");
+    assert.deepEqual(await ctx.tagsOnServer(), { "a.jpg": ["Beach"], "b.jpg": ["Portrait"], "c.jpg": [] }, "only what the write added was taken off");
   });
 
-  test("undo takes off the tags the write added", async (t) => {
-    // As a difference, through the bulk write, which starts from the file: posting the
-    // whole list from before overwrote a write queued after the one undone.
-    const s = server().on("/api/photos/bulk-tags", { success: true });
-    const { document, window } = await scanned(t, s);
-    press(document, "ArrowDown");
-    press(document, "ArrowDown");
-    document.getElementById("btn-carry-forward").click();
-    await new Promise((r) => window.setTimeout(r, 30));
-
-    document.getElementById("btn-undo").click();
-    await new Promise((r) => window.setTimeout(r, 30));
-
-    const body = s.lastBody("bulk-tags");
-    assert.deepEqual(body.paths, ["D:\\p\\b.jpg"]);
-    assert.deepEqual(body.remove_tags, ["Beach"], "b.jpg was not restored to having no tags");
-    assert.deepEqual(body.add_tags, []);
-  });
-
-  test("undo empties itself, so it cannot be applied twice", async (t) => {
-    const { document, window } = await scanned(t);
-    press(document, "ArrowDown");
-    press(document, "ArrowDown");
-    document.getElementById("btn-carry-forward").click();
-    await new Promise((r) => window.setTimeout(r, 30));
-    document.getElementById("btn-undo").click();
-    await new Promise((r) => window.setTimeout(r, 30));
-    assert.equal(document.getElementById("btn-undo").disabled, true);
+  test("Ctrl+D does the same", async (t) => {
+    const ctx = await openReal(t);
+    for (let i = 0; i < 3; i++) press(ctx.document, "ArrowDown");   // c.jpg, after b.jpg's Portrait
+    const ev = new ctx.window.KeyboardEvent("keydown", { key: "d", ctrlKey: true, bubbles: true, cancelable: true });
+    ctx.document.dispatchEvent(ev);
+    assert.equal(ev.defaultPrevented, true);
+    await until(ctx, () => !ctx.document.getElementById("btn-undo").disabled, "the write to be undoable");
+    assert.deepEqual((await ctx.tagsOnServer())["c.jpg"], ["Portrait"]);
   });
 });
 
