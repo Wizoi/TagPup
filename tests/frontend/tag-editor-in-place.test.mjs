@@ -198,7 +198,7 @@ describe("a rename is shown at once", () => {
     click(window, control(document, 2, "rename"));
     assert.equal(labelOf(row), "Zelda Brookmire", "the new name waited for the server");
     assert.match(marker(document, 2), /renaming/);
-    assert.match(marker(document, 2), /photos are being rewritten/);
+    assert.match(marker(document, 2), /renaming/);
     assert.deepEqual(childNames(document, 1), ["Avery Tolland", "Zelda Brookmire"]);
     assert.equal(rowOf(document, 2), row, "the row was rebuilt");
     assert.equal(rowOf(document, 1), people);
@@ -775,50 +775,16 @@ describe("the review's findings", () => {
     assert.equal(leave(), false);
   });
 
-  /** The page's timers, held: the ones the queue sets for 30 s and 5 minutes are kept to be let off. */
-  function holdTimers(window) {
-    const held = [];
-    window.setTimeout = (fn, ms) => { held.push({ fn, ms, off: false }); return held.length; };
-    window.clearTimeout = (id) => { if (held[id - 1]) held[id - 1].off = true; };
-    return { fire: (ms) => held.filter((h) => h.ms === ms && !h.off).forEach((h) => h.fn()), held };
-  }
-  const queueBox = (document) => document.querySelector("#taxonomy-modal .tag-editor-queue");
-
-  test("#539: a change waiting over 30 s is said so, with what is queued; the notice goes when it is answered", async (t) => {
+  test("#539: a request that never answers holds its node; later changes are queued behind it, not dropped", async (t) => {
     const ctx = await openEditor(t);
     const { window, document, server } = ctx;
-    const timers = holdTimers(window);
-    const gate = gated(server, "/api/taxonomy/rename", { success: true },
-      () => { ctx.world.tree[3].name = "Venues"; ctx.world.tree[3].tag = "Venues"; ctx.world.tree[7].tag = "Venues/Harbor Town"; });
-    ctx.answers.prompt = "Venues";
-    click(window, control(document, 4, "rename"));
-    ctx.answers.prompt = "Beta";
-    click(window, control(document, 3, "rename"));
-    await flush(window, 3);
-    assert.equal(queueBox(document).hidden, true, "said before it had waited");
-    timers.fire(30000);
-    assert.equal(queueBox(document).hidden, false);
-    assert.match(queueBox(document).textContent, /Still waiting for the server: 2 changes are queued\. They are sent in order\./);
-    const items = [...queueBox(document).querySelectorAll("li")].map((li) => li.textContent);
-    assert.deepEqual(items, ['Rename "Places" to "Venues"', 'Rename "Activity" to "Beta"']);
-    gate.resolve();
-    await flush(window, 10);
-    assert.equal(queueBox(document).hidden, true);
-  });
-
-  test("#539: a request that never answers is called stuck after 5 minutes; later changes are queued, not dropped", async (t) => {
-    const ctx = await openEditor(t);
-    const { window, document, server } = ctx;
-    const timers = holdTimers(window);
     const never = deferred();
     let calls = 0;
     server.first("/api/taxonomy/rename", () => (++calls === 1 ? never.promise : Promise.resolve({ success: true })));
     ctx.answers.prompt = "Venues";
     click(window, control(document, 4, "rename"));
     await flush(window, 3);
-    timers.fire(300000);
-    assert.match(queueBox(document).textContent, /reload the page to see what it holds/);
-    assert.match(marker(document, 4), /renaming/, "the stuck change was dropped or settled by guessing");
+    assert.match(marker(document, 4), /renaming/, "the change was dropped or settled by guessing");
     ctx.answers.prompt = "Beta";
     click(window, control(document, 3, "rename"));
     await flush(window, 6);
