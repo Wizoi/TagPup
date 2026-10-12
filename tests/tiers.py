@@ -46,6 +46,7 @@ SCENARIO = frozenset({
     "test_no_writes_to_damaged_photos",
     "test_writes_refuse_cut_short_photos",
     "test_rotate_keeps_the_photo",
+    "test_rotate_is_journaled",
     "test_taxonomy_lifecycle",
     # Faces and tags kept in step across files, jobs and the CLI's journaled apply.
     "test_bulk_faces_and_tags",

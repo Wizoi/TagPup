@@ -6,9 +6,9 @@ import os
 from tagpup.core import dates, fields, paths, photo_meta, renaming, validation, vocabulary
 from tagpup.core.result import NotFound, Refused, Result
 from tagpup.files import images, metadata, names, recycle_bin, shares
-from tagpup.services import file_changes, file_only, libraries, thumbnails
+from tagpup.services import file_changes, file_only, libraries, rotation, thumbnails
 from tagpup.services import roots as roots_service
-from tagpup.store import db, embeddings, faces, generations, photos, taxonomy
+from tagpup.store import db, faces, generations, photos, taxonomy
 from tagpup.store import folders as store_folders
 
 logger = logging.getLogger(__name__)
@@ -560,55 +560,91 @@ def delete(library, photo_path):
     return result
 
 
-@file_changes.exclusively()
-@roots_service.canonical_args("photo_path")
-def rotate(library, photo_path, direction, exiftool_path):
-    """Turn a photo a quarter left or right. Clicking Rotate Left or Rotate Right.
+def rotate_plan(direction):
+    """The `plan_one` of a quarter turn (tagpup.services.file_changes.write_fields): the Orientation the photo holds, turned,
+    composed with the one already there (a phone photo stored sideways, 6, turned left is 1, not 8); one it holds none of
+    is taken for 1. `detail` is what a turn reports of the photo."""
 
-    Only the file's Orientation changes; its pixels do not (tagpup.files.metadata.
-    rotate_image_file). Face boxes are in the coordinates Pillow shows the photo in:
-    for most formats the stored pixels, which do not move, so the boxes stay where they
-    are. Pillow applies a TIFF's Orientation as it loads it, so a TIFF's boxes turn with
-    the photo. The index row gets the file's new mtime and size, or the folder scan
-    would distrust it and read the photo again.
+    def plan_one(_path, held):
+        new = rotation.next_orientation(direction, held.get(rotation.FIELD))
+        return file_changes.Plan(after={rotation.FIELD: [str(new)]}, detail={"orientation": new, "faces_turned": 0})
+    return plan_one
 
-    details: `mtime` and `size` of the file now (the pages version image URLs by mtime,
-    because thumbnails are cached for a day), its `orientation`, and `faces_turned`.
-    Refused, touching nothing, for a direction that is not a "rotate direction".
+
+def _turn_loose(photo_paths, direction, exiftool_path):
+    """The photos of folders the library does not hold, turned in their files only (file_only.rotate), one Result."""
+    out = Result(attempted=len(photo_paths))
+    out.details["written"] = {}
+    for photo_path in photo_paths:
+        turned = file_only.rotate(photo_path, direction, exiftool_path)
+        out.changed += turned.changed
+        out.errors += turned.errors
+        if turned.changed:
+            out.details["written"][photo_path] = {"orientation": turned.details["orientation"], "faces_turned": 0}
+    return out
+
+
+@roots_service.canonical_args("photo_paths")
+def rotate_photos(library, photo_paths, direction, exiftool_path):
+    """Turn photos a quarter left or right, as ONE journaled change "rotate" (tagpup.services.file_changes.write_fields):
+    each photo's Orientation planned from what the file holds, written, and its row recorded as it is marked done -- with
+    the face boxes the turn moves and the vectors it makes stale (tagpup.services.rotation), in the same transaction. A crash
+    between the file and its rows is settled forward at the next start; History's Undo turns the files and the boxes back.
+    More than batches.CHUNK photos are a batch like any other (claim, chunks, Cancel, progress), over batches.MAX_BATCH refused.
+
+    Only the file's Orientation changes; its pixels do not (tagpup.files.metadata.rotate_image_file's note). Face boxes are in
+    the coordinates Pillow shows the photo in: for most formats the stored pixels, which do not move, so the boxes stay where
+    they are. Pillow applies a TIFF's Orientation as it loads it, so a TIFF's boxes turn with the photo. The index row gets
+    the file's new mtime and size (only when it described the file just before, #249), or the folder scan would distrust it.
+
+    A photo of a folder the library does not hold (Just look) is turned in its file only, unjournaled (file_only). A photo cut
+    short is left out of a batch (skipped, counted); a single one is refused, with nothing written. details: `written`
+    {path: {"orientation", "faces_turned"}} and `change`, as write_fields gives them, `file_only` and `with_rows`. Refused,
+    touching nothing, for a direction that is not a "rotate direction".
     """
-    result = Result(attempted=1)
+    result = Result(attempted=len(photo_paths))
     refused = validation.problem("rotate direction", direction)
     if refused:
         result.refuse(refused)
         return result
-    _held, loose = libraries.split(library, [photo_path])
-    if loose:
-        # A photo of a folder the library does not hold: its file only, but only if it decodes.
-        if file_only.refuse_unwritable(result, [photo_path], full=True):
-            return result
-        turned = file_only.rotate(photo_path, direction, exiftool_path)
-        turned.details.update({file_only.FILE_ONLY: turned.changed, file_only.WITH_ROWS: 0})
-        return turned
-    if libraries.refuse_writes(result, library, [photo_path]) or file_only.refuse_unwritable(result, [photo_path]):
+    held, loose = libraries.split(library, photo_paths)
+    if held and libraries.refuse_writes(result, library, held):
         return result
-    # The row is stamped only if it described the file just before the turn (#249).
-    before = embeddings.stamp_of(photo_path)
+    # A loose photo is asked for what it decodes as; a single held one is refused when cut short (a batch skips such a photo).
+    if loose and file_only.refuse_unwritable(result, loose, full=True):
+        return result
+    if len(held) == 1 and file_only.refuse_unwritable(result, held):
+        return result
     try:
-        width, height, oriented = images.shown_size(photo_path)
-        orientation = metadata.rotate_image_file(photo_path, direction, exiftool_path)
+        journaled = file_changes.write_fields(
+            library, "rotate", exiftool_path, held, [rotation.FIELD], rotate_plan(direction),
+            summary={"photos": len(held), "direction": direction}) if held else None
+        files = _turn_loose(loose, direction, exiftool_path) if loose else None
+        return file_only.combined(journaled, files)
     except Exception as e:
-        result.fail(photo_path, e)
+        result = Result(attempted=len(photo_paths))
+        result.fail("rotate", e)
         return result
-    result.changed = 1
-    result.details["orientation"] = orientation
-    result.details["faces_turned"] = (
-        faces.turn_boxes(library.path, photo_path, direction, width, height) if oriented else 0)
-    # The embedder applies the Orientation, so the photo's vectors describe the turn
-    # before; they go, and are computed again.
-    photos.record_file_stat(library.path, photo_path, looks_different=True, before=before)
+
+
+def rotate(library, photo_path, direction, exiftool_path):
+    """Turn a photo a quarter left or right. Clicking Rotate Left or Rotate Right: rotate_photos of one photo.
+
+    details: `mtime` and `size` of the file now (the pages version image URLs by mtime, because thumbnails are cached for a
+    day), its `orientation`, `faces_turned`, and `change` (History's id of the turn; None for a photo of a folder the library
+    does not hold). A photo left alone is an error here, not a quiet nothing.
+    """
+    result = rotate_photos(library, [photo_path], direction, exiftool_path)
+    if result.refused or result.errors:
+        return result
+    turned = next((detail for key, detail in result.details.get("written", {}).items()
+                   if paths.same(key, photo_path)), None) if result.changed else None
+    if turned is None:
+        result.fail(photo_path, "; ".join(why for _what, why in result.skipped) or "it was not turned")
+        return result
     stat = os.stat(photo_path)
+    result.details.update(turned)
     result.details.update(mtime=stat.st_mtime, size=stat.st_size)
-    result.details.update({file_only.FILE_ONLY: 0, file_only.WITH_ROWS: 1})
     return result
 
 

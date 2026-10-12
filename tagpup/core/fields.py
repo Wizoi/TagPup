@@ -75,6 +75,14 @@ def scan_reads(field):
     return key in METADATA_FIELDS or bare in METADATA_FIELDS
 
 
+#: The field a rotation journals: the EXIF Orientation, 1 to 8 (tagpup.services.rotation).
+ORIENTATION = "EXIF:Orientation"
+
+#: Fields written under another name than the one they are read and journaled by. Orientation is written without its group,
+#: so that an XMP tiff:Orientation already in the file is updated to match and not left to contradict the EXIF one.
+WRITTEN_AS = {ORIENTATION: "Orientation"}
+
+
 #: The camera of a photo that names none.
 UNKNOWN_CAMERA = "Unknown Camera"
 

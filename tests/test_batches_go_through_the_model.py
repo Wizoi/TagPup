@@ -43,6 +43,7 @@ SMALL = {
     "/api/faces/job/undo": "an assignment's undo is the journal's, a chunk at a time; face assignments fold into the batch model next",
     "/api/photo/automatch": "one photo",
     "/api/photo/unmatch-all": "one photo",
+    "/api/photo/rotate": "one photo; photos.rotate_photos takes any number through the same claim and chunks (no route sends more)",
 }
 
 

@@ -195,34 +195,31 @@ def turned_box(box, direction, width, height):
     return [height - y2, x1, height - y1, x2]
 
 
-def turn_boxes(db_path, photo_path, direction, width, height):
-    """Turn a photo's stored face boxes with it. Returns how many rows changed.
+def turn_boxes_in(conn, photo_path, direction, width, height):
+    """Turn a photo's stored face boxes with it, in the caller's transaction (a rotation's, tagpup.services.rotation).
+    `width` and `height` are the picture's size before the turn. Returns how many rows changed.
 
     Only for a photo Pillow shows already oriented (a TIFF: Pillow applies its
     Orientation on load), where every box -- and every crop cut from it -- is in the
     turned picture's coordinates once the Orientation changes. The cached crop is
     dropped so the next request cuts it again from the right place.
     """
-    def turn(conn):
-        cursor = conn.cursor()
-        where, where_params = _on_photo(conn, photo_path)
-        rows = cursor.execute("SELECT id, box FROM faces WHERE " + where, where_params).fetchall()
-        changed = 0
-        for face_id, box_json in rows:
-            try:
-                box = json.loads(box_json)
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(box, list) or len(box) < 4:
-                continue
-            cursor.execute("UPDATE faces SET box = ? WHERE id = ?",
-                           (json.dumps(turned_box(box, direction, width, height)), face_id))
-            changed += cursor.rowcount
-            cursor.execute("DELETE FROM face_crops WHERE face_id = ?", (face_id,))
-        return changed
-
-    return db.write_with_connection(
-        db_path, turn, label="face boxes for rotated %s" % os.path.basename(photo_path))
+    cursor = conn.cursor()
+    where, where_params = _on_photo(conn, photo_path)
+    rows = cursor.execute("SELECT id, box FROM faces WHERE " + where, where_params).fetchall()
+    changed = 0
+    for face_id, box_json in rows:
+        try:
+            box = json.loads(box_json)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(box, list) or len(box) < 4:
+            continue
+        cursor.execute("UPDATE faces SET box = ? WHERE id = ?",
+                       (json.dumps(turned_box(box, direction, width, height)), face_id))
+        changed += cursor.rowcount
+        cursor.execute("DELETE FROM face_crops WHERE face_id = ?", (face_id,))
+    return changed
 
 
 def crop_of(db_path, face_id):

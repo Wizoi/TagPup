@@ -58,6 +58,9 @@ class FileRow:
     note: Optional[str] = None
     #: (mtime, size) of the file just before its write, or None.
     stamp: Optional[tuple] = None
+    #: Not stored: what recording the file made of its photo's rows besides the fields, as the writer reports it (the face
+    #: boxes a rotation turned, tagpup.services.rotation).
+    followed: int = 0
 
     @property
     def is_rename(self):
