@@ -131,7 +131,7 @@ async function exclusionWhy(res) {
     }
 }
 
-/** Resolves true once the server has excluded the faces, false otherwise. */
+/** Resolves to the ids the server excluded (some may be left: a photo that could not be written), false when it did not. */
 export function postExcludeBulk(faceIds, presetReason) {
     if (!faceIds.length) return Promise.resolve(false);
     // A caller that has already asked the question passes the reason in, rather
@@ -162,17 +162,20 @@ export function postExcludeBulk(faceIds, presetReason) {
     .then(data => {
         // Said, not thrown: the faces are ruled out all the same.
         if (data && data.warning) alert(data.warning);
-        state.lastAssignChange = data && data.change ? { change: data.change, kind: 'ignore' } : null;
-        const excluded = new Set(faceIds);
+        state.lastAssignChange = data && data.change ? { change: data.change, kind: 'ignore', plain: data.plain || [] } : null;
+        // The faces the server left (their photo could not be written, the batch was stopped) stay where they are.
+        const left = new Set((data && data.left) || []);
+        const done = faceIds.filter(id => !left.has(id));
+        const excluded = new Set(done);
         state.activePersonFaces = state.activePersonFaces.filter(f => !excluded.has(f.id));
         // In place. Rebuilding the grid to account for a handful of cards leaving
         // meant recreating every card on screen -- ten seconds for Unknown Faces.
-        removeFacesFromGrid(faceIds);
+        removeFacesFromGrid(done);
         updateTabLabels();
         clearFaceDetails();
         // Go through the mode dispatcher so the sidebar always matches Tune target.
         upper.refreshSidebarQuietly();
-        return true;
+        return done;
     })
     .catch(err => {
         console.error(err);
@@ -241,11 +244,12 @@ function postUnmatchBulk(faceIds) {
     .then(data => {
         if (data.warning) alert(data.warning);
         if (data.success) {
-            // In place: only the cards that left. This removed them and then
+            // In place: only the cards that left (not the faces the server left as they were). This removed them and then
             // rebuilt every card on screen as well.
-            const leaving = new Set(faceIds);
+            const left = new Set(data.left || []);
+            const leaving = new Set(faceIds.filter(id => !left.has(id)));
             state.activePersonFaces = state.activePersonFaces.filter(f => !leaving.has(f.id));
-            removeFacesFromGrid(faceIds);
+            removeFacesFromGrid([...leaving]);
 
             // Update tab counts
             updateTabLabels();
@@ -327,7 +331,7 @@ function closeIgnoreConfirm() {
 }
 
 /** Undo the last assign or ignore: the journal's undo of its change (POST /api/history/<change>/undo, as History's), then put its faces back in the grid they left. */
-function undoAssignment(faceIds, change, kind) {
+function undoAssignment(faceIds, change, kind, plain = []) {
     // Synchronous on the server (the files a few at a time): the bar says so, stays until it ends, and cannot be pressed twice.
     if (state.assignUndoTimer) {
         clearTimeout(state.assignUndoTimer);
@@ -350,15 +354,21 @@ function undoAssignment(faceIds, change, kind) {
         hideAssignUndo();
         if (btnAssignUndo) btnAssignUndo.disabled = false;
         const refused = (data.errors || []).length;
-        if (refused) {
-            // A file changed since is never overwritten: its photo and faces stay as they are, and History says which.
-            alert(`${refused} photo(s) could not be put back (changed since): they and their faces were left as they are.`);
+        const facesLeft = data.faces_left || 0;
+        if (refused || facesLeft) {
+            // A file changed since is never overwritten, and a face somebody changed since is not put back: they stay as they are.
+            alert(`${refused} photo(s) and ${facesLeft} face(s) could not be put back (changed since); they were left as they are.`);
         }
-        if (kind === 'ignore') {
+        if (kind === 'ignore' && plain.length) {
             // The faces that carried no name had no photo to write: the faces' own call restores them (and puts them back in the grid).
-            postRestoreBulk(faceIds, { undo: true });
+            postRestoreBulk(plain, { undo: true });
+        }
+        if (refused || facesLeft) {
+            // Which cards are back is the server's to say: the person is read again.
+            if (state.activePersonName) upper.selectPerson(state.activePersonName, null, false, false, state.activePersonId);
         } else {
-            putFacesBack(faceIds);
+            const apart = new Set(plain);
+            putFacesBack(faceIds.filter(id => !apart.has(id)));
         }
         clearFaceDetails();
         upper.fetchPeopleWithCounts(true, true);
@@ -811,7 +821,7 @@ ${summary}${note}`)) {
             const last = state.lastAssignChange;
             if (last && last.kind === kind) {
                 state.lastAssignChange = null;
-                undoAssignment(ids, last.change, kind);
+                undoAssignment(ids, last.change, kind, last.plain || []);
                 return;
             }
             hideAssignUndo();

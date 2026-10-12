@@ -468,7 +468,7 @@ def faces_unmatch_bulk():
         abort(400, description="Invalid face_ids format")
     outcome = face_routes.assigned(library, face_assignment.plan_unname(library, face_ids))
     return face_routes.with_warning({"success": True, "changed": len(outcome.applied) + outcome.plain,
-                                     "tags_removed": outcome.files, "change": outcome.change}, outcome)
+                                     "tags_removed": outcome.files, "change": outcome.change, "left": outcome.left}, outcome)
 
 
 @routes.post("/api/photo/unmatch-all")

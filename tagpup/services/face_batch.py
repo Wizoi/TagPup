@@ -16,7 +16,7 @@ process has neither; nothing depends on them.
 import threading
 
 from tagpup.core import paths
-from tagpup.store import face_batches, faces
+from tagpup.store import db, face_batches, faces, person_ids
 
 NAME, UNNAME, EXCLUDE, GUESS = "name", "unname", "exclude", "guess"
 
@@ -34,6 +34,7 @@ class Work:
         self._photos = {}          # {paths.key(path): (path, [(face id, old, new)])}
         self.add = {}              # {paths.key(path): [tag]}: the tags a photo is to be given
         self.remove = {}           # {paths.key(path): [person]}: the people a photo is to lose (a Ref), when no face carries them
+        self.people = []           # the people the faces are to be given, as person_ids.wire has them
         self.applied, self.left = [], []
         self.accounted = []
 
@@ -55,6 +56,21 @@ class Work:
         with _guard:
             _live[change_id] = self
 
+    def verify(self, library):
+        """Under the lock of changes of photo files, before a file is read: the people the faces are to be given are still people
+        (a node merged away, renamed to a group, or two people now called alike since the click). A sentence refusing the whole,
+        nothing written, else None. A person gone after this is the follower's: the tag is written and no face is named."""
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            known = person_ids.read(conn)
+            for person in self.people:
+                person_ids.target(conn, person, known)
+        except person_ids.PersonProblem as problem:
+            return "%s Nothing was changed." % problem
+        finally:
+            conn.close()
+        return None
+
     def release(self):
         """The change is over for this process (finished, refused or raised): nothing is kept of it."""
         with _guard:
@@ -73,26 +89,46 @@ class Work:
         return joined
 
 
-def follower(row, state):
+class Follower:
     """What the row of a file must do for its photo's faces in the transaction that marks it `state` ('done', or 'undone' going
-    back): a function of the connection, or None for a file that is not a photo's. It finds no faces of its own in a change that
-    holds none."""
-    if row.is_rename or row.photo_id is None:
-        return None
-    forward = state == "done"
+    back). `start(conn)` is called first thing in that transaction, before the file's row is recorded (recording can name a guess,
+    which the cached grids must not take for the write's own); then the follower is called with the connection."""
 
-    def follow(conn):
+    def __init__(self, row, state):
+        self.row, self.forward = row, state == "done"
+        self.before = None
+
+    def _work(self):
+        work = _live.get(self.row.change_id)
+        return work if work is not None and self.forward and work.op in (NAME, EXCLUDE) else None
+
+    def start(self, conn):
+        if self._work() is not None:
+            self.before = faces.fingerprint(conn)
+
+    def __call__(self, conn):
+        row = self.row
+        done = face_batches.follow(conn, row.change_id, row.photo_id, self.forward)
+        if done is None:
+            return
         work = _live.get(row.change_id)
-        pools = forward and work is not None and work.op in (NAME, EXCLUDE)
-        before = faces.fingerprint(conn) if pools else None
-        done = face_batches.follow(conn, row.change_id, row.photo_id, forward)
-        if done is None or work is None or not forward:
+        if not self.forward:
+            row.faces_left = len(done.left)
+            if work is not None:      # taken out of its change as it ran (_read_back): those faces were not written after all
+                work.applied = [face_id for face_id in work.applied if face_id not in set(done.written)]
+            return
+        if work is None:
             return
         work.applied.extend(done.written)
         work.left.extend(done.left)
-        if pools and done.unpooled:
-            work.accounted.append((done.unpooled, before, faces.fingerprint(conn)))
-    return follow
+        if self.before is not None and done.unpooled:
+            work.accounted.append((done.unpooled, self.before, faces.fingerprint(conn)))
+
+
+def follower(row, state):
+    """A Follower for the row of a file, or None for a file that is not a photo's. It finds no faces of its own in a change that
+    holds none."""
+    return None if row.is_rename or row.photo_id is None else Follower(row, state)
 
 
 def tidy(conn, change_id):

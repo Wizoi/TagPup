@@ -75,6 +75,7 @@ def plan_name(library, face_ids, person):
     wanted = check.details["matched_ids"]
     found, target = _read(library, lambda conn: (faces.planning(conn, wanted), person_ids.target(conn, ref)))
     work = Work(NAME)
+    work.people = [ref]
     for face_id in wanted:
         if face_id in found:
             _photo, path, old = found[face_id]
@@ -138,6 +139,7 @@ def plan_guesses(library, folder, named):
 
     found, chosen, targets = _read(library, read) if proposed else ({}, [], {})
     work, problems = Work(GUESS), set()
+    work.people = list(targets)
     for face_id, person, _photo in chosen:
         tag = filer.tag(person)
         if tag is None:
@@ -181,12 +183,13 @@ def forget_old_jobs(library):
 class Outcome:
     """What a run did, counted from what was written: `applied` the faces written with their photos (ids), `left` the faces of the
     plan that were not (a photo that could not be written, a face changed since, a batch stopped), `files` the photo files written,
-    `plain` how many faces without a photo were written, `change` the journal's change (None when nothing was planned), `problems` the
+    `plain` how many faces without a photo were written (`plain_ids` which), `change` the journal's change (None when nothing was planned), `problems` the
     sentences to say, `runs` the writes that took faces out of identity work ([(face ids, fingerprint before, fingerprint after)]) for
     the cached grids."""
 
     def __init__(self):
         self.applied, self.left, self.files, self.plain, self.change = [], [], 0, 0, None
+        self.plain_ids = []
         self.problems, self.runs = [], []
 
     def warning(self):
@@ -217,6 +220,7 @@ def _write_plain(library, plan, outcome):
         else:
             done = faces_service.unname_faces(library, chunk)
         outcome.plain += done.changed
+        outcome.plain_ids.extend(chunk)
 
 
 def run(library, plan, exiftool_path, told=None):
@@ -246,7 +250,12 @@ def run(library, plan, exiftool_path, told=None):
         if told is not None and result.details.get("written"):
             told(result)
         if result.refused and change is None:
-            raise Conflict(result.refused)
+            if not result.details.get("cancelled"):
+                raise Conflict(result.refused)
+            # Cancelled before its turn: nothing was written, and said as a stopped batch is (the faces stay where they were).
+            outcome.left = work.face_ids()
+            outcome.problems.append(result.refused)
+            return outcome
         outcome.change = change
         outcome.files = result.changed
         outcome.applied = list(work.applied)

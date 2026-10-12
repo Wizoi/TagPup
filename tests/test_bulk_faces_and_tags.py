@@ -17,8 +17,11 @@ from test_file_journal import Crash, crash_at  # noqa: E402
 from test_organize_faces import ODA, WREN  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
-from tagpup.services import activity, batches, face_assignment, file_changes, job_runs  # noqa: E402
+from tagpup.core.result import Conflict  # noqa: E402
+from tagpup.services import activity, batches, face_assignment, file_changes, identify, job_runs  # noqa: E402
+from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, people, taxonomy  # noqa: E402
+from tagpup.web import face_routes  # noqa: E402
 
 ASSIGN = "assign faces to a person"
 IGNORE = "ignore faces"
@@ -214,6 +217,7 @@ class TakingNamesOffMany(Bulk):
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertIn("warning", reply.get_json())
         self.assertEqual([WREN, None], [self.row(f)[0] for _p, f in made], "the face and its photo disagree")
+        self.assertEqual([made[0][1]], reply.get_json()["left"], "the page would take the card of a face that stayed named")
         self.assertEqual({PEOPLE + WREN, "Regatta"}, set(self.tags(made[0][0])))
 
     def test_ignoring_a_cluster_takes_the_named_ones_people_off_and_reads_no_photo_for_the_rest(self):
@@ -251,7 +255,7 @@ class TakingNamesOffMany(Bulk):
         db.write_with_connection(self.path, lambda conn: conn.execute(
             "UPDATE faces SET excluded = 0, excluded_reason = NULL, name = ?, tag_id = NULL, name_source = 'manual' WHERE id = ?",
             (ODA, made[1][1])))
-        self.undo(change)
+        self.assertEqual(1, self.undo(change)["faces_left"], "the undo did not count the face it left")
         self.assertEqual([WREN, ODA, WREN], [self.row(f)[0] for _p, f in made], "somebody's newer decision was overwritten")
         self.assertEqual([[PEOPLE + WREN]] * 3, [self.tags(p) for p, _f in made], "the tags go back with the files")
 
@@ -375,18 +379,75 @@ class InterruptedAndAtOnce(Bulk):
         self.assertEqual((ODA, "manual"), self.row(made[2][1])[:2], "a decision made since was overwritten")
         self.assertEqual(2, self.faces_recorded(body["change"]))
 
-    def test_a_person_merged_away_meanwhile_names_no_face_and_the_batch_goes_on(self):
-        made = self.many(2)
-        plan = face_assignment.plan_name(self.library, [f for _p, f in made], WREN)
-
+    def merge_away(self):
         def merged_away(conn):
             with people.tree_edit(conn):
                 taxonomy.remove_node(conn, PEOPLE + WREN, force=True)
 
         db.write_with_connection(self.path, merged_away)
+
+    def test_a_person_merged_away_before_the_write_refuses_the_whole_and_writes_nothing(self):
+        made = self.many(2)
+        plan = face_assignment.plan_name(self.library, [f for _p, f in made], WREN)
+        self.merge_away()
+        with self.assertRaises(Conflict) as why:
+            face_assignment.run(self.library, plan, "exiftool")
+        self.assertIn("Nothing was changed", str(why.exception))
+        self.assertEqual((0, [None, None], []), (self.files.writes, [self.row(f)[0] for _p, f in made], self.operations(ASSIGN)))
+
+    def test_a_person_merged_away_during_the_write_names_no_later_face_and_the_batch_goes_on(self):
+        made = self.many(2)
+        plan = face_assignment.plan_name(self.library, [f for _p, f in made], WREN)
+        self.files.on_write = lambda path, n: self.merge_away() if n == 1 else None
         outcome = face_assignment.run(self.library, plan, "exiftool")
         self.assertEqual(([], 2, 2), (outcome.applied, len(outcome.left), outcome.files), "the tags are written all the same")
         self.assertEqual([None, None], [self.row(f)[0] for _p, f in made])
+
+    def test_a_file_that_holds_what_it_held_after_the_write_takes_its_faces_back(self):
+        made = self.many(1)
+        photo, face = made[0]
+
+        def the_write_did_not_take(step):
+            if step == "file written":
+                self.files.keep_tags(photo, [])
+
+        with mock.patch.object(file_changes, "_reached", side_effect=the_write_did_not_take):
+            body = self.assign(made).get_json()
+        self.assertEqual(([], (None, None)), (self.tags(photo), self.row(face)[:2]), "a face is named for a tag the file lacks")
+        self.assertEqual(0, self.faces_recorded(body["change"]), "History holds a face change for a file that is not in it")
+        self.assertEqual([face], body["not_named"])
+
+    def test_the_cached_grid_keeps_its_cards_when_the_tag_itself_guesses_the_face(self):
+        made = self.many(3)                               # each photo's only face is the one the rule would guess
+        cache = face_routes.identify_cache.of(self.library)
+        cache.put("matches:Unknown Faces", identify.fingerprint(self.library),
+                  {"faces": [{"id": face, "cluster_id": -1} for _p, face in made], "unclustered_total": 3})
+        body = self.tuner_post("faces/match-bulk", {"face_ids": [made[0][1]], "person_name": WREN}).get_json()
+        self.assertEqual(1, body["matched"])
+        entry = cache.entry("matches:Unknown Faces")
+        self.assertEqual([made[1][1], made[2][1]], [each["id"] for each in entry["value"]["faces"]],
+                         "the grid was thrown away: the next click builds it again")
+        self.assertEqual(identify.fingerprint(self.library), entry["fingerprint"])
+
+    def test_a_batch_cancelled_before_its_turn_is_answered_as_stopped_and_changes_nothing(self):
+        made = self.many(30)
+        with mock.patch.object(batches, "_closing", True):
+            reply = self.assign(made)
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        body = reply.get_json()
+        self.assertEqual((0, 30), (body["matched"], len(body["not_named"])))
+        self.assertIn("cancelled before it began", body["warning"])
+        self.assertEqual((0, [None] * 30), (self.files.writes, [self.row(f)[0] for _p, f in made]))
+
+    def test_a_crash_while_undoing_keeps_the_faces_the_change_recorded(self):
+        made = self.many(3)
+        change = self.assign(made).get_json()["change"]
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file recorded", nth=1)):
+            with self.assertRaises(Crash):
+                journal_service.undo(self.library, change, apply=True, exiftool_path="exiftool")
+        self.settle()
+        self.assertEqual(([None] * 3, 3), ([self.row(f)[0] for _p, f in made], self.faces_recorded(change)),
+                         "settling the undo took away what History shows of the change")
 
 
 class TheOldAssignmentRecordsAreLetGo(Bulk):

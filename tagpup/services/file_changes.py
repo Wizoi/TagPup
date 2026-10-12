@@ -285,7 +285,9 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
                 # Not waited for by a caller that holds the lock (_depth): the batch ahead needs it.
                 turn.enter_context(batches.claim(library, operation, len(photo_paths), wait=getattr(_depth, "n", 0) == 0))
             except (Conflict, Refused) as why:
-                return _refused_whole(photo_paths, str(why))
+                refused = _refused_whole(photo_paths, str(why))
+                refused.details["cancelled"] = isinstance(why, Refused)     # cancelled while it waited, not a queue that is full
+                return refused
         return _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
                               stop_at_first_error, et, held, read_back_also, on_planned, alongside)
 
@@ -318,6 +320,10 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     written = result.details["written"] = {}
     result.details.update(change=None, conflicts=[], read_back={})
     settle(library, exiftool_path)
+    problem = alongside.verify(library) if alongside is not None else None
+    if problem:
+        result.refuse(problem)
+        return result
     stored = [paths.stored(p) for p in photo_paths]
     held = fresh if fresh is not None else field_values.read(et, stored, read, validate=True)
     planned, followed = [], []
@@ -361,6 +367,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     if batch is not None and batch.stop.is_set():
         # Asked to stop while the files were read: nothing is planned, nothing written.
         result.refuse("Stopped as asked before anything was written.")
+        result.details["cancelled"] = True
         return result
     found = _rows_of(library, [path for path, _b, _a, _d in planned])
     change_id, rows = file_journal.plan(library.path, operation, [
@@ -451,6 +458,13 @@ def _follow(library, followed):
         logger.warning("Could not record what %d file(s) hold: %s", len(followed), e)
 
 
+def _followers(row, state):
+    """What a file's change brings besides the field, to be done in the transaction that marks the file `state`: a rotation's face
+    boxes and vectors, a bulk assignment's faces. The ONE place that lists them, for a file marked done or undone and for one taken
+    out of its change after it was done (_read_back)."""
+    return [each for each in (rotation.follower(row, state), face_batch.follower(row, state)) if each is not None]
+
+
 def _record(library, row, values, state, stamp=None, wrote=True, after=None):
     """Record what a file holds now in its row, and mark it `state`, in one transaction;
     with `after`, the journal's after too (file_journal.set_after). Returns the file's
@@ -461,11 +475,13 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None):
             stat = os.stat(row.path)
         except OSError:
             stat = None
-    # What a change brings besides the field -- a rotation's face boxes and vectors, a bulk assignment's faces -- goes in the same
-    # transaction as `done` (or `undone`).
-    follow = [each for each in (rotation.follower(row, state), face_batch.follower(row, state)) if each is not None]
+    follow = _followers(row, state)
 
     def work(conn):
+        # Before the row is recorded: recording can itself change faces (a guess the tag makes), and a follower that accounts
+        # for the faces it writes must start from the faces as they were.
+        for each in follow:
+            getattr(each, "start", lambda _conn: None)(conn)
         photos.follow_fields(conn, row.path, values, stat, stamp)
         for each in follow:
             each(conn)
@@ -521,6 +537,10 @@ def _read_back(et, library, wrote, also=(), records=None):
         def work(conn, row=row, kept=kept, same_as_before=same_as_before):
             photos.follow_fields(conn, row.path, kept)
             if same_as_before:
+                # Taken out of its change after it was marked done: what the done brought (its faces, its boxes) goes back in
+                # this transaction, or the rows would describe a write the file never took.
+                for each in _followers(row, "undone"):
+                    each(conn)
                 file_journal.withdraw_in(conn, [row.id])
             else:
                 file_journal.set_after(conn, row.id, kept)
@@ -971,6 +991,7 @@ def undo(library, change_id, exiftool_path, apply=False):
             with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
                 for row in changed:
                     outcome, why = _carry(et, library, row, row.after, row.before, "undone", on_failure="conflict")
+                    result.details["faces_left"] = result.details.get("faces_left", 0) + row.faces_left
                     if outcome == "undone":
                         result.changed += 1
                     else:

@@ -286,7 +286,9 @@ or taken off, and whose photos' faces follow it. Each face is recorded in the pl
 the transaction that marks the photo's file `done` (or `undone`, from History): forward, settled after a crash, or undone, so a photo and its
 faces never disagree. A face is written only where it is still what the plan read (a face somebody named or ruled out since is left and
 said) and is put back only where it is still what the change left. A photo that holds the person already is in the change all the same (only
-its faces are written). Faces that carry no name write no photo, are written by the faces' own write after the batch, and are not in the
+its faces are written). What follows a file is done by one list of followers (`file_changes._followers`, a rotation's boxes and the faces), when the
+file is marked done, when it is undone, and when it is taken out of its change after it was done (a write the file did not keep). The people are
+checked again under the lock before a file is read: one merged away refuses the whole. Faces that carry no name write no photo, are written by the faces' own write after the batch, and are not in the
 change. No job of its own: no plan file, no resume, no Undo of the whole job; the claim, queue, cap (5,000 photos that need their files looked
 at, whatever the faces), Cancel, the strip, the hand-over and History's undo are the batch's.
 **One strip shows them on both pages** (`web/common/batch-strip.js`; `api.js` announces a page's write requests as `tagpup:writes`): it asks

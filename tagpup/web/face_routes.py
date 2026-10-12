@@ -262,7 +262,7 @@ def _exclude_bulk(library, face_ids, reason):
         refuse(400, str(why))
     outcome = assigned(library, plan)
     return with_warning({"success": True, "excluded": len(outcome.applied) + outcome.plain, "tags_removed": outcome.files,
-                         "change": outcome.change}, outcome)
+                         "change": outcome.change, "left": outcome.left, "plain": outcome.plain_ids}, outcome)
 
 
 def faces_exclude():

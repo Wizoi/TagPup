@@ -364,8 +364,8 @@ export function renderPersonFaces(faces) {
                 askBeforeIgnoring(shown.length, sectionPhotoCount(section), () => {
                     const ids = sectionFaceIds(section);
                     if (!ids.length) return;
-                    Promise.resolve(postExcludeBulk(ids, EXCLUDE_IGNORED_CLUSTER)).then(ok => {
-                        if (ok) offerAssignUndo(ids, null, 'ignore');
+                    Promise.resolve(postExcludeBulk(ids, EXCLUDE_IGNORED_CLUSTER)).then(done => {
+                        if (done && done.length) offerAssignUndo(done, null, 'ignore');
                     });
                 });
             });

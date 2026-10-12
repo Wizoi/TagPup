@@ -198,18 +198,19 @@ describe("ignoring a cluster leaves the rest of the grid alone", () => {
 
   test("ignoring a cluster is one batch on the server: it asks for it, and says what the server says did not all happen", async (t) => {
     const { window, document, server } = await openGrid(t);
-    server.first("/api/faces/exclude", { success: true, excluded: 3, tags_removed: 1, warning: "1 photo(s) could not be written." });
+    server.first("/api/faces/exclude", { success: true, excluded: 2, tags_removed: 1, left: [3], warning: "1 photo(s) could not be written." });
     const said = [];
     window.alert = (text) => said.push(text);
     await ignoreCluster(window, document, "Cluster 5");
     assert.equal(server.lastBody("/api/faces/exclude").bulk, true);
     assert.deepEqual(said, ["1 photo(s) could not be written."]);
-    assert.deepEqual(cards(document).map((c) => Number(c.dataset.faceId)).sort((a, b) => a - b), [10, 11, 12, 13]);
+    assert.deepEqual(cards(document).map((c) => Number(c.dataset.faceId)).sort((a, b) => a - b), [3, 10, 11, 12, 13],
+      "the face the server left was taken out of the grid");
   });
 
   test("Undo after it is the journal's undo of the change: the faces with their names and the tags in the files", async (t) => {
     const { window, document, server } = await openGrid(t);
-    server.first("/api/faces/exclude", { success: true, excluded: 3, change: 9 });
+    server.first("/api/faces/exclude", { success: true, excluded: 3, change: 9, plain: [1, 2, 3] });
     server.on("/api/history/9/undo", { success: true, changed: 3, errors: [] });
     await ignoreCluster(window, document, "Cluster 5");
     assert.match(document.getElementById("ignore-confirm-text").textContent, /Undo.*names.*tags/s);
@@ -222,8 +223,8 @@ describe("ignoring a cluster leaves the rest of the grid alone", () => {
 
   test("Undo says Undoing... and cannot be pressed twice while it runs; a file changed since is said and left", async (t) => {
     const { window, document, server } = await openGrid(t);
-    server.first("/api/faces/exclude", { success: true, excluded: 3, change: 9 });
-    server.first("/api/history/9/undo", { success: false, changed: 2, errors: [{ what: "photo 4", why: "not undone: changed since" }] });
+    server.first("/api/faces/exclude", { success: true, excluded: 3, change: 9, plain: [3] });
+    server.first("/api/history/9/undo", { success: false, changed: 2, faces_left: 1, errors: [{ what: "photo 4", why: "not undone: changed since" }] });
     const said = [];
     window.alert = (text) => said.push(text);
     await ignoreCluster(window, document, "Cluster 5");
@@ -232,7 +233,8 @@ describe("ignoring a cluster leaves the rest of the grid alone", () => {
     assert.equal(document.getElementById("assign-undo-text").textContent, "Undoing...");
     assert.equal(button.disabled, true, "pressed twice while it runs");
     await new Promise((r) => window.setTimeout(r, 200));
-    assert.match(said.join(" "), /1 photo\(s\) could not be put back/);
+    assert.match(said.join(" "), /1 photo\(s\) and 1 face\(s\) could not be put back/);
+    assert.deepEqual(server.lastBody("/api/faces/restore").face_ids, [3], "faces whose undo was refused were restored all the same");
     assert.equal(document.getElementById("assign-undo-bar").classList.contains("hidden"), true, "an undone change is not offered again");
   });
 
