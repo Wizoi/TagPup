@@ -981,7 +981,9 @@ def schema_gap_blocker(version, current):
     a sentence naming the first migration in between that could have changed it, or None when none
     could. A migration cannot have if it is ADDITIVE and touches no table a change can name or the
     journal keys (KEYS): adding the roots table, the runs of jobs, a folder list, the derived tables, moves
-    no row a journaled change recorded. Every other migration blocks, and so does one that is not
+    no row a journaled change recorded; nor one that only drops tables nothing journaled names
+    (schema.ONLY_DROPS), or a column the migration took out of the journal (schema.COLUMNS_DROPPED). Every
+    other migration blocks, and so does one that is not
     in the list: what cannot be classified is never exempt. A change made at a schema NEWER than
     the library's blocks too (an older version of the app opened it)."""
     if version > current:
@@ -996,12 +998,15 @@ def schema_gap_blocker(version, current):
         migration = known.get(number)
         if migration is None:
             return "migration %d is not known" % number
-        if migration.kind != schema.ADDITIVE and number not in schema.ONLY_DROPS:
+        if migration.kind != schema.ADDITIVE and number not in schema.ONLY_DROPS and number not in schema.COLUMNS_DROPPED:
             return "migration %d, %s, is %s" % (number, migration.name, migration.kind)
         # What the migration added was derived when it was added (a change older than it cannot hold the column), whatever
         # a later version made of it: tests hold the declaration to the columns the migration really adds.
         derived_only = set(schema.ADDS_DERIVED_COLUMNS.get(number, {}))
-        touched = sorted(set(migration.touches) & journaled - derived_only)
+        # A column dropped (schema.COLUMNS_DROPPED): the rebuilt table keeps every row and key, and the migration took the
+        # journal's rows of the column out.
+        dropped_only = set(schema.COLUMNS_DROPPED.get(number, {}))
+        touched = sorted(set(migration.touches) & journaled - derived_only - dropped_only)
         if touched:
             return "migration %d, %s, touches %s" % (number, migration.name, ", ".join(touched))
     return None

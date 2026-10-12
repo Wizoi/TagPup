@@ -62,7 +62,7 @@ def make_legacy(path, rows=True, journaled=False):
                          " VALUES (?, 'insert', 'damaged_files', '[\"x\"]', 'kind', NULL, 'truncated')", (mixed,))
             conn.execute("INSERT INTO change_rows (change_id, action, table_name, row_key, column_name, old, new)"
                          " VALUES (?, 'update', 'settings', '[\"a.key\"]', 'value', '1', '2')", (mixed,))
-        conn.execute("DELETE FROM schema_version WHERE version = 31")
+        conn.execute("DELETE FROM schema_version WHERE version >= 31")
         conn.commit()
     finally:
         conn.close()
@@ -107,7 +107,7 @@ class WhatItDrops(AtThirty):
         self.assertEqual(counts, {table: query(self.path, "SELECT COUNT(*) FROM %s" % table)[0][0] for table in counts})
         self.assertEqual([], [name for name in names(self.path) if name in DROPPED])
         self.assertEqual([], [n for n in names(self.path, "index") if "name_review" in n or "damaged" in n])
-        self.assertEqual(31, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
+        self.assertEqual(schema.LATEST, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
 
     def test_the_declaration_is_true(self):
         migration = [m for m in schema.MIGRATIONS if m.version == 31][0]
@@ -127,7 +127,7 @@ class WhatItDrops(AtThirty):
         self.assertEqual([], self.migrate(again.path))
         conn = db.connect(again.path)
         try:
-            conn.execute("DELETE FROM schema_version WHERE version = 31")
+            conn.execute("DELETE FROM schema_version WHERE version >= 31")
             conn.commit()
         finally:
             conn.close()
@@ -148,10 +148,11 @@ class TheJournal(AtThirty):
         self.assertEqual([(mixed, "settings")], query(self.path, "SELECT change_id, table_name FROM change_rows WHERE change_id = ?",
                                                       (mixed,)))
         self.assertEqual(rows - 2, query(self.path, "SELECT COUNT(*) FROM change_rows")[0][0])
-        self.assertEqual(changes, query(self.path, "SELECT COUNT(*) FROM changes")[0][0], "one taken, the migration's own added")
+        self.assertEqual(changes + 1, query(self.path, "SELECT COUNT(*) FROM changes")[0][0], "one taken, the later migrations' own added")
         self.assertEqual([], query(self.path, "SELECT 1 FROM change_rows WHERE table_name IN (?, ?)", DROPPED))
         self.assertEqual([], query(self.path, "SELECT 1 FROM change_rows WHERE change_id NOT IN (SELECT id FROM changes)"))
-        recorded = query(self.path, "SELECT operation, schema_version, status, summary FROM changes ORDER BY id DESC LIMIT 1")[0]
+        recorded = query(self.path, "SELECT operation, schema_version, status, summary FROM changes"
+                                    " WHERE operation = 'migration 31: the names set aside and the damaged files'")[0]
         self.assertEqual(("migration 31: the names set aside and the damaged files", 30, "applied"), recorded[:3])
         summary = json.loads(recorded[3])
         self.assertEqual("destructive", summary["kind"])
@@ -161,7 +162,8 @@ class TheJournal(AtThirty):
     def test_with_nothing_journaled_it_takes_nothing(self):
         make_legacy(self.path)
         self.migrate()
-        recorded = query(self.path, "SELECT summary FROM changes ORDER BY id DESC LIMIT 1")[0][0]
+        recorded = query(self.path, "SELECT summary FROM changes"
+                                    " WHERE operation = 'migration 31: the names set aside and the damaged files'")[0][0]
         self.assertEqual({"journal rows taken out": 0, "changes taken out": 0}, json.loads(recorded)["took"])
 
     def test_a_change_made_at_30_is_still_undoable_after_it_and_its_undo_works(self):
@@ -209,7 +211,7 @@ class HowItFails(AtThirty):
             real.apply(conn)   # the journal pruned and both tables dropped, then the power goes
             raise RuntimeError("the power went")
 
-        broken = tuple(m for m in schema.MIGRATIONS if m.version != 31) + (real._replace(apply=crashes),)
+        broken = tuple(real._replace(apply=crashes) if m.version == 31 else m for m in schema.MIGRATIONS)
         with mock.patch.object(schema, "MIGRATIONS", broken):
             with self.assertRaises(RuntimeError):
                 self.migrate()
@@ -217,7 +219,7 @@ class HowItFails(AtThirty):
         self.assertEqual(held, self.held())
         self.assertEqual(1, len(backups(self.path)), "the copy was taken first, and is the way back")
         self.assertEqual(after(30), self.migrate(), "the next open does it")
-        self.assertEqual(31, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
+        self.assertEqual(schema.LATEST, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
         self.assertEqual([], [name for name in names(self.path) if name in DROPPED])
 
     def test_a_check_that_fails_rolls_it_all_back(self):
@@ -260,7 +262,7 @@ class HowItFails(AtThirty):
             out, err = each.communicate(timeout=120)
             self.assertEqual(0, each.returncode, err)
             answers.append(out.strip())
-        self.assertEqual(["0", "1"], sorted(answers))
+        self.assertEqual(["0", "2"], sorted(answers), "31 and 32, once")
         self.assertEqual(1, len(backups(self.path)))
         self.assertEqual(1, query(self.path, "SELECT COUNT(*) FROM changes WHERE operation LIKE 'migration 31%'")[0][0])
 
@@ -272,8 +274,8 @@ class HowItFails(AtThirty):
             with self.assertRaises(schema.NewerLibrary) as refused:
                 schema.ensure(self.path)
             self.assertTrue(schema.newer_problem(self.path))
-        self.assertEqual((31, 30), (refused.exception.found, refused.exception.known))
-        self.assertEqual(31, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0], "and writes nothing")
+        self.assertEqual((schema.LATEST, 30), (refused.exception.found, refused.exception.known))
+        self.assertEqual(schema.LATEST, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0], "and writes nothing")
 
     def test_a_snapshot_from_before_it_is_migrated_again_when_opened(self):
         make_legacy(self.path)

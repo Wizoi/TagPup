@@ -327,10 +327,10 @@ class TheCatchUpAtStart(Base):
         library = Library(home.library("harbour.db"))
         schema.ensure(library.path)
         self.assertFalse(sync_service.synced_whole_within(library, 3600))
-        from tagpup.store import sync_runs
-        sync_runs.record(library.path, sync_runs.now(), whole=False, in_step=True, found={}, changed={})
+        from tagpup.store import job_runs
+        job_runs.record_sync(library.path, job_runs.stamp(time.time()), whole=False, in_step=True, found={}, changed={})
         self.assertFalse(sync_service.synced_whole_within(library, 3600), "a folder's sync is not the whole")
-        sync_runs.record(library.path, sync_runs.now(), whole=True, in_step=False, found={}, changed={})
+        job_runs.record_sync(library.path, job_runs.stamp(time.time()), whole=True, in_step=False, found={}, changed={})
         self.assertTrue(sync_service.synced_whole_within(library, 3600))
         with mock.patch.object(sync_service.time, "time", return_value=time.time() + 3601):
             self.assertFalse(sync_service.synced_whole_within(library, 3600))

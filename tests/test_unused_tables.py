@@ -149,7 +149,7 @@ class WhatItDrops(AtTwentyNine):
         self.assertEqual(counts, {table: query(self.path, "SELECT COUNT(*) FROM %s" % table)[0][0] for table in counts})
         self.assertEqual([], [name for name in names(self.path) if name in DROPPED or name.startswith("search_gear")])
         self.assertNotIn("search_gear_goes_with_its_photo", names(self.path, "trigger"))
-        self.assertEqual(31, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
+        self.assertEqual(schema.LATEST, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
 
     def test_a_photo_deleted_afterwards_takes_its_derived_rows_and_the_trigger_names_no_dropped_table(self):
         make_legacy(self.path)
@@ -207,7 +207,7 @@ class TheJournal(AtTwentyNine):
         self.migrate()
         self.assertEqual(0, query(self.path, "SELECT COUNT(*) FROM changes WHERE operation = 'mark_folders'")[0][0])
         self.assertEqual(rows - 6, query(self.path, "SELECT COUNT(*) FROM change_rows")[0][0], "its rows, and no other")
-        self.assertEqual(changes + 1, query(self.path, "SELECT COUNT(*) FROM changes")[0][0], "one taken, the two migrations' own added")
+        self.assertEqual(changes + 2, query(self.path, "SELECT COUNT(*) FROM changes")[0][0], "one taken, the later migrations' own added")
         self.assertEqual([], query(self.path, "SELECT 1 FROM change_rows WHERE table_name IN (?, ?, ?, ?)", DROPPED))
         self.assertEqual([], query(self.path, "SELECT 1 FROM change_rows WHERE change_id NOT IN (SELECT id FROM changes)"))
         recorded = query(self.path, "SELECT operation, schema_version, status, summary FROM changes WHERE operation LIKE 'migration 30%' ORDER BY id DESC LIMIT 1")[0]
@@ -284,7 +284,7 @@ class HowItFails(AtTwentyNine):
                                 "photo_meta": query(self.path, "SELECT COUNT(*) FROM photo_meta")[0][0]})
         self.assertEqual(1, len(backups(self.path)), "the copy was taken first, and is the way back")
         self.assertEqual(after(29), self.migrate(), "the next open does it")
-        self.assertEqual(31, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
+        self.assertEqual(schema.LATEST, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
 
     def test_a_check_that_fails_rolls_it_all_back(self):
         make_legacy(self.path)
@@ -321,7 +321,7 @@ class HowItFails(AtTwentyNine):
             schema._current.clear()
             with self.assertRaises(schema.NewerLibrary) as refused:
                 schema.ensure(self.path)
-        self.assertEqual((31, 29), (refused.exception.found, refused.exception.known))
+        self.assertEqual((schema.LATEST, 29), (refused.exception.found, refused.exception.known))
 
     def test_a_snapshot_from_before_it_is_migrated_again_when_opened(self):
         make_legacy(self.path)

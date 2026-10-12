@@ -47,7 +47,8 @@ On the maintenance scaffold (tagpup.services.maintenance): a dry run by default,
 reads and rehearses and writes nothing -- neither a row nor a photo file (the files are
 only ever read: no DocumentID is minted); applied, the re-read rows and the moved rows are
 one change of the journal, `sync`, undoable. Then the new files' folders are queued, and
-the run is recorded in the library (tagpup.store.sync_runs): what it found and what it
+the run is recorded in the library (tagpup.store.job_runs.record_sync, a run of the job "sync-whole" or
+"sync-folder"): what it found and what it
 changed, and whether it left the library in step -- nothing new, changed or moved left
 over; missing files do not count against it -- which is the pages' "last in step".
 """
@@ -61,7 +62,7 @@ from tagpup.core.result import Result
 from tagpup.files import images
 from tagpup.services import maintenance, refresh_rows, relink_photos
 from tagpup.services import roots as roots_service
-from tagpup.store import db, generations, schema, sync_runs
+from tagpup.store import db, generations, job_runs, schema
 from tagpup.store import folders as store_folders
 from tagpup.store import photos as store_photos
 
@@ -463,12 +464,12 @@ def sync(library, folder=None, apply=False, exiftool_path=None, queue=None, root
     Applied, the folders holding new files are handed to `queue(folders)`, which returns
     the index queue's Result (tagpup.jobs.indexing.IndexQueue.start): details["queued"] is
     the folders it queued. Without a queue they are reported, not queued. Then the run is
-    recorded (tagpup.store.sync_runs) -- unless it was refused or its write failed, when
-    nothing is queued or recorded; a record that cannot be written is one of
+    recorded (tagpup.store.job_runs.record_sync) -- unless it was refused or its write failed, when
+    nothing is queued or recorded, or it was of one folder and found and changed nothing (worth_recording); a record that cannot be written is one of
     details["warnings"], not a failure of the write. details["in_step"] says whether the
     library is in step: for a dry run, as found; applied, after the write.
     """
-    started = sync_runs.now()
+    started = job_runs.stamp(time.time())
     # Every line the sync logs carries its tag, made from what its record keeps (the
     # library and when it started): the Activity page's "Logs for this run".
     try:
@@ -531,16 +532,40 @@ def _sync(library, folder, apply, exiftool_path, queue, roots, ignored, started)
     result.details["queued"] = queued
     result.details["in_step"] = in_step(counts, result)
     try:
-        result.details["record"] = sync_runs.record(
-            library.path, started, whole=folder is None, in_step=result.details["in_step"],
-            found={what: n for what, n in counts.items() if isinstance(n, int)},
-            changed={"rows": result.changed, **result.details["changed"], "queued_folders": queued},
-            change_id=result.details.get("change"))
+        if worth_recording(library, folder is None, result.details["in_step"], counts, result.changed, queued):
+            result.details["record"] = job_runs.record_sync(
+                library.path, started, whole=folder is None, in_step=result.details["in_step"],
+                found={what: n for what, n in counts.items() if isinstance(n, int)},
+                changed={"rows": result.changed, **result.details["changed"], "queued_folders": queued},
+                change_id=result.details.get("change"))
     except Exception as e:
         # The rows are written and the folders queued; only the record of it is missing.
         result.details["warnings"].append("The sync was not recorded (%s: %s); the next sync records its own."
                                           % (type(e).__name__, e))
     return result
+
+
+#: What a sync of one folder can find that makes it worth a record by itself (the Activity page's "found_..." counts).
+FOUND_WORTH = ("new", "missing", "moved", "changed")
+
+
+def worth_recording(library, whole, in_step, counts, changed, queued):
+    """Is a sync, just applied, recorded? The whole library's always. A folder's when it found (FOUND_WORTH), changed or queued
+    something, or left the library not in step -- and, when it found nothing, when the newest record says not in step, so that
+    "in step" is not left standing on an older one. A folder settling on nothing is not: the watcher syncs a folder each time
+    one settles, and a record of each pushed the daily whole sync out of the old table (the Files owner's finding). A read that
+    fails records."""
+    if whole or not in_step or changed or queued or any(counts.get(what) for what in FOUND_WORTH):
+        return True
+    try:
+        conn = db.connect(db.readonly_uri(library.path), uri=True)
+        try:
+            newest = job_runs.newest_sync(conn)
+        finally:
+            conn.close()
+    except Exception:
+        return True
+    return newest is not None and not newest["in_step"]
 
 
 #: {library key: (photos generation, the folders it holds photos in)}: watch_folders is
@@ -581,23 +606,23 @@ def synced_whole_within(library, seconds):
     kept only for a sync that wrote what it found.)"""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        finished = sync_runs.last_whole(conn)
+        newest = job_runs.newest_sync(conn, whole=True)
     finally:
         conn.close()
-    if not finished:
+    if not newest:
         return False
     try:
-        at = time.mktime(time.strptime(finished, sync_runs.TIME))
+        at = time.mktime(time.strptime(newest["finished"], job_runs.TIME))
     except (TypeError, ValueError):
         return False
     return time.time() - at < seconds
 
 
 def last(library):
-    """{"last_run", "last_in_step"} of `library` (tagpup.store.sync_runs.last): counts and
-    times, never a path. Reads only; a library from before migration 14 has neither."""
+    """{"last_run", "last_in_step"} of `library` (tagpup.store.job_runs.last_sync): counts and
+    times, never a path. Reads only; a library from before migration 13 has neither."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        return sync_runs.last(conn)
+        return job_runs.last_sync(conn)
     finally:
         conn.close()

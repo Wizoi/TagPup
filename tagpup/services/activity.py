@@ -3,7 +3,7 @@ phase 8.5): its syncs, its snapshots, and one timeline of what was done in it --
 journal's changes, the recurring jobs' runs and the syncs -- newest first.
 
 Counts, times and run tags (tagpup.core.runs), from the library's own records: `changes`
-(tagpup.store.journal), `job_runs` and `sync_runs`. A job run's note -- why it failed --
+(tagpup.store.journal) and `job_runs`, the syncs among them (tagpup.store.job_runs.record_sync). A job run's note -- why it failed --
 is given as its `error`: the page that asks answers this PC alone (tagpup.web.
 activity_routes), and says what went wrong, which a count cannot. A library behind this
 version's schema reads as holding none of what it lacks; nothing is migrated by a look.
@@ -12,7 +12,7 @@ import numbers
 import time
 
 from tagpup.core import runs
-from tagpup.store import db, job_runs, journal, snapshots, sync_runs
+from tagpup.store import db, job_runs, journal, snapshots
 
 #: The most entries a timeline gathers from each record.
 MOST = 500
@@ -40,8 +40,8 @@ def seconds_between(started, finished):
     if not started or not finished:
         return None
     try:
-        return max(0, int(time.mktime(time.strptime(finished, sync_runs.TIME))
-                          - time.mktime(time.strptime(started, sync_runs.TIME))))
+        return max(0, int(time.mktime(time.strptime(finished, job_runs.TIME))
+                          - time.mktime(time.strptime(started, job_runs.TIME))))
     except (TypeError, ValueError):
         return None
 
@@ -62,9 +62,9 @@ def sync_state(library):
     whole library counted them (None before any)."""
     conn = _look(library)
     try:
-        last = sync_runs.last(conn)
-        whole = sync_runs.newest(conn, whole=True)
-        folder = sync_runs.newest(conn, whole=False)
+        last = job_runs.last_sync(conn)
+        whole = job_runs.newest_sync(conn, whole=True)
+        folder = job_runs.newest_sync(conn, whole=False)
     finally:
         conn.close()
     counted = whole or last["last_run"]
@@ -81,7 +81,7 @@ def snapshot_list(library, now=None):
     now = time.time() if now is None else now
     found = snapshots.listed(library.path)
     return {"snapshots": [{"name": each.name, "kind": each.kind,
-                           "taken": time.strftime(sync_runs.TIME, time.localtime(each.taken)),
+                           "taken": time.strftime(job_runs.TIME, time.localtime(each.taken)),
                            "age_seconds": max(0, int(now - each.taken)), "bytes": each.size} for each in found],
             "bytes": sum(each.size for each in found)}
 
@@ -95,7 +95,7 @@ def timeline(library, limit=50):
     entries = []
     conn = _look(library)
     try:
-        syncs = sync_runs.recent(conn, limit)
+        syncs = job_runs.recent_syncs(conn, limit)
     finally:
         conn.close()
     sync_changes = set()
@@ -110,7 +110,7 @@ def timeline(library, limit=50):
                         "counts": dict(entry["changed"], **{"found_" + k: v for k, v in entry["found"].items()
                                                             if k in ("new", "missing", "moved", "changed")}),
                         "id": record["id"], "run": entry["run"], "error": None})
-    for run in job_runs.runs(library.path, None, limit):
+    for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS):   # a sync's entry is above
         entries.append({"kind": "job", "library": library.name, "time": run.started, "finished": run.finished,
                         "seconds": seconds_between(run.started, run.finished), "what": _what(run),
                         "outcome": run.outcome, "counts": _counts(run.changed), "id": run.id,

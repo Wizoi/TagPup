@@ -170,7 +170,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
   store/               the only SQL. db (connections, locks), schema (migrations), one module per table or
                        family: photos, faces, people, person_ids, taxonomy, embeddings, suggestions, journal,
                        file_journal, face_batches, settings, roots + roots_check + root_rows, derived, search_index, folders,
-                       library_view, snapshots, generations, locks, job_runs, sync_runs,
+                       library_view, snapshots, generations, locks, job_runs,
                        added_folders, faces_pending, faces_detected, tree_scan, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
                        thumbs, names, shares, lock_owners, recycle_bin
@@ -257,7 +257,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 | File copy (the file is the truth) | `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`) | only after a file is read or written: indexer, `refresh_rows`, `record_tags_in_index` (`store/photos.py`) |
 | Decision (exists only here) | `faces` (`name`, `name_source`, `excluded`, `tag_id`), `tag_taxonomy` (the tree), `roots`, `settings`, `added_folders` | services, through a journaled change where bulk; the tree through `people.tree_edit` |
 | Derived (rebuilt or computed; feature code never writes) | `photo_people`, `photo_tags`, `folders`, `photo_folder`, `search_words`/`search_names` (FTS5), `embeddings`, `tag_embeddings`, `face_crops`, `suggestions`, `faces_pending`, `faces_detected` | `store/derived.py` (the four view tables), `store/search_index.py`, `store/people.py`, `store/embeddings.py`, `store/faces.py`, `store/suggestions.py` |
-| Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs`, `sync_runs` | `store/schema.py`, `store/generations.py`, `store/job_runs.py`, `store/sync_runs.py` |
+| Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs` (the recurring jobs' runs, and the syncs: `sync-whole`, `sync-folder`) | `store/schema.py`, `store/generations.py`, `store/job_runs.py` |
 | The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state) | `store/journal.py`, `store/file_journal.py` |
 
 **The journal** (7.5). Every bulk edit, maintenance operation and data-changing migration is one `changes`
