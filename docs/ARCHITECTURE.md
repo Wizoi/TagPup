@@ -277,6 +277,7 @@ already holds the lock (Smart Rename, the Organize page's bulk tags) takes its c
 A tag or person rename (no cap) rewrites every photo first and moves the tree after (`tags._retag`, the one place that orders them): a batch stopped half way leaves the tree as it was, says so with its change, and making the same edit again finishes the rest.
 `batches.listing` and `/api/activity/now` / `/api/activity/batches` show the batches running (read from the journal, so another
 process's too) and waiting. `tests/test_batches_go_through_the_model.py` names every route that reaches `write_fields`.
+A rotation is one of these changes too (`photos.rotate_photos`, field `EXIF:Orientation`): the face boxes a TIFF turns and the vectors it makes stale are written by `services/rotation.py` in the transaction that marks the file `done`, whether forward, settled after a crash, or in an undo, so file and boxes cannot disagree.
 
 **A photo's tags and people** flow one way: the file's keywords are read into `photos.keywords`; `photo_tags`
 and `photo_people` are derived from them, the faces and the tree whenever any of the three changes, in the
