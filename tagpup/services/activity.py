@@ -110,9 +110,7 @@ def timeline(library, limit=50):
                         "counts": dict(entry["changed"], **{"found_" + k: v for k, v in entry["found"].items()
                                                             if k in ("new", "missing", "moved", "changed")}),
                         "id": record["id"], "run": entry["run"], "error": None})
-    for run in job_runs.runs(library.path, None, limit):
-        if run.job in job_runs.SYNC_JOBS:
-            continue   # a sync: its entry is above
+    for run in job_runs.runs(library.path, None, limit, exclude=job_runs.SYNC_JOBS):   # a sync's entry is above
         entries.append({"kind": "job", "library": library.name, "time": run.started, "finished": run.finished,
                         "seconds": seconds_between(run.started, run.finished), "what": _what(run),
                         "outcome": run.outcome, "counts": _counts(run.changed), "id": run.id,

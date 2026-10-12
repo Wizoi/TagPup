@@ -908,13 +908,16 @@ def _camera_words(conn):
 DROPPED = ("search_gear", "photo_meta", "folder_ids", "library_identity")
 
 
-def _take_out_of_the_journal(conn, tables):
-    """Take the rows of `tables` out of the journal (they could not be undone once the tables are gone), and a change they
-    leave with no row and no file with them; any other change is untouched. Returns (rows taken, ids of changes taken)."""
+def _take_out_of_the_journal(conn, tables, column=None):
+    """Take the rows of `tables` out of the journal (they could not be undone once the tables are gone), or only those of
+    `column` of them (a column that is gone), and a change they leave with no row and no file with them; any other change is
+    untouched. Returns (rows taken, ids of changes taken)."""
     marks = ",".join("?" * len(tables))
+    only = " AND column_name = ?" if column else ""
+    given = tuple(tables) + ((column,) if column else ())
     named = [change_id for (change_id,) in conn.execute(
-        "SELECT DISTINCT change_id FROM change_rows WHERE table_name IN (%s)" % marks, tables)]
-    rows = conn.execute("DELETE FROM change_rows WHERE table_name IN (%s)" % marks, tables).rowcount
+        "SELECT DISTINCT change_id FROM change_rows WHERE table_name IN (%s)%s" % (marks, only), given)]
+    rows = conn.execute("DELETE FROM change_rows WHERE table_name IN (%s)%s" % (marks, only), given).rowcount
     emptied = []
     for change_id in named:
         if (not conn.execute("SELECT 1 FROM change_rows WHERE change_id = ? LIMIT 1", (change_id,)).fetchone()
@@ -965,10 +968,9 @@ def _drop_dismissals_and_damaged(conn):
 
 #: The column migration 32 drops from a table the journal keys, by migration: {version: {table: columns}}. `tag_taxonomy.is_people`
 #: was made by the first schema, filled by code that is gone, and read and written by nothing since (counted 2026-10-11:
-#: `photo_index` alone still has it, 539 rows 0 and 360 rows 1). A change recorded before it holds the column in the rows of a
-#: node it inserted or deleted; the journal leaves a dropped column out of the rows it loads (journal._load), so such a change is
-#: undone without it, and the migration blocks no undo (journal.schema_gap_blocker). tests/test_unused_tables_32.py holds the
-#: declaration to what the migration really drops.
+#: `photo_index` alone still has it, 539 rows 0 and 360 rows 1). The migration takes the rows of the journal that name the
+#: column out of it (as 30 and 31 took the rows of their tables), so no recorded change names a column that is gone, and it
+#: blocks no undo of an older change (journal.schema_gap_blocker): the table keeps every row and key.
 COLUMNS_DROPPED = {32: {"tag_taxonomy": ("is_people",)}}
 
 #: `tag_taxonomy` as the first schema and a new library make it (`_tables`), without `is_people`.
@@ -1014,13 +1016,15 @@ def _drop_is_people_and_fold_syncs(conn):
 
     The column: `tag_taxonomy` is rebuilt (rebuild_table: SQLite's twelve steps, inside the runner's transaction with foreign keys
     off), every id, row, index and trigger kept, the AUTOINCREMENT counter too. A library without the column (two of the three
-    live ones) is not rebuilt: the migration is then the fold alone. Returns what it did, which the migration's own change
-    records."""
-    rebuilt = None
+    live ones) is not rebuilt: the migration is then the fold alone. The journal's rows that name the column are taken out
+    first, and a change they leave empty with them. Returns what it did, which the migration's own change records."""
+    rebuilt, taken, emptied = None, 0, []
     if "is_people" in _columns(conn, "tag_taxonomy"):
+        taken, emptied = _take_out_of_the_journal(conn, ("tag_taxonomy",), "is_people")
         rebuilt = rebuild_table(conn, "tag_taxonomy", TAG_TAXONOMY)
     kept, dropped = _fold_sync_runs(conn)
-    return {"tag_taxonomy rows rebuilt": rebuilt or 0, "sync records kept": kept, "sync records dropped": dropped}
+    return {"tag_taxonomy rows rebuilt": rebuilt or 0, "journal rows taken out": taken, "changes taken out": len(emptied),
+            "sync records kept": kept, "sync records dropped": dropped}
 
 
 # ---- What a migration holds true before it commits ----------------------------------------
@@ -1267,47 +1271,18 @@ def _count_named(conn, tables):
                         % ",".join("?" * len(tables)), tables).fetchone()[0]
 
 
-class ColumnsDropped(Check):
-    """Migration 32: the columns named are gone from the table, and nothing else about the library changed: every row of the
-    table has the values of its other columns it had (by its id, with the type SQLite stores them as), the table's AUTOINCREMENT
-    counter is what it was, and every index, trigger and view of the library has the SQL it had. A table that never had the
-    columns is left alone and must still lack them."""
+class ColumnGone(Check):
+    """Migration 32: the column is gone from the table, and no recorded change names it."""
 
-    def __init__(self, table, columns):
-        self.table, self.columns = table, tuple(columns)
-        self.name = "%s without %s, otherwise as it was" % (table, ", ".join(columns))
-
-    def _objects(self, conn):
-        return sorted(conn.execute("SELECT type, name, sql FROM sqlite_master WHERE type IN ('index', 'trigger', 'view')"
-                                   " AND sql IS NOT NULL").fetchall())
-
-    def before(self, conn, migration):
-        columns = sorted(c for c in _columns(conn, self.table) if c not in self.columns)   # by name: a rebuild may reorder
-        rows = [[(type(v).__name__, v) for v in row] for row in conn.execute(
-            "SELECT %s FROM %s ORDER BY rowid" % (", ".join(_quoted(c) for c in columns), _quoted(self.table)))]
-        counter = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (self.table,)).fetchone()
-        return {"columns": columns, "rows": rows, "counter": counter, "objects": self._objects(conn)}
+    def __init__(self, table, column):
+        self.table, self.column = table, column
+        self.name = "%s.%s gone, and none named by the journal" % (table, column)
 
     def after(self, conn, migration, state):
-        now = _columns(conn, self.table)
-        problems = ["%s is still there" % c for c in now if c in self.columns]
-        if sorted(now) != state["columns"]:
-            problems.append("%s has the columns %s and had %s" % (self.table, sorted(now), state["columns"]))
-            return problems
-        rows = [[(type(v).__name__, v) for v in row] for row in conn.execute(
-            "SELECT %s FROM %s ORDER BY rowid" % (", ".join(_quoted(c) for c in state["columns"]), _quoted(self.table)))]
-        if len(rows) != len(state["rows"]):
-            problems.append("%s had %d row(s) and has %d" % (self.table, len(state["rows"]), len(rows)))
-        else:
-            different = sum(1 for was, is_ in zip(state["rows"], rows) if was != is_)
-            if different:
-                problems.append("%d row(s) of %s are not what they were" % (different, self.table))
-        counter = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (self.table,)).fetchone()
-        if counter != state["counter"]:
-            problems.append("the counter of %s was %s and is %s" % (self.table, state["counter"], counter))
-        if self._objects(conn) != state["objects"]:
-            was, is_ = set(map(tuple, state["objects"])), set(map(tuple, self._objects(conn)))
-            problems += ["%s %s is not what it was" % (kind, name) for kind, name, _sql in sorted(was ^ is_)]
+        problems = ["%s.%s is still there" % (self.table, self.column)] if self.column in _columns(conn, self.table) else []
+        if conn.execute("SELECT 1 FROM change_rows WHERE table_name = ? AND column_name = ? LIMIT 1",
+                        (self.table, self.column)).fetchone():
+            problems.append("a recorded change still names the column")
         return problems
 
 
@@ -1718,7 +1693,7 @@ MIGRATIONS = (
               "full backup first",
               ("tag_taxonomy", "sync_runs", "job_runs"),
               (RowsKept("photos", "faces", "tag_taxonomy", "photo_people", "photo_tags", "folders", "photo_folder",
-                        "suggestions", "settings", "roots"), ColumnsDropped("tag_taxonomy", ("is_people",)),
+                        "suggestions", "settings", "roots"), ColumnGone("tag_taxonomy", "is_people"),
                SyncRunsFolded(), UnusedTablesGone(("sync_runs",))) + STANDARD),
 )
 
@@ -1727,7 +1702,7 @@ MIGRATIONS = (
 #: (journal.schema_gap_blocker). Holds the declaration to what the migration drops: tests/test_unused_tables.py.
 ONLY_DROPS = {30: DROPPED, 31: DROPPED_31}
 # Migration 32 rebuilds a journaled table to drop a column, so it is not in ONLY_DROPS: it is in COLUMNS_DROPPED, which says
-# the same of a column, and the journal's `_load` does the rest.
+# the same of a column.
 
 #: The columns a migration adds to a table the journal keys that the journal derives
 #: (derived when it added them) -- {version: {table: columns}}. Such a migration changes nothing an

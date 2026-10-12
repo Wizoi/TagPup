@@ -111,6 +111,17 @@ class TheRecordIsBounded(unittest.TestCase):
         self.assertEqual("in step", entries[0]["outcome"])
         self.assertEqual("sync:harbour:20260926T090000", entries[0]["run"])
 
+    def test_recorded_syncs_never_push_the_jobs_out_of_the_timeline(self):
+        for n in range(3):
+            claim = job_runs.claim(self.path, "snapshots", "harbour", 1_700_000_000 + n * 86400)
+            job_runs.finish(self.path, claim.run_id, "done", 1_700_000_100 + n * 86400, {"taken": 1})
+        for minute in range(20):   # recorded after the jobs, and older by their times
+            job_runs.record_sync(self.path, "2020-01-01 00:%02d:00" % minute, bool(minute % 2), True, {}, {})
+        everything = activity.timeline(Library(self.path), limit=500)
+        wanted = len([e for e in everything if e["kind"] == "change"]) + 3
+        shown = activity.timeline(Library(self.path), limit=wanted)
+        self.assertEqual(3, len([e for e in shown if e["kind"] == "job"]), "the 20 syncs took none of their places")
+
     def test_a_library_from_before_the_runs_has_none(self):
         conn = db.connect(self.home.library("empty.db"))   # no tables: a look does not migrate
         try:

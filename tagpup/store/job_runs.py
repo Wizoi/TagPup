@@ -315,14 +315,15 @@ def last_sync(conn):
     return {"last_run": newest_sync(conn), "last_in_step": last_in_step(conn)}
 
 
-def runs(db_path, job=None, limit=20):
-    """The library's runs, newest first, of `job` or of every job. Reads only."""
+def runs(db_path, job=None, limit=20, exclude=()):
+    """The library's runs, newest first, of `job` or of every job but those in `exclude`. Reads only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         if not has_table(conn):
             return []
         if job is None:
-            found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs ORDER BY id DESC LIMIT ?", (limit,))
+            found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job NOT IN (" + ",".join("?" * len(exclude)) + ")"
+                                 " ORDER BY id DESC LIMIT ?", tuple(exclude) + (limit,))
         else:
             found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job = ? ORDER BY id DESC LIMIT ?",
                                  (job, limit))

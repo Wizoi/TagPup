@@ -142,7 +142,7 @@ class TheColumn(AtThirtyOne):
         marks, triggers = objects(self.path), names(self.path, "trigger")
         counter = query(self.path, "SELECT seq FROM sqlite_sequence WHERE name = 'tag_taxonomy'")
         counts = {t: query(self.path, 'SELECT COUNT(*) FROM "%s"' % t)[0][0] for t in names(self.path)
-                  if not t.startswith("search_") and t not in ("changes", "schema_version", "job_runs")}
+                  if not t.startswith("search_") and t not in ("changes", "change_rows", "schema_version", "job_runs")}
         self.assertEqual(after(31), self.migrate())
         self.assertEqual(["id", "tag", "parent_id", "name", "has_face", "hidden_from_autocomplete"],
                          columns_of(self.path, "tag_taxonomy"), "as a new library makes it")
@@ -188,8 +188,8 @@ class TheColumn(AtThirtyOne):
         self.assertEqual(before, {"nodes": nodes(again.path), "objects": objects(again.path), "sql": query(
             again.path, "SELECT sql FROM sqlite_master WHERE name = 'tag_taxonomy'")}, "the table was not rebuilt")
         recorded = query(again.path, "SELECT summary FROM changes ORDER BY id DESC LIMIT 1")[0][0]
-        self.assertEqual({"tag_taxonomy rows rebuilt": 0, "sync records kept": 0, "sync records dropped": 0},
-                         json.loads(recorded)["took"])
+        self.assertEqual({"tag_taxonomy rows rebuilt": 0, "journal rows taken out": 0, "changes taken out": 0,
+                          "sync records kept": 0, "sync records dropped": 0}, json.loads(recorded)["took"])
 
     def test_the_declaration_is_true(self):
         migration = [m for m in schema.MIGRATIONS if m.version == 32][0]
@@ -201,29 +201,42 @@ class TheColumn(AtThirtyOne):
         self.assertEqual({"is_people"}, set(before) - set(columns_of(self.path, "tag_taxonomy")))
         self.assertEqual([m.touches for m in schema.MIGRATIONS if m.version == 14], [()], "14 makes nothing now")
 
-    def test_what_a_check_that_compares_rows_finds(self):
-        """The check is not a formality: a rebuild that changed a value or lost a trigger is refused."""
-        real = schema.rebuild_table
+    def test_a_library_whose_column_came_from_an_older_schema_not_from_the_helper_migrates_too(self):
+        """The fixtures above rebuild the table with schema.rebuild_table, the code under test. This one is made by the
+        migrations up to 31 and gains the column by ALTER TABLE, a path of its own (the column lands last, as it did in no live
+        library, but nothing here is the rebuild)."""
+        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:31]), mock.patch.object(schema, "LATEST", 31):
+            old = ViewLibrary(self, "older")
+            old.tree("People/Rowan Thackeray", "Trips/Coast", face_root="People")
+            old.photo("Trip", "a.jpg", tags=["Trips/Coast"])
+            old.conn.close()
+            self.assertEqual(31, query(old.path, "SELECT MAX(version) FROM schema_version")[0][0])
+        conn = db.connect(old.path)
+        try:
+            conn.execute("ALTER TABLE tag_taxonomy ADD COLUMN is_people INTEGER DEFAULT 0")
+            conn.execute("UPDATE tag_taxonomy SET is_people = 1 WHERE tag = 'People/Rowan Thackeray'")
+            conn.commit()
+        finally:
+            conn.close()
+        rows, types = nodes(old.path)
+        marks = objects(old.path)
+        schema._current.clear()
+        self.assertEqual(after(31), schema.ensure(old.path))
+        self.assertNotIn("is_people", columns_of(old.path, "tag_taxonomy"))
+        self.assertEqual((rows, types), nodes(old.path))
+        self.assertEqual(marks, objects(old.path))
+        self.assertEqual([], query(old.path, "PRAGMA foreign_key_check"))
 
-        def changes_a_name(conn, table, definition, *args, **kwargs):
-            copied = real(conn, table, definition, *args, **kwargs)
-            conn.execute("UPDATE tag_taxonomy SET name = 'Changed' WHERE tag = 'Trips'")
-            return copied
-
-        with mock.patch.object(schema, "rebuild_table", changes_a_name):
-            with self.assertRaises(schema.CheckFailed) as refused:
-                self.migrate()
-        self.assertIn("1 row(s) of tag_taxonomy are not what they were", str(refused.exception))
-        self.assertEqual(31, query(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
-        self.assertIn("is_people", columns_of(self.path, "tag_taxonomy"))
-
-        def loses_a_trigger(conn, table, definition, *args, **kwargs):
-            return real(conn, table, definition, *args, drop=("person_tag_not_deleted_while_named",), **kwargs)
-
-        with mock.patch.object(schema, "rebuild_table", loses_a_trigger):
-            with self.assertRaises(schema.CheckFailed) as refused:
-                self.migrate()
-        self.assertIn("person_tag_not_deleted_while_named", str(refused.exception))
+    def test_the_journal_rows_that_name_the_column_are_taken_out_and_the_rest_of_their_change_stays(self):
+        named = query(self.path, "SELECT COUNT(*) FROM change_rows WHERE column_name = 'is_people'")[0][0]
+        others = query(self.path, "SELECT COUNT(*) FROM change_rows WHERE column_name != 'is_people'")[0][0]
+        self.assertGreater(named, 0)
+        self.migrate()
+        self.assertEqual(0, query(self.path, "SELECT COUNT(*) FROM change_rows WHERE column_name = 'is_people'")[0][0])
+        self.assertEqual(others, query(self.path, "SELECT COUNT(*) FROM change_rows")[0][0], "no other row went")
+        taken = json.loads(query(self.path, "SELECT summary FROM changes ORDER BY id DESC LIMIT 1")[0][0])["took"]
+        self.assertEqual((named, 0), (taken["journal rows taken out"], taken["changes taken out"]))
+        self.assertEqual(1, len(query(self.path, "SELECT 1 FROM changes WHERE id = ?", (self.deleted,))), "the change stays")
 
 
 def syncs():
@@ -258,7 +271,8 @@ class TheSyncs(AtThirtyOne):
         self.assertEqual(dict(FOUND, new=0), kept["found"])
         self.assertEqual(dict(CHANGED, rows=3, from_files=3), kept["changed"])
         summary = json.loads(query(self.path, "SELECT summary FROM changes ORDER BY id DESC LIMIT 1")[0][0])["took"]
-        self.assertEqual({"tag_taxonomy rows rebuilt": rebuilt, "sync records kept": 1, "sync records dropped": 4}, summary)
+        self.assertEqual((rebuilt, 1, 4), (summary["tag_taxonomy rows rebuilt"], summary["sync records kept"],
+                                           summary["sync records dropped"]))
 
     def test_it_writes_what_record_sync_writes(self):
         add_syncs(self.path, syncs())
@@ -324,7 +338,7 @@ class TheSyncs(AtThirtyOne):
 
 
 class TheJournal(AtThirtyOne):
-    def test_every_change_made_at_31_is_undoable_after_it_also_those_that_recorded_the_column(self):
+    def test_every_change_made_at_31_is_undoable_after_it_also_the_delete_whose_column_rows_were_taken_out(self):
         self.migrate()
         conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:
@@ -345,27 +359,6 @@ class TheJournal(AtThirtyOne):
         back = query(self.path, "SELECT id, tag, name FROM tag_taxonomy WHERE tag = 'Events/Fair'")
         self.assertEqual(1, len(back), "the deleted node is back, under its own id, without the column")
         self.assertNotIn("is_people", columns_of(self.path, "tag_taxonomy"))
-
-    def test_an_update_of_the_column_alone_writes_nothing_and_the_rest_of_its_change_is_undone(self):
-        """Nothing wrote the column, so no change of the journal updates it; were one recorded, its undo leaves it out."""
-        self.migrate()
-        conn = db.connect(self.path)
-        try:
-            node = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = 'Trips'").fetchone()[0]
-            change = conn.execute("INSERT INTO changes (operation, status, schema_version, created, applied, summary)"
-                                  " VALUES ('old', 'applied', 31, '2026-10-01 10:00:00', '2026-10-01 10:00:01', '{}')").lastrowid
-            for column, old, new in (("is_people", "0", "1"), ("name", "Trips", "Journeys")):
-                conn.execute("INSERT INTO change_rows (change_id, action, table_name, row_key, column_name, old, new)"
-                             " VALUES (?, 'update', 'tag_taxonomy', ?, ?, ?, ?)", (change, json.dumps([node]), column, old, new))
-            conn.execute("UPDATE tag_taxonomy SET name = 'Journeys' WHERE id = ?", (node,))
-            conn.commit()
-        finally:
-            conn.close()
-        loaded = journal._load(db.connect(db.readonly_uri(self.path), uri=True), change)
-        self.assertEqual([{"name": "Trips"}], [c.old for c in loaded])
-        undone = journal_service.undo(self.vl.library, change, apply=True)
-        self.assertIsNone(undone.refused, undone.refused)
-        self.assertEqual("Trips", query(self.path, "SELECT name FROM tag_taxonomy WHERE id = ?", (node,))[0][0])
 
     def test_without_the_declaration_every_older_change_would_be_refused_and_says_so(self):
         """What the owner would see were COLUMNS_DROPPED missing: each change of the journal, refused with the migration named."""

@@ -669,30 +669,7 @@ def _load(conn, change_id, canonical=True):
                 change.old = _canonical(roots, change.table, change.key, change.old)
             if change.new is not None:
                 change.new = _canonical(roots, change.table, change.key, change.new)
-    return _without_dropped_columns(conn, changes)
-
-
-def _without_dropped_columns(conn, changes):
-    """`changes` without the columns a migration dropped (schema.COLUMNS_DROPPED) and the library no longer has: a node
-    recorded with `is_people` is put back without it. An update left with no column writes nothing and is left out. A library
-    that still has the column (one not migrated yet, only looked at) keeps it."""
-    gone = {}
-    for dropped in schema.COLUMNS_DROPPED.values():
-        for table, columns in dropped.items():
-            present = _columns(conn, table)
-            gone.setdefault(table, set()).update(c for c in columns if c not in present)
-    kept = []
-    for change in changes:
-        drop = gone.get(change.table)
-        if drop:
-            for values in (change.old, change.new):
-                for column in drop:
-                    if values is not None:
-                        values.pop(column, None)
-            if change.action == "update" and not change.new:
-                continue
-        kept.append(change)
-    return kept
+    return changes
 
 
 def _inverse(change):
@@ -1005,7 +982,7 @@ def schema_gap_blocker(version, current):
     could. A migration cannot have if it is ADDITIVE and touches no table a change can name or the
     journal keys (KEYS): adding the roots table, the runs of jobs, a folder list, the derived tables, moves
     no row a journaled change recorded; nor one that only drops tables nothing journaled names
-    (schema.ONLY_DROPS), or columns the journal leaves out of what it loads (schema.COLUMNS_DROPPED). Every
+    (schema.ONLY_DROPS), or a column the migration took out of the journal (schema.COLUMNS_DROPPED). Every
     other migration blocks, and so does one that is not
     in the list: what cannot be classified is never exempt. A change made at a schema NEWER than
     the library's blocks too (an older version of the app opened it)."""
@@ -1026,8 +1003,8 @@ def schema_gap_blocker(version, current):
         # What the migration added was derived when it was added (a change older than it cannot hold the column), whatever
         # a later version made of it: tests hold the declaration to the columns the migration really adds.
         derived_only = set(schema.ADDS_DERIVED_COLUMNS.get(number, {}))
-        # A column dropped (schema.COLUMNS_DROPPED): the rebuilt table keeps every row and key, and _load leaves the column out of
-        # what an older change recorded.
+        # A column dropped (schema.COLUMNS_DROPPED): the rebuilt table keeps every row and key, and the migration took the
+        # journal's rows of the column out.
         dropped_only = set(schema.COLUMNS_DROPPED.get(number, {}))
         touched = sorted(set(migration.touches) & journaled - derived_only - dropped_only)
         if touched:
