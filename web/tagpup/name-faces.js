@@ -3,7 +3,6 @@
 // reads the plan, asks, and writes. What this adds is the page's side of it: the folder that is open, which the dialog offers
 // as "Only this folder" and whose faces the result counts before and after, and, once names were written, the open photo's
 // faces read again.
-import { wireFaceJobBanner } from './common/face-job-banner.js';
 import { attachNameFaces, openNameFaces } from './common/name-faces.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
@@ -19,15 +18,6 @@ const nameFacesOptions = {
 /** Open the dialog for the folder that is open. */
 export function startNamingFacesInFolder() {
     return openNameFaces(nameFacesOptions);
-}
-
-/** A bulk assignment of faces that stopped part-way, or runs in another window, is offered at the top of the page (#907). */
-export function wireFaceJobs() {
-    return wireFaceJobBanner({
-        changed: () => {
-            if (state.activePhotoPath) upper.renderPhotoFaces(state.activePhotoPath);
-        },
-    });
 }
 
 export function wireNameFaces() {

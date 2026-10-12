@@ -64,6 +64,7 @@ async function openGrid(t, { clusterSize = 6, matchReply, matchStatus = 200,
     .on("/api/faces/exclude", excludeReply || { success: true }, { status: excludeStatus })
     .on("/api/faces/match-bulk", matchReply || { success: true }, { status: matchStatus })
     .on("/api/faces/unmatch-bulk", { success: true })
+    .on("/api/history/31/undo", { success: true, changed: 3, errors: [] })
     .on("/api/faces/restore", { success: true })
     .on("/api/people-with-counts", [])
     .on("/api/people", [GUESS]);
@@ -261,7 +262,7 @@ describe("Undo is offered for what the server confirmed", () => {
   test("Undo covers only the faces the server says it assigned", async (t) => {
     const { window, document, server } = await openGrid(t, {
       clusterSize: 4,
-      matchReply: { success: true, matched: 3, matched_ids: [1, 2, 3], skipped_excluded: [4] },
+      matchReply: { success: true, matched: 3, matched_ids: [1, 2, 3], skipped_excluded: [4], change: 31 },
     });
     const section = clusterSection(document, "Cluster 5");
     clickOn(window, section.querySelector(".cluster-suggestion-assign"));
@@ -271,7 +272,9 @@ describe("Undo is offered for what the server confirmed", () => {
       document.getElementById("assign-undo-text").textContent);
     clickOn(window, document.getElementById("btn-assign-undo"));
     await wait(window, 100);
-    assert.deepEqual(idsIn(server.lastBody("/api/faces/unmatch-bulk")), [1, 2, 3]);
+    assert.deepEqual(server.lastBody("/api/history/31/undo"), { apply: true }, "the change that named them is undone");
+    assert.deepEqual([1, 2, 3, 4].map((id) => cardFor(document, id) !== null), [true, true, true, true],
+      "the faces the server named came back; the one left out never left");
   });
 
   test("a refused Ignore Cluster offers no Undo", async (t) => {

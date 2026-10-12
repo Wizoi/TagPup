@@ -6,7 +6,8 @@
  * cost the in-place removal was written to avoid -- from a list the undone faces had
  * already been dropped from, so they did not come back at all until the person was
  * opened again. And undoing an assign told the server "this is nobody", a decision
- * nobody had made.
+ * nobody had made. Now an assign's Undo is the journal's undo of its change (History's), which
+ * puts the faces back as they were, unreviewed.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -52,7 +53,8 @@ async function openGrid(t) {
     })
     .on("/api/faces/exclude", { success: true, excluded: 3 })
     .on("/api/faces/restore", { success: true, restored: 3 })
-    .on("/api/faces/match-bulk", { success: true, matched_ids: [1, 2, 3] })
+    .on("/api/faces/match-bulk", { success: true, matched_ids: [1, 2, 3], change: 31 })
+    .on("/api/history/31/undo", { success: true, changed: 3, errors: [] })
     .on("/api/faces/unmatch-bulk", { success: true })
     .on("/api/people-with-counts", [])
     .on("/api/people", ["Rowan Thackeray"]);
@@ -120,8 +122,7 @@ describe("Undo puts the faces back", () => {
 
     assert.deepEqual(ids(document).sort((a, b) => a - b), [1, 2, 3, 10, 11]);
     assert.equal(card(document, 10), bystander);
-    const sent = server.lastBody("/api/faces/unmatch-bulk");
-    assert.deepEqual(sent.face_ids, [1, 2, 3]);
-    assert.equal(sent.undo, true, "the undo told the server these faces are nobody");
+    assert.deepEqual(server.lastBody("/api/history/31/undo"), { apply: true });
+    assert.equal(server.lastBody("/api/faces/unmatch-bulk"), undefined, "the undo told the server these faces are nobody");
   });
 });

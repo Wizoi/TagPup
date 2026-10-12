@@ -21,7 +21,7 @@ import {
     wireChangeDogPark, wireFolderPathInput, wireSidebarResizer
 } from './folder.js';
 import { wireTagPupGear } from './gear.js';
-import { wireFaceJobs, wireNameFaces } from './name-faces.js';
+import { wireNameFaces } from './name-faces.js';
 import {
     leaveLibraryView, libraryChanged, openLibraryView, openViewFromAddress, photosDeleted, refreshFolderOrView, wireLibraryView
 } from './library-view.js';
@@ -182,8 +182,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // A library whose root this computer does not place says so, at the top of the page.
     wireRootsBanner();
-    // A bulk assignment of faces that stopped part-way (or runs in another window) is offered (#907).
-    wireFaceJobs();
 
     // The strip of the batches of photo files; it asks once, so a reload shows one still going. Dismiss leaves the focus on the grid.
     wireBatchStrip({ restoreFocus: () => thumbnailsGrid && thumbnailsGrid.focus({ preventScroll: true }) });

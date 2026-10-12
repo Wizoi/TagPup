@@ -151,8 +151,8 @@ export function postExcludeBulk(faceIds, presetReason) {
     return api.fetch('/api/faces/exclude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // A selection is ruled out as a job on the server (#907): the faces, and the people they were named taken off their
-        // photos unless another face of the photo is them, a few photos at a time; this request waits for the end.
+        // A selection is ruled out as one batch on the server: the faces, and the people they were named taken off their
+        // photos unless another face of the photo is them; this request waits for the end (the strip shows how far it is).
         body: JSON.stringify({ face_ids: faceIds, reason: (reason || '').trim(), bulk: true })
     })
     .then(async res => {
@@ -162,7 +162,7 @@ export function postExcludeBulk(faceIds, presetReason) {
     .then(data => {
         // Said, not thrown: the faces are ruled out all the same.
         if (data && data.warning) alert(data.warning);
-        state.lastAssignJob = data && data.job ? { job: data.job, kind: 'ignore' } : null;
+        state.lastAssignChange = data && data.change ? { change: data.change, kind: 'ignore' } : null;
         const excluded = new Set(faceIds);
         state.activePersonFaces = state.activePersonFaces.filter(f => !excluded.has(f.id));
         // In place. Rebuilding the grid to account for a handful of cards leaving
@@ -221,7 +221,7 @@ function postRestoreBulk(faceIds, { undo = false } = {}) {
 }
 
 // POST bulk unmatch to backend API
-function postUnmatchBulk(faceIds, { undo = false } = {}) {
+function postUnmatchBulk(faceIds) {
     btnUnmatchSelected.disabled = true;
     const originalText = btnUnmatchSelected.textContent;
     btnUnmatchSelected.textContent = 'Unmatching...';
@@ -231,8 +231,8 @@ function postUnmatchBulk(faceIds, { undo = false } = {}) {
         headers: {
             'Content-Type': 'application/json'
         },
-        // An Undo puts them back unreviewed; an unmatch records "nobody".
-        body: JSON.stringify({ face_ids: faceIds, undo })
+        // An unmatch records "nobody".
+        body: JSON.stringify({ face_ids: faceIds })
     })
     .then(res => {
         if (!res.ok) throw new Error('Bulk unmatch operation failed');
@@ -240,13 +240,6 @@ function postUnmatchBulk(faceIds, { undo = false } = {}) {
     })
     .then(data => {
         if (data.warning) alert(data.warning);
-        if (data.success && undo) {
-            // Undoing an assign: the faces come back to the grid they left.
-            putFacesBack(faceIds);
-            clearFaceDetails();
-            upper.fetchPeopleWithCounts(true, true);
-            return;
-        }
         if (data.success) {
             // In place: only the cards that left. This removed them and then
             // rebuilt every card on screen as well.
@@ -333,9 +326,9 @@ function closeIgnoreConfirm() {
     state.pendingIgnore = null;
 }
 
-/** Undo a whole job on the server (POST /api/faces/job/undo), then put its faces back in the grid they left. */
-function undoJob(faceIds, job, kind) {
-    // Synchronous on the server (a file a few photos at a time): the bar says so, stays until it ends, and cannot be pressed twice.
+/** Undo the last assign or ignore: the journal's undo of its change (POST /api/history/<change>/undo, as History's), then put its faces back in the grid they left. */
+function undoAssignment(faceIds, change, kind) {
+    // Synchronous on the server (the files a few at a time): the bar says so, stays until it ends, and cannot be pressed twice.
     if (state.assignUndoTimer) {
         clearTimeout(state.assignUndoTimer);
         state.assignUndoTimer = null;
@@ -343,10 +336,10 @@ function undoJob(faceIds, job, kind) {
     const was = assignUndoText ? assignUndoText.textContent : '';
     if (assignUndoText) assignUndoText.textContent = 'Undoing...';
     if (btnAssignUndo) btnAssignUndo.disabled = true;
-    api.fetch('/api/faces/job/undo', {
+    api.fetch(`/api/history/${change}/undo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job })
+        body: JSON.stringify({ apply: true })
     })
     .then(async res => {
         const data = await res.json().catch(() => ({}));
@@ -354,15 +347,17 @@ function undoJob(faceIds, job, kind) {
         return data;
     })
     .then(data => {
-        if (data.warning) alert(data.warning);
-        if (data.undone === false) {
-            // Some photos could not be put back: what was done stays done, and Undo can be pressed again when they can be.
-            state.lastAssignJob = { job, kind };
-            if (assignUndoText) assignUndoText.textContent = `Undo incomplete: ${data.remaining} photo(s) remain. Press Undo to try again.`;
-            if (btnAssignUndo) btnAssignUndo.disabled = false;
+        hideAssignUndo();
+        if (btnAssignUndo) btnAssignUndo.disabled = false;
+        const refused = (data.errors || []).length;
+        if (refused) {
+            // A file changed since is never overwritten: its photo and faces stay as they are, and History says which.
+            alert(`${refused} photo(s) could not be put back (changed since): they and their faces were left as they are.`);
+        }
+        if (kind === 'ignore') {
+            // The faces that carried no name had no photo to write: the faces' own call restores them (and puts them back in the grid).
+            postRestoreBulk(faceIds, { undo: true });
         } else {
-            hideAssignUndo();
-            if (btnAssignUndo) btnAssignUndo.disabled = false;
             putFacesBack(faceIds);
         }
         clearFaceDetails();
@@ -372,7 +367,7 @@ function undoJob(faceIds, job, kind) {
     .catch(err => {
         console.error(err);
         alert('Could not undo: ' + err.message);
-        state.lastAssignJob = { job, kind };
+        state.lastAssignChange = { change, kind };
         if (assignUndoText) assignUndoText.textContent = was;
         if (btnAssignUndo) btnAssignUndo.disabled = false;
     });
@@ -453,7 +448,7 @@ export function postMatchBulk(faceIds, who) {
             const notNamed = new Set(Array.isArray(data.not_named) ? data.not_named.map(Number) : []);
             const leavingIds = faceIds.filter(id => !skippedIds.has(id) && !notNamed.has(id));
             if (data.warning) alert(data.warning);
-            state.lastAssignJob = data.job ? { job: data.job, kind: 'assign' } : null;
+            state.lastAssignChange = data.change ? { change: data.change, kind: 'assign' } : null;
             const skipped = skippedIds.size;
             if (skipped) {
                 alert(`${skipped} of these face${skipped !== 1 ? 's were' : ' was'} `
@@ -812,18 +807,16 @@ ${summary}${note}`)) {
             } catch (e) { /* nothing to undo */ }
             const kind = assignUndoBar.dataset.undoKind || 'assign';
             if (!ids.length) return hideAssignUndo();
-            // The server's job is undone as one: the faces as they were AND the photo files it wrote.
-            const last = state.lastAssignJob;
+            // The journal's change is undone: the faces as they were AND the photo files it wrote.
+            const last = state.lastAssignChange;
             if (last && last.kind === kind) {
-                state.lastAssignJob = null;
-                undoJob(ids, last.job, kind);
+                state.lastAssignChange = null;
+                undoAssignment(ids, last.change, kind);
                 return;
             }
             hideAssignUndo();
-            // Each action has its own way back: an assignment is unmatched, an
-            // exclusion is restored. Getting this wrong would quietly do nothing.
+            // Faces that carried no name wrote no photo, so there is no change: an exclusion is restored (an assignment always has one).
             if (kind === 'ignore') postRestoreBulk(ids, { undo: true });
-            else postUnmatchBulk(ids, { undo: true });
         });
     }
     if (btnAssignUndoDismiss) {
