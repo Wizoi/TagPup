@@ -72,8 +72,7 @@ class EveryJobIsWaitedFor(unittest.TestCase):
 
     def test_the_scan_sees_the_jobs_long_work_names_today(self):
         asked = asked_by_long_work()
-        for name in ("tagpup.jobs.suggestions", "tagpup.jobs.indexing", "tagpup.jobs.naming_faces",
-                     "tagpup.jobs.face_assignments", "tagpup.services.libraries"):
+        for name in ("tagpup.jobs.suggestions", "tagpup.jobs.indexing", "tagpup.jobs.naming_faces", "tagpup.services.libraries"):
             self.assertIn(name, asked)
 
 

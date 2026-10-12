@@ -104,12 +104,6 @@ class Writers(TwoSams, unittest.TestCase):
         self.assertEqual([self.faces[0]], reverted)
         self.assertEqual((None, None, None), self.face(self.faces[0]))
 
-    def test_a_removed_person_is_not_given_back(self):
-        prior = {self.faces[0]: (self.sam_i, "manual")}
-        write(self.path, lambda conn: taxonomy.remove_node(conn, SAM_I))
-        self.assertEqual([], write(self.path, lambda conn: faces.reinstate(conn, prior)))
-        self.assertEqual((None, None, None), self.face(self.faces[0]))
-
     def test_a_detected_face_given_a_name_two_people_have_is_refused_not_guessed(self):
         with self.assertRaises(person_ids.AmbiguousPerson):
             write(self.path, lambda conn: faces.insert(conn, self.other, [5, 5, 9, 9], b"\x03" * 8, name="Sam"))

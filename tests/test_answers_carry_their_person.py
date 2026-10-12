@@ -14,6 +14,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fake_exiftool  # noqa: E402
 import web_client  # noqa: E402
 from face_rows import add_face  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
@@ -251,7 +252,9 @@ class OnTheWire(unittest.TestCase):
         self.assertEqual(wren["person_id"], wren["person"]["id"])
 
     def test_naming_faces_in_bulk_says_whom(self):
+        files = fake_exiftool.standing_in(self)         # the file is read to put the person on it (a table of files)
         path = self.vl.path_of(self.vl.photo("A", "wren.jpg", tags=[WREN]))
+        files.keep_tags(path, [WREN])
         face = add_face(self.vl.conn, path, embedding=unit(0, 1, 0, 0))
         self.vl.conn.commit()
         answer = self.client.post("/library/api/faces/match-bulk", json={"face_ids": [face], "person_name": "Wren"})

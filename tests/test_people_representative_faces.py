@@ -119,7 +119,7 @@ class WhenTheFacesChange(Case):
         first = self.face(at(0), "Wren Halloway")
         second = self.face(at(40), "Wren Halloway")
         self.assertEqual(self.chosen()["Wren Halloway"], first)
-        faces.name_faces(self.lib.library, [first], "Ines Okafor")
+        faces.name_face(self.lib.library, first, "Ines Okafor")
         got = self.chosen()
         self.assertEqual(got["Wren Halloway"], second)
         self.assertEqual(got["Ines Okafor"], first)
@@ -141,7 +141,7 @@ class WhenTheFacesChange(Case):
         b = self.face(at(10), "Wren Halloway")
         c = self.face(at(20), "Wren Hallowell")
         self.assertEqual(self.chosen(), {"Wren Halloway": a, "Wren Hallowell": c})
-        faces.name_faces(self.lib.library, [c], "Wren Halloway")
+        faces.name_face(self.lib.library, c, "Wren Halloway")
         self.assertEqual(self.chosen(), {"Wren Halloway": b})
 
     def test_it_is_not_recomputed_while_nothing_moves(self):

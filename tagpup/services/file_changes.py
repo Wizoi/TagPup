@@ -66,7 +66,7 @@ from tagpup.core.result import SKIPPED_DAMAGED, Conflict, Refused, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, lock_owners, names
-from tagpup.services import batches, rotation
+from tagpup.services import batches, face_batch, rotation
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, embeddings, file_journal, journal, photos, schema
 
@@ -189,7 +189,7 @@ def _settle_stopped(library, change_id):
     try:
         left = [row.id for row in file_journal.files_of(library.path, change_id) if row.state == "planned"]
         file_journal.withdraw(library.path, left)
-        file_journal.finish(library.path, change_id)
+        file_journal.finish(library.path, change_id, also=face_batch.tidy)
     except Exception as problem:
         logger.warning("Could not finish change %s after it was stopped: %s", change_id, problem)
 
@@ -242,7 +242,7 @@ def between_chunks(batch):
 @roots_service.canonical_args("photo_paths")
 def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one, summary=None,
                  unreadable="fail", stop_at_first_error=False, et=None, held=None, read_back_also=(), on_planned=None,
-                 uncapped=False):
+                 uncapped=False, alongside=None):
     """Write fields into many photos as one change named `operation` (see the module's
     docstring). `read` is the fields read from each file; `plan_one(path, held)` says
     what one file is to hold (a Plan) from what it holds, {field: [texts]}.
@@ -268,6 +268,10 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     {path: detail} of each photo written or already holding it, `conflicts` the photos,
     named by id, found changed outside since they were read.
 
+    `alongside` (tagpup.services.face_batch.Work): rows the change writes beside the files, recorded in the plan's transaction and
+    written in the one that marks each file `done` (a bulk assignment's faces); a photo it names is in the change even when its
+    file holds what it is to hold already, and then only its rows are written.
+
     More than batches.MAX_BATCH photos are refused, nothing read, unless `uncapped` (the tag tree's rewrites only); more than
     batches.CHUNK are a batch (the module's docstring): refused, nothing read, when batches.MOST_WAITING wait already, or when it
     is cancelled before its turn.
@@ -283,7 +287,7 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
             except (Conflict, Refused) as why:
                 return _refused_whole(photo_paths, str(why))
         return _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                              stop_at_first_error, et, held, read_back_also, on_planned)
+                              stop_at_first_error, et, held, read_back_also, on_planned, alongside)
 
 
 def _refused_whole(photo_paths, why):
@@ -295,20 +299,20 @@ def _refused_whole(photo_paths, why):
 @_exclusive
 @_pinned
 def _write_session(library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                   stop_at_first_error, et, held, read_back_also, on_planned):
+                   stop_at_first_error, et, held, read_back_also, on_planned, alongside=None):
     if len(photo_paths) > batches.CHUNK and batches.current() is None:
         raise RuntimeError("%d photos are written without a batch's claim (write_fields takes it)" % len(photo_paths))
     if et is None:
         # Dead for good after a command timed out: a share that went away costs its deadline once, not once a file.
         with exiftool_session.ExifToolSession(executable=exiftool_path) as session:
             return _write_fields(exiftool_session.StaysDead(session), library, operation, exiftool_path, photo_paths, read, plan_one, summary,
-                                 unreadable, stop_at_first_error, held, read_back_also, on_planned)
+                                 unreadable, stop_at_first_error, held, read_back_also, on_planned, alongside)
     return _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary,
-                         unreadable, stop_at_first_error, held, read_back_also, on_planned)
+                         unreadable, stop_at_first_error, held, read_back_also, on_planned, alongside)
 
 
 def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan_one, summary, unreadable,
-                  stop_at_first_error, fresh, read_back_also, on_planned=None):
+                  stop_at_first_error, fresh, read_back_also, on_planned=None, alongside=None):
     result = Result(attempted=len(photo_paths))
     _running.result = result
     written = result.details["written"] = {}
@@ -344,7 +348,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             continue
         after = {field: fields.field_values(value) for field, value in plan.after.items()}
         before = {field: now.get(field, []) for field in after}
-        if fields.reads_same(before, after):
+        if fields.reads_same(before, after) and not (alongside is not None and alongside.wants(path)):
             written[path] = plan.detail
             followed.append((path, now))
             continue
@@ -361,7 +365,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     found = _rows_of(library, [path for path, _b, _a, _d in planned])
     change_id, rows = file_journal.plan(library.path, operation, [
         {"photo_id": (found.get(paths.key(path)) or (None,))[0], "path": path, "before": before, "after": after}
-        for path, before, after, _detail in planned], summary)
+        for path, before, after, _detail in planned], summary,
+        also=None if alongside is None else (lambda conn, new_id: alongside.record(conn, new_id, [each[0] for each in planned])))
     result.details["change"] = change_id
     if batch is not None:
         batch.change_id = change_id
@@ -380,7 +385,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             outcome, why = _carry(et, library, row, row.before, row.after, "done", on_failure="withdraw",
                                   wrote=wrote, now=now)
             if outcome == "done":
-                result.changed += 1
+                if not fields.reads_same(planned[n][1], planned[n][2]):
+                    result.changed += 1       # a file held what it was to hold: its rows alone were written
                 if isinstance(detail, dict) and row.followed:
                     detail["faces_turned"] = row.followed
                 written[path] = detail
@@ -396,7 +402,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             result.changed -= 1
             written.pop(row.path, None)
             result.fail(row.path, "ExifTool reported it written, but it holds what it held before")
-        file_journal.finish(library.path, change_id)
+        file_journal.finish(library.path, change_id, also=face_batch.tidy)
         stopped = result.details.get("stopped")
         if stopped:
             result.refuse("Stopped as asked after %d of %d photos: %d file(s) were written, recorded as change %d in History, "
@@ -455,13 +461,14 @@ def _record(library, row, values, state, stamp=None, wrote=True, after=None):
             stat = os.stat(row.path)
         except OSError:
             stat = None
-    # What a rotation brings besides the field (its face boxes, its vectors) goes in the same transaction as `done`.
-    follow = rotation.follower(row, state)
+    # What a change brings besides the field -- a rotation's face boxes and vectors, a bulk assignment's faces -- goes in the same
+    # transaction as `done` (or `undone`).
+    follow = [each for each in (rotation.follower(row, state), face_batch.follower(row, state)) if each is not None]
 
     def work(conn):
         photos.follow_fields(conn, row.path, values, stat, stamp)
-        if follow is not None:
-            follow(conn)
+        for each in follow:
+            each(conn)
         if after is not None:
             file_journal.set_after(conn, row.id, after)
         file_journal.set_state(conn, row.id, state)
@@ -585,7 +592,8 @@ def _record_held(library, row, now, target, finished, stamp=None):
     if finished == "done" and not fields.same_fields(held, target):
         after = held
         row.after = held
-    _record(library, row, held, finished, stamp, after=after)
+    # A file that was not to change (its faces were) is not stamped as written.
+    _record(library, row, held, finished, stamp, wrote=not fields.reads_same(row.before, row.after), after=after)
 
 
 def _after_failure(et, library, row, origin, target, finished, on_failure, error):
@@ -782,21 +790,16 @@ def _settle_renames(library, rows, forward, redo):
 # ---- Settling at start -------------------------------------------------------------------
 
 @_exclusive
-def settle(library, exiftool_path, operation=None):
+def settle(library, exiftool_path):
     """Finish every change of photo files that a process no longer running -- or an error
     in this one -- left half done: each file it left planned or writing is settled by
     what it holds, forward or, for an undo under way, back. Returns how many changes
     were finished. A change that cannot be finished now is logged, released and left as
     it is for the next time: it does NOT raise, so a caller that must know asks the
-    journal afterwards (tagpup.store.file_journal.unfinished).
-
-    `operation` names changes whose owner is not asked after: the caller holds the claim
-    that nothing carries that operation out (a face assignment's resume, which holds the library's
-    claim), so one left by an error of THIS process, still alive, is its to finish. An undo
-    under way is never taken over this way: a resume has no business finishing it."""
+    journal afterwards (tagpup.store.file_journal.unfinished)."""
     finished = 0
     for change in file_journal.unfinished(library.path):
-        if change.owner and file_journal.owner_alive(change.owner) and (change.operation != operation or change.undoing):
+        if change.owner and file_journal.owner_alive(change.owner):
             continue
         if not file_journal.claim(library.path, change.id, change.owner):
             continue
@@ -828,7 +831,7 @@ def _finish(library, change, exiftool_path):
                 else:
                     _carry(et, library, row, row.before, row.after, "done", on_failure="conflict", wrote=wrote)
             _read_back(et, library, wrote)
-    file_journal.finish(library.path, change.id)
+    file_journal.finish(library.path, change.id, also=face_batch.tidy)
 
 
 _settled = set()

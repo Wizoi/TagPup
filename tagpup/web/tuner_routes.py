@@ -446,16 +446,12 @@ def faces_match_bulk():
         _refuse(400, str(why))
     except NotFound as missing:
         abort(404, description=str(missing))
-    outcome = face_routes.assigned(library, plan).outcome()
-    named = set(outcome["matched_ids"])
-    reply = {"success": True,
-             "person": people_service.annotate(library, [{"name": plan["person_name"], "person_id": plan["person_id"]}])[0]["person"],
-             "matched": len(named), "matched_ids": outcome["matched_ids"],
-             "skipped_excluded": plan["skipped_excluded"], "tags_written": outcome["tags_written"],
-             "not_named": [face_id for face_id in outcome["planned_ids"] if face_id not in named], "job": outcome["job"]}
-    if face_routes.trouble(outcome):
-        reply["warning"] = face_routes.trouble(outcome)
-    return jsonify(reply)
+    outcome = face_routes.assigned(library, plan)
+    return face_routes.with_warning(
+        {"success": True,
+         "person": people_service.annotate(library, [{"name": plan.person_name, "person_id": plan.person_id}])[0]["person"],
+         "matched": len(outcome.applied), "matched_ids": outcome.applied, "skipped_excluded": plan.skipped_excluded,
+         "tags_written": outcome.files, "not_named": outcome.left, "change": outcome.change}, outcome)
 
 
 @routes.post("/api/faces/unmatch-bulk")
@@ -470,12 +466,9 @@ def faces_unmatch_bulk():
         face_ids = [int(fid) for fid in face_ids]
     except (ValueError, TypeError):
         abort(400, description="Invalid face_ids format")
-    plan = face_assignment.plan_unname(library, face_ids, undo=bool(body.get("undo")))
-    outcome = face_routes.assigned(library, plan).outcome()
-    reply = {"success": True, "changed": outcome["changed"], "tags_removed": outcome["tags_removed"], "job": outcome["job"]}
-    if face_routes.trouble(outcome):
-        reply["warning"] = face_routes.trouble(outcome)
-    return jsonify(reply)
+    outcome = face_routes.assigned(library, face_assignment.plan_unname(library, face_ids))
+    return face_routes.with_warning({"success": True, "changed": len(outcome.applied) + outcome.plain,
+                                     "tags_removed": outcome.files, "change": outcome.change}, outcome)
 
 
 @routes.post("/api/photo/unmatch-all")
@@ -525,19 +518,15 @@ def folder_automatch():
         return jsonify({"success": True, "dry_run": True, "matched_count": result.changed,
                         "faces": details.get("faces", 0), "photos": details.get("photos", 0),
                         "people": details.get("people", {}), "renamed": details.get("renamed", 0)})
-    # Applied: the guesses AND the people's tags, as a job (#907). The faces and photos are what was written, not proposed.
-    plan = face_assignment.plan_guesses(library, folder_path, _decided(library))
-    job = face_routes.assigned(library, plan)
-    outcome = job.outcome()
-    named = outcome["matched_ids"]
+    # Applied: the guesses AND the people's tags, as one batch. The faces and photos are what was written, not proposed.
+    outcome = face_routes.assigned(library, face_assignment.plan_guesses(library, folder_path, _decided(library)))
+    named = outcome.applied
     written = faces_service.written_report(library, named, folder_path)
     people, photos_named, remaining = written["people"], written["photos"], written["remaining_counts"]
-    answer = {"success": True, "dry_run": False, "matched_count": len(named), "faces": len(named),
-              "photos": len(photos_named), "people": people, "renamed": 0, "remaining_counts": remaining,
-              "photos_named": photos_named, "tags_written": outcome["tags_written"], "job": outcome["job"]}
-    if face_routes.trouble(outcome):
-        answer["warning"] = face_routes.trouble(outcome)
-    return jsonify(answer)
+    return face_routes.with_warning(
+        {"success": True, "dry_run": False, "matched_count": len(named), "faces": len(named), "photos": len(photos_named),
+         "people": people, "renamed": 0, "remaining_counts": remaining, "photos_named": photos_named,
+         "tags_written": outcome.files, "change": outcome.change}, outcome)
 
 
 @routes.post("/api/faces/restore")

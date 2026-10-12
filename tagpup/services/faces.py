@@ -204,37 +204,6 @@ def nameable(library, face_ids, person):
     return result
 
 
-def name_faces(library, face_ids, person):
-    """Name many faces as one person. Assigning a group, or a selection, in the grids.
-
-    An excluded face is left alone and reported; one already named this person, or not
-    in the table, is nothing to do. Refused when two of the faces are in one photo, or
-    the person is already on another face in one of the photos.
-
-    details: `matched`, the rows named; `matched_ids`, the faces asked to be named;
-    `skipped_excluded`; and, when anything was named, `face_ids` and `fingerprints`.
-    """
-    result = Result(attempted=len(face_ids))
-    who = who_is(library, person, result)
-    if who is None:
-        return result
-    ref, person_name = who
-    result.details.update(matched=0, matched_ids=[], skipped_excluded=[])
-    try:
-        with faces.accounted_write(library.path, "name faces in bulk") as write:
-            face_ids = _nameable(write.conn, face_ids, ref, person_name, result)
-            result.details.pop("photos", None)
-            if not face_ids:
-                return result
-            matched = faces.name(write.conn, face_ids, ref)
-            result.changed = matched
-    except person_ids.PersonProblem as problem:
-        people_service.translate(problem)
-    result.details.update(matched=matched, matched_ids=face_ids, face_ids=face_ids,
-                          fingerprints=(write.before, write.after))
-    return result
-
-
 def unname_face(library, face_id):
     """Take a face's name off. Unmatching a face card: a decision -- "this is nobody" --
     recorded as manual, so re-clustering does not put a name back."""
@@ -255,18 +224,14 @@ def unname_face(library, face_id):
     return result
 
 
-def unname_faces(library, face_ids, undo=False):
-    """Take the names off many faces. `undo` puts them back as they were before an
-    assignment -- unreviewed -- where unmatching is a decision recorded as manual."""
+def unname_faces(library, face_ids):
+    """Take the names off many faces that carry none to write to a photo (a bulk assignment's plain faces): "this is nobody", a
+    decision recorded as manual."""
     _library_there(library)
     result = Result(attempted=len(face_ids))
-    # Unmatching is a decision -- "this is nobody" -- recorded as manual. Undoing an
-    # assignment is not: it puts the faces back as they were, unreviewed, and used to
-    # leave them marked as deliberately nobody instead.
-    source = None if undo else "manual"
 
     def unname(conn):
-        return faces.unname(conn, face_ids, source)
+        return faces.unname(conn, face_ids, "manual")
 
     result.changed = db.write_with_connection(library.path, unname, label="unname faces")
     return result
@@ -426,7 +391,7 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     if rehearse:
         conn = db.connect(db.readonly_uri(library.path), uri=True)
         try:
-            chosen, gone = _decide_guesses(conn, proposed)
+            chosen, gone = decide_guesses(conn, proposed)
             shown = _shown(conn, [person for _fid, person, _photo in chosen])
         finally:
             conn.close()
@@ -481,7 +446,7 @@ def propose_guesses(library, named, photo_path=None, folder=None):
     return len(unnamed), _closest_named(unnamed, people, matrix)
 
 
-def _decide_guesses(conn, proposed, known=None):
+def decide_guesses(conn, proposed, known=None):
     """([(face_id, person, photo)] to name, how many were left for a person gone) of `proposed`, decided on `conn`. A person is
     their id, or a name no person is filed under."""
     given = faces.people_given(conn, {person for found in proposed.values() for _fid, person in found})
@@ -516,7 +481,7 @@ def _write_guesses(conn, proposed):
     # (docs/findings.md, #645).
     db.begin(conn, immediate=True)
     known = person_ids.read(conn)
-    chosen, gone = _decide_guesses(conn, proposed, known)
+    chosen, gone = decide_guesses(conn, proposed, known)
     # A bulk guess, not a per-face human decision, so it is left as an automatic
     # assignment that re-clustering may revise. Only the faces still unnamed and in
     # play are named, name_if_unnamed's guard, and only those are counted: in one write
@@ -525,21 +490,6 @@ def _write_guesses(conn, proposed):
     return ([(person, face_photo) for face_id, person, face_photo in chosen if face_id in named], gone,
             {face_id: person for face_id, person, _photo in chosen if face_id in named},
             _shown(conn, [person for _fid, person, _photo in chosen], known))
-
-
-def name_guesses(library, proposed):
-    """Write the guesses `propose_guesses` made for some photos ({photo path: [(face id, person)]}) -- a chunk of a folder's --
-    deciding them again under the write lock, as an automatch does (_automatch): a face named or excluded meanwhile is left as it
-    is, as is a face whose person no longer exists. `changed`: the faces named; details `named_ids` ({face id: person}), `faces`,
-    `photos`, `people`, `renamed`."""
-    _library_there(library)
-    result = Result(attempted=sum(len(found) for found in proposed.values()))
-    done, gone, named_ids, shown = db.write_with_connection(
-        library.path, lambda conn: _write_guesses(conn, proposed), label="automatch faces")
-    result.changed = len(done)
-    result.details.update(named_ids=named_ids, faces=len(done), photos=len({face_photo for _person, face_photo in done}),
-                          people=dict(collections.Counter(shown[person] for person, _photo in done)), renamed=gone)
-    return result
 
 
 #: How many unnamed faces are compared with every named face at once: a block of named x

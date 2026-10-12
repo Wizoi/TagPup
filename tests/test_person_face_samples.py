@@ -118,7 +118,7 @@ class WhenTheFacesChange(Case):
         first = self.face(0, WREN)
         second = self.face(40, WREN)
         self.assertEqual({first, second}, set(self.samples()[WREN]))
-        faces.name_faces(self.lib.library, [first], INES)
+        faces.name_face(self.lib.library, first, INES)
         got = self.samples()
         self.assertEqual([second], got[WREN])
         self.assertEqual([first], got[INES])

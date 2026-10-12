@@ -36,7 +36,6 @@ import time
 
 from flask import Blueprint, current_app, jsonify, request
 
-from tagpup.jobs import face_assignments as face_assignment_jobs
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces as naming_faces_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
@@ -112,9 +111,6 @@ def long_work():
     naming = naming_faces_jobs.running()
     if naming:
         found.append("%d naming of faces from tags" % naming)
-    assigning = face_assignment_jobs.running()
-    if assigning:
-        found.append("%d assignment(s) of faces" % assigning)
     found.extend(batches.sentences())
     bringing = library_actions.bringing_up_to_date()
     if bringing:

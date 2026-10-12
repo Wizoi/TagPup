@@ -32,15 +32,14 @@ def _this_pc_only():
 
 #: The writes the job's plan must not be written over (#871): adding or indexing folders, a sync's apply, a bulk edit,
 #: a photo's keywords and the bulk tag writes, and deleting photos; and what can put faces' names, tags or the tree back or
-#: elsewhere without going through those: History's Undo, a stopped assignment of faces resumed or undone, a branch's flags.
+#: elsewhere without going through those: History's Undo, a branch's flags.
 #: Keyed as Flask names the route (`<int:change_id>` stays in it). Answered 409 while names are given (the one owner of the
 #: refusal is tuner_routes.clustering_refusal, which TagTuner's own writes ask too); reads are never refused. Every other write
 #: route is guarded, or allowed with a reason, in tests/test_write_routes_are_classified.py.
 GUARDED = frozenset((
     "/api/folder/index-start", "/api/folder/add", "/api/sync/review/include", "/api/library/bulk-edit",
     "/api/photo/save-metadata", "/api/photos/bulk-tags", "/api/folder/auto-apply",
-    "/api/photo/delete", "/api/sync", "/api/history/<int:change_id>/undo", "/api/faces/job/resume",
-    "/api/faces/job/undo", "/api/taxonomy/update"))
+    "/api/photo/delete", "/api/sync", "/api/history/<int:change_id>/undo", "/api/taxonomy/update"))
 
 #: Routes of GUARDED that only write when the body says so: a rehearsal (Undo, sync without `apply`).
 #: A run-now of the recurring `sync` is not here: the Activity page names the library in the body, not the URL, so no route

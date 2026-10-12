@@ -235,7 +235,7 @@ class TestEveryWriteSiteResolvesPeople(unittest.TestCase):
         # The check above is worthless if the writes moved away from what it reads.
         found = [where for where, _call, _function in self.writes()]
         self.assertTrue(any("tagging.py" in where for where in found), found)
-        self.assertIn("_change_each", [function.name for _where, _call, function in self.writes()])
+        self.assertIn("keywords_planner", [function.name for _where, _call, function in self.writes()])
 
 
 if __name__ == "__main__":

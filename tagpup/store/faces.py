@@ -443,40 +443,58 @@ def named_among(conn, face_ids):
     return found
 
 
-def decided_by_id(conn, face_ids):
-    """{face id: (person, name_source)} of the faces among `face_ids` that carry a name and are not excluded: what they were, for a
-    job that can put them back (its Undo). `person` is the node's id, or -- for a face whose name no person is filed under -- the
-    name (person_ids.target takes either)."""
+#: The columns that say what was decided about a face: the person it carries (the id and the cached name), who decided it, and
+#: whether it is ruled out (and why). What a bulk assignment records of each face it changes (tagpup.store.face_batches).
+DECISION = ("name", "tag_id", "name_source", "excluded", "excluded_reason")
+
+
+def _decision_columns(conn):
+    return DECISION if person_ids.present(conn) else tuple(column for column in DECISION if column != "tag_id")
+
+
+def planning(conn, face_ids):
+    """{face id: (photo id, photo path, {column: value} of DECISION)} of the faces among `face_ids` that exist: what a bulk
+    assignment plans from. No crop or vector is read."""
+    columns = _decision_columns(conn)
     found = {}
     for chunk in _chunks(face_ids):
-        found.update((face_id, (tag_id if tag_id is not None else name, source))
-                     for face_id, name, tag_id, source, excluded in conn.execute(
-            "SELECT f.id, f.name, " + _tag_id_of(conn) + ", f.name_source, f.excluded FROM faces f WHERE f." + _in(chunk), chunk)
-            if name is not None and not excluded)
+        rows = conn.execute("SELECT f.id, f.photo_id, p.path, " + ", ".join("f." + column for column in columns) + " FROM faces f"
+                            + PHOTO + " WHERE f." + _in(chunk), chunk).fetchall()
+        for face_id, photo_id, path, *values in store_roots.natives(conn, rows, 2):
+            found[face_id] = (photo_id, path, dict(zip(columns, values)))
     return found
 
 
-def _tag_id_of(conn):
-    """The select item for a face's person id: the column, or NULL before migration 21."""
-    return "f.tag_id" if person_ids.present(conn) else "NULL"
+def decisions_of(conn, face_ids):
+    """{face id: {column: value} of DECISION} of the faces among `face_ids` that exist, as they stand on `conn`."""
+    columns = _decision_columns(conn)
+    found = {}
+    for chunk in _chunks(face_ids):
+        for face_id, *values in conn.execute("SELECT id, " + ", ".join(columns) + " FROM faces WHERE " + _in(chunk), chunk):
+            found[face_id] = dict(zip(columns, values))
+    return found
 
 
-def reinstate(conn, prior):
-    """Give each face of `prior` ({face id: (person, name_source)}) the person and decider it had, when it is unnamed and not ruled
-    out now (a face named, or ruled out, since is somebody's newer decision). A person merged away or removed since is not given
-    back (their faces stay unnamed). Returns the ids reinstated. The caller commits."""
-    done = []
-    known = person_ids.read(conn)
-    for face_id, (person, source) in prior.items():
-        try:
-            target = person_ids.target(conn, person, known)
-        except person_ids.PersonProblem:
-            continue
-        if conn.execute("UPDATE faces SET " + _assign(conn) + ", name_source = ? WHERE id = ? AND name IS NULL AND excluded = 0",
-                        _pair(conn, target) + (source, face_id)).rowcount:
-            done.append(face_id)
-    _rebuilt(conn, _photos_of(conn, done), len(done), known=known)
-    return done
+def carried_on(conn, photo_ids):
+    """{photo id: [(face id, Ref)]} of the faces on those photos that carry a person, by idx_faces_photo_id."""
+    found = {}
+    photo_ids = sorted(photo_ids)
+    for start in range(0, len(photo_ids), CHUNK):
+        chunk = photo_ids[start:start + CHUNK]
+        for photo_id, face_id, tag_id, name in conn.execute(
+                "SELECT photo_id, id, " + ("tag_id" if person_ids.present(conn) else "NULL") + ", name FROM faces"
+                " INDEXED BY idx_faces_photo_id WHERE photo_id IN (%s) AND name IS NOT NULL" % ",".join("?" * len(chunk)), chunk):
+            found.setdefault(photo_id, []).append((face_id, Ref(tag_id, name)))
+    return found
+
+
+def put_decisions(conn, values):
+    """Give each face of `values` ({face id: {column: value}}, columns of DECISION) those columns, and rebuild the people of their
+    photos. The caller commits, in the transaction that also holds what the decision goes with. Returns the ids written."""
+    for face_id, columns in values.items():
+        conn.execute("UPDATE faces SET " + ", ".join("%s = ?" % column for column in columns) + " WHERE id = ?",
+                     list(columns.values()) + [face_id])
+    return _rebuilt(conn, _photos_of(conn, list(values)), list(values))
 
 
 def name(conn, face_ids, person):

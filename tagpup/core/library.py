@@ -63,9 +63,9 @@ class Library:
 
     @property
     def bulk_jobs(self):
-        """Where the library's bulk edits keep what a restart must find of them (tagpup.files.job_files): cache/<name>/bulk
-        beside the library. A job's list of photos and how far it got; nothing the library's rows or the photos' files
-        depend on."""
+        """Where an older version kept the plans and states of its face assignments (cache/<name>/bulk beside the library): nothing
+        writes there now, and the first read of the library's settings in a process lets go of what is left
+        (tagpup.services.face_assignment.forget_old_jobs)."""
         return os.path.join(self.folder, "cache", self.name, "bulk")
 
     @property
