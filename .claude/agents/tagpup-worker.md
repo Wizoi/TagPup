@@ -82,10 +82,12 @@ A bug you fix gets a test that fails on the old code first
 
 ## Before you report
 While you work, run only the tests you touched and `python tools/affected_tests.py`.
-Before you report, run `python -m ruff check .` and `python tools/run_tests.py` (the
-whole suite, about 6 minutes) ONCE, after your last code change, and never while another
-worker's suite is running if you can tell (two at once trip load-sensitive tests); a
-docs-only commit after the run needs no second run. Report: your commits, the decisions you made, the exact result of both
-runs, anything left undone and why. Every number you report about the live libraries is
+Before you report, run `python -m ruff check .` and `python tools/run_tests.py --fast` (the
+fast tier) ONCE, after your last code change, plus every test file you added or changed on its
+own (the scenario and slow tiers when your change is in one). Do NOT run the whole suite: the
+main session runs it on the merged trunk and sends back what it breaks (owner, 2026-10-11).
+A change after a review runs only the files it touched; a docs-only commit needs no run.
+Report: your commits, the decisions you made, the exact result of each run, anything left
+undone and why. Every number you report about the live libraries is
 one you counted yourself this task. Keep it to what the main session needs to review
 and commit.

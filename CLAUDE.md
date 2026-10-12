@@ -44,14 +44,14 @@ this codebase, add it there with a comment saying why rather than working around
 No `pip.exe`, no `Activate.ps1`, no pytest — invoke the interpreter by path. Use the
 glob for the frontend suite; `node --test tests/frontend/` fails on `harness.mjs`.
 
-**The whole Python suite is `tools/run_tests.py`: 4,431 tests, about 6 minutes (350-700 s
-under load, counted 2026-10-08).** Run all of it
-before a commit that touches Python; choosing which files to run cost more turns than
-it saved. `tools/affected_tests.py` is for the loop while editing, not for the commit.
-**Run the whole suite once per round, at the end, and never beside another suite run**
-(two or three at once on one machine tripped load-sensitive tests, and each worker ran
-it several times a round). While editing, run the affected files and the one file you
-are changing; the main session runs the whole suite once on the merged trunk.
+**The whole Python suite is `tools/run_tests.py`: about 4,300 tests, about 5 minutes (350-700 s
+under load).** **A worker does not run it** (owner, 2026-10-11: too wasteful, and the main
+session runs it again on the merge): a worker runs the files of the code it is changing and
+`tools/affected_tests.py` while it edits, and once at the end `tools/run_tests.py --fast`
+(the fast tier) plus the files of every test it added or changed. The main session runs the
+whole suite once on the merged trunk, never beside another suite run (two or three at once
+on one machine tripped load-sensitive tests); a break it finds goes back to the worker with
+the file names. A change made after a review runs only the files it touched.
 
 **The owner runs the apps from an installed copy** (`%LOCALAPPDATA%\TagPup\*.cmd`,
 made by `scripts/install_app.py`), with `TAGPUP_HOME` set to the repository. Saving a
