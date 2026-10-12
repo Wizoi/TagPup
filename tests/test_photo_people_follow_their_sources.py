@@ -11,7 +11,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from face_rows import add_face, people_of  # noqa: E402
+from face_rows import add_face, people_of, person_of  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.store import checks, db, faces, generations, people, photos, taxonomy  # noqa: E402
@@ -111,7 +111,7 @@ class PhotoPeople(unittest.TestCase):
         # Such faces have happened (the doctor watches for them); restored, the face
         # counts again (#89).
         face_id = self.face()
-        self.write(lambda conn: conn.execute("UPDATE faces SET name = ?, excluded = 1 WHERE id = ?", (ODA, face_id)))
+        self.write(lambda conn: conn.execute("UPDATE faces SET name = ?, tag_id = ?, excluded = 1 WHERE id = ?", (ODA, person_of(conn, ODA), face_id)))
         self.write(lambda conn: faces.restore(conn, [face_id]))
         self.assertEqual([WREN, ODA], self.listed())
 

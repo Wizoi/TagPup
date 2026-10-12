@@ -9,7 +9,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { closeAllApps, click } from "./harness.mjs";
-import { loadViewPage, pageErrors, syntheticFolders, syntheticKeywords, syntheticPeople, syntheticDates } from "./view-page.mjs";
+import { loadViewPage, pageErrors, personRow, syntheticFolders, syntheticKeywords, syntheticPeople, syntheticDates } from "./view-page.mjs";
 
 afterEach(() => {
   closeAllApps();
@@ -388,7 +388,7 @@ describe("a stale answer paints nowhere", () => {
     let calls = 0;
     const ctx = await loadViewPage(t, {
       search: "?view=all",
-      navigator: { people: () => ({ people: [{ name: `Call ${++calls}`, count: 1 }] }) },
+      navigator: { people: () => ({ people: [personRow(1, `Call ${++calls}`, 1)] }) },
     });
     ctx.hold.people = true;
     ctx.tab("people").click();
@@ -419,7 +419,7 @@ describe("a stale answer paints nowhere", () => {
     click(ctx.window, ctx.rows("people")[1]);
     await ctx.settle(20);
     assert.equal(ctx.state.library.kind, "person");
-    assert.equal(ctx.state.library.value, ctx.rows("people")[1].querySelector(".nav-label").textContent);
+    assert.equal(ctx.state.library.value, "People/" + ctx.rows("people")[1].querySelector(".nav-label").textContent, "a person is asked for by their tag");
     ctx.hold.ids = false;
     await ctx.release("ids");
     await ctx.settle();
@@ -450,7 +450,7 @@ describe("following the view that is open", () => {
     assert.equal(keyword.row("keywords", "k:Trips").getAttribute("aria-expanded"), "true");
 
     const person = syntheticPeople()[250].name;
-    const people = await loadViewPage(t, { search: `?view=person&value=${encodeURIComponent(person.toLowerCase())}` });
+    const people = await loadViewPage(t, { search: `?view=person&value=${encodeURIComponent("People/" + person.toLowerCase())}` });
     assert.equal(people.state.nav.tab, "people");
     assert.equal(people.selectedRows("people").length, 1, "found without regard to case");
 
@@ -502,7 +502,7 @@ describe("following the view that is open", () => {
     assert.equal(ctx.selectedRows("people").length, 0, "the person is no longer the view");
     await ctx.openTab("folders");
     // Forward again.
-    await ctx.popTo(`?view=person&value=${encodeURIComponent(name)}`);
+    await ctx.popTo(`?view=person&value=${encodeURIComponent("People/" + name)}`);
     assert.equal(ctx.state.nav.tab, "people");
     assert.equal(ctx.selectedRows("people")[0].querySelector(".nav-label").textContent, name);
     await ctx.openTab("folders");

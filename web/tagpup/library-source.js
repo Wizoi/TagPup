@@ -16,6 +16,7 @@
 // a reply for a view that is no longer `state.library` is dropped.
 import { api } from './common/api.js';
 import { baseName, pathKey } from './common/paths.js';
+import { leafOf } from './common/vocabulary.js';
 import { upper } from './hooks.js';
 import { state } from './state.js';
 import { forgetSelectedIds, newIdSelection, reconcileIdSelection } from './selected.js';
@@ -316,7 +317,7 @@ export function memberLabel(spec) {
     if (spec.kind === 'keyword_only') return `${spec.value} alone`;
     if (spec.kind === 'folder') return `${baseName(spec.value) || spec.value}${spec.recursive ? '' : ' alone'}`;
     if (spec.kind === 'all') return 'everything';
-    if (spec.kind === 'person') return String(spec.value);
+    if (spec.kind === 'person') return leafOf(String(spec.value));   // a person is asked for by their tag; the leaf is what is shown
     return String(spec.value);
 }
 

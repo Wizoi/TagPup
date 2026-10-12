@@ -44,10 +44,11 @@ class TheRule(unittest.TestCase):
     def test_a_group_is_read_by_the_spelling_a_file_gives_it(self):
         self.assertEqual([], vocabulary.extract_people({}, ["family\\marlowe"], self.known()))
 
-    def test_a_person_of_the_groups_name_elsewhere_is_still_a_person(self):
+    def test_a_person_of_the_groups_name_elsewhere_is_named_by_their_own_path(self):
         known = vocabulary.PeopleVocabulary.from_rows(
             ["Family", "Friends"], [(FAMILY, "Marlowe"), (PERSON, CORA), ("Friends/Marlowe", "Marlowe")], [FAMILY])
-        self.assertEqual(["Marlowe"], vocabulary.extract_people({}, ["Marlowe", FAMILY], known))
+        self.assertEqual([], vocabulary.extract_people({}, ["Marlowe", FAMILY], known), "a bare name is a path of its own")
+        self.assertEqual(["Marlowe"], vocabulary.extract_people({}, ["Friends/Marlowe", FAMILY], known))
 
     def test_without_the_tree_a_path_under_a_face_root_is_a_person_as_before(self):
         self.assertEqual(["Marlowe"], vocabulary.extract_people({}, [FAMILY.replace("Family", "People")]))
@@ -67,7 +68,9 @@ class InTheLibrary(unittest.TestCase):
         self.alone = self.photo("alone.jpg", [FAMILY])
         self.both = self.photo("both.jpg", [FAMILY, PERSON])
         self.person = self.photo("person.jpg", [PERSON])
-        self.write(lambda conn: people.rebuild(conn))
+        # Only `alone` is listed: a keyword with no node names nobody (the indexer gives it a node when it reads the file, and
+        # these rows are written by hand), so the two photos that carry Cora's path list her once the node is there.
+        self.write(lambda conn: people.rebuild_photos(conn, [self.alone]))
 
     def photo(self, name, tags):
         path = self.lib.photo(name)
@@ -98,8 +101,8 @@ class InTheLibrary(unittest.TestCase):
 
     def test_the_doctor_counts_the_photos_a_writer_that_did_not_follow_left(self):
         # add_path writes the tree and rebuilds nothing, as an older writer: the lists are as they were. Three photos are
-        # out of date: the two that lose the person who is a group now, and the one that names Cora by a path with no node
-        # when it was listed (no id then) and by a node now.
+        # out of date: the one that loses the person who is a group now, and the two that name Cora by a path that has a node
+        # now.
         self.write(lambda conn: taxonomy.add_path(conn, PERSON))
         self.assertEqual(3, len(self.read(lambda conn: people.stale(conn))))
         stale = self.read(lambda conn: checks.people_out_of_date(conn))

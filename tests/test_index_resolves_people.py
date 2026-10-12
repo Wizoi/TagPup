@@ -1,8 +1,8 @@
 """The index works out a photo's people from its own taxonomy, whoever read the file.
 
 Who a keyword names depends on the library: `Crew/Rowan Thackeray` is a person only
-where `Crew` is a face root, and a bare `Imogen Vale` only where the taxonomy lists
-her. The metadata reader resolves that when it is given the database, and nothing
+where `Crew` is a face root (a bare `Imogen Vale` names nobody: a keyword is its path). The metadata reader resolves that when
+it is given the database, and nothing
 made its callers give it one. `tagpup_cli index` did not -- nor the folder indexers in
 either server -- so re-indexing rebuilt a photo's people from the three default roots
 and dropped everyone else: 2,594 names over 2,291 rows of one library, nearly all of
@@ -47,7 +47,7 @@ class TheIndexResolvesPeople(unittest.TestCase):
         return people_of(self.index.conn, path)
 
     def test_a_reader_without_the_database_does_not_cost_the_row_its_people(self):
-        tags = ["Crew/Rowan Thackeray", "Imogen Vale", "Activity/Rowing"]
+        tags = ["Crew/Rowan Thackeray", "Activity/Rowing"]
         raw = {"XMP:HierarchicalSubject": tags}
         path = os.path.join(self.tmp.name, "boathouse.jpg")
         meta = {"path": path, "tags": tags, "captions": [], "raw_metadata": raw,
@@ -58,7 +58,7 @@ class TheIndexResolvesPeople(unittest.TestCase):
 
         self.index.build_or_update([[0.1] * 512], [meta], reload=False)
 
-        self.assertEqual({"Rowan Thackeray", "Imogen Vale"}, set(self.stored_people(path)))
+        self.assertEqual({"Rowan Thackeray"}, set(self.stored_people(path)))
 
     def test_people_the_reader_did_find_are_kept(self):
         path = os.path.join(self.tmp.name, "slipway.jpg")

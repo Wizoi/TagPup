@@ -411,7 +411,7 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
 def _shown(conn, persons, known=None):
     """{person: the name to show} for the persons (wire form: an id, or a name no person is filed under) of a guess."""
     names = (known or person_ids.read(conn)).node_names
-    return {person: (names.get(person, str(person)) if isinstance(person, int) else person) for person in persons}
+    return {person: names.get(person, str(person)) for person in persons}
 
 
 def written_report(library, face_ids, folder):
@@ -456,14 +456,13 @@ def decide_guesses(conn, proposed, known=None):
         # Only the photos a person is proposed for, each by an index. Reading every
         # named face under the folder scanned the whole table inside the write lock,
         # and every other face action waited (docs/findings.md, #45).
-        taken = {person_ids.key_of(each.id, each.name) for each in faces.people_in_photo(conn, face_photo)}
+        taken = {each.id for each in faces.people_in_photo(conn, face_photo)}
         # A person the owner took off this photo on purpose is not guessed onto another face of it (tagpup.store.removals).
         taken_off = {vocabulary.key(each) for each in removals.removed_names(conn, faces.nobody_in_photo(conn, face_photo)).values()}
         proposed_people = [person for _fid, person in faces_proposed]
         for face_id, person in faces_proposed:
-            shown = known.node_names.get(person, "") if isinstance(person, int) else person
-            if (proposed_people.count(person) > 1 or person_ids.wire_key(person) in taken
-                    or vocabulary.key(shown) in taken_off):
+            if (proposed_people.count(person) > 1 or person in taken
+                    or vocabulary.key(known.node_names.get(person, "")) in taken_off):
                 continue
             if person not in given:
                 gone += 1

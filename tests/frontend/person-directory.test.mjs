@@ -34,12 +34,10 @@ describe("the directory", () => {
     assert.equal(directory.ofText(""), null);
   });
 
-  test("everyone called a name, the one person called it, and whether it is shared", () => {
+  test("everyone called a name, and the one person called it", () => {
     assert.deepEqual(directory.called("sam").map((each) => each.id), [40, 41]);
     assert.equal(directory.only("Sam"), null);
     assert.equal(directory.only("Rowan Thackeray").id, 31);
-    assert.equal(directory.shared("Sam"), true);
-    assert.equal(directory.shared("Wren"), false);
     assert.equal(directory.ofId(41).tag, "Pets/Sam");
     assert.equal(directory.ofId(9999), null);
     assert.equal(directory.ofId(null), null);
@@ -77,10 +75,10 @@ describe("the same person", () => {
     assert.equal(sameTagPerson("Friends/Sam", "Pets/Sam", new PeopleDirectory([])), true);
   });
 
-  test("two records are one person by id; two with no id by name; never one with and one without", () => {
+  test("two records are one person by id; a record with no id is nobody", () => {
     assert.equal(sameRecord(PEOPLE[1], { ...PEOPLE[1], group: "other" }), true);
     assert.equal(sameRecord(PEOPLE[1], PEOPLE[2]), false);
-    assert.equal(sameRecord({ id: null, name: "Fenn" }, { id: null, name: "fenn" }), true);
+    assert.equal(sameRecord({ id: null, name: "Fenn" }, { id: null, name: "fenn" }), false);
     assert.equal(sameRecord({ id: null, name: "Sam" }, PEOPLE[1]), false);
     assert.equal(sameRecord(null, PEOPLE[1]), false);
   });

@@ -43,8 +43,8 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 |---|---|
 | A person is a leaf tag; a branch is a group; a used tag gets no children | `tests/test_group_tag_is_not_a_person.py`, `tests/test_people_by_id_tree.py` |
 | `tag_id` and `photo_people` written only by `person_ids` and the rebuild | `tests/test_person_ids_single_owner.py` |
-| A name is linked to a person only by the writer that knew the id, by `link_added`, or by the owner | `tests/test_person_ids.py`, `tests/test_tree_edit_links_only_what_it_adds.py` |
-| Every name and keyword first seen gets a node, in the transaction that saw it; a batch makes at most 500 | `tests/test_every_tag_has_an_id.py`, `tests/test_tree_fill.py` |
+| A person is written with the id of a node and no other way: no writer leaves a `photo_people` row, or a face with a name, without `tag_id`; nothing links a name to a person (owner, 2026-10-11) | `tests/test_no_person_row_without_an_id.py`, `tests/test_person_ids.py` |
+| Every name and keyword first seen gets a node, in the transaction that saw it (a name two people have or a group's leaf is another path: a node under the root); a batch makes at most 500 | `tests/test_every_tag_has_an_id.py`, `tests/test_tree_fill.py` |
 | Who a face is is decided in `clustering` | `tests/test_face_values_have_one_owner.py` |
 | Face roots and bucket names have one owner | `tests/test_face_roots_are_the_trees.py`, `tests/test_bucket_names_have_one_owner.py` |
 | A person goes over the wire as an id; answers carry their person | `tests/test_answers_carry_their_person.py`, `tests/test_people_representative_faces.py`, `tests/test_two_people_one_leaf_on_a_photo.py` |
@@ -56,7 +56,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 
 ## Review checklist (ask in this order)
 1. Does every new read or write of a person take an id or call `resolve`, never compare a name or leaf? Where a typed name enters, does two matches ask which one by path, and is that tested?
-2. Does anything link a `NULL tag_id` row on a name match? Only `target`, `link_added` and the owner may.
+2. Can anything write a row for a person with a `NULL tag_id`, or link one to a person by its name? Neither may exist: the write gives the name a node (`ensure_node`) or is refused with a sentence.
 3. Is every refusal evaluated before the first file or row is written, with the transaction taken before the tree is read? Is there a test that asserts nothing was written?
 4. When a face is named, unnamed or excluded, what happens to the photo's keyword, `photo_people` and the index? Is it the same function the single-photo path uses?
 5. For many photos: is it the one batch (`face_assignment.run`: the faces recorded in the plan, written with each file, a face written only where it is still what the plan read), does a cancel leave earlier photos whole and later ones untouched, does a crash settle forward with both, does History's undo restore exactly what the change wrote?

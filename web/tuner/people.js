@@ -20,8 +20,8 @@ const peopleViewName = document.getElementById('people-view-name');
 const peopleViewFace = document.getElementById('people-view-face');
 
 /**
- * What identifies a person in the list: the id of their node when the server sent one (two people called alike are two rows), else
- * the name (a bucket such as Unknown Faces, or a name no tag has). Never the label, which is only what is shown.
+ * What identifies a person in the list: the id of their node (two people called alike are two rows), else the name of a bucket
+ * such as Unknown Faces. Never the label, which is only what is shown.
  */
 export function personKeyOf(name, personId) {
     return personId !== null && personId !== undefined ? `id:${personId}` : String(name);

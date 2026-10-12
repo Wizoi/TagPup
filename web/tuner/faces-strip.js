@@ -456,8 +456,7 @@ function postMatch(faceId, who) {
     // Client-side conflict check to prevent second match in same photo: the same PERSON, by id (two people may be called alike).
     if (state.currentPhotoDetails && state.currentPhotoDetails.faces) {
         const alreadyMatched = state.currentPhotoDetails.faces.some(f => f.id !== faceId && f.name
-            && (typeof who !== 'string' && who.id !== null && who.id !== undefined && f.person && f.person.id !== null
-                ? sameRecord(f.person, who) : f.name === personName));
+            && typeof who !== 'string' && sameRecord(f.person, who));
         if (alreadyMatched) {
             alert(`Cannot match: "${personLabelOf(typeof who === 'string' ? { name: who } : { person: who })}" is already tagged on another face in this photo.`);
             return;

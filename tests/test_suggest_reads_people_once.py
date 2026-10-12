@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import _root  # noqa: E402,F401
 from tagpup.core import clustering  # noqa: E402
+from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.ml import clip as clip_model  # noqa: E402
 from tagpup.ml import faces as face_model  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
@@ -30,6 +31,9 @@ from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import person_of  # noqa: E402
 
 
 def unit(vector):
@@ -74,10 +78,11 @@ class ReadsPeopleOncePerRun(unittest.TestCase):
 
         def known_faces(db_path):
             known_reads.append(db_path)
-            return clustering.KnownFaces.of([("Rowan Thackeray", unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg")])
+            return clustering.KnownFaces.of([(7, unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg", Ref(7, "Rowan Thackeray"))])
 
         run = TagSuggester(Index(), FakeTaxonomy(), faces=FakeFaceProcessor())
         with mock.patch.object(face_records, "known_faces", side_effect=known_faces), \
+                mock.patch.object(TagSuggester, "_tags_by_id", return_value={7: "People/Rowan Thackeray"}), \
                 mock.patch.object(face_records, "record_detected", return_value=0), \
                 mock.patch.object(store_faces, "for_clustering", side_effect=AssertionError("read every face")):
             results = [run.suggest_for_photo(r"D:\Pictures\Run\%02d.jpg" % n, [1.0, 0.0, 0.0])
@@ -104,9 +109,10 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
         index.conn.execute("INSERT INTO photos (path) VALUES (?)", (r"D:\Pictures\a.jpg",))
         for name, excluded, emb in rows:
             index.conn.execute(
-                "INSERT INTO faces (photo_id, box, embedding, name, excluded) VALUES ((SELECT id FROM photos WHERE path = ?),?,?,?,?)",
+                "INSERT INTO faces (photo_id, box, embedding, name, tag_id, excluded)"
+                " VALUES ((SELECT id FROM photos WHERE path = ?),?,?,?,?,?)",
                 (r"D:\Pictures\a.jpg", "[0,0,1,1]", np.asarray(emb, dtype=np.float32).tobytes(),
-                 name, excluded))
+                 name, person_of(index.conn, name) if name else None, excluded))
         index.conn.commit()
         self.index = index
 
@@ -119,7 +125,7 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
         self.assertEqual(sorted(person.name for person in known.labels.values()), ["Imogen Vale", "Rowan Thackeray"])
         # Rowan's closest face to each of their two named ones is itself; the excluded
         # face is not among them.
-        # Keyed by person (no node here, so by the name's key), the Ref each is in `labels`.
+        # Keyed by person (the id of their node), the Ref each is in `labels`.
         rowan = next(key for key, person in known.labels.items() if person.name == "Rowan Thackeray")
         self.assertAlmostEqual(1.0, known.likeness(rowan, unit([0.8, 0.6, 0])), places=5)
         self.assertAlmostEqual(0.0, known.likeness(rowan, unit([0, 0, 1])), places=5)

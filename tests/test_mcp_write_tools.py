@@ -238,8 +238,8 @@ class WriteTools(unittest.TestCase):
 
     def test_no_write_answer_names_anyone_or_any_file_without_reveal(self):
         """Every write tool's dry run and apply, over rows naming people and files."""
+        self.seed_tree()   # first: the faces below are named by the people it files
         self.seed_faces()
-        self.seed_tree()
         self.seed_moved_on()
         tools = ("dedupe_faces", "merge_duplicate_person_tags", "refresh_rows")
         for tool in tools:

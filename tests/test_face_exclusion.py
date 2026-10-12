@@ -29,6 +29,7 @@ import tuner_client  # noqa: E402
 from face_rows import add_face, people_of  # noqa: E402
 import fake_exiftool  # noqa: E402
 
+from tagpup.store import derived  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 from tagpup.store import taxonomy  # noqa: E402
 
@@ -84,11 +85,13 @@ class ExclusionTestBase(unittest.TestCase):
         path = os.path.abspath(os.path.join(self.tmpdir, name))
         Image.new("RGB", (64, 64), (80, 90, 100)).save(path, "JPEG")
         conn = sqlite3.connect(self.TEST_DB)
+        tags = ["People/" + person for person in people]
         conn.execute(
             "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
             " VALUES (?, 1.0, 1, ?, '[]', '{}')",
-            (path, json.dumps(["People/" + person for person in people])),
+            (path, json.dumps(tags)),
         )
+        derived.make_nodes(conn, [tags])   # the nodes of its keywords, as the index makes them when it reads the file
         store_people.rebuild_photos(conn, [path])
         conn.commit()
         conn.close()
@@ -385,7 +388,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
         pi = self.index()
         try:
             for i in range(2):
-                photo = self.add_photo(f"q{i}.jpg", people=["Jane Doe"])
+                photo = self.add_photo(f"q{i}.jpg", people=["Jane Doe", "John Roe"])   # two people, one face: it is named by no tag
                 face_records.record_detected(pi.db_path, photo, [{
                     "box": [0, 0, 50, 50],
                     "embedding": near(base, 70 + i).tolist(),

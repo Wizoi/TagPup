@@ -8,7 +8,7 @@
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { closeAllApps, click } from "./harness.mjs";
-import { loadViewPage, pageErrors, syntheticDates } from "./view-page.mjs";
+import { loadViewPage, pageErrors, personRow, syntheticDates } from "./view-page.mjs";
 
 afterEach(() => {
   closeAllApps();
@@ -83,7 +83,7 @@ describe("several rows at once", () => {
     click(ctx.window, first, { ctrlKey: true });
     await ctx.settle();
     assert.equal(asked(ctx).kind, "person", "a union of one is that person");
-    assert.equal(asked(ctx).value, second.querySelector(".nav-label").textContent);
+    assert.equal(asked(ctx).value, "People/" + second.querySelector(".nav-label").textContent, "a person is asked for by their tag");
     const requests = ctx.idsAsked.length;
     click(ctx.window, second, { ctrlKey: true });
     await ctx.settle();
@@ -267,9 +267,9 @@ describe("the People under their branches", () => {
     { tag: "Friends", name: "Friends", parent: null, count: 9 },
   ];
   const people = [
-    { name: "Rowan Thackeray", count: 12, group: "Family/Immediate" }, { name: "Wren Halloway", count: 10, group: "Family/Immediate" },
-    { name: "Hazel Brookmire", count: 15, group: "Family/Cousins" }, { name: "Orla Pemberley", count: 9, group: "Friends" },
-    { name: "Ash Gantry", count: 3, group: null },
+    personRow(1, "Rowan Thackeray", 12, "Family/Immediate"), personRow(2, "Wren Halloway", 10, "Family/Immediate"),
+    personRow(3, "Hazel Brookmire", 15, "Family/Cousins"), personRow(4, "Orla Pemberley", 9, "Friends"),
+    personRow(5, "Ash Gantry", 3, null),
   ];
   const navigator = { people: { people, groups, unfiled: 3 } };
 
@@ -290,15 +290,15 @@ describe("the People under their branches", () => {
     await ctx.settle();
     const source = asked(ctx);
     assert.equal(source.kind, "any_of");
-    assert.deepEqual(source.value.map((m) => m.value).sort(), ["Hazel Brookmire", "Rowan Thackeray", "Wren Halloway"]);
+    assert.deepEqual(source.value.map((m) => m.value).sort(), ["Family/Cousins/Hazel Brookmire", "Family/Immediate/Rowan Thackeray", "Family/Immediate/Wren Halloway"]);
     assert.equal(ctx.selectedRows("people").length, 6, "the branch, its two branches and its three people");
     click(ctx.window, ctx.rowByLabel("people", "Wren Halloway"), { ctrlKey: true });
     await ctx.settle();
-    assert.deepEqual(asked(ctx).value.map((m) => m.value).sort(), ["Hazel Brookmire", "Rowan Thackeray"]);
+    assert.deepEqual(asked(ctx).value.map((m) => m.value).sort(), ["Family/Cousins/Hazel Brookmire", "Family/Immediate/Rowan Thackeray"]);
   });
 
   test("a person opened from the address is found under their branch, and the filter finds people with their place", async (t) => {
-    const ctx = await loadViewPage(t, { search: "?view=person&value=orla%20pemberley", navigator });
+    const ctx = await loadViewPage(t, { search: "?view=person&value=friends%2Forla%20pemberley", navigator });
     assert.equal(ctx.state.nav.tab, "people");
     // Orla is the only person of Friends: the branch, holding nothing of its own, is all selected too.
     assert.deepEqual(ctx.selectedRows("people").map((row) => row.querySelector(".nav-label").textContent), ["Friends", "Orla Pemberley"]);

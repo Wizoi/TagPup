@@ -198,35 +198,24 @@ def _words_clause(conn, words):
 
 
 class _Reads:
-    """What resolving the members of one source reads once however many members name it (#751): the names photo_people
-    holds that no person is filed under, by vocabulary.key (one pass of its name index), the people of the tag tree (a person is
-    the node, docs/ARCHITECTURE.md "People by id, stage 2"), the tag tree's nodes (read only when a keyword is not spelled
-    exactly as a node is), and the folders' parent ids. One for each statement a source is compiled into, never kept."""
+    """What resolving the members of one source reads once however many members name it (#751): the people of the tag tree (a
+    person is the node, docs/ARCHITECTURE.md "People by id, stage 2"), the tag tree's nodes (read only when a keyword is not
+    spelled exactly as a node is), and the folders' parent ids. One for each statement a source is compiled into, never kept."""
 
     def __init__(self, conn):
         self.conn = conn
-        self._spelled = self._nodes = self._children = self._known = None
-
-    def spellings(self, name):
-        """The names photo_people holds that are `name` (without case), in every spelling: the cached name of whoever it is."""
-        if self._spelled is None:
-            self._spelled = collections.defaultdict(list)
-            for (held,) in self.conn.execute("SELECT DISTINCT name FROM photo_people"):
-                self._spelled[vocabulary.key(held)].append(held)
-        return list(self._spelled.get(vocabulary.key(name), ()))
+        self._nodes = self._children = self._known = None
 
     def persons(self, value):
-        """([the ids of the people `value` names], [the names it names]): a tag path is the one person filed there (their
-        id: exact, even when the leaf is shared); a name is the rows that spell it -- a view of "Sam" shows both Sams, as it
-        always showed the name, and a person no node holds. A group is nobody."""
+        """[the id of the person `value` names]: an id, or the tag path of the node (a person at the top of the tree is the bare
+        name of their node), exactly: the leaf is never identity (owner, 2026-10-11), so a name that is no person's path names
+        nobody. A group is nobody."""
         if self._known is None:
             self._known = person_ids.read(self.conn)
-        text = str(value).strip()
-        path = vocabulary.normalize(text)
-        if vocabulary.SEPARATOR in path:
-            found = self._known.by_tag.get(path.lower())
-            return ([found.id] if found else []), []
-        return [], self.spellings(text)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return [value] if value in self._known.by_id else []
+        found = self._known.by_tag.get(vocabulary.normalize(str(value).strip()).lower())
+        return [found.id] if found else []
 
     def tag(self, tag):
         if self.conn.execute("SELECT 1 FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone():
@@ -303,7 +292,7 @@ def _search_scope(conn, search, reads):
 def _union_scope(conn, members, reads=None):
     """The Scope of the union of `members`: ONE where-clause over `photos p`, so a photo in two of them is one row and the
     count counts it once. The members are gathered by kind -- the folders' ids (a folder with its subfolders is its own and
-    every folder under it, by the tree's parent ids), the tag tree's node ids, the people's spellings, the years -- each
+    every folder under it, by the tree's parent ids), the tag tree's node ids, the people's ids, the years -- each
     gathering one IN (...), the months and the "Other" of years OR'd: a union of 400 people is one seek of the name index
     for each name, not 400 subqueries. None when no member holds anything.
 
@@ -312,7 +301,7 @@ def _union_scope(conn, members, reads=None):
     if any(member.kind == ALL for member in members):
         return _scope(conn, Source(ALL))
     reads = reads or _Reads(conn)
-    folder_ids, tag_ids, names, person_tags, years, clauses = set(), set(), set(), set(), set(), []
+    folder_ids, tag_ids, person_tags, years, clauses = set(), set(), set(), set(), []
     walked = set()   # the folders whose subfolders are in: apart from folder_ids, so a folder named alone first is still walked (#695)
     for member in members:
         kind = member.kind
@@ -336,9 +325,7 @@ def _union_scope(conn, members, reads=None):
             sql, params = derived.under(tag) if kind == KEYWORD else ("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag,))
             tag_ids.update(node_id for (node_id,) in conn.execute(sql, params))
         elif kind == PERSON:
-            found_ids, found_names = reads.persons(member.value)
-            person_tags.update(found_ids)
-            names.update(found_names)
+            person_tags.update(reads.persons(member.value))
         elif kind == YEAR:
             years.add(int(member.value))
         elif kind == MONTH:
@@ -348,7 +335,7 @@ def _union_scope(conn, members, reads=None):
         else:
             raise ValueError("no such kind of source in a union: %r" % (kind,))
     for table, column, held in (("photo_folder", "folder_id", folder_ids), ("photo_tags", "tag_id", tag_ids),
-                                ("photo_people", "tag_id", person_tags), ("photo_people", "name", names)):
+                                ("photo_people", "tag_id", person_tags)):
         if held:
             ordered = sorted(held)
             clauses.append(("p.id IN (SELECT photo_id FROM %s WHERE %s IN (%s))" % (table, column, _marks(ordered)),
@@ -406,22 +393,13 @@ def _scope(conn, source, reads=None):
         return Scope("photos p", "p.id IN (SELECT photo_id FROM photo_tags WHERE tag_id IN (%s))" % sql, params,
                      ("SELECT COUNT(DISTINCT photo_id) FROM photo_tags WHERE tag_id IN (%s)" % sql, params))
     if kind == PERSON:
-        found_ids, found_names = reads.persons(source.value)
-        if not found_ids and not found_names:
+        found_ids = reads.persons(source.value)
+        if not found_ids:
             return None
-        if found_ids:
-            inner, params = "SELECT photo_id FROM photo_people WHERE tag_id IN (%s)" % _marks(found_ids), tuple(sorted(found_ids))
-        else:
-            inner, params = "SELECT photo_id FROM photo_people WHERE name IN (%s)" % _marks(found_names), tuple(found_names)
+        inner, params = "SELECT photo_id FROM photo_people WHERE tag_id IN (%s)" % _marks(found_ids), tuple(sorted(found_ids))
         return Scope("photos p", "p.id IN (%s)" % inner, params,
                      ("SELECT COUNT(DISTINCT photo_id) FROM (%s)" % inner, params))
     raise ValueError("no such kind of source: %r" % (kind,))
-
-
-def spellings(conn, name):
-    """The names `photo_people` holds that are `name` -- the same person without regard to case -- as it holds
-    them: usually one. One pass of the name index (400 names on photo_index: 4 ms)."""
-    return _Reads(conn).spellings(name)
 
 
 #: The orders read by the index of an expression: {order: (the expression of `p`, the index, whether a photo may have
@@ -627,11 +605,10 @@ def tally(conn, ids=None, source=None, excluded=()):
     """({"total": photos selected, "tags": [(tag, photos)], "people": [(Ref, photos)]}) of a selection: `ids`, or every photo
     of `source` but `excluded`. From photo_tags (by tag-tree node: the tag the tree spells, exactly -- not the tags under it --
     so a keyword no node holds is not counted, as the navigator's counts) and photo_people, each a single grouped statement over
-    the selection; a person is the node (the id, the name beside it: two people called alike are two), and a name no person is
-    filed under is one entry under the spelling most photos hold, without regard to case (people_counts). A tag that is a
+    the selection; a person is the node (the id, the name beside it: two people called alike are two). A tag that is a
     person's node (person_ids: a leaf of the tree that holds faces) is a person, listed under "people" and not here: left out
     BEFORE the service cuts the list, so the cut spends its slots on keywords (#865). "nameless" is the people among "people"
-    that are no person node -- an id that is a group's, a name with none or only a group -- (#866): not people to open a view of.
+    that are no person node any more -- an id that became a group's (#866): not people to open a view of.
     Unsorted: the service orders and cuts them. One read transaction."""
     db.begin(conn)
     selected, params = selected_sql(conn, ids, source, excluded)
@@ -642,24 +619,9 @@ def tally(conn, ids=None, source=None, excluded=()):
     tags = [(tag, count) for tag_id, tag, count in conn.execute(
         "SELECT t.id, t.tag, COUNT(*) FROM photo_tags pt JOIN tag_taxonomy t ON t.id = pt.tag_id"
         " WHERE pt.photo_id IN (%s) GROUP BY pt.tag_id" % selected, params) if tag_id not in known.nodes]
-    held = conn.execute("SELECT tag_id, name, COUNT(DISTINCT photo_id) FROM photo_people WHERE photo_id IN (%s)"
-                        " GROUP BY tag_id, name" % selected, params).fetchall()
-    grouped = collections.defaultdict(list)
-    for tag_id, name, count in held:
-        grouped[person_ids.key_of(tag_id, name)].append((tag_id, name, count))
-    people = []
-    for spellings_of in grouped.values():
-        spellings_of.sort(key=lambda each: (-each[2], each[1]))
-        tag_id, name, count = spellings_of[0]
-        if len(spellings_of) > 1:
-            if tag_id is not None:
-                where, held_params = "tag_id = ?", [tag_id]
-            else:
-                names = [each[1] for each in spellings_of]
-                where, held_params = "tag_id IS NULL AND name IN (%s)" % ",".join("?" * len(names)), names
-            count = conn.execute("SELECT COUNT(DISTINCT photo_id) FROM photo_people WHERE " + where
-                                 + " AND photo_id IN (%s)" % selected, held_params + list(params)).fetchone()[0]
-        people.append((Ref(tag_id, name), count))
+    people = [(Ref(tag_id, name), count) for tag_id, name, count in conn.execute(
+        "SELECT tag_id, name, COUNT(DISTINCT photo_id) FROM photo_people WHERE photo_id IN (%s) AND tag_id IS NOT NULL"
+        " GROUP BY tag_id" % selected, params)]
     return {"total": total, "tags": tags, "people": people,
             "nameless": [ref for ref, _count in people if ref.id not in known.nodes]}
 
@@ -699,8 +661,8 @@ def keyword_counts(conn):
 
 def people_counts(conn):
     """[(Ref, photos)] of everyone in photo_people, most photos first, then by name: one pass of photo_people. A person is
-    the node (their id, the cached name beside it), so two people called alike are two entries; a name no person is filed
-    under is one entry, under the spelling most photos hold, counting each photo once."""
+    the node (their id, the cached name beside it), so two people called alike are two entries. A row without an id (from before
+    names had ids) is not a person and is not counted."""
     names = person_ids.read(conn).node_names
     found = []
     # The people the tree files: one row a photo each, by the covering index of the id; named by their node.
@@ -709,20 +671,6 @@ def people_counts(conn):
         if name is None:   # an id of a node that is gone: the rows' own name, until the next settle drops it
             name = conn.execute("SELECT name FROM photo_people WHERE tag_id = ? LIMIT 1", (tag_id,)).fetchone()[0]
         found.append((Ref(tag_id, name), count))
-    # The names no person is filed under: one entry for the spellings of a name, each photo once.
-    grouped = collections.defaultdict(list)
-    for name, count in conn.execute("SELECT name, COUNT(*) FROM photo_people WHERE tag_id IS NULL GROUP BY name").fetchall():
-        grouped[vocabulary.key(name)].append((name, count))
-    for spellings_of in grouped.values():
-        spellings_of.sort(key=lambda each: (-each[1], each[0]))
-        name = spellings_of[0][0]
-        if len(spellings_of) == 1:
-            found.append((Ref(None, name), spellings_of[0][1]))
-            continue
-        spelled = [each[0] for each in spellings_of]
-        found.append((Ref(None, name), conn.execute(
-            "SELECT COUNT(DISTINCT photo_id) FROM photo_people WHERE tag_id IS NULL AND name IN (%s)"
-            % ",".join("?" * len(spelled)), spelled).fetchone()[0]))
     return sorted(found, key=lambda each: (-each[1], vocabulary.tag_sort_key(each[0].name)))
 
 

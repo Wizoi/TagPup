@@ -69,6 +69,7 @@ def plan_name(library, face_ids, person):
     if check.refused:
         raise Refused(check.refused)
     ref, person_name = faces_service.who_is(library, person, Result())
+    ref = face_people.made(library, ref)   # a name no person is called is made first, with its node
     tag = face_people.Filer(library).tag(ref)
     if tag is None:
         raise Refused(face_people.not_filed(person_name))
@@ -81,7 +82,7 @@ def plan_name(library, face_ids, person):
             _photo, path, old = found[face_id]
             work.face(path, face_id, old, _new(old, name=target[1], tag_id=target[0], name_source="manual"))
             work.add[paths.key(path)] = [tag]
-    return Plan(NAME, work, person_name=person_name, person_id=ref if isinstance(ref, int) else None,
+    return Plan(NAME, work, person_name=person_name, person_id=ref,
                 skipped_excluded=list(check.details["skipped_excluded"]))
 
 

@@ -20,9 +20,14 @@ const labels = (ctx, list) => links(ctx, list).map((a) => a.textContent);
 const listText = (ctx, list) => el(ctx, list).textContent.replace(/\s+/g, " ").trim();
 const TAGGING = "btn-selection-tagging";
 
+/** A person of the selection as the tally answers: the node's id and tag beside the name. */
+function personOf(id, name, count, more = {}) {
+  return { name, count, person_id: id, person: { id, name, tag: `People/${name}` }, ...more };
+}
+
 const TALLY = {
   total: 3, more_tags: 0, more_people: 0,
-  people: [{ name: "Wren Halloway", count: 2 }, { name: "Ash Brookmire", count: 3 }],
+  people: [personOf(1, "Wren Halloway", 2), personOf(2, "Ash Brookmire", 3)],
   tags: [
     { tag: "People/Wren Halloway", count: 2 }, { tag: "People/Ash Brookmire", count: 3 },
     { tag: "Zoo/Cats", count: 1 }, { tag: "Animals/Dogs", count: 3 }, { tag: "Trips/Coast", count: 2 },
@@ -43,7 +48,7 @@ describe("People jump and Keyword jump", () => {
     const ctx = await view(t);
     assert.deepEqual(labels(ctx, "selection-people-jump"), ["Ash Brookmire", "Wren Halloway"]);
     const [ash] = links(ctx, "selection-people-jump");
-    assert.equal(ash.getAttribute("href"), "?view=person&value=Ash+Brookmire");
+    assert.equal(ash.getAttribute("href"), "?view=person&value=People%2FAsh+Brookmire");
     assert.deepEqual([...ctx.document.querySelectorAll("#selection-people-jump .selection-jump-item")].map((item) => item.textContent),
       ["Ash Brookmire (3)", "Wren Halloway (2)"]);
   });
@@ -61,9 +66,9 @@ describe("People jump and Keyword jump", () => {
     const idsBefore = ctx.idsAsked.length;
     links(ctx, "selection-people-jump")[1].click();
     await ctx.settle(200);
-    assert.equal(ctx.window.location.search, "?view=person&value=Wren+Halloway");
+    assert.equal(ctx.window.location.search, "?view=person&value=People%2FWren+Halloway");
     assert.equal(ctx.state.library.kind, "person");
-    assert.equal(ctx.state.library.value, "Wren Halloway");
+    assert.equal(ctx.state.library.value, "People/Wren Halloway");
     assert.equal(ctx.idsAsked.length, idsBefore + 1, "the view's order is asked for");
     assert.match(ctx.stripText(), /Wren Halloway/);
     assert.deepEqual(ctx.selectedIds(), [], "a view has its own selection: the old one is left behind");
@@ -116,7 +121,7 @@ describe("People jump and Keyword jump", () => {
   test("a name the tree has no person node for is listed without a link, and its keyword stays a keyword (#866)", async (t) => {
     const tally = {
       ...TALLY,
-      people: [{ name: "Ash Brookmire", count: 3, has_node: true }, { name: "Family", count: 2, has_node: false }],
+      people: [personOf(2, "Ash Brookmire", 3, { has_node: true }), { name: "Family", count: 2, has_node: false }],
       tags: [{ tag: "People/Family", count: 2 }, { tag: "Trips/Coast", count: 2 }],
     };
     const ctx = await view(t, { tally });
@@ -126,7 +131,7 @@ describe("People jump and Keyword jump", () => {
   });
 
   test("a name is text, never markup", async (t) => {
-    const tally = { ...TALLY, people: [{ name: "<img src=x onerror=alert(1)>", count: 1 }], tags: [{ tag: "Trips/<b>Coast</b>", count: 1 }] };
+    const tally = { ...TALLY, people: [personOf(3, "<img src=x onerror=alert(1)>", 1)], tags: [{ tag: "Trips/<b>Coast</b>", count: 1 }] };
     const ctx = await view(t, { tally });
     assert.equal(ctx.document.querySelectorAll("#selection-people-jump img, #selection-keyword-jump b").length, 0);
     assert.deepEqual(labels(ctx, "selection-people-jump"), ["<img src=x onerror=alert(1)>"]);
@@ -147,7 +152,7 @@ describe("People jump and Keyword jump", () => {
 describe("a long list shows its first few and 'and N more'", () => {
   const MANY = {
     total: 30, more_tags: 0, more_people: 0, folders: { count: 1, listed: [] },
-    people: Array.from({ length: 20 }, (_, i) => ({ name: `Person ${String(i + 1).padStart(2, "0")}`, count: 30 - i })),
+    people: Array.from({ length: 20 }, (_, i) => personOf(i + 10, `Person ${String(i + 1).padStart(2, "0")}`, 30 - i)),
     tags: Array.from({ length: 12 }, (_, i) => ({ tag: `Trips/Place ${String(i + 1).padStart(2, "0")}`, count: 2 })),
   };
 

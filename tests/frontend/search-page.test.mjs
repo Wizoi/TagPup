@@ -10,7 +10,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { closeAllApps, click, flush, pageExports } from "./harness.mjs";
-import { loadViewPage, pageErrors, speedUp } from "./view-page.mjs";
+import { loadViewPage, pageErrors, personRow, speedUp } from "./view-page.mjs";
 
 afterEach(() => {
   closeAllApps();
@@ -42,10 +42,9 @@ const KEYWORDS = () => [
  */
 const PEOPLE = () => ({
   people: [
-    { name: "Rowan Thackeray", count: 12, group: "People/Family" },
-    { name: "Hazel Brookmire", count: 9, group: "People/Family" },
-    { name: "Family", count: 3, group: null },
-    { name: "Wren Halloway", count: 4, group: null },
+    personRow(1, "Rowan Thackeray", 12, "People/Family"),
+    personRow(2, "Hazel Brookmire", 9, "People/Family"),
+    personRow(3, "Wren Halloway", 4),
   ],
   groups: [{ tag: "People/Family", name: "Family", parent: null, count: 20 }],
   unfiled: 7,
@@ -125,7 +124,7 @@ describe("words, Enter, and the address", () => {
   });
 
   test("a bookmark of a search opens it, the box and the chips holding it; its parts are sent in their one order", async (t) => {
-    const value = { words: "sand dunes", none_of: [{ kind: "person", value: "Wren Halloway" }], all_of: [{ kind: "keyword", value: "Trips/Coast" }] };
+    const value = { words: "sand dunes", none_of: [{ kind: "person", value: "People/Wren Halloway" }], all_of: [{ kind: "keyword", value: "Trips/Coast" }] };
     const ctx = await loadViewPage(t, { search: `?view=search&value=${encodeURIComponent(JSON.stringify(value))}&order=name`, navigator: NAVIGATOR() });
     assert.equal(ctx.state.library.kind, "search");
     assert.equal(words(ctx).value, "sand dunes");
@@ -333,7 +332,7 @@ describe("the picker: the library's tags and people", () => {
   });
 
   test("a bookmark's tag that no longer exists: the chip says so, the search is sent, the empty view says why", async (t) => {
-    const value = { all_of: [{ kind: "keyword", value: "Trips/Pier" }, { kind: "person", value: "Rowan Thackeray" }] };
+    const value = { all_of: [{ kind: "keyword", value: "Trips/Pier" }, { kind: "person", value: "People/Family/Rowan Thackeray" }] };
     const ctx = await loadViewPage(t, {
       search: `?view=search&value=${encodeURIComponent(JSON.stringify(value))}`, navigator: NAVIGATOR(),
       onIds: () => ({ source: {}, total: 0, ids: [], complete: true }),
@@ -342,7 +341,7 @@ describe("the picker: the library's tags and people", () => {
     const [pier, rowan] = chips(ctx, "all_of");
     assert.ok(pier.classList.contains("library-search-chip-unknown"));
     assert.ok(!rowan.classList.contains("library-search-chip-unknown"));
-    assert.deepEqual(lastSearch(ctx).value.all_of.map((m) => m.value), ["Trips/Pier", "Rowan Thackeray"]);
+    assert.deepEqual(lastSearch(ctx).value.all_of.map((m) => m.value), ["Trips/Pier", "People/Family/Rowan Thackeray"]);
     assert.match(ctx.stripText(), /Nothing in the library matches this search/);
   });
 

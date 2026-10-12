@@ -41,11 +41,11 @@ class ThePeopleOfTheNavigator(unittest.TestCase):
             def execute(self, sql, params=()):
                 class Rows:
                     def fetchall(self_inner):
-                        # names no person is filed under: (name, photos); the people the tree files are none
-                        return [("Zoe Abbott", 4), ("anh Tran", 4), ("Wen Zhao", 9)] if "tag_id IS NULL" in sql else []
+                        # the people the tree files: (the node's id, photos)
+                        return [(1, 4), (2, 4), (3, 9)] if "tag_id IS NOT NULL" in sql else []
                 return Rows()
-        nobody = mock.Mock(node_names={})
-        with mock.patch.object(store_library_view.person_ids, "read", return_value=nobody):
+        people = mock.Mock(node_names={1: "Zoe Abbott", 2: "anh Tran", 3: "Wen Zhao"})
+        with mock.patch.object(store_library_view.person_ids, "read", return_value=people):
             self.assertEqual([ref.name for ref, _ in store_library_view.people_counts(Conn())],
                              ["Wen Zhao", "anh Tran", "Zoe Abbott"])
 

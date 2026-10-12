@@ -483,15 +483,11 @@ class TagSuggester:
                                 # A name filed twice is not resolved to either
                                 # path, and not offered at all: a guess names the
                                 # wrong person (docs/findings.md, #27).
-                                # A person the tree files is the tag of their node: another person called alike is another
-                                # tag. A name no node is called is resolved by the old rule.
-                                if best_key in tags_by_id:
-                                    resolved_path = tags_by_id[best_key]
-                                else:
-                                    filed = self.taxonomy.person_paths(best_name)
-                                    if len(filed) > 1:
-                                        continue
-                                    resolved_path = filed[0] if filed else best_name
+                                # A person is the tag of their node: another person called alike is another tag. A face
+                                # whose person the tree no longer files (or never did: a name from before ids) suggests nobody.
+                                resolved_path = tags_by_id.get(best_key)
+                                if resolved_path is None:
+                                    continue
 
                                 # Boost or insert tag
                                 found = False

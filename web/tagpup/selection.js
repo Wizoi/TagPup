@@ -108,7 +108,7 @@ export function updateSelectedThumbnailsCount() {
             const tags = photo.tags || [];
 
             tags.forEach(tag => {
-                const isPerson = namesAPerson(tag) || photoPeople.includes(tag);
+                const isPerson = namesAPerson(tag);
                 if (isPerson) {
                     // One entry per PERSON: a tag the people records know is that person's id, so two people called Sam are two chips.
                     const leaf = leafOf(tag);
@@ -232,9 +232,9 @@ export function updateSelectedThumbnailsCount() {
                             photoAlreadyHas(photo, p.name, namesAPerson, state.people)
                             || peopleListHas(photoPeople, leaf, state.people);
                         if (!alreadyAdded) {
-                            // A person who shares a name is counted, and applied, by their tag: not as the other Sam.
+                            // A person is counted, and applied, by their tag: not as the other Sam.
                             const known = state.people.ofText(p.name);
-                            noteSuggestion(suggPeopleCounts, known && state.people.shared(known.name) ? known.tag : leaf, photo.path, p.score);
+                            noteSuggestion(suggPeopleCounts, known ? known.tag : leaf, photo.path, p.score);
                         }
                     });
                 }
@@ -252,7 +252,7 @@ export function updateSelectedThumbnailsCount() {
                             const cleanLeaf = leafOf(leaf);
                             if (peopleListHas(photoPeople, cleanLeaf, state.people)) return;
                             const known = state.people.ofText(leaf);
-                            noteSuggestion(suggPeopleCounts, known && state.people.shared(known.name) ? known.tag : cleanLeaf, photo.path, t.score);
+                            noteSuggestion(suggPeopleCounts, known ? known.tag : cleanLeaf, photo.path, t.score);
                         } else {
                             noteSuggestion(suggTagCounts, leaf, photo.path, t.score);
                         }

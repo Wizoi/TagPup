@@ -34,7 +34,7 @@ not written here: they are one batch of photo files whose photos' faces are writ
 import logging
 
 from tagpup.core import fields, paths, vocabulary
-from tagpup.core.result import Conflict, Result
+from tagpup.core.result import Conflict, Refused, Result
 from tagpup.files import exiftool_session
 from tagpup.services import faces as faces_service
 from tagpup.services import file_changes, tagging
@@ -77,6 +77,28 @@ class Filer:
         return vocabulary.person_tag(name, self.filed.get(vocabulary.key(name), []), self.roots)
 
 
+def made(library, ref):
+    """`ref` (the id of a person, or a name) as the id of a person that has a node: a name no person is called is given its node
+    at the path the filer chooses -- the tag first, as the New person dialog makes it (every tag has an id, owner 2026-10-10) --
+    and the node's id is returned. Refused for a name the filer cannot place, or that would go under a person that faces or photos
+    use; nothing is made then."""
+    ref = person_ids.wire(ref)
+    if isinstance(ref, int):
+        return ref
+    tag = Filer(library).tag(ref)
+    if tag is None:
+        raise Refused(not_filed(ref))
+
+    def make(conn):
+        taxonomy.refuse_child_of_person(conn, tag)
+        return taxonomy.add_node(conn, tag, root_has_face=1)
+
+    try:
+        return db.write_with_connection(library.path, make, label="tag tree: add %s" % tag)
+    except person_ids.PersonProblem as why:
+        raise Refused(str(why)) from None
+
+
 def not_filed(name):
     return ("%s is filed in more than one place in the tag tree (or the tree has several people roots), so it is "
             "not known where to file them: add them to the photo from TagPup's Organize, which asks, or name the "
@@ -97,29 +119,12 @@ def already_names(tags, tag, known):
 
 
 def person_tags(tags, person, known):
-    """The tags among `tags` that name `person` (a Ref, an id or a name): the node's own path or a bare name only they have,
-    by their id; a person with no id, by their name. A tag that names a person of the same name that no node here is -- a
-    path the tree lacks, a bare name two people have -- is theirs only when nobody else is called alike."""
+    """The tags among `tags` that name `person` (a Ref or an id), by the id of their node: their node's own path, nothing else
+    (a bare name is a path of its own, owner 2026-10-11). None for a name from before ids: that is no person."""
     person = person_ids.wire(person)
-    if isinstance(person, int):
-        name = known.names.get(person)
-        if name is None:
-            return []
-        alone = known.resolve_name(name) == person
-    else:
-        name, alone = person, True
-    found = []
-    for tag in tags:
-        ref = vocabulary.person_ref_of_tag(tag, known)
-        if ref is None:
-            continue
-        if isinstance(person, int) and ref.id is not None:
-            same = ref.id == person
-        else:
-            same = alone and vocabulary.key(ref.name) == vocabulary.key(name)
-        if same:
-            found.append(tag)
-    return found
+    if not isinstance(person, int) or person not in known.names:
+        return []
+    return [tag for tag in tags if (ref := vocabulary.person_ref_of_tag(tag, known)) is not None and ref.id == person]
 
 
 # ---- The tag, written and taken off ----------------------------------------------------------------------------
@@ -271,6 +276,7 @@ def name_face(library, face_id, person, writer):
     if found is None:
         return refused
     ref, person_name = faces_service.who_is(library, person, refused)
+    ref = made(library, ref)
     photo_path, was = found
     if writer is None:
         _give_back_guesses(library, photo_path, face_id, ref)
@@ -305,13 +311,8 @@ def name_face(library, face_id, person, writer):
 
 
 def is_person(face_ref, person):
-    """Is the person a face carries, `face_ref` (a Ref), `person` (the id, or the name of a person no node is)? Names a node
-    holds are compared when either has no id."""
-    if face_ref is None:
-        return False
-    if isinstance(person, int):
-        return face_ref.id == person
-    return vocabulary.key(face_ref.name) == vocabulary.key(person)
+    """Is the person a face carries, `face_ref` (a Ref), the person with the id `person`?"""
+    return face_ref is not None and face_ref.id == person
 
 
 def _names_on(library, photo_path):
@@ -401,7 +402,6 @@ def _faces_to_unname(library, removed):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         known = taxonomy.read_people_vocabulary(conn)
-        tree = person_ids.read(conn)
         named = {photo_path: faces.named_in_photo(conn, photo_path) for photo_path in removed}
     finally:
         conn.close()
@@ -410,8 +410,8 @@ def _faces_to_unname(library, removed):
     for photo_path, taken_off in removed.items():
         tags_now = now.get(paths.key(photo_path), [])
         for face_id, person, source in named[photo_path]:
-            if person.id is None and tree.why_not(person.name) == "branch":
-                continue
+            if person.id is None:
+                continue   # a name from before ids is no person
             if person_tags(taken_off, person, known) and not person_tags(tags_now, person, known):
                 found.append((face_id, person, source))
     return found

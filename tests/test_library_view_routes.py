@@ -80,7 +80,7 @@ class TheView(Routes):
 
     def test_a_keyword_a_person_a_year_and_a_month(self):
         self.assertEqual([self.a, self.b], self.view(kind="keyword", value="Trips")[1]["ids"])
-        self.assertEqual([self.a], self.view(kind="person", value="Wren Halloway")[1]["ids"])
+        self.assertEqual([self.a], self.view(kind="person", value="People/Wren Halloway")[1]["ids"])
         self.assertEqual([self.a, self.b], self.view(kind="year", value="2024")[1]["ids"])
         self.assertEqual([self.a, self.b], self.view(kind="month", value="2024-06")[1]["ids"])
         self.assertEqual([self.c], self.view(kind="month", value="2023-01")[1]["ids"])

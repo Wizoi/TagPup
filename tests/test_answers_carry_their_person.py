@@ -127,7 +127,7 @@ class TheAnswers(Library):
 
     def test_review_peoples_list(self):
         listed = {each["name"]: each for each in people_service.with_counts(self.library)}
-        self.assertIsNone(listed["Sam"]["person"])
+        self.assertNotIn("Sam", listed, "a face named with a name two people have holds no id: it is no person")
         self.assertEqual(self.person(WREN), listed["Wren"]["person"])
         self.assertEqual(2, listed["Wren"]["count"], "the fields it had are still there")
 

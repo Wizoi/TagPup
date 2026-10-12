@@ -10,23 +10,18 @@ beside People/Sam), and a group is never put on a photo as a person (rule b, `re
 everything that groups, counts or joins "this person" reads the id. The name beside it
 (`faces.name`, `photo_people.name`) is a CACHE of the node's leaf, written by this module's callers in
 the same statement as the id and kept by `follow_*` / `sync` when the tree renames the node: identity
-never reads it. A row with a name and no id holds an UNRESOLVED name -- one no person node is called, or
-that two are and nothing said which -- left exactly as it is (the owner settles those, #985).
+never reads it. A row with a name and no id is from before names had ids (owner, 2026-10-11: only the id): no writer makes one
+now, a reader does not count it as a person, and the doctor lists them ("names with no person node").
 
 **One door.** A person comes in as an id (a page, a journal), a tag path (a keyword, a saved search) or a
 bare name (the CLI, the MCP, a page not reloaded since the update), and `resolve` turns it into a
 `Person` -- or refuses: `StalePerson` for an id no person has (merged or deleted meanwhile: a 404, never a
 new person), `AmbiguousPerson` for a name two people have (naming the candidates), `GroupNotPerson` for a
-group. A name no node is called resolves to None: the caller decides whether that makes a person (the
-tag first, as TagTuner's New Person does) or leaves an unresolved name.
+group. A name no node is called resolves to None: the caller makes the person's node first (`taxonomy.ensure_node`, or
+`face_people.made`: the tag first, as TagTuner's New Person does) or refuses.
 
-A name with no id is an UNRESOLVED name, and nothing links it by chance: `follow_*`, `sync` and `settle` keep an id that
-is set (with its node's leaf as the cache), drop the id of a node that is gone, and give a missing one to NOBODY, however
-unique the name has become -- a name that became one person's because a same-named node left says nothing about who a row
-meant. Rows are linked by exactly two things: the writer that wrote the row and knew the id (`target`), and `link_added` for
-a name a person was ADDED under (a node made, moved or renamed into it: `follow_tree`, and the journal) -- which is how a
-name that had no node is linked once `taxonomy.ensure_node` gives it one. A keyword's row is resolved by its path when it is
-written. It never moves an id that is set.
+Nothing links a name to a person: `follow_*`, `sync` and `settle` keep an id that is set (with its node's leaf as the cache) and
+drop the id of a node that is gone. A row gets its id from the writer that wrote it (`target`), or from the keyword's path.
 
 The tree is read inside the writer's transaction, every time, and never kept: a rename committed by
 another process between two writes is what the second one reads. Ids are AUTOINCREMENT, never given
@@ -118,24 +113,23 @@ def present(conn):
 
 
 def wire(ref):
-    """A person as it travels in a plan, a job's state or a request: the node's id, or -- a name no person is filed under --
-    the name. `ref` is a Ref, a Person, an id or a name. `target` takes it back."""
+    """A person as it travels in a plan, a job's state or a request: the id of the node (None for a Ref or a Person with none:
+    a row from before names had ids is not a person). A typed name is passed on as it is, for `target` to resolve. `ref` is a Ref,
+    a Person, an id or a name."""
     if isinstance(ref, (vocabulary.Ref, Person)):
-        return ref.id if ref.id is not None else ref.name
+        return ref.id
     return ref
 
 
 def wire_key(ref):
-    """What `key_of` gives for a person in wire form: the id, or the name's key."""
-    return ref if isinstance(ref, int) else vocabulary.key(ref)
+    """What `key_of` gives for a person in wire form: the id."""
+    return ref
 
 
 def key_of(tag_id, name):
-    """What a row's person is KEYED by wherever people are grouped, counted or compared in memory: the node's
-    id, or -- for an unresolved name -- the name's key (a str). A row with neither is nobody: None."""
-    if tag_id is not None:
-        return tag_id
-    return vocabulary.key(name) or None
+    """What a row's person is KEYED by wherever people are grouped, counted or compared in memory: the node's id. A row with
+    none -- a name from before names had ids -- is nobody: None (owner, 2026-10-11: only the id)."""
+    return tag_id
 
 
 class People:
@@ -146,12 +140,14 @@ class People:
 
     AMBIGUOUS = object()
 
-    def __init__(self, nodes, parents=(), every=None):
+    def __init__(self, nodes, parents=(), every=None, words=()):
         self.by_key, self.branches = {}, {}
         self.nodes = set()   # every person node's id, those two nodes are called alike too
         self.listing = []    # (id, tag, name) of each of them: what Directory tells the pages
         self.by_id, self.by_tag = {}, {}
         self.groups, self.group_by_tag = {}, {}
+        #: {key: tag} of the nodes at the top with nodes under them that are not marked as holding faces (Places): groups too.
+        self.words = {vocabulary.key(tag): tag for tag in words}
         #: {id: name} of EVERY node of the tree (not only people): what a row's cached name is held to while its
         #: id is set. Without `every`, only the nodes given.
         self.node_names = {}
@@ -184,8 +180,11 @@ class People:
         parents = [parent for (parent,) in conn.execute(
             "SELECT DISTINCT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL")]
         every = conn.execute("SELECT id, name, has_face, tag FROM tag_taxonomy").fetchall()
+        parented = set(parents)
         return cls([(node_id, tag, name) for node_id, name, has_face, tag in every if has_face == 1], parents,
-                   [(node_id, name) for node_id, name, _has_face, _tag in every])
+                   [(node_id, name) for node_id, name, _has_face, _tag in every],
+                   [tag for node_id, _name, has_face, tag in every
+                    if has_face != 1 and node_id in parented and tag and vocabulary.SEPARATOR not in tag])
 
     def id_of(self, name):
         """The id of the one person node called `name`; None for no name, no node or two."""
@@ -242,6 +241,8 @@ class People:
         if found is None:
             if key in self.branches:
                 raise GroupNotPerson(self.groups[self.branches[key][0]].tag)
+            if key in self.words:
+                raise GroupNotPerson(self.words[key])
             return None
         if found is People.AMBIGUOUS:
             raise AmbiguousPerson(text, self.called(text))
@@ -296,14 +297,8 @@ def target(conn, ref, known=None):
 
 
 def matches(face, target):
-    """Is the person a face carries, `face` (a Ref), the person `target` (the pair `target()` gives) is? By the node's id; a
-    face holding a name and no id is the person whose name it is."""
-    if face is None:
-        return False
-    tag_id, name = target
-    if tag_id is not None and face.id is not None:
-        return face.id == tag_id
-    return vocabulary.key(face.name) == vocabulary.key(name)
+    """Is the person a face carries, `face` (a Ref), the person `target` (the pair `target()` gives) is? By the node's id."""
+    return face is not None and face.id is not None and face.id == target[0]
 
 
 class Directory:
@@ -393,23 +388,6 @@ def follow_faces(conn, photo_ids, known=None):
     return len(updates)
 
 
-def settle_faces(conn, face_ids, known=None):
-    """Settle the faces `face_ids` (People.settle): an id that is set keeps its node's leaf for a name, a gone node's is dropped;
-    a face with a name and no id stays as it is. Returns faces changed."""
-    if not face_ids or not present(conn):
-        return 0
-    known = known or read(conn)
-    updates = []
-    for chunk in _chunks(face_ids):
-        for face_id, name, held in conn.execute(
-                "SELECT id, name, tag_id FROM faces WHERE id IN (%s)" % _marks(chunk), chunk):
-            wanted, cached = known.settle(name, held)
-            if held != wanted or name != cached:
-                updates.append((wanted, cached, face_id))
-    conn.executemany("UPDATE faces SET tag_id = ?, name = ? WHERE id = ?", updates)
-    return len(updates)
-
-
 def follow_listed(conn, photo_ids, known=None):
     """Settle each person listed for the photos `photo_ids` (photo_people), as follow_faces does. Every photo, without
     `photo_ids`. Returns rows changed."""
@@ -486,13 +464,9 @@ def sync(conn, known=None):
 
 def follow_tree(conn, before):
     """After an edit of the tree (`before` is the People read before it): a node renamed gives its name to the rows
-    that hold its id (UPDATE ... WHERE tag_id = ?, by idx_faces_tag); a node gone leaves its rows' names unresolved;
-    and a name NO ONE had before the edit and a person has after it -- the edit ADDED that person under that name (a node
-    made, moved or renamed into it) -- links the rows that name it and hold no id (a hand decision too: the person was added for that name, and the
-    decision was always to that name). That is the one rule for linking an unresolved name after an edit: a name that became
-    exactly one person's because a same-named node LEFT (renamed away, merged, deleted) was ambiguous before and stays
-    unresolved, hand decisions included, for the owner to settle (the doctor lists them); nothing is guessed. An edit that does none of these costs two reads of the
-    tree. Returns rows changed."""
+    that hold its id (UPDATE ... WHERE tag_id = ?, by idx_faces_tag); a node gone takes its faces' id off (a name left, which
+    the doctor lists) and its listed people away. Nothing links a name to a person: a row has the id or is not a person (owner,
+    2026-10-11). An edit that renames or removes nothing costs two reads of the tree. Returns rows changed."""
     if not present(conn):
         return 0
     after = read(conn)
@@ -505,51 +479,9 @@ def follow_tree(conn, before):
                 changed += conn.execute("UPDATE %s SET name = ? WHERE tag_id = ? AND name IS NOT ?" % table,
                                         (name, node_id, name)).rowcount
     for node_id in set(before.node_names) - set(after.node_names):
-        for table in TABLES:
-            changed += conn.execute("UPDATE %s SET tag_id = NULL WHERE tag_id = ?" % table, (node_id,)).rowcount
-    changed += link_added(conn, {key for key, found in after.by_key.items()
-                                 if found is not People.AMBIGUOUS and key not in before.by_key}, after)
+        changed += conn.execute("UPDATE faces SET tag_id = NULL WHERE tag_id = ?", (node_id,)).rowcount
+        changed += conn.execute("DELETE FROM photo_people WHERE tag_id = ?", (node_id,)).rowcount   # not a person without a node
     return changed
-
-
-def link_added(conn, keys, known=None):
-    """THE one place that links an unresolved name -- a face or a listed person with a name and no id -- to a person after the fact:
-    the rows whose name's key is in `keys` are given the one person that name is. The callers say which names a person was ADDED
-    under (a node made, moved or renamed into the name): `follow_tree`, for an edit of the tree, and the journal, for a node
-    its change inserted or renamed. Nothing else links one: not `settle` (which has no memory of what changed), not a rebuild
-    of a photo, not the journal's replay of a face -- a name that became one person's because a same-named node left says nothing
-    about who a row meant. A writer that knows the id writes it; a keyword is resolved by its path. Returns rows changed."""
-    keys = set(keys)
-    if not keys or not present(conn):
-        return 0
-    known = known or read(conn)
-    changed = 0
-    for table in TABLES:
-        for name, in conn.execute("SELECT DISTINCT name FROM %s WHERE tag_id IS NULL AND name IS NOT NULL" % table).fetchall():
-            if vocabulary.key(name) in keys:
-                found = known.id_of(name)
-                if found is not None:
-                    changed += _link(conn, table, name, known.by_id[found])
-    return changed
-
-
-def _link(conn, table, name, person):
-    """THE statement that gives the rows of `table` called `name` (exactly, and holding no id) the Person's id and name. Of the
-    listed people only those a FACE made: a keyword's row is its PATH's person (vocabulary.people_rows; people.rebuild writes it
-    so every time), never a name's."""
-    only = " AND source = 'face'" if table == "photo_people" else ""
-    return conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS NULL%s" % (table, only),
-                        (person.id, person.name, name)).rowcount
-
-
-def names_of_nodes(conn, node_ids, known=None):
-    """The keys of the names the nodes `node_ids` are called, of those that are a person and the only one so called now: the names
-    a change that made, moved or renamed those nodes ADDED a person under (link_added's `keys`)."""
-    if not node_ids or not present(conn):
-        return set()
-    known = known or read(conn)
-    return {vocabulary.key(known.node_names[node_id]) for node_id in node_ids
-            if node_id in known.node_names and known.by_key.get(vocabulary.key(known.node_names[node_id])) == node_id}
 
 
 def faces_using(conn, ids):
@@ -562,15 +494,15 @@ def faces_using(conn, ids):
 
 
 def release(conn, node_ids):
-    """The rows that name the nodes `node_ids` are left with the name alone (tag_id NULL): the journal's undo of a node's
-    insert takes the node away, and the faces and listed people it was linked to by their name go back to being that name.
+    """The rows that name the nodes `node_ids` let go of them: the journal's undo of a node's insert takes the node away; the
+    listed people it was given are not listed (they are worked out again from the photos), the faces go back to being a name.
     The caller refused first for a face a person named. Returns rows changed."""
     if not node_ids or not present(conn):
         return 0
     changed = 0
     for chunk in _chunks(node_ids):
-        for table in TABLES:
-            changed += conn.execute("UPDATE %s SET tag_id = NULL WHERE tag_id IN (%s)" % (table, _marks(chunk)), chunk).rowcount
+        changed += conn.execute("UPDATE faces SET tag_id = NULL WHERE tag_id IN (%s)" % _marks(chunk), chunk).rowcount
+        changed += conn.execute("DELETE FROM photo_people WHERE tag_id IN (%s)" % _marks(chunk), chunk).rowcount
     return changed
 
 

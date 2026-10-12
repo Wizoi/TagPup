@@ -20,7 +20,7 @@ from click.testing import CliRunner  # noqa: E402
 import tagpup_cli  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.services import face_people, tags_from_faces  # noqa: E402
-from tagpup.store import checks, db, people, taxonomy  # noqa: E402
+from tagpup.store import checks, db  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 import doctor  # noqa: E402
@@ -62,19 +62,6 @@ class TheDryRun(Mending):
         said = self.run_cli()
         self.assertNotIn(WREN, said.output)
         self.assertNotIn("drift_x", said.output)
-
-    def test_a_person_the_tree_files_in_two_places_is_left_and_counted(self):
-        def two_places(conn):
-            with people.tree_edit(conn):
-                taxonomy.add_path(conn, "People/Pairs/" + ODA)
-                taxonomy.add_path(conn, "People/Others/" + ODA)
-        db.write_with_connection(self.path, two_places)
-        self.drifted("drift_a.jpg")
-        self.drifted("drift_b.jpg", who=ODA)
-        planned = tags_from_faces.plan(self.library)
-        self.assertEqual({"photos_with_a_person_on_a_face_alone": 2, "people": 2, "photos_to_write": 1, "people_to_write": 1,
-                          "people_the_tree_files_in_two_places": 1, "people_the_file_names_under_another_root": 0,
-                          "people_from_a_guess_only": 0, "guesses_included": False}, planned.details["counts"])
 
     def test_a_library_in_step_has_nothing_to_do(self):
         self.photo("fine.jpg", [PEOPLE + WREN])

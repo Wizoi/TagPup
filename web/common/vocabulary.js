@@ -177,11 +177,6 @@ export class PeopleDirectory {
         return found && found.length === 1 ? found[0] : null;
     }
 
-    /** Do two or more people share this name? */
-    shared(name) {
-        return (this.byName.get(textKey(name)) || []).length > 1;
-    }
-
     /** The person a text names: a tag path exactly, a bare name when it is one person's. Null for neither. */
     ofText(text) {
         const value = String(text ?? '').trim();
@@ -212,13 +207,11 @@ export class PeopleDirectory {
     }
 }
 
-/** Are these two the same person? By id; a person with no id (a name no tag has) by name. Never by label. */
+/** Are these two the same person? By the id of their node, and only so: a record with no id is nobody. Never by label or name. */
 export function sameRecord(a, b) {
     if (!a || !b) return false;
     const left = a.id ?? null, right = b.id ?? null;
-    if (left !== null && right !== null) return left === right;
-    if (left !== null || right !== null) return false;
-    return textKey(a.name) === textKey(b.name);
+    return left !== null && left === right;
 }
 
 /**
@@ -236,14 +229,10 @@ export function sameTagPerson(a, b, directory = null) {
 
 /**
  * Do two rows that each name someone -- a face and a match, `{name, person?}` -- name the same person? By the id of their nodes
- * when both rows have one (two people called Sam are two), else by name.
+ * (two people called Sam are two); a row with none names nobody.
  */
 export function sameNamed(a, b) {
-    if (!a || !b) return false;
-    const left = a.person && a.person.id !== undefined ? a.person.id : null;
-    const right = b.person && b.person.id !== undefined ? b.person.id : null;
-    if (left !== null && right !== null) return left === right;
-    return samePerson(a.name, b.name);
+    return !!a && !!b && sameRecord(a.person, b.person);
 }
 
 /**
@@ -252,7 +241,7 @@ export function sameNamed(a, b) {
  */
 export function peopleListHas(names, text, directory = null) {
     const leaf = leafOf(text);
-    if (!leaf || (directory && directory.shared(leaf))) return false;
+    if (!leaf || (directory && directory.called(leaf).length > 1)) return false;
     return (names || []).some(each => samePerson(each, leaf));
 }
 

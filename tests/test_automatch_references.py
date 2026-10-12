@@ -20,7 +20,7 @@ from face_rows import add_face  # noqa: E402
 from tagpup.jobs import identify as identify_jobs  # noqa: E402
 from tagpup.services import faces  # noqa: E402
 from tagpup.services import identify  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, taxonomy  # noqa: E402
 from tagpup.store import people as store_people  # noqa: E402
 
 
@@ -36,6 +36,12 @@ class Case(unittest.TestCase):
     def setUp(self):
         self.lib = TempLibrary(self)
         self.cache = identify_jobs.GridCache()
+
+        def people(conn):   # the tree the people are filed in: a face is named by the node it files
+            taxonomy.add_path(conn, "People", root_has_face=1)
+            for name in ("Wren Halloway", "Ada Pembrook"):
+                taxonomy.add_path(conn, "People/" + name)
+        db.write_with_connection(self.lib.library.path, people)
 
     def photo(self, name, keywords=()):
         path = self.lib.photo(name)

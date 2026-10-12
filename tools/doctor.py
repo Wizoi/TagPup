@@ -150,9 +150,9 @@ def report(db_path, show=0, out=print):
         for tag in sorted(at_the_top)[:show]:
             out("    %s" % tag)
     if nameless.none:
-        out("names with no person node: %d, on %d row(s) of faces and photos' people (reported, not broken: they have no "
-            "person id, and none is guessed; `tagpup_cli.py tree-fill` gives them nodes, except a name that a tag with tags "
-            "under it already is)" % (len(nameless.none), sum(nameless.none.values())))
+        out("names with no person node: %d, on %d row(s) of faces and photos' people (reported, not broken: rows from before "
+            "names had ids; they are not counted as a person and nothing links them: name the face again)"
+            % (len(nameless.none), sum(nameless.none.values())))
         for name, count in sorted(nameless.none.items(), key=lambda pair: (-pair[1], pair[0]))[:show]:
             out("    %6d  %s" % (count, name))
     if nameless.one:

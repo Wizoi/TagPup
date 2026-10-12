@@ -130,7 +130,6 @@ export const UNFILED_ID = 'g:';
  */
 export function indexPeople(list, groups = [], unfiled = 0) {
     const people = [];
-    const byLower = new Map();
     const byTag = new Map();
     for (const each of Array.isArray(groups) ? groups : []) {
         if (!each || typeof each.tag !== 'string' || byTag.has(each.tag)) continue;
@@ -141,23 +140,18 @@ export function indexPeople(list, groups = [], unfiled = 0) {
     }
     for (const each of Array.isArray(list) ? list : []) {
         if (!each || typeof each.name !== 'string') continue;
-        // A person is their id when the server has one (two people called alike are two rows: `p:${name}` collided); a name
-        // no node is stays the name. `tag` is the person's path.
-        const identity = each.person_id !== undefined && each.person_id !== null ? each.person_id : each.name;
+        // A person is the id of their node (two people called alike are two rows) and nothing else: a name the server sends
+        // with no id is no person. `tag` is the person's path.
+        if (each.person_id === undefined || each.person_id === null) continue;
         const record = each.person && typeof each.person === 'object' ? each.person : {};
         people.push({
-            id: `p:${identity}`, name: each.name, count: Number(each.count) || 0, groupTag: each.group || null, children: [],
-            personId: each.person_id === undefined ? null : each.person_id, tag: typeof record.tag === 'string' ? record.tag : null,
+            id: `p:${each.person_id}`, name: each.name, count: Number(each.count) || 0, groupTag: each.group || null, children: [],
+            personId: each.person_id, tag: typeof record.tag === 'string' ? record.tag : null,
         });
     }
-    // Two rows of one name are two people: each is asked for by its tag, not as the name (which is everyone called it).
-    const called = new Map();
-    for (const person of people) called.set(person.name.toLowerCase(), (called.get(person.name.toLowerCase()) || 0) + 1);
-    for (const person of people) person.shared = called.get(person.name.toLowerCase()) > 1;
     people.sort((a, b) => compareTagNames(a.name, b.name) || compareTagNames(a.tag || '', b.tag || ''));
     const byPersonTag = new Map();
     for (const person of people) {
-        if (!byLower.has(person.name.toLowerCase())) byLower.set(person.name.toLowerCase(), person);
         if (person.tag) byPersonTag.set(person.tag.toLowerCase(), person);
     }
     const alphabetical = (a, b) => compareTagNames(a.name, b.name) || compareTagNames(a.tag, b.tag);
@@ -181,22 +175,20 @@ export function indexPeople(list, groups = [], unfiled = 0) {
             unfiled: true, subgroups: [], people: loose, children: loose,
         });
     }
-    return { people, byLower, byPersonTag, groups: byTag, tops: grouped ? tops : loose, grouped, size: people.length };
+    return { people, byPersonTag, groups: byTag, tops: grouped ? tops : loose, grouped, size: people.length };
 }
 
-/**
- * What a view or a chip of this person asks for: their name, or -- when another person has it -- their tag path, which names
- * exactly them (the library's views: a name is everyone called it, a path is one person).
- */
+/** What a view or a chip of this person asks for: their tag path, which names exactly them (the library's views read a person by
+ *  the id of their node; the leaf is never identity). */
 export function personSource(person) {
-    return person.shared && person.tag ? person.tag : person.name;
+    return person.tag;
 }
 
 function navPersonRow(person, level = 1) {
     const shown = person.name;
     return {
         id: person.id, level, label: shown, count: person.count,
-        title: `${person.shared && person.tag ? person.tag : person.name}${person.groupTag ? ` (${person.groupTag})` : ''}\n${navPlural(person.count, 'photo', 'photos')}`,
+        title: `${person.tag}${person.groupTag ? ` (${person.groupTag})` : ''}\n${navPlural(person.count, 'photo', 'photos')}`,
         aria: `${shown}, ${navPlural(person.count, 'photo', 'photos')}`,
         hint: '', expandable: false, expanded: false,
         spec: { kind: 'person', value: personSource(person), recursive: false },
@@ -452,7 +444,7 @@ export function locate(section, index, spec) {
     }
     if (section === 'people' && spec.kind === 'person') {
         const wanted = String(spec.value).toLowerCase();
-        const person = (index.byPersonTag && index.byPersonTag.get(wanted)) || index.byLower.get(wanted);
+        const person = index.byPersonTag && index.byPersonTag.get(wanted);   // by the person's tag: the leaf is never identity
         if (!person) return null;
         const open = [];
         for (let tag = person.groupTag; tag && index.groups && index.groups.has(tag) && open.length < 64; tag = index.groups.get(tag).parentTag) {

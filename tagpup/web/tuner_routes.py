@@ -350,8 +350,12 @@ def person_faces():
     if not _library_there(library):
         return jsonify({"faces": [], "total_count": 0, "has_more": False})
     try:
-        # A read: a name two people have is all of them (the union), as the name always showed; a write refuses it.
-        return jsonify(identify_service.person_faces(library, people_service.for_reading(library, person), limit, page))
+        # A read: the person by their id; a name one person has is that person, a name two people have is refused naming their
+        # paths, a name nobody is called holds nothing.
+        person = people_service.for_reading(library, person)
+        if person is None:
+            return jsonify({"faces": [], "total_count": 0, "has_more": False})
+        return jsonify(identify_service.person_faces(library, person, limit, page))
     except NotFound as missing:
         abort(404, description=str(missing))
     except Refused as why:
@@ -371,7 +375,7 @@ def faces_excluded():
 
 def _grid_key():
     """What a request calls the grid it asks for or the progress of: the id of the person's node when the page has it, else the
-    name (a bucket, or an old page)."""
+    name (a bucket)."""
     return request.args.get("person_id") or request.args.get("name")
 
 
@@ -396,12 +400,14 @@ def unmatched_faces_person_matches():
     asked = _grid_key()
     try:
         # A read: the person by their id, a name one person has as that person (an old page; typed or external), a name two
-        # people have refused naming their paths, a name no node is as the name (an unresolved keyword's grid).
+        # people have refused naming their paths, a name nobody is called holds nothing.
         person = people_service.for_reading(library, person)
     except NotFound as missing:
         abort(404, description=str(missing))
     except Refused as why:
         _refuse(400, str(why))
+    if person is None:
+        return jsonify({"faces": [], "total_count": 0, "has_more": False})
     return jsonify(identify_jobs.grid(library, identify_cache.of(library),
                                       identify_progress.of(library), person, progress_key=asked))
 

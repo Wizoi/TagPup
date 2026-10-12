@@ -162,10 +162,6 @@ class CrossDatabaseReadIsolationMixin:
         )
         add_people(conn, f"C:/{marker}.jpg", [marker])
         add_face(conn, f"C:/{marker}.jpg", box="[]", embedding=b"", name=marker)
-        conn.execute(
-            "INSERT INTO tag_taxonomy (tag, parent_id, name) VALUES (?, NULL, ?)",
-            (marker, marker),
-        )
         conn.commit()
         conn.close()
 

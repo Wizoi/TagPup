@@ -18,6 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.services.suggester import TagSuggester  # noqa: E402
+from tagpup.store import taxonomy  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from face_rows import person_of  # noqa: E402
 
 ROWAN = [1.0, 0.0, 0.0]
 
@@ -54,6 +58,8 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         self.index = PhotoIndex(os.path.join(self.dir, "lib.db"))
         self.index.load()
         self.processor = CountingFaceProcessor()
+        taxonomy.add_path(self.index.conn, "People", root_has_face=1)   # the tree files Rowan: a face is named by a node
+        taxonomy.add_path(self.index.conn, "People/Rowan Thackeray")
         # Rowan is known from another photo.
         self.add_face(r"D:\Pictures\known.jpg", "Rowan Thackeray", None, 0)
 
@@ -65,9 +71,10 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         conn = self.index.conn
         conn.execute("INSERT OR IGNORE INTO photos (path) VALUES (?)", (path,))
         conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, prob, name, name_source, excluded)"
-            " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 100, 100]', ?, 0.99, ?, ?, ?)",
-            (path, np.asarray(ROWAN, dtype=np.float32).tobytes(), name, name_source, excluded))
+            "INSERT INTO faces (photo_id, box, embedding, prob, name, tag_id, name_source, excluded)"
+            " VALUES ((SELECT id FROM photos WHERE path = ?), '[0, 0, 100, 100]', ?, 0.99, ?, ?, ?, ?)",
+            (path, np.asarray(ROWAN, dtype=np.float32).tobytes(), name, person_of(conn, name) if name else None,
+             name_source, excluded))
         conn.commit()
 
     def suggested(self, path):

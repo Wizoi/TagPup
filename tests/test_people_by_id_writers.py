@@ -69,13 +69,13 @@ class Writers(TwoSams, unittest.TestCase):
         self.assertEqual(1, done.changed)
 
     def test_a_keyword_path_gives_the_exact_person_and_a_bare_one_nobody(self):
-        """The photo's keyword is Sam Thackeray's PATH: the list holds his id. A bare 'Sam' keyword, which two people are
-        called, is the name alone; beside a face that says which, it is that person's."""
+        """The photo's keyword is Sam Thackeray's PATH: the list holds his id. A bare 'Sam' keyword is a path of its own (a
+        node at the top) and names neither Sam; a face that says which makes the person the photo's."""
         from tagpup.store import photos
         photos.record_tags(self.path, self.other, ["Sam"])
-        self.assertEqual([(None, "Sam", "keyword")], self.listed(self.other))
+        self.assertEqual([], self.listed(self.other))
         write(self.path, lambda conn: faces.name(conn, [self.faces[2]], self.sam_i))
-        self.assertEqual([(self.sam_i, "Sam", "keyword")], self.listed(self.other))
+        self.assertEqual([(self.sam_i, "Sam", "face")], self.listed(self.other))
 
     def test_a_pet_and_a_friend_called_alike_are_told_apart(self):
         max_pet, max_friend = self.node(MAX_PET), self.node(MAX_FRIEND)

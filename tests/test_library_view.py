@@ -13,7 +13,6 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import face_rows  # noqa: E402
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
 from test_migrations import at_version  # noqa: E402
@@ -83,7 +82,7 @@ class EqualDates(Library):
         self.folder = os.path.join(self.vl.pictures, "Run")
         self.sources = {"all": ("all", None, False), "folder": ("folder", self.folder, False),
                         "folder+": ("folder", self.folder, True), "keyword": ("keyword", "Trips/Coast", False),
-                        "person": ("person", "Wren Halloway", False), "year": ("year", "2024", False),
+                        "person": ("person", "People/Wren Halloway", False), "year": ("year", "2024", False),
                         "month": ("month", "2024-06", False)}
 
     def test_a_run_of_seven_equal_dates_is_in_id_order_and_none_is_lost_or_repeated(self):
@@ -234,21 +233,21 @@ class APerson(Library):
         self.nobody = self.vl.photo("A", "d.jpg", taken="2024:01:04 00:00:00")
 
     def test_a_person_holds_the_photos_they_are_in(self):
-        self.assertEqual([self.wren_a, self.wren_b], self.ids("person", "Wren Halloway"))
-        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "Rowan Thackeray"))
+        self.assertEqual([self.wren_a, self.wren_b], self.ids("person", "People/Wren Halloway"))
+        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "People/Rowan Thackeray"))
+
+    def test_a_name_that_is_no_persons_path_holds_nothing(self):
+        self.assertEqual([], self.ids("person", "Wren Halloway"))
 
     def test_a_person_nobody_is_called_holds_nothing(self):
         found = library_view.ids(self.vl.library, "person", "Nobody At All")
         self.assertEqual(([], 0), (found["ids"], found["total"]))
 
-    def test_names_that_differ_only_in_case_are_one_person_and_a_photo_is_counted_once(self):
-        face_rows.add_people(self.vl.conn, self.vl.path_of(self.rowan), ["rowan thackeray"], source="face")
-        face_rows.add_people(self.vl.conn, self.vl.path_of(self.wren_a), ["WREN HALLOWAY"], source="face")
-        self.vl.conn.commit()
-        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "Rowan Thackeray"))
-        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "ROWAN THACKERAY"))
-        found = library_view.ids(self.vl.library, "person", "wren halloway")
-        self.assertEqual((2, [self.wren_a, self.wren_b]), (found["total"], found["ids"]), "wren_a holds both spellings")
+    def test_a_path_in_any_case_is_one_person_and_a_photo_is_counted_once(self):
+        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "people/rowan thackeray"))
+        self.assertEqual([self.wren_b, self.rowan], self.ids("person", "PEOPLE/ROWAN THACKERAY"))
+        found = library_view.ids(self.vl.library, "person", "People/wren halloway")
+        self.assertEqual((2, [self.wren_a, self.wren_b]), (found["total"], found["ids"]))
 
     def test_a_percent_or_a_quote_in_a_name_is_a_plain_character(self):
         for name in ("Wren %", "Wren _alloway", "Wren' OR '1'='1", "%"):
@@ -420,17 +419,6 @@ class TheNavigator(Library):
     def test_the_people_are_counted_by_photos_most_first(self):
         found = self.section("people")["people"]
         self.assertEqual([("Wren Halloway", 2), ("Rowan Thackeray", 1)], [(each["name"], each["count"]) for each in found])
-
-    def test_names_no_person_has_that_differ_only_in_case_are_one_entry_and_a_photo_counts_once(self):
-        """A person the tree files is their node, whatever the rows spell; a name no node has is one entry for its spellings."""
-        photo = self.vl.photo("2024 A", "extra.jpg", taken="2024:08:01 00:00:00")
-        face_rows.add_people(self.vl.conn, self.vl.path_of(photo), ["skye marlowe", "SKYE MARLOWE"], source="face")
-        other = self.vl.photo("2024 A", "extra2.jpg", taken="2024:08:02 00:00:00")
-        face_rows.add_people(self.vl.conn, self.vl.path_of(other), ["Skye Marlowe"], source="face")
-        self.vl.conn.commit()
-        found = {each["name"].lower(): each["count"] for each in self.section("people")["people"]}
-        self.assertEqual(2, found["skye marlowe"])
-        self.assertEqual(3, len(found))
 
     def test_the_dates_are_years_with_their_months_and_what_has_no_month_of_it(self):
         found = self.section("dates")

@@ -32,13 +32,14 @@ def resolve(library, ref):
 
 
 def for_reading(library, person):
-    """`person` as a READ may ask for them: the id of their node when it is a name one person has (or a path), the name as it
-    is for one no node is; a bucket or an id is as it is. NotFound for an id that is nobody's, Refused for a group and for a
-    name two people have (the sentence names their paths: the page asks which one). Nothing is created or linked."""
+    """`person` as a READ may ask for them: the id of their node when it is a name one person has (or a path); a bucket as it is.
+    None for a name no person is called (a name is never a person by itself: the answer is nobody's, and empty). NotFound for an
+    id that is nobody's, Refused for a group and for a name two people have (the sentence names their paths: the page asks which
+    one). Nothing is created."""
     if isinstance(person, str) and person in vocabulary.BUCKETS.values():
         return person
     found = resolve(library, person)
-    return found.id if found else person
+    return found.id if found else None
 
 
 def tags_by_id(library):

@@ -169,38 +169,13 @@ export function updatePeopleDatalist() {
     // Every person offered while typing, by their tag: two called alike are two entries.
     state.offeredPeople.all().forEach(person => peopleSet.add(person.tag));
 
-    // Helper to resolve a flat name to the full tag paths of the people called it: one, or each of several that share the name
-    function resolveToPersonPaths(name) {
-        const called = state.people.called(name);
-        if (called.length) return called.map(person => person.tag);
-        // Find in knownTags first
-        const matchedTag = state.knownTags.find(t => {
-            if (!namesAPerson(t)) return false;
-            return samePerson(t, name);
-        });
-        if (matchedTag) return [matchedTag];
-        
-        // Default fallback
-        return [`People/${name}`];
-    }
-    
-    // Add from knownPeople
-    state.knownPeople.forEach(name => {
-        resolveToPersonPaths(name).forEach(tag => peopleSet.add(tag));
-    });
-    
-    // Add from folderPhotos
+    // Add from folderPhotos. A name alone is no person (a person is a tag path, held as the id of a node): only the tags count.
     state.folderPhotos.forEach(p => {
         if (p.tags) {
             p.tags.forEach(t => {
                 if (namesAPerson(t)) {
                     peopleSet.add(t);
                 }
-            });
-        }
-        if (p.people) {
-            p.people.forEach(name => {
-                resolveToPersonPaths(name).forEach(tag => peopleSet.add(tag));
             });
         }
     });
@@ -221,8 +196,6 @@ export function updatePeopleDatalist() {
         const leaf = leafOf(tag).toLowerCase();
         if (!leaf) return;
         const known = state.people.ofText(tag);
-        // A bare name two people have is no one of them: their own entries stand for them.
-        if (!known && !tag.includes('/') && state.people.shared(leaf)) return;
         const key = known ? `id:${known.id}` : `tag:${tag.trim().toLowerCase()}`;
         byPerson.set(key, preferPathed(byPerson.get(key), tag));
     });

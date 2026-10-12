@@ -133,12 +133,11 @@ function namesAListedFolder(tag, folders) {
  */
 export function drawJumps(data) {
     if (!selectionPeopleJump || !selectionKeywordJump || !data) return;
-    // Only a name that is one person node of the tree is a person to open a view of (the server says: `has_node`); a branch, a name
-    // two nodes share or one no node has is listed, without a link (#866).
-    // A person who shares a name is opened by their tag (exactly them).
+    // Only a person that is a node of the tree is one to open a view of (the server says: `has_node`, and sends their `person`); a
+    // branch is listed, without a link (#866). A person is opened by their tag (exactly them): there is no view of a name.
     const people = sortedTags(data.people, each => personLabelOf(each)).map(each => ({
-        spec: { kind: 'person', value: each.person && each.person.tag && state.people.shared(each.name) ? each.person.tag : each.name, recursive: false },
-        label: personLabelOf(each), count: each.count, linked: each.has_node !== false,
+        spec: { kind: 'person', value: each.person ? each.person.tag : null, recursive: false },
+        label: personLabelOf(each), count: each.count, linked: each.has_node !== false && !!(each.person && each.person.tag),
     }));
     const tags = sortedTags(data.tags, each => each.tag)
         .filter(each => !data.people.some(person => person.has_node !== false && samePerson(each.tag, person.name))

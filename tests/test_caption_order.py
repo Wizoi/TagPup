@@ -29,6 +29,7 @@ from tagpup.store import library_view as store  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
 WREN = "Wren Halloway"
+PEOPLE = "People/"   # a person is named by the path of their node (owner, 2026-10-11)
 
 
 def look(path, sql, params=()):
@@ -121,7 +122,7 @@ class ThePlans(Captioned):
         return {sql: "\n".join(lines) for sql, lines in statements if "FROM photos" in sql}
 
     def test_the_captioned_walk_the_caption_index_in_order_and_nothing_is_sorted_but_a_sources_uncaptioned_ids(self):
-        for kind, value in (("all", None), ("keyword", "Trips"), ("person", WREN)):
+        for kind, value in (("all", None), ("keyword", "Trips"), ("person", PEOPLE + WREN)):
             for order in ("caption", "caption-desc"):
                 with self.subTest(kind=kind, order=order):
                     plans = self.plans(kind, value, order)
@@ -175,7 +176,7 @@ class ThePlanOfEachKindOfSource(unittest.TestCase):
                     self.assertNotIn(store.CAPTION_INDEX if order.startswith("caption") else store.NAME_INDEX, plan)
 
     def test_the_library_a_list_of_ids_and_a_range_holding_much_of_it_walk_the_index(self):
-        for kind, value, recursive in (("all", None, False), ("keyword", "Trips", False), ("person", WREN, False),
+        for kind, value, recursive in (("all", None, False), ("keyword", "Trips", False), ("person", PEOPLE + WREN, False),
                                        ("year", "2019", False), ("folder", self.vl.pictures, True)):
             for order in ("caption", "caption-desc", "name", "name-desc"):
                 with self.subTest(kind=kind, order=order):
