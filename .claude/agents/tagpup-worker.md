@@ -42,6 +42,9 @@ of them, missed:
 - **The real data's shape**: counts and spellings from the live libraries, read-only
   (`db.readonly_uri`), not what a fixture holds. Check a claim you report against it.
 - **What the owner sees**: the page, the message, the time it takes, on a network share.
+- **Is the case real?** A fallback, a compatibility arm or a defensive branch needs a live count above zero or the user
+  action that produces it (CLAUDE.md, 'A special case needs a real instance'). If it has neither, refuse the write that
+  could make it and write no branch. Say in the report which cases you did not handle for that reason.
 Test the scenario the owner lives in, not only the unit: rapid clicks, switching library
 mid-folder, two libraries holding one folder, the always-on process updating.
 

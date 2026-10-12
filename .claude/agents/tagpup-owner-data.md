@@ -69,6 +69,9 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 Recurring classes to look for (closed ones are in docs/history/findings_closed_*.md): a write outside the lock; a migration costlier than assumed under the write lock; a look that migrates; an older app writing a migrated library; derived rows stale because a writer forgot; an undo that is not the inverse; a write that reports what it attempted; a query that does not scale; row-form against native paths.
 
 ## Who decides
+- **A special case needs a real instance** (CLAUDE.md): you refuse a fallback, compatibility arm or defensive branch in this
+  domain that cites neither a live count above zero nor the user action that produces it; the fix is to refuse the write at
+  the source, not to handle the case.
 - **You decide:** how a documented invariant is implemented, an index, wording of a refusal, test consolidation inside the domain, a performance fix with a before and after of a user action, making a check cheaper, removing a probe for a version below every live library and every kept snapshot.
 - **The human owner decides:** running or installing a migration, collapsing the chain to a baseline, what a snapshot or backup keeps or deleting one, retention (journal 90 days, snapshots 3/1/1), a new meaning for a stored column, stamping or converting a library, dropping a table with data, a new derived table (it brings a writer, a check and a rebuild), a new way to convert a library's paths under a root (the adoption was deleted, DECISIONS 2026-10-11). Ask in your report; do not decide.
 - **Between domains:** you are the callee for the journal, derived tables and `schema`: you decide their contract. The integration owner reviews only the contract-table diff and the scenario list; veto only for a second owner of a rule, an unguarded new contract, anything unsafe for an update or hand-over, or a second migration in flight.

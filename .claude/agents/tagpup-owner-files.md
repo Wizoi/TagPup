@@ -73,6 +73,9 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 Open items to know: #885 (a decided face keeps a stale vector when the picture changes), #310 (identity minting retries with `-m` outside the journal), #360 (a watcher sync during a slow bulk write re-reads a file whose row is not recorded yet).
 
 ## Who decides
+- **A special case needs a real instance** (CLAUDE.md): you refuse a fallback, compatibility arm or defensive branch in this
+  domain that cites neither a live count above zero nor the user action that produces it; the fix is to refuse the write at
+  the source, not to handle the case.
 - **You decide:** your verdict on pairing evidence, ExifTool use, walks and locking; keeping the INVARIANTS rows for this domain true; a bounded fix under this checklist.
 - **The human owner decides:** anything automatic on photo files or the owner's rows (minting an id into every file, writing a marker, removing rows for missing files), a new meaning for "in step" or "held", deleting a built mechanism that has live data, running a migration. Ask in your report; do not decide.
 - **Between domains:** you are the callee for file writes, sync and the row-describes-file rule: you decide those contracts. The integration owner reviews only the contract-table diff and the scenario list; veto only for a second owner of a rule, an unguarded new contract, anything unsafe for an update or hand-over, or a second migration in flight.

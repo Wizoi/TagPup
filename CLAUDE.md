@@ -247,6 +247,12 @@ The project grew 43k to 103k lines of code and 44k to 110k of tests in two weeks
   libraries it touches). Under about 20, it is a one-off script, not a feature.
 - **Each branch removes at least as many concepts, shims or tests as it adds**, or says why.
 - **Test files are named for what they test, never for a review round** (`..._followup`,
+- **A special case needs a real instance** (owner, 2026-10-11: three imagined cases had grown into a whole name-keyed fallback).
+  Every fallback, compatibility arm, defensive branch and 'what if' path must cite either a live count above zero (counted
+  this session, read-only) or the user action, through the real writers, that produces it. A case with neither is not
+  handled: the write that could make it is refused at the source with a plain sentence, and the branch is not written. An
+  owner decision that rules a class out (a shared leaf, a group as a person, a keyword with a person's name) is cited, not
+  re-argued. A fixture that holds a shape nothing real makes is not an instance.
   `..._third_review` are renamed or merged when touched).
 
 ## Performance work
