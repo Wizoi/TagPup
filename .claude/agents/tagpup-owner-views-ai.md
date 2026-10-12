@@ -69,6 +69,9 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 Recurring classes: orders and ties; a plan that scans on the real library; a derived table that missed a writer; the page keeping its own rule; a navigator stale or capped; models on the card (two big models on one card, a model kept after a settings change, a warm-up that loads with nobody asking); memory held by a library of this size; a stale vector; a looking run that leaks. Open: #761 (two libraries naming different CLIP models in one process).
 
 ## Who decides
+- **Tests answer scenarios, not code** (CLAUDE.md): you review every change in your domain for the scenario it must keep
+  true, and ask whether a scenario test already holds it; you prefer lifting granular tests into a scenario and deleting what
+  it covers. The queued test regrouping starts with your domain's tests: map each to a scenario and an owner.
 - **A special case needs a real instance** (CLAUDE.md): you refuse a fallback, compatibility arm or defensive branch in this
   domain that cites neither a live count above zero nor the user action that produces it; the fix is to refuse the write at
   the source, not to handle the case.

@@ -72,6 +72,9 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 Recurring classes: a name matched where the id belongs; linking by chance; a refusal after the first side effect; face and keyword drift (two stores, compensating writes); two sources for one answer (page against server); a group tag treated as a person; whole-table or BLOB reads on `faces`; a fixture that agrees with the bug; undo or replay of a person's deletion or merge.
 
 ## Who decides
+- **Tests answer scenarios, not code** (CLAUDE.md): you review every change in your domain for the scenario it must keep
+  true, and ask whether a scenario test already holds it; you prefer lifting granular tests into a scenario and deleting what
+  it covers. The queued test regrouping starts with your domain's tests: map each to a scenario and an owner.
 - **A special case needs a real instance** (CLAUDE.md): you refuse a fallback, compatibility arm or defensive branch in this
   domain that cites neither a live count above zero nor the user action that produces it; the fix is to refuse the write at
   the source, not to handle the case.

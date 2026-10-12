@@ -80,6 +80,9 @@ Closed since: a server starved of threads by a migrating library (`tests/test_li
 14. Does it remove at least as many concepts, shims or tests as it adds? One concern, about 1,200 lines or fewer, two rounds at most?
 
 ## Decision rights
+- **Tests answer scenarios, not code** (CLAUDE.md): you review every change in your domain for the scenario it must keep
+  true, and ask whether a scenario test already holds it; you prefer lifting granular tests into a scenario and deleting what
+  it covers. The queued test regrouping starts with your domain's tests: map each to a scenario and an owner.
 - **A special case needs a real instance** (CLAUDE.md): you refuse a fallback, compatibility arm or defensive branch in this
   domain that cites neither a live count above zero nor the user action that produces it; the fix is to refuse the write at
   the source, not to handle the case.

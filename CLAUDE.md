@@ -254,6 +254,11 @@ The project grew 43k to 103k lines of code and 44k to 110k of tests in two weeks
   owner decision that rules a class out (a shared leaf, a group as a person, a keyword with a person's name) is cited, not
   re-argued. A fixture that holds a shape nothing real makes is not an instance.
   `..._third_review` are renamed or merged when touched).
+- **Tests answer scenarios, not code** (owner, 2026-10-11). A test is a scenario a person lives through (rapid clicks, a
+  crash half way, two libraries, an update while working), grouped by domain owner and named for it; a test that only
+  restates what a function does is too granular and misses the scenario between functions. New work adds or lifts a
+  scenario test, and deletes the granular tests it makes redundant. QUEUED before any more feature work: every owner
+  regroups its domain's tests by scenario, lifts the granular ones into scenarios and removes what they cover.
 
 ## Performance work
 
