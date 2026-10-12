@@ -571,6 +571,7 @@ def rotate_plan(direction):
     return plan_one
 
 
+@file_changes.exclusively()
 def _turn_loose(photo_paths, direction, exiftool_path):
     """The photos of folders the library does not hold, turned in their files only (file_only.rotate), one Result."""
     out = Result(attempted=len(photo_paths))
