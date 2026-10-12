@@ -25,6 +25,7 @@ one. After the first time in a process it costs a stat.
 import collections
 import contextlib
 import contextvars
+import json
 import logging
 import os
 import re
@@ -692,21 +693,9 @@ def _job_runs(conn):
                  " note TEXT)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job, library, id)")
 def _sync_runs(conn):
-    """Each sync that was applied: `sync_runs`, when it started and finished, whether it
-    looked at the whole library, whether it left it in step, what it found and what it
-    changed, as counts (tagpup.store.sync_runs, tagpup.services.sync; docs/ARCHITECTURE.md,
-    phase 8). The pages show "last in step" from it. Only adds a table, so it needs no
-    backup.
-    """
-    conn.execute("CREATE TABLE IF NOT EXISTS sync_runs ("
-                 " id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                 " started TEXT NOT NULL,"
-                 " finished TEXT NOT NULL,"
-                 " whole INTEGER NOT NULL,"
-                 " in_step INTEGER NOT NULL,"
-                 " found TEXT NOT NULL,"
-                 " changed TEXT NOT NULL,"
-                 " change_id INTEGER)")
+    """Nothing is made any more. It made `sync_runs`, the record of each sync that was applied; migration 32 folds that table
+    into `job_runs` (a sync is a run of the job "sync-whole" or "sync-folder", tagpup.store.job_runs.record_sync) and drops it. A
+    library that ran this migration when it made the table holds it until migration 32."""
 
 
 def _added_folders(conn):
@@ -974,6 +963,66 @@ def _drop_dismissals_and_damaged(conn):
     return {"journal rows taken out": rows, "changes taken out": len(emptied)}
 
 
+#: The column migration 32 drops from a table the journal keys, by migration: {version: {table: columns}}. `tag_taxonomy.is_people`
+#: was made by the first schema, filled by code that is gone, and read and written by nothing since (counted 2026-10-11:
+#: `photo_index` alone still has it, 539 rows 0 and 360 rows 1). A change recorded before it holds the column in the rows of a
+#: node it inserted or deleted; the journal leaves a dropped column out of the rows it loads (journal._load), so such a change is
+#: undone without it, and the migration blocks no undo (journal.schema_gap_blocker). tests/test_unused_tables_32.py holds the
+#: declaration to what the migration really drops.
+COLUMNS_DROPPED = {32: {"tag_taxonomy": ("is_people",)}}
+
+#: `tag_taxonomy` as the first schema and a new library make it (`_tables`), without `is_people`.
+TAG_TAXONOMY = ("id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT UNIQUE, parent_id INTEGER, name TEXT,"
+                " has_face INTEGER DEFAULT 0, hidden_from_autocomplete INTEGER DEFAULT 0,"
+                " FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE")
+
+#: Migration 32 spells these itself, not by tagpup.store.job_runs (a migration runs today's code, and these must stay what
+#: they were when it ran): the jobs a sync is recorded as, and the counts it records. tests/test_unused_tables_32.py holds them
+#: to record_sync.
+SYNC_WHOLE_JOB = "sync-whole"
+
+
+def _fold_sync_runs(conn):
+    """Migration 32's second half: the newest sync of the whole library that left it in step becomes a finished run of the job
+    "sync-whole" in `job_runs`, as record_sync writes one (so "last in step" shows what it showed); the other records of
+    `sync_runs` are not kept (the owner approved, 2026-10-11: the changes the syncs made stay in the journal); then the table
+    goes. Returns (records kept, records dropped). A library without the table (made at the latest, or behind 14) has none."""
+    if "sync_runs" not in _tables_now(conn):
+        return 0, 0
+    total = _count(conn, "sync_runs")
+    newest = conn.execute("SELECT started, finished, found, changed, change_id FROM sync_runs"
+                          " WHERE whole = 1 AND in_step = 1 ORDER BY id DESC LIMIT 1").fetchone()
+    kept = 0
+    if newest is not None:
+        started, finished, found, changed, change_id = newest
+        counts = {"in_step": 1}
+        counts.update({"found_" + what: n for what, n in (json.loads(found) or {}).items()})
+        counts.update(json.loads(changed) or {})
+        if change_id is not None:
+            counts["change"] = change_id
+        # The library's name, as tagpup.core.library.Library.name spells it: its file's.
+        library = os.path.splitext(os.path.basename(conn.execute("PRAGMA database_list").fetchone()[2]))[0]
+        conn.execute("INSERT INTO job_runs (job, library, started, finished, outcome, changed) VALUES (?, ?, ?, ?, 'done', ?)",
+                     (SYNC_WHOLE_JOB, library, started, finished, json.dumps(counts, sort_keys=True)))
+        kept = 1
+    conn.execute("DROP TABLE sync_runs")
+    return kept, total - kept
+
+
+def _drop_is_people_and_fold_syncs(conn):
+    """Migration 32: drops `tag_taxonomy.is_people` and folds `sync_runs` into `job_runs`, two tables nothing reads any more.
+
+    The column: `tag_taxonomy` is rebuilt (rebuild_table: SQLite's twelve steps, inside the runner's transaction with foreign keys
+    off), every id, row, index and trigger kept, the AUTOINCREMENT counter too. A library without the column (two of the three
+    live ones) is not rebuilt: the migration is then the fold alone. Returns what it did, which the migration's own change
+    records."""
+    rebuilt = None
+    if "is_people" in _columns(conn, "tag_taxonomy"):
+        rebuilt = rebuild_table(conn, "tag_taxonomy", TAG_TAXONOMY)
+    kept, dropped = _fold_sync_runs(conn)
+    return {"tag_taxonomy rows rebuilt": rebuilt or 0, "sync records kept": kept, "sync records dropped": dropped}
+
+
 # ---- What a migration holds true before it commits ----------------------------------------
 
 #: The runner's own tables: it writes them as it records each migration.
@@ -1216,6 +1265,78 @@ class UnusedTablesGone(Check):
 def _count_named(conn, tables):
     return conn.execute("SELECT COUNT(*) FROM change_rows WHERE table_name IN (%s)"
                         % ",".join("?" * len(tables)), tables).fetchone()[0]
+
+
+class ColumnsDropped(Check):
+    """Migration 32: the columns named are gone from the table, and nothing else about the library changed: every row of the
+    table has the values of its other columns it had (by its id, with the type SQLite stores them as), the table's AUTOINCREMENT
+    counter is what it was, and every index, trigger and view of the library has the SQL it had. A table that never had the
+    columns is left alone and must still lack them."""
+
+    def __init__(self, table, columns):
+        self.table, self.columns = table, tuple(columns)
+        self.name = "%s without %s, otherwise as it was" % (table, ", ".join(columns))
+
+    def _objects(self, conn):
+        return sorted(conn.execute("SELECT type, name, sql FROM sqlite_master WHERE type IN ('index', 'trigger', 'view')"
+                                   " AND sql IS NOT NULL").fetchall())
+
+    def before(self, conn, migration):
+        columns = sorted(c for c in _columns(conn, self.table) if c not in self.columns)   # by name: a rebuild may reorder
+        rows = [[(type(v).__name__, v) for v in row] for row in conn.execute(
+            "SELECT %s FROM %s ORDER BY rowid" % (", ".join(_quoted(c) for c in columns), _quoted(self.table)))]
+        counter = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (self.table,)).fetchone()
+        return {"columns": columns, "rows": rows, "counter": counter, "objects": self._objects(conn)}
+
+    def after(self, conn, migration, state):
+        now = _columns(conn, self.table)
+        problems = ["%s is still there" % c for c in now if c in self.columns]
+        if sorted(now) != state["columns"]:
+            problems.append("%s has the columns %s and had %s" % (self.table, sorted(now), state["columns"]))
+            return problems
+        rows = [[(type(v).__name__, v) for v in row] for row in conn.execute(
+            "SELECT %s FROM %s ORDER BY rowid" % (", ".join(_quoted(c) for c in state["columns"]), _quoted(self.table)))]
+        if len(rows) != len(state["rows"]):
+            problems.append("%s had %d row(s) and has %d" % (self.table, len(state["rows"]), len(rows)))
+        else:
+            different = sum(1 for was, is_ in zip(state["rows"], rows) if was != is_)
+            if different:
+                problems.append("%d row(s) of %s are not what they were" % (different, self.table))
+        counter = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (self.table,)).fetchone()
+        if counter != state["counter"]:
+            problems.append("the counter of %s was %s and is %s" % (self.table, state["counter"], counter))
+        if self._objects(conn) != state["objects"]:
+            was, is_ = set(map(tuple, state["objects"])), set(map(tuple, self._objects(conn)))
+            problems += ["%s %s is not what it was" % (kind, name) for kind, name, _sql in sorted(was ^ is_)]
+        return problems
+
+
+class SyncRunsFolded(Check):
+    """Migration 32: `sync_runs` is gone, and `job_runs` holds one run of the job "sync-whole" more if the table held a sync of
+    the whole library that left it in step, the newest, with its times, and none more otherwise."""
+    name = "the newest whole sync in step is a run of job_runs, and sync_runs is gone"
+
+    def before(self, conn, migration):
+        if "sync_runs" not in _tables_now(conn):
+            return None
+        newest = conn.execute("SELECT started, finished FROM sync_runs WHERE whole = 1 AND in_step = 1"
+                              " ORDER BY id DESC LIMIT 1").fetchone()
+        return {"newest": newest, "runs": _count(conn, "job_runs")}
+
+    def after(self, conn, migration, state):
+        problems = ["sync_runs is still there"] if "sync_runs" in _tables_now(conn) else []
+        if state is None:
+            return problems
+        runs = _count(conn, "job_runs")
+        expected = state["runs"] + (1 if state["newest"] else 0)
+        if runs != expected:
+            problems.append("job_runs had %d run(s) and has %d, not %d" % (state["runs"], runs, expected))
+        if state["newest"]:
+            held = conn.execute("SELECT started, finished, outcome FROM job_runs WHERE job = ? ORDER BY id DESC LIMIT 1",
+                                (SYNC_WHOLE_JOB,)).fetchone()
+            if held != tuple(state["newest"]) + ("done",):
+                problems.append("the newest whole sync in step is not the newest run of %s" % SYNC_WHOLE_JOB)
+        return problems
 
 
 STANDARD = (ForeignKeys(), Integrity())
@@ -1504,8 +1625,8 @@ MIGRATIONS = (
               ("job_runs",),
               (RowsKept(),) + STANDARD),
     Migration(14, "when the library was last in step", _sync_runs, ADDITIVE,
-              "adds the sync_runs table, empty",
-              ("sync_runs",),
+              "makes nothing now (it made sync_runs, which migration 32 folds into job_runs and drops)",
+              (),
               (RowsKept(),) + STANDARD),
     Migration(15, "the folders asked to be added", _added_folders, ADDITIVE,
               "adds the added_folders table, empty",
@@ -1591,12 +1712,22 @@ MIGRATIONS = (
               DROPPED_31,
               (RowsKept("photos", "faces", "tag_taxonomy", "photo_people", "photo_tags", "folders", "photo_folder",
                         "suggestions", "settings", "roots"), UnusedTablesGone(DROPPED_31)) + STANDARD),
+    Migration(32, "no is_people, and syncs among the job runs", _drop_is_people_and_fold_syncs, DESTRUCTIVE,
+              "drops tag_taxonomy.is_people by rebuilding the table (every id, row, index and trigger kept) and folds sync_runs "
+              "into job_runs, keeping the newest whole sync that left the library in step and dropping the other records; one "
+              "full backup first",
+              ("tag_taxonomy", "sync_runs", "job_runs"),
+              (RowsKept("photos", "faces", "tag_taxonomy", "photo_people", "photo_tags", "folders", "photo_folder",
+                        "suggestions", "settings", "roots"), ColumnsDropped("tag_taxonomy", ("is_people",)),
+               SyncRunsFolded(), UnusedTablesGone(("sync_runs",))) + STANDARD),
 )
 
 #: The migrations that only DROP tables nothing journaled names, and the tables each drops: they change no row a recorded
 #: change holds, so (like an ADDITIVE one that touches none) they block no undo of a change made before them
 #: (journal.schema_gap_blocker). Holds the declaration to what the migration drops: tests/test_unused_tables.py.
 ONLY_DROPS = {30: DROPPED, 31: DROPPED_31}
+# Migration 32 rebuilds a journaled table to drop a column, so it is not in ONLY_DROPS: it is in COLUMNS_DROPPED, which says
+# the same of a column, and the journal's `_load` does the rest.
 
 #: The columns a migration adds to a table the journal keys that the journal derives
 #: (derived when it added them) -- {version: {table: columns}}. Such a migration changes nothing an

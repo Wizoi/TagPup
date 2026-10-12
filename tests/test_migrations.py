@@ -44,7 +44,7 @@ KINDS = {
     11: schema.ADDITIVE,     # change_files, and changes.owner
     12: schema.ADDITIVE,     # change_files.stamp
     13: schema.ADDITIVE,     # job_runs
-    14: schema.ADDITIVE,     # the sync_runs table
+    14: schema.ADDITIVE,     # makes nothing now (it made sync_runs, which 32 folds into job_runs and drops)
     15: schema.ADDITIVE,     # the added_folders table
     16: schema.ADDITIVE,     # makes nothing now (it made damaged_files, which 31 drops)
     17: schema.ADDITIVE,     # the faces_pending table
@@ -62,11 +62,12 @@ KINDS = {
     29: schema.ADDITIVE,     # the trigger that keeps a person faces name from being deleted; the faces' generation moves with tag_id
     30: schema.DESTRUCTIVE,  # drops search_gear, photo_meta, folder_ids and library_identity (one backup)
     31: schema.DESTRUCTIVE,  # drops name_review_dismissals and damaged_files (one backup)
+    32: schema.DESTRUCTIVE,  # drops tag_taxonomy.is_people (a rebuild) and folds sync_runs into job_runs (one backup)
 }
 
 
 #: The migrations that only make indexes (and, for 29, a trigger), or make nothing now (26 and 27): they change no row of any table.
-INDEX_ONLY = (16, 20, 22, 23, 26, 27, 28, 29)
+INDEX_ONLY = (14, 16, 20, 22, 23, 26, 27, 28, 29)
 
 
 class TheNamesTestsExpect(unittest.TestCase):
@@ -577,10 +578,10 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
                 mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:29]), mock.patch.object(schema, "LATEST", 29):
             self.assertEqual(migration_names.after(10), schema.ensure(path))
         # What it touches: change_files, which it makes, and changes, the runner's own;
-        # migration 12 touches change_files alone, 13 job_runs, 14 sync_runs, 15
+        # migration 12 touches change_files alone, 13 job_runs, 15
         # added_folders, which they make; 21 faces and photo_people, whose
         # columns it adds (a count of faces reads its smallest index, not its rows).
-        self.assertLessEqual(set(counted), {"change_files", "changes", "job_runs", "sync_runs", "added_folders",
+        self.assertLessEqual(set(counted), {"change_files", "changes", "job_runs", "added_folders",
                                             "faces_pending", "faces", "photo_people",
                                             "faces_detected"})
 
