@@ -111,16 +111,6 @@ export const btnSaveDetails = document.getElementById('btn-save-details');
 export const writeQueueBox = document.getElementById('write-queue');
 
 // The bulk edit's strip (bulk-strip.js)
-export const bulkStrip = document.getElementById('bulk-strip');
-export const bulkStripTitle = document.getElementById('bulk-strip-title');
-export const bulkStripBar = document.getElementById('bulk-strip-bar');
-export const bulkStripCounts = document.getElementById('bulk-strip-counts');
-export const bulkStripMessage = document.getElementById('bulk-strip-message');
-export const bulkStripErrors = document.getElementById('bulk-strip-errors');
-export const bulkStripErrorsSummary = document.getElementById('bulk-strip-errors-summary');
-export const bulkStripErrorList = document.getElementById('bulk-strip-error-list');
-export const bulkStripLive = document.getElementById('bulk-strip-live');
-export const btnBulkDismiss = document.getElementById('btn-bulk-dismiss');
 export const detailPeople = document.getElementById('detail-people');
 export const inputAddPerson = document.getElementById('input-add-person');
 export const btnAddPerson = document.getElementById('btn-add-person');

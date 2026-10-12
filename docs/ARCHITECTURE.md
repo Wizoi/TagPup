@@ -278,6 +278,14 @@ A tag or person rename (no cap) rewrites every photo first and moves the tree af
 `batches.listing` and `/api/activity/now` / `/api/activity/batches` show the batches running (read from the journal, so another
 process's too) and waiting. `tests/test_batches_go_through_the_model.py` names every route that reaches `write_fields`.
 A rotation is one of these changes too (`photos.rotate_photos`, field `EXIF:Orientation`): the face boxes a TIFF turns and the vectors it makes stale are written by `services/rotation.py` in the transaction that marks the file `done`, whether forward, settled after a crash, or in an undo, so file and boxes cannot disagree.
+**One strip shows them on both pages** (`web/common/batch-strip.js`; `api.js` announces a page's write requests as `tagpup:writes`): it asks
+`/api/activity/batches` once when a page opens (so a reload shows a batch still going) and every 1.5 s while the page has a write out or a
+batch is listed, and draws this page's library's rows: the operation, the files handled of the total from the journal's counts, the time left
+from when it started, Cancel for a batch of this server, a waiting one with how many are ahead. The page's own request still awaits its reply
+and hands the strip its result sentence (`showEnded`: counts, the first 50 errors, History, Dismiss; a stopped batch is the server's "Stopped as
+asked after N of M ... change K in History"); a batch that leaves the list with no such sentence ends in one made from its last row. A list
+that cannot be read is said ("cannot tell how far the write has got"), never taken for a finished write. The Activity page keeps its own rows.
+The photo write queue (`web/tagpup/write-queue.js`: a single save's Retry and Dismiss) is not a batch and stays.
 
 **A photo's tags and people** flow one way: the file's keywords are read into `photos.keywords`; `photo_tags`
 and `photo_people` are derived from them, the faces and the tree whenever any of the three changes, in the
@@ -286,7 +294,7 @@ same transaction (`store/derived.py`, `people.tree_edit`).
 ## Frontend
 
 - `web/common/` holds ES modules shared by the pages: `api.js` (library-aware URLs and JSON, with a read
-  retried across a server update), `paths.js`, `vocabulary.js`, `library.js`, `validate.js` (the rules
+  retried across a server update), `batch-strip.js` (the strip of the batches of photo files), `paths.js`, `vocabulary.js`, `library.js`, `validate.js` (the rules
   `/api/rules` publishes), `dom.js` (elements built from text), `dialog.js`, and the gear's tag editor,
   settings and history dialogs.
 - `web/activity/` is the Activity page; `web/tagpup/` and `web/tuner/` have a `main.js` that only wires the

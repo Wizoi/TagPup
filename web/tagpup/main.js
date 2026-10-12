@@ -2,6 +2,7 @@
 // Every request goes through api.js, which puts the library in front of it
 // (web/common/api.js).
 import { initDatabaseSelector } from './common/library.js';
+import { wireBatchStrip } from './common/batch-strip.js';
 import { wireRootsBanner } from './common/roots-banner.js';
 import { loadRules } from './common/validate.js';
 import { upper } from './hooks.js';
@@ -11,7 +12,7 @@ import {
     btnFolderAutoApply, btnRefreshList, btnRotateLeft, btnRotateRight, btnSaveTitle,
     btnSelectAllThumbnails, btnSelectNoneThumbnails, btnSuggestCancel, btnSuggestTags, btnSuggestTitleWand,
     btnUndo, bulkAddPeopleInput, bulkAddTagsInput, dbSelect, detailPath, folderPathInput,
-    folderViewHeader, inputAddPerson, inputAddTag, inputPhotoTitle, mainImage, photoSearch
+    folderViewHeader, inputAddPerson, inputAddTag, inputPhotoTitle, mainImage, photoSearch, thumbnailsGrid
 } from './elements.js';
 import { fetchKnownTagsAndPeople } from './tags.js';
 import { leavePhotoThen, wireUnsavedEdits } from './edits.js';
@@ -33,7 +34,6 @@ import { choosePane, navigatorCountsChanged, navigatorFollows, wireNavigator } f
 import { showSortOrder, wireSortMenu } from './sort-menu.js';
 import { searchFollows, searchVocabularyChanged, wireSearch } from './search.js';
 import { addedFromView, wireBanner } from './library-banner.js';
-import { wireBulk } from './bulk-run.js';
 import { renderSyncInfo } from './sync-state.js';
 import { photosWritten } from './tally.js';
 import { landOnAnchor, libraryViewPainted, openInOrganize, wireMoves } from './library-moves.js';
@@ -164,9 +164,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // The photo panel's Back, to the grid of a library view as it was left.
     wireViewLeft();
 
-    // The strip of a bulk edit of the library's photos: Dismiss.
-    wireBulk();
-
     enableSwipeNavigation(mainImage);
 
     if (btnCarryForward) btnCarryForward.addEventListener('click', carryTagsForward);
@@ -187,6 +184,9 @@ document.addEventListener('DOMContentLoaded', () => {
     wireRootsBanner();
     // A bulk assignment of faces that stopped part-way (or runs in another window) is offered (#907).
     wireFaceJobs();
+
+    // The strip of the batches of photo files; it asks once, so a reload shows one still going. Dismiss leaves the focus on the grid.
+    wireBatchStrip({ restoreFocus: () => thumbnailsGrid && thumbnailsGrid.focus({ preventScroll: true }) });
 
     // ---- Start ------------------------------------------------------------
     //

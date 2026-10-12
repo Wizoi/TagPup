@@ -1,0 +1,59 @@
+/* The strip of the batches of photo files (web/common/batch-strip.js): over the page, above its dialogs, so a write started in one is seen. */
+.batch-strip {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    z-index: 2500;
+    max-width: min(760px, calc(100vw - 380px));
+    padding: 8px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.batch-strip[hidden] {
+    display: none;
+}
+
+.batch-strip-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.batch-strip progress {
+    flex: 1 1 160px;
+    min-width: 120px;
+    max-width: 320px;
+    height: 10px;
+}
+
+.batch-strip-sentence {
+    overflow-wrap: anywhere;
+}
+
+.batch-strip-problem {
+    color: #f59e0b;
+}
+
+.batch-strip-errors {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    max-height: 160px;
+    overflow: auto;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.batch-strip-live {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+}
