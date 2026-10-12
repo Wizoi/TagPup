@@ -119,29 +119,12 @@ def already_names(tags, tag, known):
 
 
 def person_tags(tags, person, known):
-    """The tags among `tags` that name `person` (a Ref, an id or a name): the node's own path or a bare name only they have,
-    by their id; a person with no id, by their name. A tag that names a person of the same name that no node here is -- a
-    path the tree lacks, a bare name two people have -- is theirs only when nobody else is called alike."""
+    """The tags among `tags` that name `person` (a Ref or an id), by the id of their node: their node's own path, nothing else
+    (a bare name is a path of its own, owner 2026-10-11). None for a name from before ids: that is no person."""
     person = person_ids.wire(person)
-    if isinstance(person, int):
-        name = known.names.get(person)
-        if name is None:
-            return []
-        alone = known.resolve_name(name) == person
-    else:
-        name, alone = person, True
-    found = []
-    for tag in tags:
-        ref = vocabulary.person_ref_of_tag(tag, known)
-        if ref is None:
-            continue
-        if isinstance(person, int) and ref.id is not None:
-            same = ref.id == person
-        else:
-            same = alone and vocabulary.key(ref.name) == vocabulary.key(name)
-        if same:
-            found.append(tag)
-    return found
+    if not isinstance(person, int) or person not in known.names:
+        return []
+    return [tag for tag in tags if (ref := vocabulary.person_ref_of_tag(tag, known)) is not None and ref.id == person]
 
 
 # ---- The tag, written and taken off ----------------------------------------------------------------------------
@@ -328,13 +311,8 @@ def name_face(library, face_id, person, writer):
 
 
 def is_person(face_ref, person):
-    """Is the person a face carries, `face_ref` (a Ref), `person` (the id, or the name of a person no node is)? Names a node
-    holds are compared when either has no id."""
-    if face_ref is None:
-        return False
-    if isinstance(person, int):
-        return face_ref.id == person
-    return vocabulary.key(face_ref.name) == vocabulary.key(person)
+    """Is the person a face carries, `face_ref` (a Ref), the person with the id `person`?"""
+    return face_ref is not None and face_ref.id == person
 
 
 def _names_on(library, photo_path):
@@ -424,7 +402,6 @@ def _faces_to_unname(library, removed):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         known = taxonomy.read_people_vocabulary(conn)
-        tree = person_ids.read(conn)
         named = {photo_path: faces.named_in_photo(conn, photo_path) for photo_path in removed}
     finally:
         conn.close()
@@ -433,8 +410,8 @@ def _faces_to_unname(library, removed):
     for photo_path, taken_off in removed.items():
         tags_now = now.get(paths.key(photo_path), [])
         for face_id, person, source in named[photo_path]:
-            if person.id is None and tree.why_not(person.name) == "branch":
-                continue
+            if person.id is None:
+                continue   # a name from before ids is no person
             if person_tags(taken_off, person, known) and not person_tags(tags_now, person, known):
                 found.append((face_id, person, source))
     return found

@@ -97,8 +97,8 @@ class Plans(unittest.TestCase):
         self.assert_searches(self.ids(store.Source(store.FOLDER, self.top, True)), "idx_photos_path_nocase (path>? AND path<?)")
         self.assert_searches(self.ids(store.Source(store.FOLDER, self.folder, False)), "idx_photo_folder_folder (folder_id=?)")
         self.assert_searches(self.ids(store.Source(store.KEYWORD, "Trips")), "idx_photo_tags_tag (tag_id=?)")
-        found = self.plan_of(self.ids(store.Source(store.PERSON, "Wren Halloway")))
-        self.assertIn("idx_photo_people_name (name=?)", "\n".join("\n".join(lines) for _statement, lines in found))
+        found = self.plan_of(self.ids(store.Source(store.PERSON, "People/Wren Halloway")))
+        self.assertIn("idx_photo_people_tag (tag_id=?)", "\n".join("\n".join(lines) for _statement, lines in found))
 
     def test_id_plans_gives_each_statement_with_its_plan_for_the_measurement_script(self):
         conn = db.connect(db.readonly_uri(self.vl.path), uri=True)

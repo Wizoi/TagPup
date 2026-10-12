@@ -33,9 +33,10 @@ const THREE = {
   total: 3, unmatched: 3, size: [4000, 3000], turned: false,
 };
 
+const HAZEL = { id: 21, name: "Hazel Brookmire", tag: "People/Hazel Brookmire" };
 const MATCHES = [
-  { name: "Hazel Brookmire", similarity: 0.91, band: "likely" },
-  { name: "Anh Tran", similarity: 0.72, band: "possible" },
+  { name: "Hazel Brookmire", person: HAZEL, similarity: 0.91, band: "likely" },
+  { name: "Anh Tran", person: { id: 22, name: "Anh Tran", tag: "People/Anh Tran" }, similarity: 0.72, band: "possible" },
 ];
 
 function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, photo = null, extra = null, busy = { on: false } } = {}) {
@@ -65,7 +66,9 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
     })
     .on("/api/face/match", () => {
       if (busy.on) return Promise.reject(new Error("the library is busy"));
-      const { face_id: id, person_name: name } = written(server);
+      const body = written(server);
+      const id = body.face_id;
+      const name = body.person_name ?? (body.person_id === HAZEL.id ? HAZEL.name : null);   // a person by the id of their node
       const was = held.faces.find((f) => f.id === id).name;
       held.faces.find((f) => f.id === id).name = name;
       // A face that was another person's: the server says which tags go with that name (face_people.name_face).
@@ -239,7 +242,7 @@ describe("the boxes", () => {
 
   test("name the person on a named face, and say so to a screen reader", async (t) => {
     const ctx = await openPhoto(t, {
-      photoFaces: { ...THREE, faces: [{ ...THREE.faces[0], name: "Hazel Brookmire" }, THREE.faces[1], THREE.faces[2]], unmatched: 2 },
+      photoFaces: { ...THREE, faces: [{ ...THREE.faces[0], name: "Hazel Brookmire", person: HAZEL }, THREE.faces[1], THREE.faces[2]], unmatched: 2 },
     });
     ctx.show();
     const [named, unnamed] = ctx.boxes();
@@ -271,7 +274,7 @@ describe("the panel of a face", () => {
 
   test("does not offer a person another face of the photo already is", async (t) => {
     const ctx = await openPhoto(t, {
-      photoFaces: { ...THREE, faces: [{ ...THREE.faces[0], name: "Hazel Brookmire" }, THREE.faces[1], THREE.faces[2]], unmatched: 2 },
+      photoFaces: { ...THREE, faces: [{ ...THREE.faces[0], name: "Hazel Brookmire", person: HAZEL }, THREE.faces[1], THREE.faces[2]], unmatched: 2 },
     });
     ctx.show();
     click(ctx.window, ctx.boxes()[1]);
@@ -846,7 +849,7 @@ describe("in the full-window zoom (#859)", () => {
     click(ctx.window, ctx.zoomPanel().querySelector(".face-panel-suggestion"));
     await flush(ctx.window, 14);
     assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["People/Anh Tran", "People/Hazel Brookmire"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire", page_writes_tags: true });
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_id: HAZEL.id, page_writes_tags: true });
     assert.equal(ctx.zoomIsOpen(), true, "naming closed the zoom");
     assert.match(ctx.zoomBoxes()[1].getAttribute("aria-label"), /Hazel Brookmire/);
     assert.equal(ctx.zoomPanel(), null);

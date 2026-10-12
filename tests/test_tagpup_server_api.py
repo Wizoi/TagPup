@@ -524,10 +524,12 @@ class TestPhotoFaces(TagPupAPITestBase):
         rng = np.random.default_rng(seed)
         vec = rng.standard_normal(512).astype("float32")
         vec = vec / np.linalg.norm(vec)
+        if name:   # a face is named by the person it files: the node a name has, as the writers make it
+            self.lib.execute("INSERT OR IGNORE INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, NULL, ?, 1)", (name, name))
         return self.lib.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name, prob, excluded, excluded_reason)"
-            " VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, 0.99, ?, ?)",
-            (photo, json.dumps(list(box)), vec.tobytes(), name, excluded, reason),
+            "INSERT INTO faces (photo_id, box, embedding, name, tag_id, prob, excluded, excluded_reason)"
+            " VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, (SELECT id FROM tag_taxonomy WHERE tag = ?), 0.99, ?, ?)",
+            (photo, json.dumps(list(box)), vec.tobytes(), name, name, excluded, reason),
         )
 
     def faces_of(self, photo):

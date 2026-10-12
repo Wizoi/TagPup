@@ -14,7 +14,7 @@
 // branch is offered as the tag it is (People/Family, everything under it). On photo_index 4 names are so, each the name of a
 // branch the people answer lists (counted read-only, 2026-10-04). And a filed person's own node is not offered a second time
 // as a tag: they are offered by name.
-import { compareTagNames, joinTag } from './common/vocabulary.js';
+import { compareTagNames } from './common/vocabulary.js';
 import { memberLabel, viewLabel } from './library-source.js';
 import { personSource } from './navigator-model.js';
 
@@ -30,11 +30,9 @@ export function pickerNames(keywords, people) {
     const names = [];
     const personNodes = new Set();
     if (people) {
-        const branches = new Set([...people.groups.values()].map(group => group.name.toLowerCase()));
         for (const person of people.people) {
             const key = person.name.toLowerCase();
-            if (!person.groupTag && branches.has(key)) continue;   // a branch is never a person (#660)
-            if (person.groupTag) personNodes.add(joinTag(person.groupTag, person.name).toLowerCase());
+            personNodes.add(person.tag.toLowerCase());
             names.push({
                 member: { kind: 'person', value: personSource(person), recursive: false }, label: person.name, hint: person.groupTag || '',
                 count: person.count, what: 'person', words: [key],
@@ -118,7 +116,7 @@ export function chipLabel(member, people = null) {
 export function chipKnown(member, keywords, people) {
     if (member.kind === 'person') {
         const wanted = String(member.value).toLowerCase();
-        return people ? people.byLower.has(wanted) || (!!people.byPersonTag && people.byPersonTag.has(wanted)) : null;
+        return people && people.byPersonTag ? people.byPersonTag.has(wanted) : null;
     }
     if (member.kind === 'keyword' || member.kind === 'keyword_only') {
         return keywords ? keywords.byTag.has(member.value) || keywords.byLower.has(String(member.value).toLowerCase()) : null;

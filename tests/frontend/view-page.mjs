@@ -91,11 +91,17 @@ export function syntheticKeywords() {
   return nodes;
 }
 
+/** One person as the route answers: their node's id and tag beside the name (a person is the id of a node). */
+export function personRow(id, name, count, group = null) {
+  return { name, count, group, person_id: id, person: { id, name, tag: `${group || "People"}/${name}` } };
+}
+
 /** 413 people, fictional. */
 export function syntheticPeople() {
   const people = [];
   for (let i = 0; i < 413; i++) {
-    people.push({ name: `${GIVEN[i % GIVEN.length]} ${FAMILY[Math.floor(i / GIVEN.length) % FAMILY.length]}${i >= 130 ? " " + (Math.floor(i / 130) + 1) : ""}`, count: 5 + (i * 37) % 900 });
+    const name = `${GIVEN[i % GIVEN.length]} ${FAMILY[Math.floor(i / GIVEN.length) % FAMILY.length]}${i >= 130 ? " " + (Math.floor(i / 130) + 1) : ""}`;
+    people.push(personRow(i + 1, name, 5 + (i * 37) % 900));
   }
   return people;
 }

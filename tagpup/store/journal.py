@@ -893,10 +893,11 @@ def record_rows(conn, change_id, changes):
 PERSON_DELETED = "person deleted (force): faces unnamed"
 PERSON_MERGED = "person merged: faces renamed"
 
-#: What History says of those two changes: honest about what an undo gives back (the tree rows are not journaled).
+#: What History says of those two changes: honest about what an undo gives back (the tree rows are not journaled): nothing, since
+#: the person's node is gone and a face is named by a node only (an undo is refused: _unfiled).
 PERSON_NOTES = {
-    PERSON_DELETED: "the faces return as unresolved names; the deleted person and the photos' keywords are not restored",
-    PERSON_MERGED: "the faces return as unresolved names; the merged person and the photos' keywords are not restored",
+    PERSON_DELETED: "the deleted person is not kept, so the faces cannot be given back to them: name them again",
+    PERSON_MERGED: "the merged person is not kept, so the faces cannot be given back to them: name them again",
 }
 
 #: Rows a face costs the journal when a person is deleted with force or merged: name, name_source and tag_id.
@@ -917,9 +918,9 @@ def read_faces(conn, face_ids):
 def record_faces(conn, operation, before):
     """Record, in the caller's transaction, the face rows a tree edit has just changed -- `before` is read_faces' answer from
     before the write -- as ONE applied change `operation` (counts only in its summary), so History can put the faces' names and
-    who decided them back as they were. The person's id is recorded with them (cache_columns): an undo puts the id back, and when the node is gone (a
-    force delete, a merge) the settle that follows drops it and keeps the name -- an unresolved name for the owner to settle,
-    never another person called alike. The tree rows themselves are not journaled (as before). Nothing when no face changed or the library has
+    who decided them back as they were. The person's id is recorded with them (cache_columns): an undo puts the id back, and when the
+    node is gone (a force delete, a merge) the undo is refused (_unfiled): a face is never left with a name and no node. The tree rows
+    themselves are not journaled (as before). Nothing when no face changed or the library has
     no journal. Returns the change's id or None. The caller commits."""
     if not before or not has_journal(conn):
         return None
@@ -1060,6 +1061,24 @@ def refusals(db_path, change_ids):
         conn.close()
 
 
+def _unfiled(conn, writes):
+    """Why writing `writes` would leave a face, or a listed person, naming a person whose node is not in the tag tree (a person
+    deleted or merged away since): [] when it would not. A person is the id of a node and no other way (owner, 2026-10-11), so
+    such a row is not given back. A node the same writes insert counts as there. Names no one. Reads only."""
+    if not person_ids.present(conn):
+        return []
+    wanted = {(change.new or {}).get("tag_id") for change in writes
+              if change.table in person_ids.TABLES and change.action != "delete"}
+    wanted.discard(None)
+    if not wanted:
+        return []
+    known = person_ids.read(conn).node_names
+    inserted = {change.key[0] for change in writes if change.table == "tag_taxonomy" and change.action == "insert" and change.key}
+    gone = [person for person in wanted if person not in known and person not in inserted]
+    return ["%d person(s) the rows to put back are named after are no longer in the tag tree: the faces are not given back to them; "
+            "name them again" % len(gone)] if gone else []
+
+
 def _undo_in(conn, change_id):
     """_undo_rows, a root this machine does not place or a map that cannot be read being a
     refusal that says so, not an error."""
@@ -1083,7 +1102,7 @@ def _undo_rows(conn, change_id):
     reasons = _not_as_left(conn, change_id, changes)
     inverse = [_inverse(change) for change in reversed(changes)]
     if not reasons:
-        reasons = _blocked(conn, inverse)
+        reasons = _blocked(conn, inverse) + _unfiled(conn, inverse)
     if reasons:
         raise Refusal(reasons)
     try:

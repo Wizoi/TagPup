@@ -235,7 +235,7 @@ def for_pages(library, by_person):
     left out, as is a person the tree no longer files. Read now from the tree."""
     everyone = people_service.directory(library)
     return {"id:%d" % person: value for person, value in by_person.items()
-            if isinstance(person, int) and everyone.of_id(person) is not None}
+            if everyone.of_id(person) is not None}
 
 
 # ---- The photos, and one photo ----------------------------------------------------------
@@ -544,8 +544,9 @@ def person_faces(library, person, limit=100, page=1):
             found = person_ids.target(conn, person)
         except person_ids.PersonProblem as problem:
             people_service.translate(problem)
-        ref = found[0] if found[0] is not None else found[1]
-        key = person_ids.key_of(*found)
+        if found[0] is None:
+            raise NotFound("No person is called %s: reload the page." % found[1])
+        ref = key = found[0]
         total_count = faces.count_named(conn, ref)
         all_matched_rows = faces.person_embeddings(conn, ref)
         rows = faces.person_page(conn, ref, limit, offset)
@@ -627,11 +628,12 @@ def _queue_stamp(conn):
 
 
 def _listed(people_json):
-    """[(node id or None, name)] of a photo's people (faces.identify_candidates' JSON, [[id, name]]); none for text that is not."""
+    """[(node id, name)] of a photo's people (faces.identify_candidates' JSON, [[id, name]]); none for text that is not. A row
+    with no id (from before ids) is no person."""
     if not people_json:
         return []
     try:
-        return [(tag_id, name) for tag_id, name in json.loads(people_json)]
+        return [(tag_id, name) for tag_id, name in json.loads(people_json) if tag_id is not None]
     except Exception:
         return []
 
@@ -770,7 +772,7 @@ def grid(library, name, named, on_progress=None):
 
     # How many unmatched candidates each tag has library-wide, so "Ungrouped" can
     # recognise the tags that cannot form a group. Mirrors the queue listing.
-    seeking_keys = set() if is_bucket(name) else {person_ids.wire_key(name)}
+    seeking_keys = set() if is_bucket(name) else {name}
     tag_candidate_counts = {}
     if name == vocabulary.BUCKETS["ungrouped"]:
         for r in unmatched_rows:

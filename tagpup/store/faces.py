@@ -97,17 +97,9 @@ def _of_photo(conn, photo_path):
 
 
 def people_given(conn, persons):
-    """Which of `persons` some face carries now, on `conn`: a person given as an id by idx_faces_tag, one given as a name (a
-    name no person is filed under) by the name's index; one query a chunk. A person read before a write began may have been
-    unnamed everywhere, or merged away, before it is written."""
-    persons = list(persons)
-    ids = person_ids.given(conn, [person for person in persons if isinstance(person, int)])
-    names = set()
-    named = [person for person in persons if isinstance(person, str)]
-    for chunk in _chunks(named):
-        names.update(name for (name,) in conn.execute(
-            "SELECT DISTINCT name FROM faces WHERE tag_id IS NULL AND name IN (" + ",".join("?" * len(chunk)) + ")", chunk))
-    return {person for person in persons if (person in ids if isinstance(person, int) else person in names)}
+    """Which of the person ids `persons` some face carries now, on `conn` (idx_faces_tag, one query a chunk). A person read
+    before a write began may have been unnamed everywhere, or merged away, before it is written."""
+    return person_ids.given(conn, list(persons))
 
 
 def generation(conn):
@@ -346,11 +338,12 @@ def for_clustering(conn):
 
 def named_for_known(conn):
     """(Ref, embedding bytes, photo path, the year it was taken or None) of every named
-    face that is not excluded: what tagpup.core.clustering.KnownFaces is made of."""
+    face that is not excluded and names a person by id (a name from before ids is no person): what
+    tagpup.core.clustering.KnownFaces is made of."""
     return [(Ref(tag_id, name), embedding, photo_path, year)
             for tag_id, name, embedding, photo_path, year in store_roots.natives(conn, conn.execute(
                 "SELECT f.tag_id, f.name, f.embedding, p.path, p.year FROM faces f" + PHOTO
-                + " WHERE f.excluded = 0 AND f.name IS NOT NULL AND f.embedding IS NOT NULL").fetchall(), 3)]
+                + " WHERE f.excluded = 0 AND f.tag_id IS NOT NULL AND f.embedding IS NOT NULL").fetchall(), 3)]
 
 
 def in_photo(conn, photo_path):
@@ -571,12 +564,12 @@ def name_unnamed(conn, persons_by_id, vocabulary=None, known=None):
 
 
 def _carries(conn, target, alias=""):
-    """(SQL, parameters): a face (of the table aliased `alias`, with its dot) carries the person `target` (id, name) is: the
-    id, or -- an unresolved name -- the name with no id."""
-    tag_id, name = target
-    if tag_id is not None:
-        return "%stag_id = ?" % alias, [tag_id]
-    return ("%sname = ? AND %stag_id IS NULL" % (alias, alias) if person_ids.present(conn) else "%sname = ?" % alias), [name]
+    """(SQL, parameters): a face (of the table aliased `alias`, with its dot) carries the person `target` (id, name) is: by the
+    id. A name no person is called is carried by no face (a face with a name and no id is no person's)."""
+    tag_id = target[0]
+    if tag_id is None:
+        return "0", []
+    return "%stag_id = ?" % alias, [tag_id]
 
 
 def revert_automatic(conn, persons_by_id):
@@ -669,9 +662,8 @@ def restore(conn, face_ids):
 
 def named_elsewhere_in_photo(conn, photo_path, person, face_id, decided_only=False):
     """Does a face in the photo other than `face_id` carry the person (an id, a tag path or a name: person_ids.target)? By
-    the node's id, or -- a name no person is filed under -- by the name's equality: a LIKE retry scanned every face row, and
-    read an underscore in a file name as any character. With `decided_only`, only a person somebody decided counts, not a
-    guess (name_source NULL)."""
+    the node's id; a name no person is called is carried by no face. With `decided_only`, only a person somebody decided
+    counts, not a guess (name_source NULL)."""
     where, params = _on_photo(conn, photo_path)
     carried, carried_params = _carries(conn, person_ids.target(conn, person))
     return conn.execute("SELECT 1 FROM faces WHERE " + where + " AND " + carried + " AND id != ?"
@@ -738,14 +730,10 @@ def unnamed_counts(conn, folder):
 
 def counts_by_person(conn):
     """[(Ref, faces)] for everyone named, most faces first: a person is the node (the id), so two people called alike are two
-    rows; a name no person is filed under is one row by its name (without case)."""
-    counted = {}
-    for tag_id, name, count in conn.execute("SELECT tag_id, name, COUNT(*) FROM faces WHERE name IS NOT NULL"
-                                           " GROUP BY tag_id, name").fetchall():
-        key = person_ids.key_of(tag_id, name)
-        seen = counted.setdefault(key, [Ref(tag_id, name), 0])
-        seen[1] += count
-    return sorted(((ref, count) for ref, count in counted.values()), key=lambda found: -found[1])
+    rows. A face with a name and no id (from before ids) is no person and is not counted."""
+    return sorted(((Ref(tag_id, name), count) for tag_id, name, count in conn.execute(
+        "SELECT tag_id, name, COUNT(*) FROM faces WHERE tag_id IS NOT NULL GROUP BY tag_id, name").fetchall()),
+        key=lambda found: -found[1])
 
 
 def identify_candidates(conn):
@@ -809,11 +797,11 @@ def unnamed_among(conn, face_ids):
 
 
 def names_by_photo(conn):
-    """{photo_path as stored: the people on its faces, as person_ids.key_of}, for every photo with a named face."""
+    """{photo_path as stored: the ids of the people on its faces}, for every photo with a face that names a person."""
     named = {}
-    for photo_path, tag_id, name in store_roots.natives(conn, conn.execute(
-            "SELECT p.path, f.tag_id, f.name FROM faces f" + PHOTO + " WHERE f.name IS NOT NULL").fetchall(), 0):
-        named.setdefault(photo_path, set()).add(person_ids.key_of(tag_id, name))
+    for photo_path, tag_id in store_roots.natives(conn, conn.execute(
+            "SELECT p.path, f.tag_id FROM faces f" + PHOTO + " WHERE f.tag_id IS NOT NULL").fetchall(), 0):
+        named.setdefault(photo_path, set()).add(tag_id)
     return named
 
 
@@ -827,7 +815,7 @@ def for_named_matrix(conn):
     excluded: what a face is compared against to say who it resembles."""
     return [(face_id, Ref(tag_id, name), embedding) for face_id, tag_id, name, embedding in conn.execute(
         "SELECT id, tag_id, name, embedding FROM faces"
-        " WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()]
+        " WHERE tag_id IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()]
 
 
 def for_decided_matrix(conn):
@@ -837,7 +825,7 @@ def for_decided_matrix(conn):
     return [(face_id, Ref(tag_id, name), embedding, source, photo_id)
             for face_id, tag_id, name, embedding, source, photo_id in conn.execute(
                 "SELECT id, tag_id, name, embedding, name_source, photo_id FROM faces"
-                " WHERE name IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()]
+                " WHERE tag_id IS NOT NULL AND embedding IS NOT NULL AND excluded = 0").fetchall()]
 
 
 def embedding_row(conn, face_id):

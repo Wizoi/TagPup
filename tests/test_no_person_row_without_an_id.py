@@ -86,6 +86,15 @@ class NoRowWithoutAnId(unittest.TestCase, people_by_id.TwoSams):
         tag_service.merge(self.library, "People/Zed Quill Jr", people_by_id.WREN, None, apply=True)
         self.none_without_an_id("merged")
 
+    def test_the_undo_of_a_person_deleted_with_force_or_merged_away(self):
+        from tagpup.services import journal as journal_service
+        wren = self.node(people_by_id.WREN)
+        people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[1]], wren))
+        tag_service.delete(self.library, wren, "remove", None, "exiftool", force=True)
+        for change, in people_by_id.look(self.path, "SELECT id FROM changes ORDER BY id"):
+            journal_service.undo(self.library, change, apply=True, exiftool_path="exiftool")   # refused: the person is gone
+            self.none_without_an_id("undo of change %d" % change)
+
     def test_the_tree_fill_command(self):
         self.read(subject=["Wren Halloway", "Trips/Harbour"], named=["Sam", "Zed Quill"])
         tree_fill.run(self.library, apply=True)

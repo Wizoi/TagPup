@@ -202,10 +202,10 @@ describe("the navigator's people", () => {
   }
   const labels = (ctx) => ctx.rows("people").map((row) => row.querySelector(".nav-label").textContent);
 
-  test("in a flat list each Sam is a row, told apart by its title; a name nobody shares is its name", async (t) => {
+  test("in a flat list each person is a row, told apart by its title: their tag", async (t) => {
     const ctx = await people(t, { people: LIST, groups: [], unfiled: 0 });
     assert.deepEqual(labels(ctx), ["Sam", "Sam", "Wren"]);
-    assert.deepEqual(ctx.rows("people").map((row) => row.title.split("\n")[0]), ["Friends/Sam", "Pets/Sam", "Wren"]);
+    assert.deepEqual(ctx.rows("people").map((row) => row.title.split("\n")[0]), ["Friends/Sam", "Pets/Sam", "Family/Ingersoll/Wren"]);
   });
 
   test("in a tree the branch above says which, so the row is the name", async (t) => {

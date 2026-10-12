@@ -26,6 +26,7 @@ from tagpup.store import db  # noqa: E402
 from tagpup.store import library_view as store  # noqa: E402
 
 WREN, ROWAN = "Wren Halloway", "Rowan Thackeray"
+PEOPLE = "People/"   # a person is named by the path of their node (owner, 2026-10-11)
 
 
 def union(*members):
@@ -66,9 +67,9 @@ class TheUnion(Library):
         self.assertEqual(len(found["ids"]), len(set(found["ids"])))
 
     def test_kinds_mix_and_a_folder_with_its_subfolders_takes_every_folder_under_it(self):
-        found = self.ids("any_of", union(("folder", self.folder, True), ("person", WREN.upper(), False)))
+        found = self.ids("any_of", union(("folder", self.folder, True), ("person", PEOPLE + WREN.upper(), False)))
         self.assertEqual({self.july_20, self.july_21, self.june_21, self.july_22, self.dashed}, set(found["ids"]))
-        alone = self.ids("any_of", union(("folder", self.folder, False), ("person", ROWAN, False)))
+        alone = self.ids("any_of", union(("folder", self.folder, False), ("person", PEOPLE + ROWAN, False)))
         self.assertEqual({self.july_21, self.june_21, self.dashed, self.july_22}, set(alone["ids"]))
         only = self.ids("any_of", union(("folder", self.folder, False), ("month", "2099-01", False)))
         self.assertEqual({self.july_21, self.june_21, self.dashed}, set(only["ids"]), "the folder alone, not Later under it")
@@ -182,17 +183,17 @@ class ThePlans(Library):
                          and not sql.startswith("SELECT id, name, has_face, tag FROM tag_taxonomy"))
 
     def test_a_union_seeks_an_index_for_each_kind_and_scans_no_table(self):
-        text = self.plans("any_of", union(("keyword", "Trips", False), ("person", WREN, False), ("year", "2021", False),
+        text = self.plans("any_of", union(("keyword", "Trips", False), ("person", PEOPLE + WREN, False), ("year", "2021", False),
                                           ("month", "2020-07", False), ("folder", self.folder, True)))
         self.assertIn("idx_photo_tags_tag (tag_id=?)", text)
-        self.assertIn("idx_photo_people_name (name=?)", text)
+        self.assertIn("idx_photo_people_tag (tag_id=?)", text)
         self.assertIn("idx_photo_folder_folder (folder_id=?)", text)
         self.assertNotIn("SCAN p\n", text + "\n")
         self.assertNotRegex(text, r"SCAN (p|photos)( |$)(?!USING COVERING INDEX)")
 
     def test_by_name_the_name_index_is_walked_in_order_and_nothing_sorted(self):
         for kind, value in (("all", None), ("keyword", "Trips"), ("any_of", union(("month", "2020-07", False),
-                                                                                    ("person", ROWAN, False)))):
+                                                                                    ("person", PEOPLE + ROWAN, False)))):
             for order in ("name", "name-desc"):
                 with self.subTest(kind=kind, order=order):
                     text = self.plans(kind, value, order)

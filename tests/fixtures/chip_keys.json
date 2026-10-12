@@ -3,9 +3,9 @@
   "pairs": [
     {"name": "a tag in another case", "a": {"kind": "keyword", "value": "Trips/Coast"}, "b": {"kind": "keyword", "value": "trips/coast"}, "same_chip": true},
     {"name": "a tag alone in another case", "a": {"kind": "keyword_only", "value": "Trips/Coast"}, "b": {"kind": "keyword_only", "value": "TRIPS/COAST"}, "same_chip": true},
-    {"name": "a person in another case", "a": {"kind": "person", "value": "Wren Halloway"}, "b": {"kind": "person", "value": "wren halloway"}, "same_chip": true},
+    {"name": "a person in another case", "a": {"kind": "person", "value": "People/Wren Halloway"}, "b": {"kind": "person", "value": "people/wren halloway"}, "same_chip": true},
     {"name": "a tag and the same tag alone", "a": {"kind": "keyword", "value": "Trips/Coast"}, "b": {"kind": "keyword_only", "value": "Trips/Coast"}, "same_chip": false},
-    {"name": "a person and the tag they are filed under", "a": {"kind": "person", "value": "Wren Halloway"}, "b": {"kind": "keyword", "value": "People/Wren Halloway"}, "same_chip": false},
+    {"name": "a person and the tag they are filed under", "a": {"kind": "person", "value": "People/Wren Halloway"}, "b": {"kind": "keyword", "value": "People/Wren Halloway"}, "same_chip": false},
     {"name": "a folder and the folder with what is under it", "a": {"kind": "folder", "value": "{folder}", "recursive": false}, "b": {"kind": "folder", "value": "{folder}", "recursive": true}, "same_chip": false},
     {"name": "a folder twice", "a": {"kind": "folder", "value": "{folder}", "recursive": true}, "b": {"kind": "folder", "value": "{folder}", "recursive": true}, "same_chip": true},
     {"name": "a year as a number and as text", "a": {"kind": "year", "value": 2024}, "b": {"kind": "year", "value": "2024"}, "same_chip": true},

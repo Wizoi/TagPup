@@ -10,23 +10,18 @@ beside People/Sam), and a group is never put on a photo as a person (rule b, `re
 everything that groups, counts or joins "this person" reads the id. The name beside it
 (`faces.name`, `photo_people.name`) is a CACHE of the node's leaf, written by this module's callers in
 the same statement as the id and kept by `follow_*` / `sync` when the tree renames the node: identity
-never reads it. A row with a name and no id holds an UNRESOLVED name -- one no person node is called, or
-that two are and nothing said which -- left exactly as it is (the owner settles those, #985).
+never reads it. A row with a name and no id is from before names had ids (owner, 2026-10-11: only the id): no writer makes one
+now, a reader does not count it as a person, and the doctor lists them ("names with no person node").
 
 **One door.** A person comes in as an id (a page, a journal), a tag path (a keyword, a saved search) or a
 bare name (the CLI, the MCP, a page not reloaded since the update), and `resolve` turns it into a
 `Person` -- or refuses: `StalePerson` for an id no person has (merged or deleted meanwhile: a 404, never a
 new person), `AmbiguousPerson` for a name two people have (naming the candidates), `GroupNotPerson` for a
-group. A name no node is called resolves to None: the caller decides whether that makes a person (the
-tag first, as TagTuner's New Person does) or leaves an unresolved name.
+group. A name no node is called resolves to None: the caller makes the person's node first (`taxonomy.ensure_node`, or
+`face_people.made`: the tag first, as TagTuner's New Person does) or refuses.
 
-A name with no id is an UNRESOLVED name, and nothing links it by chance: `follow_*`, `sync` and `settle` keep an id that
-is set (with its node's leaf as the cache), drop the id of a node that is gone, and give a missing one to NOBODY, however
-unique the name has become -- a name that became one person's because a same-named node left says nothing about who a row
-meant. Rows are linked by exactly two things: the writer that wrote the row and knew the id (`target`), and `link_added` for
-a name a person was ADDED under (a node made, moved or renamed into it: `follow_tree`, and the journal) -- which is how a
-name that had no node is linked once `taxonomy.ensure_node` gives it one. A keyword's row is resolved by its path when it is
-written. It never moves an id that is set.
+Nothing links a name to a person: `follow_*`, `sync` and `settle` keep an id that is set (with its node's leaf as the cache) and
+drop the id of a node that is gone. A row gets its id from the writer that wrote it (`target`), or from the keyword's path.
 
 The tree is read inside the writer's transaction, every time, and never kept: a rename committed by
 another process between two writes is what the second one reads. Ids are AUTOINCREMENT, never given
@@ -118,24 +113,23 @@ def present(conn):
 
 
 def wire(ref):
-    """A person as it travels in a plan, a job's state or a request: the node's id, or -- a name no person is filed under --
-    the name. `ref` is a Ref, a Person, an id or a name. `target` takes it back."""
+    """A person as it travels in a plan, a job's state or a request: the id of the node (None for a Ref or a Person with none:
+    a row from before names had ids is not a person). A typed name is passed on as it is, for `target` to resolve. `ref` is a Ref,
+    a Person, an id or a name."""
     if isinstance(ref, (vocabulary.Ref, Person)):
-        return ref.id if ref.id is not None else ref.name
+        return ref.id
     return ref
 
 
 def wire_key(ref):
-    """What `key_of` gives for a person in wire form: the id, or the name's key."""
-    return ref if isinstance(ref, int) else vocabulary.key(ref)
+    """What `key_of` gives for a person in wire form: the id."""
+    return ref
 
 
 def key_of(tag_id, name):
-    """What a row's person is KEYED by wherever people are grouped, counted or compared in memory: the node's
-    id, or -- for an unresolved name -- the name's key (a str). A row with neither is nobody: None."""
-    if tag_id is not None:
-        return tag_id
-    return vocabulary.key(name) or None
+    """What a row's person is KEYED by wherever people are grouped, counted or compared in memory: the node's id. A row with
+    none -- a name from before names had ids -- is nobody: None (owner, 2026-10-11: only the id)."""
+    return tag_id
 
 
 class People:
@@ -303,14 +297,8 @@ def target(conn, ref, known=None):
 
 
 def matches(face, target):
-    """Is the person a face carries, `face` (a Ref), the person `target` (the pair `target()` gives) is? By the node's id; a
-    face holding a name and no id is the person whose name it is."""
-    if face is None:
-        return False
-    tag_id, name = target
-    if tag_id is not None and face.id is not None:
-        return face.id == tag_id
-    return vocabulary.key(face.name) == vocabulary.key(name)
+    """Is the person a face carries, `face` (a Ref), the person `target` (the pair `target()` gives) is? By the node's id."""
+    return face is not None and face.id is not None and face.id == target[0]
 
 
 class Directory:

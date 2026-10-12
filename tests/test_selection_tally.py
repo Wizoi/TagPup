@@ -93,17 +93,6 @@ class Counting(Tally):
         found = self.tally({"ids": [self.d]})
         self.assertEqual(({}, {"Rowan Thackeray": 1}), self.counts(found))
 
-    def test_a_name_no_person_has_spelled_two_ways_is_one_entry_counting_each_photo_once(self):
-        """A person the tree files is their node whatever the rows spell; a name no node has is one entry for its spellings."""
-        for position, (photo, spelled) in enumerate(((self.a, "skye marlowe"), (self.a, "Skye Marlowe"), (self.e, "SKYE MARLOWE")), 5):
-            self.vl.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, 'keyword')",
-                                 (photo, position, spelled))
-        self.vl.conn.commit()
-        found = self.tally({"ids": [self.a, self.b, self.e]})
-        counts = {name.lower(): count for name, count in self.counts(found)[1].items()}
-        self.assertEqual(2, counts["skye marlowe"])
-        self.assertEqual(1, counts["rowan thackeray"])
-
     def test_the_lists_are_in_the_shared_alphabetical_order(self):
         found = self.tally({"ids": [self.a, self.b, self.c, self.d, self.e]})
         for listing, name in ((found["tags"], "tag"), (found["people"], "name")):
@@ -133,12 +122,8 @@ class Counting(Tally):
     def test_a_branch_of_the_tree_is_a_keyword_and_never_a_person_to_open(self):
         self.vl.tree("People/Family/Parent", face_root="People")
         branch = self.vl.photo("Misc", "g.jpg", tags=["People/Family", "People/Family/Parent"])
-        for position, name in ((5, "Family"), (6, "Nobody Known")):
-            self.vl.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, 'keyword')", (branch, position, name))
-        self.vl.conn.commit()
         found = self.tally({"ids": [self.a, branch]})
-        self.assertEqual({"Wren Halloway": True, "Family": False, "Nobody Known": False, "Parent": True},
-                         {each["name"]: each["has_node"] for each in found["people"]})
+        self.assertEqual({"Wren Halloway": True, "Parent": True}, {each["name"]: each["has_node"] for each in found["people"]})
         tags = {each["tag"] for each in found["tags"]}
         self.assertIn("People/Family", tags, "a branch is a keyword")
         self.assertNotIn("People/Family/Parent", tags, "a leaf person node is a person")

@@ -25,6 +25,7 @@ from tagpup.store import db, people, taxonomy  # noqa: E402
 from tagpup.store import library_view as store  # noqa: E402
 
 WREN, ROWAN, ELODIE = "Wren Halloway", "Rowan Thackeray", "Élodie Marchetti"
+PEOPLE = "People/"   # a person is named by the path of their node (owner, 2026-10-11)
 
 
 def member(kind, value=None, recursive=False):
@@ -76,18 +77,18 @@ class Library(unittest.TestCase):
 class WhatASearchHolds(Library):
     def test_all_of_is_every_member_any_of_one_none_of_not_one(self):
         coast, sailing = self.of("keyword", "Trips/Coast"), self.of("keyword", "Activity/Sailing")
-        wren, rowan = self.of("person", WREN), self.of("person", ROWAN)
+        wren, rowan = self.of("person", PEOPLE + WREN), self.of("person", PEOPLE + ROWAN)
         y2021 = self.of("year", "2021")
         cases = (
-            (search(all_of=[member("keyword", "Trips/Coast"), member("person", WREN)]), coast & wren),
-            (search(all_of=[member("keyword", "Activity/Sailing"), member("person", ROWAN), member("year", "2021")]),
+            (search(all_of=[member("keyword", "Trips/Coast"), member("person", PEOPLE + WREN)]), coast & wren),
+            (search(all_of=[member("keyword", "Activity/Sailing"), member("person", PEOPLE + ROWAN), member("year", "2021")]),
              sailing & rowan & y2021),
-            (search(any_of=[member("person", WREN), member("person", ROWAN)], none_of=[member("keyword", "Activity/Sailing")]),
+            (search(any_of=[member("person", PEOPLE + WREN), member("person", PEOPLE + ROWAN)], none_of=[member("keyword", "Activity/Sailing")]),
              (wren | rowan) - sailing),
-            (search(all_of=[member("keyword", "Activity/Sailing")], any_of=[member("person", ELODIE), member("person", WREN)],
-                    none_of=[member("folder", self.misc)]), sailing & (self.of("person", ELODIE) | wren) - self.of("folder", self.misc)),
+            (search(all_of=[member("keyword", "Activity/Sailing")], any_of=[member("person", PEOPLE + ELODIE), member("person", PEOPLE + WREN)],
+                    none_of=[member("folder", self.misc)]), sailing & (self.of("person", PEOPLE + ELODIE) | wren) - self.of("folder", self.misc)),
             # Three family members and not a fourth: the owner's own example.
-            (search(all_of=[member("person", WREN)], none_of=[member("person", ROWAN)]), wren - rowan),
+            (search(all_of=[member("person", PEOPLE + WREN)], none_of=[member("person", PEOPLE + ROWAN)]), wren - rowan),
         )
         for value, expected in cases:
             with self.subTest(value=value):
@@ -116,16 +117,16 @@ class WhatASearchHolds(Library):
         self.assertEqual({self.p[1], self.p[3]}, set(found["ids"]))
         self.assertEqual("any_of", found["source"]["value"]["all_of"][0]["kind"], "the union stays one member")
         # A union in any_of or none_of is its members.
-        spread = self.found(search(any_of=[julys], none_of=[member("any_of", [member("person", ROWAN), member("person", ELODIE)])]))
-        self.assertEqual(julys_set - self.of("person", ROWAN) - self.of("person", ELODIE), set(spread["ids"]))
+        spread = self.found(search(any_of=[julys], none_of=[member("any_of", [member("person", PEOPLE + ROWAN), member("person", PEOPLE + ELODIE)])]))
+        self.assertEqual(julys_set - self.of("person", PEOPLE + ROWAN) - self.of("person", PEOPLE + ELODIE), set(spread["ids"]))
         self.assertEqual(12, len(spread["source"]["value"]["any_of"]))
 
     def test_a_search_inside_a_thousand_member_union(self):
         months = [member("month", "%04d-%02d" % (2000 + n // 12, n % 12 + 1)) for n in range(library_view.MAX_MEMBERS)]
-        found = self.found(search(all_of=[member("any_of", months), member("person", WREN)],
+        found = self.found(search(all_of=[member("any_of", months), member("person", PEOPLE + WREN)],
                                   any_of=months[:600], none_of=[member("keyword", "Trips/Coast/Harbour")] + months[700:]))
         dated = set().union(*[self.of("month", each["value"]) for each in months[:600]])
-        self.assertEqual(dated & self.of("person", WREN) - self.of("keyword", "Trips/Coast/Harbour"), set(found["ids"]))
+        self.assertEqual(dated & self.of("person", PEOPLE + WREN) - self.of("keyword", "Trips/Coast/Harbour"), set(found["ids"]))
         self.assertTrue(found["ids"])
 
     def test_a_folder_with_its_subfolders_and_alone_and_a_keyword_alone(self):
@@ -162,19 +163,16 @@ class WhatASearchHolds(Library):
         ponds = self.vl.photo("Misc", "ponds.jpg", tags=["Trips/Ponds"])
         self.assertEqual({ponds}, set(self.found(search(all_of=[member("keyword", "Trips/Ponds")], none_of=[member("year", "1999")]))["ids"]))
 
-    def test_a_person_on_a_branch_tag_is_read_by_name_as_the_person_source(self):
-        # People/Rowan Thackeray given a node under it: a branch, never a person (owner, #660), so stage 1 gives no id;
-        # the views read people by name, and a search by the same rule as the person row of the navigator.
+    def test_a_person_given_a_node_under_them_is_a_group_and_names_nobody(self):
+        # People/Rowan Thackeray given a node under it: a branch, never a person (owner, #660); the person source reads people by
+        # the id of their node, so a group's path holds nothing and a name that is no path holds nothing.
         self.vl.tree("People/%s/Sailing club" % ROWAN, face_root="People")
-        listed = {row[0] for row in self.vl.rows("SELECT photo_id FROM photo_people WHERE name = ?", ROWAN)}
-        self.assertTrue(listed, "the photos still list the name")
-        found = self.found(search(all_of=[member("person", ROWAN)], none_of=[member("year", "1999")]))
-        self.assertEqual(self.of("person", ROWAN), set(found["ids"]))
-        self.assertEqual(listed, set(found["ids"]))
-        self.assertEqual(self.of("person", ROWAN.upper()), set(found["ids"]), "a name in any case")
+        found = self.found(search(all_of=[member("person", PEOPLE + ROWAN)], none_of=[member("year", "1999")]))
+        self.assertEqual([], found["ids"])
+        self.assertEqual(set(), self.of("person", ROWAN))
 
     def test_a_name_past_ascii(self):
-        found = self.found(search(all_of=[member("person", ELODIE.lower())], none_of=[member("year", "1999")]))
+        found = self.found(search(all_of=[member("person", PEOPLE + ELODIE.lower())], none_of=[member("year", "1999")]))
         self.assertEqual({self.p[3]}, set(found["ids"]))
 
 
@@ -182,20 +180,20 @@ class TheShapeOfASearch(Library):
     def test_a_search_that_says_no_more_than_a_source_is_that_source(self):
         self.assertEqual({"kind": "all", "value": None, "recursive": False}, self.found(search())["source"])
         self.assertEqual({"kind": "all", "value": None, "recursive": False}, self.found(search(words="   "))["source"])
-        one = self.found(search(all_of=[member("person", WREN)]))
-        self.assertEqual({"kind": "person", "value": WREN, "recursive": False}, one["source"])
-        union = self.found(search(any_of=[member("person", WREN), member("person", ROWAN), member("person", WREN)]))
+        one = self.found(search(all_of=[member("person", PEOPLE + WREN)]))
+        self.assertEqual({"kind": "person", "value": PEOPLE + WREN, "recursive": False}, one["source"])
+        union = self.found(search(any_of=[member("person", PEOPLE + WREN), member("person", PEOPLE + ROWAN), member("person", PEOPLE + WREN)]))
         self.assertEqual(("any_of", 2), (union["source"]["kind"], len(union["source"]["value"])))
-        self.assertEqual(self.of("person", WREN) | self.of("person", ROWAN), set(union["ids"]))
+        self.assertEqual(self.of("person", PEOPLE + WREN) | self.of("person", PEOPLE + ROWAN), set(union["ids"]))
 
     def test_the_value_is_json_text_or_an_object_and_says_itself_back(self):
-        value = search(all_of=[member("keyword", "Trips/Coast"), member("person", WREN)], none_of=[member("year", "2021")], text=False)
+        value = search(all_of=[member("keyword", "Trips/Coast"), member("person", PEOPLE + WREN)], none_of=[member("year", "2021")], text=False)
         as_object = library_view.ids(self.vl.library, "search", value)
         as_text = library_view.ids(self.vl.library, "search", json.dumps(value))
         self.assertEqual(as_object, as_text)
         said = as_object["source"]
         self.assertEqual({"kind": "search", "recursive": False, "value": {
-            "all_of": [member("keyword", "Trips/Coast"), member("person", WREN)], "any_of": [],
+            "all_of": [member("keyword", "Trips/Coast"), member("person", PEOPLE + WREN)], "any_of": [],
             "none_of": [member("year", 2021)], "words": ""}}, said)
         again = library_view.ids(self.vl.library, said["kind"], said["value"])
         self.assertEqual(as_object["ids"], again["ids"], "what a reply says is a search that asks the same")
@@ -223,8 +221,8 @@ class TheShapeOfASearch(Library):
             self.found(search(words="harbour"))
         self.assertIn("word index", str(caught.exception))
         with self.assertRaises(store.NoWordIndex):
-            self.found(search(all_of=[member("person", WREN)], words="harbour"))
-        self.assertEqual(self.of("person", WREN), set(self.found(search(all_of=[member("person", WREN)], words=" - "))["ids"]),
+            self.found(search(all_of=[member("person", PEOPLE + WREN)], words="harbour"))
+        self.assertEqual(self.of("person", PEOPLE + WREN), set(self.found(search(all_of=[member("person", PEOPLE + WREN)], words=" - "))["ids"]),
                          "words that say nothing ask nothing of the index")
 
 
@@ -239,7 +237,7 @@ class TheOrders(Library):
     def test_by_name_a_search_holding_most_of_the_library_walks_the_name_index(self):
         conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
         try:
-            source = library_view.source_of(self.vl.library, "search", search(none_of=[member("person", ELODIE)]))
+            source = library_view.source_of(self.vl.library, "search", search(none_of=[member("person", PEOPLE + ELODIE)]))
             statements, _ms = store.id_plans(conn, source, 1000, store.NAME)
         finally:
             conn.close()
@@ -252,10 +250,11 @@ class TheOrders(Library):
 
 class TheMembersAreGatheredOnce(Library):
     def test_all_of_reads_the_names_and_the_tree_once_whatever_its_members_751(self):
-        # #751: each all_of person was a pass of photo_people's names and each keyword spelled otherwise a read of the tree.
-        value = search(all_of=[member("person", WREN), member("person", ROWAN.upper()), member("person", ELODIE),
+        # #751: each all_of person was a pass of photo_people's names (gone: a person is the id of a node) and each keyword spelled
+        # otherwise a read of the tree.
+        value = search(all_of=[member("person", PEOPLE + WREN), member("person", PEOPLE + ROWAN.upper()), member("person", PEOPLE + ELODIE),
                                member("keyword", "trips/coast"), member("keyword", "ACTIVITY/sailing")],
-                       any_of=[member("person", WREN), member("keyword", "activity")], none_of=[member("person", "Nobody Atall")])
+                       any_of=[member("person", PEOPLE + WREN), member("keyword", "activity")], none_of=[member("person", "Nobody Atall")])
         conn = db.connect(db.readonly_uri(self.vl.path), uri=True)
         seen = []
         try:
@@ -265,16 +264,16 @@ class TheMembersAreGatheredOnce(Library):
         finally:
             conn.set_trace_callback(None)
             conn.close()
-        self.assertEqual(1, sum(1 for sql in seen if "SELECT DISTINCT name FROM photo_people" in sql))
+        self.assertEqual(0, sum(1 for sql in seen if "SELECT DISTINCT name FROM photo_people" in sql), "a person is an id, not a name")
         self.assertEqual(1, sum(1 for sql in seen if sql.strip() == "SELECT id, tag FROM tag_taxonomy"))
-        expected = (self.of("person", WREN) & self.of("person", ROWAN) & self.of("person", ELODIE)
+        expected = (self.of("person", PEOPLE + WREN) & self.of("person", PEOPLE + ROWAN) & self.of("person", PEOPLE + ELODIE)
                     & self.of("keyword", "Trips/Coast") & self.of("keyword", "Activity/Sailing"))
         self.assertEqual(expected, set(found))
 
 
 class ASelectionOfASearch(Library):
     def test_select_all_less_some_resolves_tallies_and_is_the_list(self):
-        named = {"kind": "search", "value": search(any_of=[member("person", WREN), member("person", ROWAN)],
+        named = {"kind": "search", "value": search(any_of=[member("person", PEOPLE + WREN), member("person", PEOPLE + ROWAN)],
                                                    none_of=[member("keyword", "Trips/Lakes")], text=False)}
         listed = self.found(json.dumps(named["value"]))["ids"]
         chosen = selection.read(self.vl.library, {"source": named, "excluded": [listed[0]]})
@@ -287,9 +286,9 @@ class ASelectionOfASearch(Library):
         other = ViewLibrary(self, "lighthouse", home=self.vl.home)
         other.tree("People/" + WREN, face_root="People")
         theirs = other.photo("Elsewhere", "w.jpg", taken="2020:07:04 10:00:00", tags=["People/" + WREN])
-        value = search(all_of=[member("person", WREN)], none_of=[member("folder", self.misc)])
+        value = search(all_of=[member("person", PEOPLE + WREN)], none_of=[member("folder", self.misc)])
         self.assertEqual([theirs], library_view.ids(other.library, "search", value)["ids"])
-        self.assertEqual(self.of("person", WREN) - self.of("folder", self.misc), set(self.found(value)["ids"]),
+        self.assertEqual(self.of("person", PEOPLE + WREN) - self.of("folder", self.misc), set(self.found(value)["ids"]),
                          "this library's own photos (ids are each library's: the same number is another photo)")
 
 
