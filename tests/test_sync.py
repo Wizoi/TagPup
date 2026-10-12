@@ -216,7 +216,7 @@ class TheRecord(SyncTestCase):
 
     def test_a_record_that_cannot_be_written_is_a_warning(self):
         path = self.changed_file()
-        with mock.patch("tagpup.store.sync_runs.record", side_effect=OSError("locked")):
+        with mock.patch("tagpup.store.job_runs.record_sync", side_effect=OSError("locked")):
             result = self.run_sync(apply=True)
         self.assertTrue(result.ok, result.message())
         self.assertEqual(1, result.changed)

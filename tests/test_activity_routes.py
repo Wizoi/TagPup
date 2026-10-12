@@ -4,7 +4,7 @@ and Run now; the syncs, the watcher, the snapshots; one timeline of what was don
 logs, read from the end and never whole, by level, text and run.
 
 Every library is made in a home of the test's own; the runs, syncs and changes are
-seeded as the store records them (tagpup.store.job_runs, sync_runs; a journaled change of
+seeded as the store records them (tagpup.store.job_runs, its syncs; a journaled change of
 the settings), never through what is under test.
 """
 import logging
@@ -26,7 +26,7 @@ from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import recurring  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings  # noqa: E402
-from tagpup.store import job_runs, snapshots, sync_runs  # noqa: E402
+from tagpup.store import job_runs, snapshots  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
@@ -285,9 +285,9 @@ class RunNow(Base):
 
 class SyncSnapshotsAndTheTimeline(Base):
     def test_the_last_syncs_the_review_count_and_the_roots(self):
-        sync_runs.record(self.harbour.path, "2026-09-25 08:00:00", whole=True, in_step=True,
+        job_runs.record_sync(self.harbour.path, "2026-09-25 08:00:00", whole=True, in_step=True,
                          found={"review_folders": 3, "missing": 0}, changed={"rows": 0})
-        sync_runs.record(self.harbour.path, "2026-09-26 09:00:00", whole=False, in_step=False,
+        job_runs.record_sync(self.harbour.path, "2026-09-26 09:00:00", whole=False, in_step=False,
                          found={"new": 4}, changed={"rows": 2, "queued_folders": 1})
         root = os.path.join(self.home.root, "Photos")
         os.makedirs(root)
@@ -345,7 +345,7 @@ class SyncSnapshotsAndTheTimeline(Base):
         job_runs.finish(self.harbour.path, claim.run_id, "failed", seconds("2026-09-20 12:00:05"), {"errors": 1},
                         "OSError: full")
         changed = settings.change(self.regatta, {"candidates.tags": "harbour, regatta"})
-        sync_runs.record(self.harbour.path, "2026-09-21 08:00:00", whole=True, in_step=True,
+        job_runs.record_sync(self.harbour.path, "2026-09-21 08:00:00", whole=True, in_step=True,
                          found={"new": 0, "missing": 2}, changed={"rows": 0, "queued_folders": 0},
                          change_id=None)
         found = self.get("/api/activity/timeline")
@@ -386,7 +386,7 @@ class SyncSnapshotsAndTheTimeline(Base):
         sync's "Logs for this run" includes the indexer's own log."""
         started = "2026-09-26 09:00:00"
         sync_tag = runs.sync_tag("harbour", started)
-        sync_runs.record(self.harbour.path, started, whole=True, in_step=True, found={}, changed={})
+        job_runs.record_sync(self.harbour.path, started, whole=True, in_step=True, found={}, changed={})
         queue = indexing_jobs.queue_for(self.harbour)
         self.addCleanup(indexing_jobs.forget, self.harbour)
         seen = {}
@@ -411,7 +411,7 @@ class SyncSnapshotsAndTheTimeline(Base):
     def test_every_run_says_which_logs_hold_its_lines(self):
         claim = job_runs.claim(self.harbour.path, "snapshots", "harbour", seconds("2026-09-20 12:00:00"))
         job_runs.finish(self.harbour.path, claim.run_id, "done", seconds("2026-09-20 12:00:05"), {})
-        sync_runs.record(self.harbour.path, "2026-09-21 08:00:00", whole=True, in_step=True, found={}, changed={})
+        job_runs.record_sync(self.harbour.path, "2026-09-21 08:00:00", whole=True, in_step=True, found={}, changed={})
         entries = self.get("/api/activity/timeline")["entries"]
         for entry in entries:
             self.assertEqual([logs.SERVER_LOG] if entry["run"] else [], entry["logs"], entry)

@@ -466,7 +466,7 @@ class RecoveryOfANewerLibrary(unittest.TestCase):
                         refused.append(name)
         self.assertIn("sync", refused, "the one that writes the library's last sync is stopped by ensure")
         self.assertEqual(before, fingerprint(self.path), "nothing written into the newer library")
-        self.assertEqual([(0,)], look(self.path, "SELECT COUNT(*) FROM sync_runs"))
+        self.assertEqual([(0,)], look(self.path, "SELECT COUNT(*) FROM job_runs WHERE job IN ('sync-whole', 'sync-folder')"))
 
     def test_the_mcp_read_tools_answer_with_the_note(self):
         call = self.mcp()
