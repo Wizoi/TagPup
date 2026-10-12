@@ -22,6 +22,16 @@ START, STATUS, CONFIRM, CANCEL, CURRENT = ("/harbour/api/name-faces/" + name
                                            for name in ("start", "status", "confirm", "cancel", "current"))
 
 
+def fill(case):
+    """The photos of these tests: one face to name by its tag, one left for Identify Faces, one decided face to compare with."""
+    case.single = case.photo("old_001.jpg", ["People/" + WREN])
+    case.single_face = case.face(case.single)
+    both = case.photo("old_002.jpg", ["People/" + WREN, "People/" + ODA])
+    case.face(both, at(120))                    # like no one: left for Identify Faces
+    elsewhere = case.photo("old_003.jpg", ["People/" + WREN])
+    case.face(elsewhere, at(0), name=WREN, name_source="manual")     # Wren has a decided face to be compared with
+
+
 class RoutesCase(Case):
     def setUp(self):
         super().setUp()
@@ -31,12 +41,7 @@ class RoutesCase(Case):
             app = web.create_app(kind, startup=self.library)
             app.testing = True
             self.apps[kind] = app.test_client()
-        self.single = self.photo("old_001.jpg", ["People/" + WREN])
-        self.single_face = self.face(self.single)
-        both = self.photo("old_002.jpg", ["People/" + WREN, "People/" + ODA])
-        self.face(both, at(120))                    # like no one: left for Identify Faces
-        elsewhere = self.photo("old_003.jpg", ["People/" + WREN])
-        self.face(elsewhere, at(0), name=WREN, name_source="manual")     # Wren has a decided face to be compared with
+        fill(self)
 
     def join(self, handle):
         job = naming_faces._held(self.library)[handle]

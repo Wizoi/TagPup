@@ -338,6 +338,73 @@ export class FakeServer {
   }
 }
 
+/** The real servers when tests/page_server.py started them ({tagpup: url, tuner: url}); none under a plain `node --test`. */
+export const REAL = process.env.TAGPUP_PAGE_SERVERS ? JSON.parse(process.env.TAGPUP_PAGE_SERVERS) : null;
+
+/**
+ * The real app in a FakeServer's place (contract table, rows 12 and 22): the page's `fetch` goes to the server at `base`; a
+ * reply is read whole before the page sees it, status and headers kept (a 4xx keeps its JSON, a 503 its X-TagPup-Updating).
+ */
+export class RealServer extends FakeServer {
+  constructor(base) {
+    super();
+    this.base = base;
+    this.waiting = [];
+    this.replied = [];   // the URLs answered whole
+  }
+
+  nextReply() {
+    return new Promise((resolve) => this.waiting.push(resolve));
+  }
+
+  install(window) {
+    window.fetch = async (input, init = {}) => {
+      const url = typeof input === "string" ? input : String(input.url);
+      const body = typeof init.body === "string" && /^[\[{]/.test(init.body) ? JSON.parse(init.body) : init.body;
+      this.calls.push({ url, method: init.method || "GET", body });
+      const target = new URL(url, "http://page/");
+      const abort = new AbortController();
+      if (init.signal) init.signal.addEventListener("abort", () => abort.abort(), { once: true });
+      try {
+        const sent = await fetch(this.base + target.pathname + target.search, { ...init, signal: abort.signal });
+        this.replied.push(url);
+        return new Response([204, 304].includes(sent.status) ? null : await sent.arrayBuffer(), { status: sent.status, headers: sent.headers });
+      } catch (error) {
+        if (init.signal && init.signal.aborted) throw new window.DOMException("The operation was aborted.", "AbortError");
+        throw error;
+      } finally {
+        this.waiting.splice(0).forEach((resolve) => resolve());
+      }
+    };
+    return this;
+  }
+}
+
+/** A library of the test's own, made by the Python seed `seed`: `{library, server, url, ...what the seed says}` to load a page on. */
+export async function realLibrary(seed, appName = "tagpup") {
+  const kind = appName === "tagtuner" ? "tuner" : "tagpup";
+  const facts = await (await fetch(`${REAL[kind]}/__seed/${seed}`)).json();
+  return { ...facts, server: new RealServer(REAL[kind]), url: `http://localhost:8090/${facts.library}/` };
+}
+
+/** Wait on replies, not on time, until `done()` holds; after `seconds` it fails saying what it waited for (`what`, or a function of it). */
+export async function until(ctx, done, what, seconds = 30) {
+  let timer;
+  const gaveUp = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`gave up waiting for ${typeof what === "function" ? what() : what}`)), seconds * 1000);
+  });
+  gaveUp.catch(() => {});
+  try {
+    for (;;) {
+      await flush(ctx.window, 2);
+      if (done()) return;
+      await Promise.race([ctx.server.nextReply(), gaveUp]);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Windows still open, so a failing test cannot leave timers running forever. */
 const openWindows = new Set();
 

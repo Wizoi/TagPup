@@ -7,121 +7,71 @@
  * already been dropped from, so they did not come back at all until the person was
  * opened again. And undoing an assign told the server "this is nobody", a decision
  * nobody had made.
+ *
+ * Against the real server (tests/test_pages_against_the_real_server.py runs this): the
+ * library holds five unnamed faces, three alike Wren's decided face (Cluster 1, which
+ * offers her name) and two alike each other (Cluster 2).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps } from "./harness.mjs";
+import { loadApp, closeAllApps, REAL, realLibrary, until } from "./harness.mjs";
 
-const NAME = "Unknown Faces";
-
-function face(id, clusterId, photo, suggested = null) {
-  return {
-    id,
-    photo_path: `D:\\meets\\${photo}`,
-    filename: photo,
-    box: [10, 10, 40, 40],
-    prob: 0.99,
-    mtime: 0,
-    year: 2025,
-    similarity: 0.9,
-    person_similarity: 0.9,
-    cluster_id: clusterId,
-    cluster_name: `Cluster ${clusterId}`,
-    other_names: [],
-    suggested_name: suggested,
-    suggested_similarity: suggested ? 0.93 : 0,
-    suggestion_strength: suggested ? "likely" : null,
-  };
-}
-
-const FACES = [
-  face(1, 5, "a.jpg", "Rowan Thackeray"),
-  face(2, 5, "b.jpg"),
-  face(3, 5, "c.jpg"),
-  face(10, 9, "d.jpg"),
-  face(11, 9, "e.jpg"),
-];
-
-async function openGrid(t) {
-  const server = new FakeServer()
-    .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
-    .on("/api/unmatched-faces/people", [{ name: NAME, count: FACES.length, unit: "face" }])
-    .on("/api/unmatched-faces/person-matches", {
-      faces: FACES, total_count: FACES.length, unclustered_total: 0,
-      unclustered_shown: 0, has_more: false,
-    })
-    .on("/api/faces/exclude", { success: true, excluded: 3 })
-    .on("/api/faces/restore", { success: true, restored: 3 })
-    .on("/api/faces/match-bulk", { success: true, matched_ids: [1, 2, 3] })
-    .on("/api/faces/unmatch-bulk", { success: true })
-    .on("/api/people-with-counts", [])
-    .on("/api/people", ["Rowan Thackeray"]);
-  const { window, document } = await loadApp("tagtuner", {
-    server,
-    url: `http://localhost:8080/photo_index/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,
-    t,
-  });
-  await new Promise((r) => window.setTimeout(r, 150));
-  return { window, document, server };
-}
-
-const settle = (window, ms = 150) => new Promise((r) => window.setTimeout(r, ms));
-const card = (document, id) => document.querySelector(`#matching-faces-grid [data-face-id="${id}"]`);
-const ids = (document) =>
-  [...document.querySelectorAll("#matching-faces-grid [data-face-id]")].map((c) => Number(c.dataset.faceId));
 const press = (window, el) => el.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+const ids = (document) => [...document.querySelectorAll("#matching-faces-grid [data-face-id]")].map((c) => Number(c.dataset.faceId));
+const sorted = (list) => [...list].sort((a, b) => a - b);
 
 function section(document, title) {
   return [...document.querySelectorAll("#matching-faces-grid .matching-group-section")].find((s) =>
     ((s.querySelector(".matching-group-title") || {}).textContent || "").startsWith(title));
 }
 
-async function ignore(window, document) {
-  const button = [...section(document, "Cluster 5").querySelectorAll("button")]
-    .find((b) => b.textContent.includes("Ignore Cluster"));
-  press(window, button);
-  await settle(window, 120);
-  const ok = document.getElementById("btn-ignore-confirm-ok");
-  const modal = document.getElementById("ignore-confirm-modal");
-  if (modal && !modal.classList.contains("hidden")) press(window, ok);
-  await settle(window);
-}
-
-describe("Undo puts the faces back", () => {
+describe("Undo puts the faces back, against the server", { skip: !REAL }, () => {
   afterEach(() => closeAllApps());
 
-  test("undoing an ignore: the cards return, and nothing else is rebuilt", async (t) => {
-    const { window, document, server } = await openGrid(t);
-    const bystander = card(document, 10);
-    await ignore(window, document);
-    assert.deepEqual(ids(document), [10, 11], "fixture: the cluster was ignored");
+  async function openGrid(t) {
+    const real = await realLibrary("unknown_faces", "tagtuner");
+    const url = `${real.url}?mode=unmatched-faces&person=${encodeURIComponent("Unknown Faces")}`;
+    const ctx = await loadApp("tagtuner", { server: real.server, url, t });
+    await until(ctx, () => ids(ctx.document).length === 5, "the five faces");
+    const [first, second, third, fourth, fifth] = real.faces;
+    return Object.assign(ctx, {
+      bystander: ctx.document.querySelector(`#matching-faces-grid [data-face-id="${fourth}"]`),
+      // The faces the library still offers as unknown, and what it calls the first photo's face.
+      offered: async () => sorted((await (await fetch(`${REAL.tuner}/${real.library}/api/unmatched-faces/person-matches?name=Unknown%20Faces`)).json()).faces.map((f) => f.id)),
+      firstFace: async () => (await (await fetch(`${REAL.tagpup}/${real.library}/api/photo-faces?path=${encodeURIComponent(real.photos[0])}`)).json()).faces[0],
+      all: sorted([first, second, third, fourth, fifth]),
+    });
+  }
 
-    press(window, document.getElementById("btn-assign-undo"));
-    await settle(window);
+  const gone = (ctx) => until(ctx, () => ids(ctx.document).length === 2, "the cluster to leave the grid");
+  const undo = async (ctx) => {
+    press(ctx.window, ctx.document.getElementById("btn-assign-undo"));
+    await until(ctx, () => ids(ctx.document).length === 5, "the faces to come back");
+    assert.deepEqual(sorted(ids(ctx.document)), ctx.all, "the undone faces did not come back");
+    assert.ok(ctx.document.getElementById("assign-undo-bar").classList.contains("hidden"), "the undo can be applied twice");
+  };
 
-    assert.deepEqual(ids(document).sort((a, b) => a - b), [1, 2, 3, 10, 11],
-      "the undone faces did not come back");
-    assert.equal(card(document, 10), bystander, "the grid was rebuilt around the undo");
-    assert.deepEqual(server.lastBody("/api/faces/restore").face_ids, [1, 2, 3]);
-    assert.match(section(document, "Cluster 5").textContent, /3 faces/);
+  test("undoing an ignore: the cards return, nothing else is rebuilt, and the library offers the faces again", async (t) => {
+    const ctx = await openGrid(t);
+    press(ctx.window, [...section(ctx.document, "Cluster 1").querySelectorAll("button")].find((b) => b.textContent.includes("Ignore Cluster")));
+    await until(ctx, () => !ctx.document.getElementById("ignore-confirm-modal").classList.contains("hidden"), "the question");
+    press(ctx.window, ctx.document.getElementById("btn-ignore-confirm-ok"));
+    await gone(ctx);
+    assert.equal((await ctx.offered()).length, 2, "the library still offered the ignored faces");
+    assert.match((await ctx.firstFace()).excluded_reason, /cluster/, "the reason says where it came from");
+    assert.match(ctx.document.getElementById("assign-undo-text").textContent, /Ignored 3 faces/, "the way back was offered");
+    await undo(ctx);
+    assert.equal(ctx.document.querySelector(`#matching-faces-grid [data-face-id="${ctx.bystander.dataset.faceId}"]`), ctx.bystander, "the grid was rebuilt around the undo");
+    assert.deepEqual(await ctx.offered(), ctx.all);
   });
 
   test("undoing an assign: the cards return, and the faces are unreviewed, not nobody", async (t) => {
-    const { window, document, server } = await openGrid(t);
-    const bystander = card(document, 10);
-    const accept = section(document, "Cluster 5").querySelector(".cluster-suggestion-assign");
-    assert.ok(accept, "fixture: the cluster offers its guess");
-    press(window, accept);
-    await settle(window);
-    assert.deepEqual(ids(document), [10, 11], "fixture: the cluster was assigned");
-
-    press(window, document.getElementById("btn-assign-undo"));
-    await settle(window);
-
-    assert.deepEqual(ids(document).sort((a, b) => a - b), [1, 2, 3, 10, 11]);
-    assert.equal(card(document, 10), bystander);
-    const sent = server.lastBody("/api/faces/unmatch-bulk");
-    assert.deepEqual(sent.face_ids, [1, 2, 3]);
-    assert.equal(sent.undo, true, "the undo told the server these faces are nobody");
+    const ctx = await openGrid(t);
+    press(ctx.window, section(ctx.document, "Cluster 1").querySelector(".cluster-suggestion-assign"));
+    await gone(ctx);
+    assert.equal((await ctx.firstFace()).name, "Wren Halloway");
+    await undo(ctx);
+    assert.equal((await ctx.firstFace()).name, null);
+    assert.deepEqual(await ctx.offered(), ctx.all, "a face the undo made nobody is not offered any more");
   });
 });

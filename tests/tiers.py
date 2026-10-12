@@ -59,6 +59,8 @@ SCENARIO = frozenset({
     "test_migration_28_and_the_newer_library",
     # Roots: the folders a library holds, through a whole scenario.
     "test_roots_scenarios",
+    # Pages run against the real apps (node + jsdom, tests/page_server.py), not a hand-written fake.
+    "test_pages_against_the_real_server",
     "test_roots_location",
     "test_roots_ingress",
     "test_roots_store",

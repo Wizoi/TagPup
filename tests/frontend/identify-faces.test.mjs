@@ -226,11 +226,6 @@ describe("ignoring a cluster", () => {
                  /3 faces from 2 photos/);
   });
 
-  test("confirming excludes every face in the cluster", async (t) => {
-    const { server } = await clickIgnore(t);
-    assert.deepEqual(server.lastBody("/api/faces/exclude").face_ids, [10, 11, 12]);
-  });
-
   test("cancelling changes nothing", async (t) => {
     const { server } = await clickIgnore(t, { confirmIt: false });
     assert.equal(server.lastBody("/api/faces/exclude"), undefined);
@@ -249,31 +244,6 @@ describe("ignoring a cluster", () => {
 
     assert.equal(prompted, false, "a second modal appeared for the same decision");
     assert.ok(server.lastBody("/api/faces/exclude"));
-  });
-
-  test("the reason it records says where it came from", async (t) => {
-    const { server } = await clickIgnore(t);
-    assert.match(server.lastBody("/api/faces/exclude").reason, /cluster/);
-  });
-
-  test("it offers the exclusion back", async (t) => {
-    const { document } = await clickIgnore(t);
-    const bar = document.getElementById("assign-undo-bar");
-    assert.ok(!bar.classList.contains("hidden"), "no way back was offered");
-    assert.match(document.getElementById("assign-undo-text").textContent,
-                 /Ignored 3 faces/);
-  });
-
-  test("undoing an ignore restores rather than unmatches", async (t) => {
-    // Each action has its own way back. Calling the wrong one would quietly do
-    // nothing, which is worse than failing.
-    const { document, window, server } = await clickIgnore(t);
-    document.getElementById("btn-assign-undo").click();
-    await new Promise((r) => window.setTimeout(r, 40));
-
-    assert.deepEqual(server.lastBody("/api/faces/restore").face_ids, [10, 11, 12]);
-    assert.equal(server.lastBody("/api/faces/unmatch-bulk"), undefined,
-                 "it tried to unmatch faces that were never assigned");
   });
 
   test("ticking don't ask again records the preference", async (t) => {
@@ -506,13 +476,6 @@ describe("accepting a suggestion in one click", () => {
     assert.match(btn.textContent, /Assign 3/);
   });
 
-  test("it assigns the whole cluster to the suggested name", async (t) => {
-    const { server } = await accept(t);
-    const body = server.lastBody("/api/faces/match-bulk");
-    assert.equal(body.person_name, "Emory Kade");
-    assert.deepEqual(body.face_ids, [71, 72, 73]);
-  });
-
   test("it does not stop to ask first", async (t) => {
     // A confirmation on every cluster is the same friction the button removes.
     // What makes that fair is the undo, not a prompt.
@@ -532,21 +495,6 @@ describe("accepting a suggestion in one click", () => {
     assert.ok(!bar.classList.contains("hidden"), "no undo was offered");
     assert.match(document.getElementById("assign-undo-text").textContent,
                  /Assigned 3 faces to Emory Kade/);
-  });
-
-  test("undo unmatches exactly the faces it assigned", async (t) => {
-    const { document, window, server } = await accept(t);
-    document.getElementById("btn-assign-undo").click();
-    await new Promise((r) => window.setTimeout(r, 40));
-
-    assert.deepEqual(server.lastBody("/api/faces/unmatch-bulk").face_ids, [71, 72, 73]);
-  });
-
-  test("undoing clears the offer, so it cannot be applied twice", async (t) => {
-    const { document, window } = await accept(t);
-    document.getElementById("btn-assign-undo").click();
-    await new Promise((r) => window.setTimeout(r, 40));
-    assert.ok(document.getElementById("assign-undo-bar").classList.contains("hidden"));
   });
 
   test("it can be dismissed without undoing", async (t) => {
