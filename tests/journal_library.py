@@ -59,6 +59,7 @@ class JournalLibrary(unittest.TestCase):
 
             node("People", None, 1)
             node("People/Rowan Thackeray", "People", 1)
+            node("People/Maren Oakhollow", "People", 1)
             node("Friends", None, 0)
             node("Friends/Imogen Vale", "Friends", 1)
             node("Rowan Thackeray", None, 0)
@@ -77,7 +78,7 @@ class JournalLibrary(unittest.TestCase):
 
             ids["start"] = photo("regatta_001.jpg", ["People/Rowan Thackeray", "Activity/Sailing"],
                                  "2024:06:01 10:00:00", 1)
-            ids["finish"] = photo("regatta_002.jpg", ["Imogen Vale", "Rowan Thackeray"], "2024:06:01 11:30:00", 2)
+            ids["finish"] = photo("regatta_002.jpg", ["Friends/Imogen Vale", "People/Rowan Thackeray"], "2024:06:01 11:30:00", 2)
             ids["prize"] = photo("regatta_003.jpg", ["Activity/Sailing"], "2024:06:02 09:15:00", 3)
 
             def face(photo_id, n, **columns):
@@ -89,11 +90,11 @@ class JournalLibrary(unittest.TestCase):
                 conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, jpeg(n)))
                 return face_id
 
-            ids["kept"] = face(ids["start"], 1, name="Rowan Thackeray", name_source="manual")
+            ids["kept"] = face(ids["start"], 1, name="Rowan Thackeray", tag_id=ids["People/Rowan Thackeray"], name_source="manual")
             ids["copy"] = face(ids["start"], 2)
             ids["excluded"] = face(ids["finish"], 3, excluded=1, excluded_reason="not a face")
             # Named on a face only: the photo's keywords do not name her.
-            ids["named"] = face(ids["finish"], 4, name="Maren Oakhollow", name_source="cluster")
+            ids["named"] = face(ids["finish"], 4, name="Maren Oakhollow", tag_id=ids["People/Maren Oakhollow"], name_source="cluster")
             conn.execute("DELETE FROM face_crops WHERE face_id = ?", (ids["excluded"],))   # never shown
             for photo_id in (ids["start"], ids["finish"], ids["prize"]):
                 conn.execute("INSERT INTO embeddings (photo_id, model, mtime, size, vector) VALUES (?, ?, ?, ?, ?)",

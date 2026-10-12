@@ -410,7 +410,7 @@ class TheMigration(unittest.TestCase):
     def test_a_change_recorded_before_it_is_undone_after_it_and_the_face_gets_its_id(self):
         """A face deleted by a journaled change at version 20 (dedupe_faces) was recorded without the
         column. The migration blocks no undo of it (schema.ADDS_DERIVED_COLUMNS); the undo puts the row
-        back as recorded: a name and no id, which nothing links by the name alone (person_ids.link_added)."""
+        back as recorded: a name and no id, which nothing links by the name alone."""
         _home, path, made = self.library_at_20()
         schema._current.clear()
         with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:20]), mock.patch.object(schema, "LATEST", 20):
@@ -449,18 +449,17 @@ class TheJournal(Library):
         self.assertIn("faces", str(refused.exception))
         self.assertEqual(oda, self.face_id(self.faces[0]))
 
-    def test_the_undo_of_a_nodes_insert_gives_the_faces_linked_to_it_their_name_back(self):
-        """A face carrying the name of a person made later is linked to them (the settle that follows a write); undoing the
-        insert takes the node away and leaves the name -- unless a person named the face, which is theirs."""
+    def test_the_undo_of_a_nodes_insert_takes_the_node_away_unless_a_person_named_a_face_by_it(self):
+        """Nothing links a face to a person made later by its name: the insert leaves the face as it was, and undoing it takes
+        the node away -- unless a person named a face by it, which is theirs."""
         write(self.path, lambda conn: conn.execute("UPDATE faces SET name = 'Maren Oakhollow' WHERE id = ?", (self.faces[0],)))
         applied = journal.apply(self.path, "add a person", [journal.insert("tag_taxonomy", {
             "tag": "Friends/Maren Oakhollow", "parent_id": node_id(self.path, "Friends"), "name": "Maren Oakhollow",
             "has_face": 1})])
-        made = node_id(self.path, "Friends/Maren Oakhollow")
-        self.assertEqual(made, self.face_id(self.faces[0]))
+        self.assertIsNone(self.face_id(self.faces[0]))
         self.assertTrue(journal.rehearse_undo(self.path, applied.change_id).exact)
         journal.undo(self.path, applied.change_id)
-        self.assertIsNone(self.face_id(self.faces[0]))
+        self.assertIsNone(node_id(self.path, "Friends/Maren Oakhollow"))
         self.assertEqual("Maren Oakhollow", look(self.path, "SELECT name FROM faces WHERE id = ?", (self.faces[0],))[0][0])
         again = journal.apply(self.path, "add a person", [journal.insert("tag_taxonomy", {
             "tag": "Friends/Maren Oakhollow", "parent_id": node_id(self.path, "Friends"), "name": "Maren Oakhollow",
@@ -584,7 +583,7 @@ class TheDoctor(Library):
             found = person_ids.unresolved(conn)
         finally:
             conn.close()
-        self.assertEqual({"Coast": ([coast], 2)}, found.branch, "a face and the photo's list")
+        self.assertEqual({"Coast": ([coast], 1)}, found.branch, "the face; the photo does not list a name with no person")
         import io
         from contextlib import redirect_stdout
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
@@ -594,7 +593,7 @@ class TheDoctor(Library):
             with redirect_stdout(said):
                 doctor.report(self.path, show=show)
             text = said.getvalue()
-            self.assertIn("names on a branch: 1, on 2 row(s)", text)
+            self.assertIn("names on a branch: 1, on 1 row(s)", text)
             self.assertIn("node %d" % coast, text)
             self.assertEqual(named, "Coast" in text.replace("Family/Coast", ""), "names only with --show")
 

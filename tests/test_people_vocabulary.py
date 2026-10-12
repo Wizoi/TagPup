@@ -40,7 +40,7 @@ class PeopleVocabularyCase(unittest.TestCase):
 
     CASES = [
         ["Pets/Biscuit"],                 # a root only the taxonomy knows
-        ["Imogen Vale"],                  # a bare leaf
+        ["Imogen Vale"],                  # a bare name: a path of its own, nobody
         ["people/imogen vale"],           # case
         ["Pets", "People"],               # roots alone name nobody
         ["Activity/Rowing", "Rowing"],    # not a face tag
@@ -57,7 +57,8 @@ class PeopleVocabularyCase(unittest.TestCase):
     def test_what_it_resolves(self):
         vocabulary = people_vocabulary(self.db_path)
         self.assertEqual(["Biscuit"], extract_people({}, ["Pets/Biscuit"], vocabulary))
-        self.assertEqual(["Imogen Vale"], extract_people({}, ["Imogen Vale"], vocabulary))
+        self.assertEqual([], extract_people({}, ["Imogen Vale"], vocabulary))
+        self.assertEqual(["Imogen Vale"], extract_people({}, ["People/Imogen Vale"], vocabulary))
         self.assertEqual([], extract_people({}, ["Pets", "People"], vocabulary))
 
     def test_without_a_library_only_a_new_librarys_people_root_counts(self):

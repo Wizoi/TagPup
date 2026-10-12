@@ -190,7 +190,7 @@ def keywords_under_a_person(conn):
     owner's. Reads every photo's keywords, as `tags_without_a_node` does."""
     if not derived.present(conn):
         return 0
-    return len(tree_scan.keywords(conn, derived.Tree.read(conn), person_ids.read(conn)).under)
+    return len(tree_scan.keywords(conn, derived.Tree.read(conn)).under)
 
 
 def people_at_the_top(conn):

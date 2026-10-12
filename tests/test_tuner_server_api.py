@@ -78,6 +78,7 @@ class TunerAPITestBase(unittest.TestCase):
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
+        conn.execute("DELETE FROM tag_taxonomy")   # a name given to a face makes its node (2026-10-10): not for the next test
         conn.commit()
         conn.close()
 
@@ -447,7 +448,8 @@ class TestMatchBulkListsThePerson(TunerAPITestBase):
         # Naming writes the person to the photo's file (#907), so the file holds what the row says: Bob.
         files = fake_exiftool.standing_in(self)
         # The tree a library has once it has a node (naming a face with a new name makes one): its face root is in it.
-        db.write_with_connection(self.TEST_DB, lambda conn: taxonomy.add_path(conn, "People", root_has_face=1))
+        db.write_with_connection(self.TEST_DB, lambda conn: (taxonomy.add_path(conn, "People", root_has_face=1),
+                                                             taxonomy.add_path(conn, "People/Bob")))
         photo = self.add_photo(self.make_photo_file("a.jpg"), tags=["People/Bob"])
         files.keep_tags(photo, ["People/Bob"])
         face = self.add_face(photo, unit_vector(80))
@@ -511,13 +513,13 @@ class TestUnmatchAll(TunerAPITestBase):
 
 
 class TestPersonRename(TunerAPITestBase):
-    def test_a_name_no_person_tag_has_is_refused_and_nothing_changes(self):
+    def test_a_name_no_person_is_called_is_refused_and_nothing_changes(self):
         photo = self.add_photo(self.make_photo_file("a.jpg"))
         face_id = self.add_face(photo, unit_vector(90), name="Jane Doe")
         self.rebuild(photo)
 
         status, body = self.post(
-            "/api/person/rename", {"old_name": "Jane Doe", "new_name": "Jane Smith"}
+            "/api/person/rename", {"old_name": "Jane Dow", "new_name": "Jane Smith"}
         )
         self.assertEqual(status, 400, body)
         self.assertEqual(self.face_name(face_id), "Jane Doe")
@@ -575,11 +577,11 @@ class TestPersonRename(TunerAPITestBase):
         self.assertIn("Jane Smith", names)
 
     def test_a_non_person_taxonomy_node_is_left_alone(self):
-        """Only face categories are people; a keyword that happens to match is not."""
+        """Only face categories are people; a keyword at another path that happens to end alike is not."""
         conn = sqlite3.connect(self.TEST_DB)
         conn.execute(
             "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, NULL, ?, 0)",
-            ("Jane Doe", "Jane Doe"),
+            ("Places/Jane Doe", "Jane Doe"),
         )
         conn.commit()
         conn.close()
@@ -591,7 +593,7 @@ class TestPersonRename(TunerAPITestBase):
         conn = sqlite3.connect(self.TEST_DB)
         tags = {r[0] for r in conn.execute("SELECT tag FROM tag_taxonomy").fetchall()}
         conn.close()
-        self.assertIn("Jane Doe", tags, "a non-person keyword tag was renamed")
+        self.assertIn("Places/Jane Doe", tags, "a non-person keyword tag was renamed")
 
 
 class TestUnmatchedFacesQueue(TunerAPITestBase):

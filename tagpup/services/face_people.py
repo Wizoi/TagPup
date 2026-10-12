@@ -34,7 +34,7 @@ not written here: they are one batch of photo files whose photos' faces are writ
 import logging
 
 from tagpup.core import fields, paths, vocabulary
-from tagpup.core.result import Conflict, Result
+from tagpup.core.result import Conflict, Refused, Result
 from tagpup.files import exiftool_session
 from tagpup.services import faces as faces_service
 from tagpup.services import file_changes, tagging
@@ -75,6 +75,28 @@ class Filer:
             return self.tags_by_id.get(person)
         name = (person or "").strip()
         return vocabulary.person_tag(name, self.filed.get(vocabulary.key(name), []), self.roots)
+
+
+def made(library, ref):
+    """`ref` (the id of a person, or a name) as the id of a person that has a node: a name no person is called is given its node
+    at the path the filer chooses -- the tag first, as the New person dialog makes it (every tag has an id, owner 2026-10-10) --
+    and the node's id is returned. Refused for a name the filer cannot place, or that would go under a person that faces or photos
+    use; nothing is made then."""
+    ref = person_ids.wire(ref)
+    if isinstance(ref, int):
+        return ref
+    tag = Filer(library).tag(ref)
+    if tag is None:
+        raise Refused(not_filed(ref))
+
+    def make(conn):
+        taxonomy.refuse_child_of_person(conn, tag)
+        return taxonomy.add_node(conn, tag, root_has_face=1)
+
+    try:
+        return db.write_with_connection(library.path, make, label="tag tree: add %s" % tag)
+    except person_ids.PersonProblem as why:
+        raise Refused(str(why)) from None
 
 
 def not_filed(name):
@@ -271,6 +293,7 @@ def name_face(library, face_id, person, writer):
     if found is None:
         return refused
     ref, person_name = faces_service.who_is(library, person, refused)
+    ref = made(library, ref)
     photo_path, was = found
     if writer is None:
         _give_back_guesses(library, photo_path, face_id, ref)

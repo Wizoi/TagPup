@@ -57,7 +57,7 @@ class ForwardThenUndo(JournalLibrary):
 
     def test_a_deleted_photo_comes_back_with_everything_it_took(self):
         before = self.dump()
-        applied = self.apply([journal.delete("photos", (self.ids["finish"],), {"tags": '["Imogen Vale", "Rowan Thackeray"]'})])
+        applied = self.apply([journal.delete("photos", (self.ids["finish"],), {"tags": '["Friends/Imogen Vale", "People/Rowan Thackeray"]'})])
         # The photo, its two faces, the one crop they had, and its vector; its people rebuilt.
         tables = dict(self.query("SELECT table_name, COUNT(DISTINCT row_key) FROM change_rows GROUP BY table_name"))
         self.assertEqual({"photos": 1, "faces": 2, "face_crops": 1, "embeddings": 1}, tables)
@@ -266,7 +266,7 @@ class Crashes(JournalLibrary):
         self.assertIn("Maren Oakhollow", self.people_of(finish), "not rebuilt yet")
         self.start_again()
         self.assertEqual([(1, "t", "applied")], self.changes())
-        self.assertEqual(["Imogen Vale", "Rowan Thackeray"], self.people_of(finish))
+        self.assertEqual(["Rowan Thackeray", "Imogen Vale"], self.people_of(finish))
 
     def test_a_derived_rebuild_that_fails_is_finished_at_start(self):
         with mock.patch.object(journal, "_derive", side_effect=RuntimeError("database is locked")):

@@ -115,17 +115,17 @@ class TheKeywordsOfAPhoto(ALibrary):
             self.rebuilt()
             self.assertEqual(["Trips/Coast/Harbour"], self.tags_of(one), repr(spelled))
 
-    def test_a_bare_leaf_is_not_the_path_it_is_a_person_of(self):
-        """Keywords are full paths; a bare name some old writer left is the people rule's to
-        resolve (store.people), not a node of its own."""
+    def test_a_bare_leaf_is_a_path_of_its_own_not_the_persons(self):
+        """Keywords are full paths (owner, 2026-10-11): a bare name is the node of that name at the top, not the person
+        filed under a branch."""
         taxonomy.add_path(self.conn, "People", root_has_face=1)
         self.tree("People/Cora Ingersoll")
         bare = self.photo("2024", "a.jpg", ["Cora Ingersoll"])
         full = self.photo("2024", "b.jpg", ["People/Cora Ingersoll"])
         self.rebuilt()
-        self.assertEqual([], self.tags_of(bare))
+        self.assertEqual(["Cora Ingersoll"], self.tags_of(bare))
         self.assertEqual(["People/Cora Ingersoll"], self.tags_of(full))
-        self.assertEqual({"Cora Ingersoll": 1}, dict(derived.tags_without_a_node(self.conn)))
+        self.assertEqual({}, dict(derived.tags_without_a_node(self.conn)))
 
     def test_a_keyword_held_twice_is_one_row(self):
         self.tree("Trips/Coast")

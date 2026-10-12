@@ -811,44 +811,37 @@ def tags_from_faces(ctx, apply_, guesses, folder):
 @cli.command("tree-fill")
 @click.option("--apply", "apply_", is_flag=True,
               help="Back the library up, then make the nodes in one transaction. Without it, only says how many it would.")
-@click.option("--reveal", is_flag=True, help="Also list the names and keywords (a library is photographs of real people).")
+@click.option("--reveal", is_flag=True, help="Also list the keywords (a library is photographs of real people).")
 @click.option("--skip-root", "skip_roots", multiple=True,
               help="Leave out the keywords under this root of the tag tree (repeat it): for a root you removed on purpose.")
 @click.pass_context
 def tree_fill(ctx, apply_, reveal, skip_roots):
-    """Give the names and keywords the library holds without a node their nodes, once (every tag has an id): a file
-    keyword no node of the tag tree is gets its own path, a name a face or a photo's people hold with no id gets a node
-    directly under the tree's root, marked as a person; the rows are linked to them. Merge them into the right branch
-    afterwards in the library's tag view (the tag merge moves faces and photo lists by id).
+    """Give the file keywords the library holds without a node their nodes, once (every tag has an id): a keyword no node of
+    the tag tree is gets its own path, a bare one a node of its own at the top, never a person. Merge them into the right
+    branch afterwards in the library's tag view (the tag merge moves faces and photo lists by id).
 
-    Left, and counted: a name two people have, a name a group has, and a bare keyword that is a person's name. A dry run
-    unless --apply; counts only, and a second --apply finds nothing. The tag tree is not journaled: `undo` cannot take
-    this back; --apply takes a backup of the library first."""
+    Left, and counted: a keyword under a person that faces or photos use. A dry run unless --apply; counts only, and a
+    second --apply finds nothing. The tag tree is not journaled: `undo` cannot take this back; --apply takes a backup of
+    the library first."""
     library = _existing_library(ctx)
     report = tree_fill_service.run(library, apply=False, skip_roots=skip_roots)
-    words, names = report["keywords"], report["names"]
+    words = report["keywords"]
     console.print("%d keyword(s) hold no node of the tag tree: %d use(s) on %d photo(s)."
                   % (words["without_a_node"], words["uses"], words["photos"]), markup=False)
-    console.print("%d name(s) on faces (%d row(s)) and listed people (%d row(s)) hold no id and no person is called so."
-                  % (names["without_a_node"], names["faces"], names["listed"]), markup=False)
     if words["without_a_node"] and words["largest_missing_root"] * 2 >= words["without_a_node"] \
             and words["largest_missing_root"] >= tree_fill_service.SHARED_ROOT_MIN:
         console.print("  %d keyword(s) share one root that is not in the tag tree: if you removed it on purpose, do not apply "
                       "(--skip-root NAME leaves it out; --reveal gives its name)." % words["largest_missing_root"], markup=False)
     for count, why in ((words["skipped_by_root"], "keyword(s) under a --skip-root: left out"),
-                       (words["left_under_a_person"], "keyword(s) under a person that faces or photos use: left without a node"),
-                       (words["left_a_persons_name"], "bare keyword(s) that are a person's name: their keyword, no node of their own"),
-                       (names["left_several_people"], "name(s) that several people have: left, for you to rename one"),
-                       (names["left_a_group"], "name(s) that a group of people has: left"),
-                       (names["left_one_person_unlinked"], "name(s) of one person whose rows are linked to nobody: left")):
+                       (words["left_under_a_person"], "keyword(s) under a person that faces or photos use: left without a node")):
         if count:
             console.print("  %d %s." % (count, why), markup=False)
     if reveal:
         for name, count in report["reveal"]["missing_roots"]:
             console.print("    root not in the tree: %s (%d keyword(s))" % (name, count), markup=False, soft_wrap=True)
-        for text in report["reveal"]["keywords"] + report["reveal"]["names"]:
+        for text in report["reveal"]["keywords"]:
             console.print("    " + text, markup=False, soft_wrap=True)
-    if not report["made"]["nodes"] and not report["linked"]["faces"] and not report["linked"]["listed_people"]:
+    if not report["made"]["nodes"]:
         console.print("Nothing to make.")
         return
     if not apply_:
@@ -864,11 +857,8 @@ def tree_fill(ctx, apply_, reveal, skip_roots):
 
 def _tree_fill_said(verb, report):
     """What a tree-fill made or would make, in counts."""
-    made, linked = report["made"], report["linked"]
-    console.print("%s %d node(s): %d for keywords (with their levels), %d for names (%d of them people)."
-                  % (verb, made["nodes"], made["for_keywords"], made["for_names"], made["persons_among_names"]), markup=False)
-    console.print("  linked %d face(s) and %d listed person row(s) to their person; %d keyword row(s) added to photos."
-                  % (linked["faces"], linked["listed_people"], report["keyword_rows_added"]), markup=False)
+    console.print("%s %d node(s) for keywords (with their levels); %d keyword row(s) added to photos."
+                  % (verb, report["made"]["nodes"], report["keyword_rows_added"]), markup=False)
 
 
 def _machine():

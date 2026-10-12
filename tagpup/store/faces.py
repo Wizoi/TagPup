@@ -286,7 +286,7 @@ def _rebuilt(conn, photo_ids, changed, vocabulary=None, known=None):
     if changed and photo_ids:
         known = known or person_ids.read(conn)
         person_ids.follow_faces(conn, photo_ids, known)
-        people.rebuild(conn, photo_ids, known=vocabulary, ids=known, make=True)   # a name no node has gets one
+        people.rebuild(conn, photo_ids, known=vocabulary, ids=known)
     return changed
 
 
@@ -309,7 +309,7 @@ def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
     person_ids.target), or None. Returns the face's id. The caller commits."""
     from tagpup.store import photos   # photos imports this module
     photo_id = photos.ensure_row(conn, photo_path)
-    tag_id, name = person_ids.target(conn, name) if name is not None else (None, None)
+    tag_id, name = _target(conn, name) if name is not None else (None, None)
     if person_ids.present(conn):
         face_id = conn.execute(
             "INSERT INTO faces (photo_id, box, embedding, name, tag_id, prob) VALUES (?, ?, ?, ?, ?, ?)",
@@ -363,12 +363,28 @@ def in_photo(conn, photo_path):
                 params).fetchall()]
 
 
+def _target(conn, person, known=None):
+    """person_ids.target, for a WRITER: a name no node is called is given its node first (taxonomy.ensure_node: every tag has an
+    id), so a face is never written with a name and no id."""
+    tag_id, name = person_ids.target(conn, person, known)
+    if tag_id is not None or not name or not person_ids.present(conn):
+        return tag_id, name
+    from tagpup.store import taxonomy   # taxonomy imports this module's neighbours
+    node_id = taxonomy.ensure_node(conn, name, person=True)[0]
+    if node_id is None:
+        return tag_id, name
+    return node_id, conn.execute("SELECT name FROM tag_taxonomy WHERE id = ?", (node_id,)).fetchone()[0]
+
+
 def _targets(conn, persons, known=None):
     """({person: (id, name)} for each distinct person among `persons`, the People read for it): the tree is read once,
     inside the caller's transaction (or is `known`, which the caller read in it), and each distinct person is resolved once
-    (person_ids.target)."""
+    (_target); read again when a node was made for one."""
     known = known or person_ids.read(conn)
-    return {person: person_ids.target(conn, person, known) for person in set(persons)}, known
+    targets = {person: _target(conn, person, known) for person in set(persons)}
+    if any(tag_id is not None and tag_id not in known.node_names for tag_id, _name in targets.values()):
+        known = person_ids.read(conn)
+    return targets, known
 
 
 def _assign(conn):
@@ -501,8 +517,8 @@ def name(conn, face_ids, person):
     """Name faces as a person's decision (name_source 'manual'), which re-clustering does
     not revise. `person` is an id, a tag path or a name (person_ids.target: refused when the id is stale, the name two
     people have, or it is a group). Excluded faces are left alone. Returns rows named. The caller commits."""
-    known = person_ids.read(conn)
-    given = _pair(conn, person_ids.target(conn, person, known))
+    targets, known = _targets(conn, [person])
+    given = _pair(conn, targets[person])
     changed = sum(conn.execute(
         "UPDATE faces SET " + _assign(conn) + ", name_source = 'manual' WHERE " + _in(chunk) + " AND excluded = 0",
         list(given) + chunk).rowcount for chunk in _chunks(face_ids))
@@ -522,8 +538,8 @@ def name_if_unnamed(conn, face_id, person):
     so re-clustering may revise it. Not a face somebody unmatched by hand: "this is
     nobody" is a decision, which a guess does not overrule (docs/findings.md, #643).
     Returns rows named. The caller commits."""
-    known = person_ids.read(conn)
-    given = _pair(conn, person_ids.target(conn, person, known))
+    targets, known = _targets(conn, [person])
+    given = _pair(conn, targets[person])
     changed = conn.execute("UPDATE faces SET " + _assign(conn) + " WHERE id = ? AND name IS NULL AND excluded = 0"
                            " AND " + NOT_DECIDED_NOBODY % "", given + (face_id,)).rowcount
     return _rebuilt(conn, _photos_of(conn, [face_id]), changed, known=known)

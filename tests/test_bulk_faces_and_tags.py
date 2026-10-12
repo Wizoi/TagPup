@@ -161,7 +161,7 @@ class AssigningMany(Bulk):
         reply = self.tuner_post("faces/match-bulk", {"face_ids": [face for _p, face in made], "person_name": "Zelda Pike"})
         self.assertEqual(200, reply.status_code, reply.get_json())
         self.assertEqual(2, reply.get_json()["matched"])
-        node = self.look("SELECT id FROM tag_taxonomy WHERE tag = ?", ("Zelda Pike",))       # where the tree makes a person it lacks
+        node = self.look("SELECT id FROM tag_taxonomy WHERE tag = ?", (PEOPLE + "Zelda Pike",))   # the tag first, where the filer files them
         self.assertEqual(1, len(node), "the person was not made")
         for photo, face in made:
             self.assertEqual([PEOPLE + "Zelda Pike"], self.tags(photo))

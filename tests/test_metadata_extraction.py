@@ -223,11 +223,15 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
         self.assertEqual(people, ["Jane Doe"])
 
     def test_a_flat_tag_marked_as_a_person_resolves_to_that_person(self):
-        """'Cora Ingersoll' with no hierarchy still counts if the taxonomy says it is a person."""
+        """'Cora Ingersoll' with no hierarchy is the person of that path, if the taxonomy says it is a person; the same name
+        filed under a branch is named by its own path alone (owner, 2026-10-11)."""
         self.add_tag("People", "People", has_face=1)
         self.add_tag("People/Cora Ingersoll", "Cora Ingersoll", has_face=1)
-        people = extract_people({}, ["Cora Ingersoll"], people_vocabulary(self.db_path))
-        self.assertEqual(people, ["Cora Ingersoll"])
+        self.add_tag("Tamsin Marlowe", "Tamsin Marlowe", has_face=1)
+        known = people_vocabulary(self.db_path)
+        self.assertEqual(extract_people({}, ["Tamsin Marlowe"], known), ["Tamsin Marlowe"])
+        self.assertEqual(extract_people({}, ["Cora Ingersoll"], known), [])
+        self.assertEqual(extract_people({}, ["People/Cora Ingersoll"], known), ["Cora Ingersoll"])
 
     def test_a_face_root_category_never_resolves_as_a_person(self):
         """"Family" is a category -- a face root with tags under it; a photo tagged with it gains no person named Family.
@@ -240,7 +244,7 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
         self.add_tag("Family", "Family", has_face=1)
         self.add_tag("Family/Jane Doe", "Jane Doe", has_face=1)
         self.assertEqual(
-            extract_people({}, ["Jane Doe"], people_vocabulary(self.db_path)), ["Jane Doe"]
+            extract_people({}, ["Family/Jane Doe"], people_vocabulary(self.db_path)), ["Jane Doe"]
         )
 
     def test_a_flat_tag_that_is_not_a_person_is_ignored(self):

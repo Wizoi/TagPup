@@ -3,8 +3,9 @@ no node in the tag tree is given one when it is first seen -- a keyword its own 
 root marked as a person -- so no row is left holding a name and no id. taxonomy.ensure_node is the one place; photos.record_indexed
 (the read) and faces' writers (a name) reach it. The owner merges the nodes into the right branch with the tag merge.
 
-A name that two people have, a group's name, and a bare keyword that is a person's name are NOT given a node: they stay as they
-were, for the doctor to count.
+Nothing is left holding a name and no id (owner, 2026-10-11: only the id): a name that two people have, or that is a group's
+leaf, is a different path, so it gets a node directly under the root; a bare keyword is a path of its own, never a person's
+name. Only a name that is the path of a group at the top is given none, and is not listed as a person.
 """
 import os
 import sys
@@ -81,10 +82,12 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
         self.assertEqual(1, self.count("Family/Thackeray"))
         self.assertEqual(0, self.count("Thackeray"))
 
-    def test_a_bare_keyword_that_is_a_persons_name_is_theirs_and_gets_no_node(self):
-        before = self.tags()
-        self.read_photo(["Wren Halloway"])
-        self.assertEqual(before, self.tags())
+    def test_a_bare_keyword_that_is_a_persons_name_is_a_path_of_its_own_and_names_nobody(self):
+        photo_id = self.read_photo(["Wren Halloway"])
+        self.assertEqual(1, self.count("Wren Halloway"))
+        self.assertEqual([(0,)], people_by_id.look(self.path, "SELECT has_face FROM tag_taxonomy WHERE tag = 'Wren Halloway'"))
+        self.assertIn(("Wren Halloway",), self.rows_of(photo_id))
+        self.assertEqual([], self.listed(self.later))
 
     def test_a_bare_keyword_is_a_top_level_word_tag_not_a_person(self):
         self.read_photo(["Regatta"])
@@ -135,17 +138,26 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
         self.assertEqual(before, self.tags())
         self.assertEqual((self.node(people_by_id.WREN), "Wren Halloway"), self.face(self.faces[0])[:2])
 
-    def test_the_shared_leaf_pair_is_given_no_node_and_the_face_keeps_its_name(self):
-        before = self.tags()
+    def test_a_name_two_people_have_is_the_person_at_the_top_called_so_and_the_same_one_again(self):
         self.read_photo(people=["Sam"])
-        self.assertEqual(before, self.tags())
-        self.assertEqual([(None, "Sam", "keyword")], self.listed(self.later))
+        node = self.node("Sam")
+        self.assertIsNotNone(node)
+        self.assertEqual([(node, "Sam", "keyword")], self.listed(self.later))
+        self.read_photo(people=["sam"], path=self.photo)
+        self.assertEqual(1, self.count("Sam"))
+        self.assertEqual([(node, "Sam", "keyword")], self.listed(self.photo)[-1:])
 
-    def test_a_name_equal_to_a_groups_is_given_no_node(self):
-        before = self.tags()
+    def test_a_name_equal_to_a_groups_leaf_is_another_path_and_gets_its_own_node(self):
         self.read_photo(people=["Thackeray"])
+        node = self.node("Thackeray")
+        self.assertEqual([(node, "Thackeray", "keyword")], self.listed(self.later))
+        self.assertIsNone(self.node("Family/Thackeray/Thackeray"))
+
+    def test_a_name_that_is_a_group_at_the_top_is_given_no_node_and_is_not_listed(self):
+        before = self.tags()
+        self.read_photo(people=["Places", "Family"])
         self.assertEqual(before, self.tags())
-        self.assertEqual([(None, "Thackeray", "keyword")], self.listed(self.later))
+        self.assertEqual([], self.listed(self.later))
 
     def test_a_childless_word_tag_of_the_name_at_the_top_becomes_the_person(self):
         self.read_photo(["Kentridge"])

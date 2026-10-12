@@ -20,7 +20,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_refresh_rows as base  # noqa: E402
-from face_rows import people_of  # noqa: E402
+from face_rows import add_face, people_of  # noqa: E402
 
 from tagpup.services import maintenance  # noqa: E402
 from tagpup.store import db, journal  # noqa: E402
@@ -93,8 +93,7 @@ class RefreshGuards(base.RefreshFixture):
 
     def test_a_person_named_only_on_a_face_stays_in_people(self):
         conn = db.connect(self.db)
-        conn.execute("INSERT INTO faces (photo_id, box, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', 'Rowan Thackeray', 'manual')",
-                     (self.files["stale_keywords"],))
+        add_face(conn, self.files["stale_keywords"], box="[]", name="Rowan Thackeray", name_source="manual")
         conn.commit()
         conn.close()
         self.refresh(apply=True)
@@ -108,8 +107,7 @@ class RefreshGuards(base.RefreshFixture):
     def test_a_row_missing_a_face_name_is_found_and_fixed(self):
         # "fine" agrees with its file in every other way; only its people are short.
         conn = db.connect(self.db)
-        conn.execute("INSERT INTO faces (photo_id, box, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', 'Imogen Vale', 'manual')",
-                     (self.files["fine"],))
+        add_face(conn, self.files["fine"], box="[]", name="Imogen Vale", name_source="manual")
         conn.commit()
         conn.close()
         result = self.refresh(apply=True)

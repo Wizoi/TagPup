@@ -51,6 +51,10 @@ class AutomatchNamesItsFacesInOneWrite(FacesCase):
 
 
 class NamingUnnamedFacesTogether(FacesCase):
+    def setUp(self):
+        super().setUp()
+        db.write_with_connection(self.lib.library.path, lambda conn: taxonomy.add_node(conn, "People/" + ROWAN, 1))
+
     def test_only_faces_still_unnamed_in_play_and_not_unmatched_by_hand_are_named(self):
         photo = self.photo("a.jpg")
         free, named, excluded, nobody = (self.face(photo) for _ in range(4))

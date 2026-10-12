@@ -180,20 +180,6 @@ class PersonRename(T.Bulk):
             reply = tuner_routes.not_renamed(result).get_json()
         self.assertEqual((False, False), (reply["success"], reply["renamed"]))
 
-    def test_stopped_in_the_bare_name_stage_the_sentence_says_how_to_finish(self):
-        self.vl.photo("2024 A", "bare.jpg", taken="2024:06:01 10:00:00", tags=[self.NAME], real=True, size=(16, 16))
-        real = tags._rewrite
-        calls = []
-
-        def second_is_stopped(*args):
-            calls.append(1)
-            return real(*args) if len(calls) == 1 else (0, 0, "Stopped as asked after 0 of 1 photos.", [])
-        with mock.patch.object(tags, "_rewrite", side_effect=second_is_stopped):
-            result = tags.rename_person(self.library, self.NAME, self.NEW, "exiftool")
-        self.assertEqual(2, len(calls))
-        self.assertIn("merge that tag into", result.refused)
-        self.assertTrue(taxonomy.find(self.library.path, "People/" + self.NEW), "the tree was renamed")
-
     def test_stopped_after_the_first_chunk_the_person_keeps_their_node_until_it_is_made_again(self):
         first_write = self.files.writes
         self.files.on_write = lambda path, n: batches.stop_all() if n == first_write + 10 else None

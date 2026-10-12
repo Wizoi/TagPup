@@ -292,7 +292,8 @@ def rename_person(library, person, new_name, exiftool_path):
 
     It never merges: a person already filed at the new place is refused ("merge them instead", tags.merge). Other people
     called the same are other people and are left. A photo that could not be rewritten still names the person the old way;
-    the Result fails for it. A name no person tag has is refused: the person is made first (owner, 2026-10-10).
+    the Result fails for it. A name no person is called is refused. A bare keyword spelled like the person is another tag (a path of its own,
+    owner 2026-10-11) and is not rewritten.
 
     details: `photos_affected`, `photos_rewritten`, `faces_renamed`.
     """
@@ -315,8 +316,7 @@ def rename_person(library, person, new_name, exiftool_path):
 
     found = people_service.resolve(library, person)   # NotFound for a stale id; Refused naming the candidates
     if found is None:
-        result.refuse("No person is called '%s': create the person first (a name with no person tag is flagged, not renamed)."
-                      % str(person).strip())
+        result.refuse("No person is called '%s': create the person first." % str(person).strip())
         return result
     if found.name == new_name:
         return result
@@ -325,28 +325,12 @@ def rename_person(library, person, new_name, exiftool_path):
     if there and there["id"] != found.id:
         result.refuse("A person is filed at '%s' already: merge them instead (Merge tags), or choose another name." % new_tag)
         return result
-    alone = _alone(library, found)   # before the tree moves: a bare keyword spelled so is theirs only if nobody else is called so
     try:
         # The photo files first, then the node with its faces' cache in one transaction (_retag): a rename stopped half way
         # leaves the tree as it was.
         if not _rename_in_place(library, found.tag, new_tag, exiftool_path, result):
             return result
         result.details["faces_renamed"] = _faces_of(library, [found.id], named=new_name)   # counted after the write
-        # A photo naming them by the bare name carries no tag of the tree's, and was not rewritten above; with the tree
-        # moved, the bare name named nobody (#87). Only a name nobody else has is theirs.
-        bare = list(photos.carrying(library.path, found.name)) if alone else []
-        if bare:
-            rewritten, unwritten, stopped, failed = _rewrite(library, bare, found.name, new_name, exiftool_path)
-            _name_failed(result, failed)
-            _count(result, len(bare), rewritten, add_up=True)
-            if stopped:
-                # Made again, the person has their new name already, so this cannot find the old one: the photos naming them by
-                # the old bare name are finished by merging that tag into the person's.
-                result.refuse("%s The person is renamed in the tree, but some photos still name them by the bare name '%s': "
-                              "merge that tag into '%s' (Merge tags) to finish." % (stopped, found.name, new_tag))
-            elif unwritten:
-                result.fail(found.name, "%d of %d photo(s) naming '%s' could not be rewritten."
-                            % (unwritten, len(bare), found.name))
     except Exception as e:
         # The node and the faces already have the new name; what is left is said, not thrown.
         logger.error("Person rename: failed to update the photo files: %s", e)
@@ -362,11 +346,6 @@ def _faces_of(library, person_ids_, named=None):
         return faces.count_of_people(conn, person_ids_, named)
     finally:
         conn.close()
-
-
-def _alone(library, found):
-    """Is nobody else called what `found` (a Person) is? A bare keyword spelled so is theirs only then."""
-    return people_service.directory(library).of_name(found.name) is not None
 
 
 def _shared_by(library, source, target):

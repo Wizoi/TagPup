@@ -32,15 +32,26 @@ def add_people(conn, photo_path, names, source="keyword"):
     photo = photo_id(conn, photo_path)
     start = conn.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM photo_people WHERE photo_id = ?",
                          (photo,)).fetchone()[0]
-    from tagpup.store import person_ids   # the person a name is, as people.rebuild writes it
     rows = []
     for n, name in enumerate(names):
-        try:
-            tag_id = person_ids.target(conn, name)[0]
-        except person_ids.PersonProblem:
-            tag_id = None
-        rows.append((photo, start + n, name, source, tag_id))
+        rows.append((photo, start + n, name, source, person_of(conn, name)))
     conn.executemany("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, ?, ?)", rows)
+
+
+def person_of(conn, name):
+    """The id of the person a name is, as the writers that name someone give it (every tag has an id: a name no node is called gets
+    one, as tagpup.store.taxonomy.ensure_node makes it); None for a name that two people have or a group's, which no writer lists."""
+    from tagpup.store import person_ids   # a test helper reads the tree as the writers do
+    try:
+        found = person_ids.target(conn, name)[0]
+    except person_ids.PersonProblem:
+        return None
+    if found is not None:
+        return found
+    top = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (name,)).fetchone()   # the person at the top, as ensure_node makes them
+    if top is not None:
+        return top[0]
+    return conn.execute("INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, NULL, ?, 1)", (name, name)).lastrowid
 
 
 def people_of(conn, photo_path):
@@ -98,11 +109,7 @@ def add_face(conn, photo_path, box=(0, 0, 10, 10), **columns):
     values = dict(columns, photo_id=photo_id(conn, photo_path),
                   box=box if isinstance(box, str) else json.dumps(list(box)))
     if values.get("name") and "tag_id" not in values:
-        from tagpup.store import person_ids   # a test helper reads the tree as the writers do
-        try:
-            values["tag_id"] = person_ids.target(conn, values["name"])[0]
-        except person_ids.PersonProblem:
-            values["tag_id"] = None
+        values["tag_id"] = person_of(conn, values["name"])
     names = sorted(values)
     return conn.execute("INSERT INTO faces (%s) VALUES (%s)" % (", ".join(names), ", ".join("?" * len(names))),
                         [values[name] for name in names]).lastrowid

@@ -52,11 +52,13 @@ TOOLS = READ_TOOLS | WRITE_TOOLS
 
 
 def _tree(conn):
-    """The tag tree: People holds faces, one person filed under it, an activity branch,
+    """The tag tree: People holds faces, four people filed under it (every name has a node), an activity branch,
     and a node whose parent is gone (an orphan, for the checks)."""
     rows = [(1, "People", None, "People", 1), (2, "People/Rowan Thackeray", 1, "Rowan Thackeray", 1),
             (3, "Activity", None, "Activity", 0), (4, "Activity/Sailing", 3, "Sailing", 0),
-            (5, "Activity/Sailing/Dinghy", 4, "Dinghy", 0), (6, "Clubs/Quayside Rowers", 99, "Quayside Rowers", 0)]
+            (5, "Activity/Sailing/Dinghy", 4, "Dinghy", 0), (6, "Clubs/Quayside Rowers", 99, "Quayside Rowers", 0),
+            (7, "People/Tamsin Ferrow", 1, "Tamsin Ferrow", 1), (8, "People/Pell Quarrington", 1, "Pell Quarrington", 1),
+            (9, "People/Maren Oakhollow", 1, "Maren Oakhollow", 1)]
     for row in rows:
         conn.execute("INSERT INTO tag_taxonomy (id, tag, parent_id, name, has_face) VALUES (?, ?, ?, ?, ?)", row)
 
@@ -211,7 +213,7 @@ class McpServer(unittest.TestCase):
         self.assertEqual((answer["photos"], answer["faces"], answer["named"], answer["manual"], answer["excluded"]),
                          (5, 6, 4, 3, 2))
         self.assertEqual(answer["schema_version"], schema.MIGRATIONS[-1].version)
-        self.assertEqual(answer["tree_nodes"], 6)
+        self.assertEqual(answer["tree_nodes"], 9)
         self.assertEqual(answer["without_a_vector"], 5)
 
     def test_folders_count_their_photos_and_say_which_are_gone(self):

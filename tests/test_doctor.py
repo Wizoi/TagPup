@@ -40,6 +40,7 @@ class Library(unittest.TestCase):
                 f.write(b"photo")
         added = self.conn.execute("INSERT INTO photos (path, mtime, size, tags) VALUES (?, 1, 1, ?)",
                                   (path, json.dumps(list(tags))))
+        derived.make_nodes(self.conn, [list(tags)])   # the nodes of its keywords, as the index makes them when it reads the file
         people.rebuild_photos(self.conn, [path])
         derived.refresh_photos(self.conn, [added.lastrowid])   # a library at rest: its derived tables are right
         self.conn.commit()
@@ -81,9 +82,10 @@ class TheRules(Library):
             self.conn.execute(broken, (photo,))
             self.conn.commit()
         # The people are words of the word index, kept by people.rebuild: two of the three hand-made lists hold a name the
-        # index does not (the third holds the same names in another order).
-        self.assertEqual({"photos whose people are out of date": 3, "photos whose word index rows are out of date": 2},
-                         self.broken())
+        # index does not (the third holds the same names in another order); the first and third carry a name that is not
+        # their node's, since the hand-made rows hold a name and the id of another.
+        self.assertEqual({"photos whose people are out of date": 3, "photos whose word index rows are out of date": 2,
+                          "people listed whose name is not their person's": 2}, self.broken())
 
     def test_a_face_named_and_excluded(self):
         self.face(self.photo("a.jpg"), name="Wren Halloway", excluded=1)

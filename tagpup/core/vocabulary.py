@@ -380,7 +380,7 @@ class PeopleVocabulary:
         # of the top level (owner, 2026-10-10).
         categories = {keyword_key(tag) for tag in group_tags if tag and SEPARATOR not in tag} | {NEW_LIBRARY_FACE_ROOT.lower()}
         categories |= {keyword_key(segments(row[-2])[0]) for row in face_rows if len(row[-2:]) == 2 and SEPARATOR in row[-2]}
-        by_keyword, ids, names = {}, {}, {}
+        by_keyword, ids, names, tops = {}, {}, {}, {}
         called = collections.Counter()   # how many people each bare name has
         for row in face_rows:
             # (tag, name), or (id, tag, name) from a tree whose nodes have ids.
@@ -391,14 +391,14 @@ class PeopleVocabulary:
             # a photo tagged plainly "Family" must not gain a name.
             if name and name.lower() in roots and "/" not in tag and keyword_key(tag) in categories:
                 continue
-            # The first row to match a keyword by either spelling wins, as it did
-            # when this was a scan in row order.
+            # A keyword is a PATH (owner, 2026-10-11): a person's leaf is not a keyword that names them. A person at the top
+            # of the tree is their own path.
             if tag:
                 by_keyword.setdefault(tag.lower(), name)
-            if name:
-                by_keyword.setdefault(name.lower(), name)
             if node_id is not None:
                 names[node_id] = name
+                if tag and SEPARATOR not in tag:
+                    tops[node_id] = tag
                 if tag:
                     ids.setdefault(tag.lower(), node_id)
                 if name:
@@ -406,7 +406,9 @@ class PeopleVocabulary:
                     ids.setdefault(name.lower(), node_id)
         for bare, number in called.items():
             if number > 1:
-                ids.pop(bare, None)   # two people are called it: no keyword spelled so names one of them
+                # Two people are called it: the name alone names neither; the person at the top of the tree called so IS that path.
+                ids.pop(bare, None)
+                ids.update({tag.lower(): node_id for node_id, tag in tops.items() if tag.lower() == bare})
         return cls(roots, by_keyword, groups, ids, names)
 
 

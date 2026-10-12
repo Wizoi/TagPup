@@ -61,37 +61,34 @@ def add_path(conn, path, root_has_face=0):
 
 
 def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
-    """THE one place a name or a keyword that has no node gets one (owner, 2026-10-10: every tag has an id): (the node's id,
-    whether a node was made or, for a name, marked as a person), or (None, False) for a text with no levels, a name that two
-    people have or that is a group's, and a bare keyword that is a person's name. The caller commits. The edit is a
-    tree_edit, so what follows it follows: the photos carrying the keyword get their rows, and a person made (a node under
-    a face root, or for a name) is linked to the faces and listed people that hold the name and no id (person_ids.follow_tree
-    -> link_added, the one owner of linking).
+    """THE one place a name or a keyword that has no node gets one (owner, 2026-10-10: every tag has an id; 2026-10-11: only the id):
+    (the node's id, whether a node was made or, for a name, marked as a person), or (None, False) for a text with no levels, a
+    name that is the path of a group, and a keyword that would go under a person that faces or photos use. The caller commits.
+    The edit is a tree_edit, so what follows it follows: the photos carrying the keyword get their rows, and a person made (a
+    node under a face root, or for a name) is linked to the faces and listed people that hold the name and no id
+    (person_ids.follow_tree -> link_added, the one owner of linking).
 
-    A keyword is found as the tree spells it, else without case, in one Unicode form and as `vocabulary.normalize` spells it
-    (derived.Tree), so a level that exists is never made a second time under another case; one that does not is made with
-    each missing level above it (add_path), a root without the flag. A NAME (`person`; a bare one) is the person called it
-    if one is, else a node directly under the tree's root marked as a person; a childless word tag of that name at the top
-    is marked as one, and a name with a node under it (a group) is given none. `tree` is the derived.Tree the caller holds
-    (kept up to date here); `known` the person_ids.People, read here when it is needed and not given. `edited`: the caller
-    is inside a tree_edit of its own (tagpup.services.tree_fill makes many nodes in one). Idempotent: the second call finds
-    the node the first made."""
+    A keyword IS its path: it is found as the tree spells it, else without case, in one Unicode form and as
+    `vocabulary.normalize` spells it (derived.Tree), so a level that exists is never made a second time under another case; one
+    that does not is made with each missing level above it (add_path), a root without the flag. A bare keyword is a node of its
+    own at the top, never a person's name. A NAME (`person`; a bare one) is the one person called it if exactly one is; else
+    -- none, two, or a group's leaf, which are other paths -- the node of that path directly under the tree's root, marked as a
+    person (a childless word tag of that name there is marked as one); the name of a node with nodes under it is a group's, and
+    is given none. `tree` is the derived.Tree the caller holds (kept up to date here); `known` the person_ids.People, read here
+    when it is needed and not given. `edited`: the caller is inside a tree_edit of its own (tagpup.services.tree_fill makes many
+    nodes in one). Idempotent: the second call finds the node the first made."""
     path = vocabulary.normalize(text)
     if not path or not tree_exists(conn):
         return None, False
     tree = tree or derived.Tree.read(conn)
     bare = vocabulary.SEPARATOR not in path
-    if bare:
-        known = known or person_ids.read(conn)
-        if person:
-            try:
-                found = known.person(path)
-            except person_ids.PersonProblem:
-                return None, False   # two people have the name, or it is a group's: the owner settles it
-            if found is not None:
-                return found.id, False
-        elif known.why_not(path) in (None, "several"):
-            return None, False   # a person's name: their keyword, not a tag of its own
+    if bare and person:
+        try:
+            found = (known or person_ids.read(conn)).person(path)
+        except person_ids.PersonProblem:
+            found = None   # two people have the name, or it is a group's leaf: the path of the name is the person
+        if found is not None:
+            return found.id, False
     spelled, level, hit = _walk(tree, path)
     parts = vocabulary.segments(path)
     if hit is not None:

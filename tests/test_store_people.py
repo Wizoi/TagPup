@@ -52,16 +52,16 @@ class ThePeopleALibraryKnows(unittest.TestCase):
         self.assertEqual(self.names(keywords_too=True), ["Ada Pembrook", "Milo Garrick"])
 
     def test_a_person_hidden_from_autocomplete_is_left_out_unless_asked_for(self):
+        self.file("People/Wren Halloway", hidden=1)   # the tree first: a face is named by the person it files
         self.face("Ada Pembrook")
         self.face("Wren Halloway")
-        self.file("People/Wren Halloway", hidden=1)
         self.assertEqual(self.names(), ["Ada Pembrook"])
         self.assertEqual(self.names(include_hidden=True), ["Ada Pembrook", "Wren Halloway"])
 
     def test_so_is_one_filed_in_a_hidden_branch(self):
-        self.face("Wren Halloway")
         self.file("People/Archive", hidden=1)
         self.file("People/Archive/Wren Halloway")
+        self.face("Wren Halloway")
         self.assertEqual(self.names(), [])
 
     def test_one_filed_twice_is_offered_while_either_place_is_visible(self):
