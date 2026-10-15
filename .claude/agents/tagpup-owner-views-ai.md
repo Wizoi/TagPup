@@ -39,7 +39,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 |---|---|
 | One process on the card at a time | `tests/test_gpu_single_owner.py`, `tests/test_one_gpu_at_a_time.py`, `tests/test_one_gpu_jobs.py` |
 | Models built once by the runtime; no test loads one | `tests/test_gpu_single_owner.py`, `tests/test_no_test_loads_a_model.py` |
-| Idle models and indexes released | `tests/test_models_released_when_idle.py`, `tests/test_vectors_and_pool_released_when_idle.py`, `tests/test_unload_models_now.py` |
+| Idle models and indexes released | `tests/test_models_released_when_idle.py` (V6) |
 | A view page searches an index, never scans `photos` | `tests/test_library_view_plans.py` |
 | Ties and orders | `tests/test_library_view.py`, `tests/test_library_views_scenarios.py` (V1, V8) |
 | Derived tables follow every writer | `tests/test_derived_writers.py`, `tests/test_search_words.py`, `tests/test_camera_words.py` |
