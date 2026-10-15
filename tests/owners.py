@@ -192,7 +192,7 @@ _FILES = {
             "test_index_reports_failed_clustering test_index_startup_reads test_jobs_indexing "
             "test_journaled_write_is_one_command test_keyword_fields test_lock_owners test_membership_is_bounded "
             "test_metadata_extraction test_minor_errors_in_a_journaled_write test_one_answer_to_the_librarys_folders "
-            "test_partial_writes_stamp_only_a_current_row test_path_spelling_in_faces_and_records test_paths "
+            "test_path_spelling_in_faces_and_records test_paths "
             "test_paths_roots test_photo_identity test_photo_meta test_refresh_rows_guards "
             "test_relink_checks_the_destination test_relink_stays_in_its_folder test_remove_folder_lists_the_library "
             "test_rename_keeps_the_index test_rename_settle_knows_a_copy test_renaming "
