@@ -3,14 +3,14 @@
  * library-source.js). Words in one box and Enter; All of / Any of / None of, each a list of the library's tags and people picked
  * by a combobox; Within the sidebar's selection. The address holds the search, so Back, Forward and a bookmark restore it, the
  * box and the chips with it. How it fails: the vocabulary changing while the picker is open, a person named like a branch, a
- * bookmark's tag that is gone, an address too long, a list of 1,000, words of punctuation only, the server's 400 and 503, a
+ * bookmark's tag that is gone, an address too long, a list of 1,000, words of punctuation only, the server's 400, a
  * later search overtaking an earlier one. Every name is fictional; the real library is photographs of real people.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { closeAllApps, click, flush, pageExports } from "./harness.mjs";
-import { loadViewPage, pageErrors, personRow, speedUp } from "./view-page.mjs";
+import { loadViewPage, pageErrors, personRow } from "./view-page.mjs";
 
 afterEach(() => {
   closeAllApps();
@@ -455,78 +455,6 @@ describe("what the server says", () => {
     assert.match(ctx.stripText(), /at most 20 words/);
   });
 
-  test("503 while the word index is being made: the sentence in the strip, asked again after Retry-After, then the result", async (t) => {
-    const ctx = await loadViewPage(t, { search: "?view=all" });
-    speedUp(ctx);
-    let refused = 0;
-    const sentence = "The word index is being made now; try again in a few seconds.";
-    // The second refusal is held until the strip has been looked at: the waits are sped up a hundredfold (50 ms), and on a
-    // busy machine both retries ran before the test looked, and the strip had already moved on (#721).
-    let look;
-    const looked = new Promise((resolve) => { look = resolve; });
-    ctx.server.first("/api/library/ids", async () => {
-      refused += 1;
-      if (refused === 2) {
-        ctx.server.routes.shift();   // the third ask finds the index made
-        await looked;
-      }
-      return { success: false, error: sentence };
-    }, { status: 503, headers: { "Retry-After": "5" } });
-    words(ctx).value = "beach";
-    ctx.key(words(ctx), "Enter");
-    await ctx.until(() => refused >= 2);
-    assert.match(ctx.stripText(), /being made now/);
-    assert.ok(ctx.document.getElementById("library-strip-status").classList.contains("library-strip-problem"));
-    look();
-    await ctx.until(() => ctx.state.library.status === "ready");
-    assert.equal(refused, 2);
-    assert.deepEqual(ctx.delays.filter((ms) => ms === 5000), [5000, 5000], "each wait is the Retry-After");
-    assert.doesNotMatch(ctx.stripText(), /being made now/);
-    assert.equal(note(ctx).textContent, "", "a 503 is the strip's, not the box's");
-  });
-
-  test("503 that never ends: about a minute of asking again, then it stops and leaves the sentence", async (t) => {
-    const ctx = await loadViewPage(t, { search: "?view=all" });
-    speedUp(ctx);
-    let refused = 0;
-    ctx.server.first("/api/library/ids", () => {
-      refused += 1;
-      return { success: false, error: "The word index is being made now; try again in a few seconds." };
-    }, { status: 503, headers: { "Retry-After": "5" } });
-    await search(ctx, "beach");
-    await ctx.until(() => ctx.state.library.status === "error");
-    const asked = refused;
-    assert.equal(asked, 13, "the first ask and twelve more, five seconds apart: a minute");
-    await ctx.settle(300);
-    assert.equal(refused, asked, "and then nothing more");
-    assert.match(ctx.stripText(), /being made now/);
-  });
-
-  test("a new search while one waits out a 503: the waiting one asks nothing more", async (t) => {
-    const ctx = await loadViewPage(t, { search: "?view=all" });
-    speedUp(ctx);
-    const asked = [];
-    ctx.server.first("/api/library/ids", () => {
-      const body = ctx.server.lastBody("/api/library/ids");
-      asked.push(body.value.words);
-      if (body.value.words === "sand") return { source: {}, total: 1, ids: [5], complete: true };
-      return { success: false, error: "The word index is being made now; try again in a few seconds." };
-    }, { status: 503, headers: { "Retry-After": "5" } });
-    await search(ctx, "beach");
-    assert.ok(asked.length >= 1);
-    ctx.server.routes.shift();
-    ctx.server.first("/api/library/ids", () => {
-      asked.push(ctx.server.lastBody("/api/library/ids").value.words);
-      return { source: {}, total: 1, ids: [5], complete: true };
-    });
-    words(ctx).value = "sand";
-    ctx.key(words(ctx), "Enter");
-    const beachAsks = asked.filter((w) => w === "beach").length;
-    await ctx.settle(400);
-    assert.equal(asked.filter((w) => w === "beach").length, beachAsks, "the replaced search was not asked again");
-    assert.equal(ctx.state.library.value.words, "sand");
-    assert.equal(ctx.state.library.status, "ready");
-  });
 });
 
 describe("a search is a view like any other", () => {

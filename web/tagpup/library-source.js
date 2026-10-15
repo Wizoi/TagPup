@@ -34,11 +34,6 @@ export const MEMBER_KINDS = LIBRARY_KINDS.filter(kind => kind !== 'any_of' && ki
 export const SEARCH_LISTS = ['all_of', 'any_of', 'none_of'];
 /** The longest text of words a search reads (services.library_view.MAX_WORDS). */
 export const MAX_WORDS = 500;
-/**
- * How long a view waits, in all, for a library answering 503 with Retry-After -- the word index being made (#753) -- asking
- * again after each Retry-After; then it stops and leaves the server's sentence.
- */
-export const WAIT_FOR_INDEX_MS = 60000;
 /** The most sources a union holds: as the server takes (services.library_view.MAX_MEMBERS). */
 export const MAX_MEMBERS = 1000;
 /**
@@ -412,8 +407,6 @@ export function newLibrary(spec) {
         status: 'loading',            // loading | ready | empty | error
         message: '',                  // why it is empty or failed, in a sentence
         notice: '',                   // something that went wrong beside the view: a refresh, a selection
-        waiting: '',                  // the library's sentence while its ids are asked again after a 503 (the word index being made)
-        waitTimer: 0,                 // the next ask, after the 503's Retry-After
         failure: null,                // { status } of the ids request that failed: a search's 400 is said by the box (search.js)
         ids: [], total: 0, complete: true,
         loading: false, controller: null,
@@ -436,51 +429,26 @@ export function destroyLibrary(lib) {
     lib.requested.clear();
     window.clearTimeout(lib.timer);
     window.clearTimeout(lib.retryTimer);
-    window.clearTimeout(lib.waitTimer);
     lib.timer = 0;
     lib.retryTimer = 0;
-    lib.waitTimer = 0;
 }
 
 /**
- * Ask for the view's order: its ids and total. Resolves true when they were replaced. A library answering 503 with Retry-After
- * (a search's words while the word index is being made, #753) is asked again after it, its sentence in the strip meanwhile,
- * until WAIT_FOR_INDEX_MS of Retry-After have passed: then the view fails with that sentence. A view replaced meanwhile asks
- * nothing more.
+ * Ask for the view's order: its ids and total. Resolves true when they were replaced. A server being updated is waited out by
+ * api.js; any other refusal is the view's sentence. A view replaced meanwhile drops the answer.
  */
 export function loadLibraryIds(lib, refreshing = false) {
     if (lib.controller) lib.controller.abort();
-    window.clearTimeout(lib.waitTimer);
-    lib.waitTimer = 0;
-    lib.waiting = '';
     const controller = new AbortController();
     lib.controller = controller;
     lib.loading = true;
     if (!refreshing) lib.status = 'loading';
     upper.libraryChanged();
     const current = () => lib === state.library && controller === lib.controller;
-    let waited = 0;
-    const ask = () => api.fetch(...idsRequest(lib, controller.signal))
-        .then(res => res.json().catch(() => ({})).then(body => {
-            const header = res.headers && typeof res.headers.get === 'function' ? res.headers.get('Retry-After') : null;
-            return { ok: res.ok, status: res.status, body, retryAfter: header };
-        }))
-        .then(reply => {
-            if (!current() || reply.status !== 503 || reply.retryAfter === null) return reply;
-            const seconds = Number(reply.retryAfter);
-            const wait = (Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 30) : 5) * 1000;
-            if (waited + wait > WAIT_FOR_INDEX_MS) return reply;
-            waited += wait;
-            lib.waiting = (reply.body && reply.body.error) || 'The library is busy; asking again in a few seconds.';
-            upper.libraryChanged();
-            return new Promise(resolve => { lib.waitTimer = window.setTimeout(resolve, wait); })
-                .then(() => (current() ? ask() : reply));
-        });
-    return ask()
+    return api.fetch(...idsRequest(lib, controller.signal))
+        .then(res => res.json().catch(() => ({})).then(body => ({ ok: res.ok, status: res.status, body })))
         .then(({ ok, status, body }) => {
             if (!current()) return false;
-            lib.waiting = '';
-            lib.waitTimer = 0;
             if (!ok) {
                 const failure = new Error((body && body.error) || 'The library could not be asked.');
                 failure.status = status;
@@ -500,7 +468,6 @@ export function loadLibraryIds(lib, refreshing = false) {
         .catch(err => {
             if (err.name === 'AbortError' || !current()) return false;
             lib.loading = false;
-            lib.waiting = '';
             lib.failure = { status: err.status || 0 };
             if (refreshing) lib.notice = `Could not refresh the view: ${err.message}`;
             else {
