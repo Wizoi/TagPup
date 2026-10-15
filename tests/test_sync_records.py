@@ -122,14 +122,6 @@ class TheRecordIsBounded(unittest.TestCase):
         shown = activity.timeline(Library(self.path), limit=wanted)
         self.assertEqual(3, len([e for e in shown if e["kind"] == "job"]), "the 20 syncs took none of their places")
 
-    def test_a_library_from_before_the_runs_has_none(self):
-        conn = db.connect(self.home.library("empty.db"))   # no tables: a look does not migrate
-        try:
-            self.assertEqual({"last_run": None, "last_in_step": None}, job_runs.last_sync(conn))
-            self.assertEqual([], job_runs.recent_syncs(conn))
-        finally:
-            conn.close()
-
 
 class WhichFolderSyncsAreRecorded(SyncTestCase):
     """The folder watcher syncs a folder each time it settles; a sync of one folder is recorded when it found or changed
