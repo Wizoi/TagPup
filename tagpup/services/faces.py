@@ -628,7 +628,7 @@ def _record_detection(conn, photo_path, detector, detected):
 def record_detected(db_path, photo_path, detected, detector=None):
     """Record the faces found in a photo only when it has none yet. Returns rows inserted.
 
-    Never deletes: replace_detected clears the photo's rows first, which would discard
+    Never deletes: record_batch(overwrite=True) clears the photo's rows first, which would discard
     manual names and exclusions. This is for callers that detected faces as a side
     effect of doing something else (the suggester) and want to keep the work without
     disturbing anything already recorded.
@@ -690,29 +690,6 @@ def record_detected(db_path, photo_path, detected, detector=None):
             "recover them.", photo_path, e
         )
         return 0
-
-
-def replace_detected(conn, photo_path, detected, detector=None):
-    """Replace a photo's faces with freshly detected ones, and commit.
-
-    This discards any names, manual overrides, exclusions and cached crops on the
-    existing rows: it is for explicit re-detection. Logged, not raised. Without a
-    connection, nothing.
-    """
-    if conn is None:
-        return
-    try:
-        faces.remove_for_photo(conn, photo_path)
-        for face in detected:
-            _insert_detected(conn, photo_path, face, name=face.get("name"))
-        if detected:
-            face_tags.name_paths(conn, [photo_path])   # (#788)
-        faces_pending.clear(conn, [photo_path])
-        _record_detection(conn, photo_path, detector, detected)
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Error saving faces for {photo_path}: {e}")
-        conn.rollback()
 
 
 def faces_to_detect(library):

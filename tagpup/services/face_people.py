@@ -7,7 +7,7 @@ be them is the same drift the other way. So every write that names, unnames or r
 open photo goes through here, and this is the one place that says how the keyword follows:
 
 * **Naming** a face adds the person to the photo, the TAG FIRST: a tag that cannot be written (a file
-  that cannot be read, a network share that is away, a person the tree files in two places) names no
+  that cannot be read, a network share that is away, a new person with no one people root to be filed under) names no
   face, and says why. A face that cannot be named afterwards (somebody named the person on another face
   meanwhile) keeps the tag, the state the app always allowed, and the same choice names it.
 * **Taking a name off** a face, ruling it out ("not important") or taking every name off a photo removes
@@ -62,29 +62,32 @@ CHUNK = 25
 class Filer:
     """The tag a person is written as, by the one rule a chip and Apply All follow (`vocabulary.person_tag`): the tree
     read once, and only read -- no node is made. A person given by the id of their node (or as a Person or a Ref with one)
-    is the tag of that node: a leaf two people have is no question for them. None for a person the tree files in two places
-    (a NAME two people have), or a tree with several people roots: someone must choose (the page's placement question)."""
+    is the tag of that node. A NAME is a person the tree does not have yet (`made` and bulk_edit resolve a name a person
+    has first, and refuse the one two people have), filed under the one people root; None when the tree has several: someone
+    must choose (the page's placement question)."""
 
     def __init__(self, library):
-        self.filed, self.roots = taxonomy.people_filing(library.path)
+        self.roots = taxonomy.people_filing(library.path)[1]
         self.tags_by_id = people_service.tags_by_id(library)
 
     def tag(self, person):
         person = person_ids.wire(person)
         if isinstance(person, int):
             return self.tags_by_id.get(person)
-        name = (person or "").strip()
-        return vocabulary.person_tag(name, self.filed.get(vocabulary.key(name), []), self.roots)
+        return vocabulary.person_tag((person or "").strip(), [], self.roots)
 
 
 def made(library, ref):
     """`ref` (the id of a person, or a name) as the id of a person that has a node: a name no person is called is given its node
     at the path the filer chooses -- the tag first, as the New person dialog makes it (every tag has an id, owner 2026-10-10) --
-    and the node's id is returned. Refused for a name the filer cannot place, or that would go under a person that faces or photos
-    use; nothing is made then."""
+    and the node's id is returned. Refused for a name two people have (the sentence names their paths), one the filer cannot place,
+    or one that would go under a person that faces or photos use; nothing is made then."""
     ref = person_ids.wire(ref)
     if isinstance(ref, int):
         return ref
+    found = people_service.resolve(library, ref)
+    if found is not None:
+        return found.id
     tag = Filer(library).tag(ref)
     if tag is None:
         raise Refused(not_filed(ref))
@@ -100,9 +103,8 @@ def made(library, ref):
 
 
 def not_filed(name):
-    return ("%s is filed in more than one place in the tag tree (or the tree has several people roots), so it is "
-            "not known where to file them: add them to the photo from TagPup's Organize, which asks, or name the "
-            "path." % name)
+    return ("The tag tree has several people roots, so it is not known where to file %s: add them to the photo from "
+            "TagPup's Organize, which asks, or name the path." % name)
 
 
 def shown(person):
@@ -186,7 +188,7 @@ def add_people(library, wanted, writer, filer=None, operation=ADDED, stop_at_fir
     """Add the person of each (photo path, person) of `wanted` to the photo's keywords, a photo given all its people in
     one write; a person is their id, a Ref, or a name. A Result: `changed` the files written, details `written`. A photo whose
     keywords name the person already (by the id of their node: already_names) is not read or written again.
-    Refused, nothing written, for a name the tree files in two places."""
+    Refused, nothing written, for a name the tree has no one root to file under."""
     filer = filer or Filer(library)
     result = Result(attempted=len(wanted))
     held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, [path for path, _name in wanted])}

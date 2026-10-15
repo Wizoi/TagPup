@@ -5,7 +5,7 @@ An EDIT is what is done to every photo of a selection (at most batches.MAX_BATCH
 * `tags`: add some tags and take some off, `{"add": [...], "remove": [...]}`;
 * `people`: add and take off people, `{"add": [...], "remove": [...], "add_ids": [...], "remove_ids": [...]}`: a person_id is the
   one person (their node's tag; an id that is nobody's is refused, naming nothing, and writes nothing), a name is filed as a
-  click on a person's chip files it (`vocabulary.person_tag`, the one rule; a name two people have is refused), a person a
+  click on a person's chip files it (`vocabulary.person_tag`, the one rule; a name two people have is refused, naming their paths), a person a
   file already names (by the id of their node: two people called alike are two) is not added again, and no node of the tag
   tree is made;
 * `delete`: send each photo's file to the Recycle Bin and forget its row, faces and thumbnail, as the folder view's Delete
@@ -97,7 +97,7 @@ def _ids_of(params, key):
 def prepare(library, op, params):
     """The Edit for `op` and `params` as a request sends them, or Refused with a sentence and nothing done: an unknown
     op, a list that is not text, a tag the rules forbid (tagpup.core.validation, as every write of a tag checks), a name with
-    nothing in it, a person the tree files in two places (which one?), nothing to do, a tag both added and removed. What is
+    nothing in it, nothing to do, a tag both added and removed. What is
     taken off is not checked: a bad tag must stay removable."""
     if op not in OPS:
         raise Refused("op must be one of %s." % ", ".join(OPS))
@@ -149,10 +149,10 @@ def _people(library, add, remove, add_ids=(), remove_ids=()):
         name = name.strip()
         if not name:
             raise Refused("A person's name cannot be empty.")
-        tag = vocabulary.person_tag(name, filed.get(vocabulary.key(name), []), roots)
+        found = None if vocabulary.SEPARATOR in name else people_service.resolve(library, name)   # Refused: two people have it
+        tag = found.tag if found else vocabulary.person_tag(name, [], roots)
         if tag is None:
-            raise Refused("%s is filed in more than one place in the tag tree (or the tree has several people roots), so "
-                          "it is not known where to file them: name the path." % name)
+            raise Refused("The tag tree has several people roots, so it is not known where to file %s: name the path." % name)
         tags.append(tag)
         persons.append(tag)
     taken = list(taken_by_id)

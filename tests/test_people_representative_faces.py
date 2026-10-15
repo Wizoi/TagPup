@@ -111,8 +111,8 @@ class WhenTheFacesChange(Case):
     def test_a_rename_is_seen(self):
         face = self.face(at(0), "Wren Halloway")
         self.assertEqual(self.chosen(), {"Wren Halloway": face})
-        db.write_with_connection(self.lib.library.path, lambda conn: store_faces.set_names(
-            conn, {face: "Wren Hallowell"}))
+        db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name(
+            conn, [face], "Wren Hallowell"))
         self.assertEqual(self.chosen(), {"Wren Hallowell": face})
 
     def test_a_representative_named_for_someone_else_meanwhile_is_replaced(self):

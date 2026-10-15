@@ -108,7 +108,8 @@ class PersonIdsHaveOneOwner(unittest.TestCase):
         for found, via in IDS_WRITTEN_WITH_THE_PAIR.items():
             with self.subTest(found):
                 self.assertIn(found, self.ids, "the exception is for a function that does write an id")
-                self.assertTrue(mentions(self.nodes[found], "person_ids"), "%s: the pair comes from %s" % (found, via))
+                self.assertTrue(mentions(self.nodes[found], "person_ids") or mentions(self.nodes[found], "_target"),
+                                "%s: the pair comes from %s" % (found, via))
 
     def test_every_writer_of_a_name_follows_it_with_the_id(self):
         unfollowed = []

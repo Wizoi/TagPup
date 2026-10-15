@@ -83,12 +83,22 @@ def _excluded_face_ids(photo_index):
         return set()
 
 
-def _save_face_names(photo_index, face_updates):
+def _person_id(known, name):
+    """The id of the one person `name` is, or None (no person is called it, two are, or it is a group's)."""
+    try:
+        found = known.person(name)
+    except person_ids.PersonProblem:
+        return None
+    return found.id if found else None
+
+
+def _save_face_names(photo_index, face_updates, as_read):
     """Write the names resolved, (name, face id) each, as the people they are (person_ids.resolve): a name no person is called
     stays a name; a name two people are called, or a group's, is nobody here -- clustering cannot say which -- so its face is
-    left unnamed."""
+    left unnamed. A face is written only while it is still what was read (`as_read`: {face id: the person's id it carried},
+    store_faces.set_names): one a person named meanwhile keeps its name. Returns (faces written, faces left)."""
     if photo_index.conn is None or not face_updates:
-        return
+        return 0, 0
     try:
         conn = photo_index.conn
         known = person_ids.read(conn)
@@ -101,8 +111,10 @@ def _save_face_names(photo_index, face_updates):
                 resolved[name] = found.id if found else name
             except person_ids.PersonProblem:
                 resolved[name] = None
-        store_faces.set_names(conn, {face_id: None if name is None else resolved[name] for name, face_id in face_updates})
+        written, left = store_faces.set_names(
+            conn, {face_id: None if name is None else resolved[name] for name, face_id in face_updates}, as_read)
         conn.commit()
+        return len(written), len(left)
     except Exception as e:
         logger.error(f"Error updating face names: {e}")
         photo_index.conn.rollback()
@@ -122,7 +134,8 @@ def resolve(photo_index, max_iterations=5, on_step=None):
     overwritten, and excluded faces take no part.
 
     `on_step(stage, done, total)`, if given, hears where it has got -- "reading", "grouping" (one call of
-    DBSCAN: no count inside it), "voting", "propagating", "matching" and "saving" -- and may raise to stop it. Every
+    DBSCAN: no count inside it), "voting", "propagating", "matching" and "saving", then "left" (done: the faces not
+    written because a person named them while this ran) -- and may raise to stop it. Every
     stage but the last only reads; the names are written in one commit after "saving" is announced, so a stop is
     nothing written or all of it, never part (the job behind the apps' button, tagpup.jobs.naming_faces).
     """
@@ -624,6 +637,8 @@ def resolve(photo_index, max_iterations=5, on_step=None):
 
     face_updates = []
     resolved_stats = {}
+    known = person_ids.read(photo_index.conn)
+    as_read = {f["id"]: f["person"].id if f["person"] else None for f in all_faces}
 
     # Names already spoken for in each photo. The iterative loop refuses to put one
     # person on two faces of the same photo; without tracking that here, this final
@@ -713,7 +728,7 @@ def resolve(photo_index, max_iterations=5, on_step=None):
         # A face a person decided is not written; nor is one that already carries a person of the name found.
         carried = face.get("person")
         if face["id"] not in manual_names and not (
-                final_name and carried and tag_vocabulary.key(carried.name) == tag_vocabulary.key(final_name)):
+                final_name and carried and carried.id is not None and carried.id == _person_id(known, final_name)):
             face_updates.append((final_name, face["id"]))
         if final_name:
             resolved_stats[final_name] = resolved_stats.get(final_name, 0) + 1
@@ -721,7 +736,10 @@ def resolve(photo_index, max_iterations=5, on_step=None):
     # Apply name updates to the SQLite database: the last place to stop
     step("saving", 0, 1)
     if face_updates:
-        _save_face_names(photo_index, face_updates)
+        written, left = _save_face_names(photo_index, face_updates, as_read)
+        logger.info("Named %d face(s); %d left as they were.", written, left)
+        if left:
+            step("left", left, len(face_updates))   # a person decided them while this ran
         
     # Save traces to JSON
     try:

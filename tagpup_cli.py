@@ -751,7 +751,7 @@ def tags_from_faces(ctx, apply_, guesses, folder):
     ExifTool, 25 photos to a change of the journal (`history` lists them, `undo` takes one back).
     Run it on a small library first; TagPup and TagTuner may stay open (a file changed meanwhile
     is a conflict, reported and not overwritten: run it again). Left, and counted: a person the
-    tree files in two places; a photo whose keywords already name the person under a root the
+    a photo whose keywords already name the person under a root the
     tree does not file people under; and, unless --guesses, a person only a guess backs.
 
     --folder limits the count and the write to the photos under one folder and its subfolders."""
@@ -765,9 +765,6 @@ def tags_from_faces(ctx, apply_, guesses, folder):
         console.print("Only the photos under the folder given, and its subfolders.")
     console.print("%d photo(s) list a person from a face alone (%d people): their keywords do not name them."
                   % (counts["photos_with_a_person_on_a_face_alone"], counts["people"]))
-    if counts["people_the_tree_files_in_two_places"]:
-        console.print("  %d of the people are filed in more than one place in the tag tree (or the tree has several people "
-                      "roots): left, for you to choose where." % counts["people_the_tree_files_in_two_places"])
     if counts["people_the_file_names_under_another_root"]:
         console.print("  %d of the people: the photo's keywords already name them under a root the tag tree does not file people "
                       "under: skipped. They are people tags under a non-people root, a tree question: make that root a people "
@@ -1069,7 +1066,10 @@ def cluster_faces(ctx, reset: bool, max_iterations: int):
             console.print(f"[bold red]Failed to reset face assignments: {e}[/bold red]")
 
     try:
-        resolved_stats = identities.resolve(photo_index, max_iterations=max_iterations)
+        def heard(stage, done=0, total=1):
+            if stage == "left":
+                console.print(f"[bold yellow]{done} face(s) were named by hand while this ran and keep that name.[/bold yellow]")
+        resolved_stats = identities.resolve(photo_index, max_iterations=max_iterations, on_step=heard)
         
         if not resolved_stats:
             console.print("[yellow]No faces were resolved to identities. Try tagging photos with people names first.[/yellow]")
