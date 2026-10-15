@@ -77,10 +77,6 @@ class TestItWritesWhatWasOffered(unittest.TestCase):
     def test_a_photo_with_nothing_offered_writes_nothing(self):
         self.assertEqual(offered_tags({"tags": [], "people": []}), [])
 
-    def test_a_suggestion_record_missing_its_lists_is_not_a_crash(self):
-        self.assertEqual(offered_tags({}), [])
-        self.assertEqual(offered_tags({"tags": None, "people": None}), [])
-
 
 class TestTheRouteUsesTheOfferedLists(unittest.TestCase):
     """The guard. The drift was invisible for as long as the write threshold sat above

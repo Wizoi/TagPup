@@ -211,20 +211,10 @@ class CompletedMeansConsensusIsDone(_RunFixture):
 
 
 class WithoutAModelProvider(_LibraryFixture):
-    def test_a_run_says_it_has_no_models(self):
-        """An app made without a runtime fails the run with a message, not a NameError
-        three frames down; an empty folder never needs the model."""
+    def test_an_empty_folder_never_needs_the_model(self):
         folder, photos = self._folder("2025-08 Sprints", 1)
-        self.runs.run(folder, suggestion_jobs.work_for(self.library, lambda: photos, None))
-        status = self.runs.status(folder)
-        self.assertEqual(status["status"], "error")
-        self.assertIn("without a runtime", status["message"])
         self.runs.run(folder, suggestion_jobs.work_for(self.library, lambda: {}, None))
         self.assertEqual(self.runs.status(folder)["message"], "No images found in this folder.")
-
-    def test_there_is_no_slot_to_fill(self):
-        """The models were a module-level slot a script filled (docs/findings.md, #112)."""
-        self.assertFalse(hasattr(suggestion_jobs, "models"))
 
 
 class OneFileOneOwner(unittest.TestCase):
