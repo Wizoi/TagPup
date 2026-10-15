@@ -9,7 +9,7 @@ import it -- by package name (tagpup.store.db) or by the old names in scripts/ (
 the tests do -- or when its source names a changed file, as the tests that read the
 specs, the pages or config.ini do. Any Python change brings the lint test in. A change
 to the pages (web/) or to tests/frontend/ also calls for the frontend
-suite, which this prints the command for.
+suite, which this prints the command for, and for the pages' test against the real server.
 
 The full suite still runs before each commit and each merge: what a test reaches
 through a subprocess, a file it opens by a name built at run time, or state another
@@ -25,6 +25,9 @@ sys.path.insert(0, ROOT)
 
 from tagpup.core import processes  # noqa: E402
 FRONTEND = ("web/", "tests/frontend/")
+
+#: The Python test that runs the pages against the real server (the node suite skips those describes).
+PAGES_TEST = "tests/test_pages_against_the_real_server.py"
 
 
 def changed_files(since):
@@ -109,9 +112,12 @@ def affected(changed):
                 tests.add(relative)
     if any(c.endswith(".py") for c in changed):
         tests.add("tests/test_lint.py")
+    frontend = any(c.startswith(FRONTEND) for c in changed)
+    if frontend:
+        tests.add(PAGES_TEST)
     modules = sorted(os.path.splitext(os.path.basename(t))[0] for t in tests
                      if os.path.exists(os.path.join(ROOT, t)))
-    return modules, any(c.startswith(FRONTEND) for c in changed)
+    return modules, frontend
 
 
 def main(argv=None):
