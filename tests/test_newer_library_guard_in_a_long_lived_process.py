@@ -54,12 +54,12 @@ class ALongLivedProcessAndANewerApp(unittest.TestCase):
         self.home = own_home.for_test(self)
         self.path = self.home.library("harbour.db")
         library_actions.create(self.path)
-        schema._current.clear()
+        schema.forget(self.path)
         self.clock = Clock()
         patch = mock.patch.object(schema, "_clock", self.clock)
         patch.start()
         self.addCleanup(patch.stop)
-        self.addCleanup(schema._current.clear)
+        self.addCleanup(schema.forget)
         self.assertEqual([], schema.ensure(self.path), "found current, and remembered")
         # This process (a server's request thread, say) holds a read mark, as a long-lived one does: the newer app's
         # commit then stays in the -wal file and the main file is not written.
@@ -100,7 +100,7 @@ class ALongLivedProcessAndANewerApp(unittest.TestCase):
     def test_the_server_answers_409_under_the_library_after_the_bound(self):
         app, home = web_client.app_for(self, "tagpup")
         path = home.library("library.db")
-        schema._current.clear()
+        schema.forget()
         client = app.test_client()
         self.assertEqual(200, client.get("/library/api/databases").status_code)
         reader = db.connect(db.readonly_uri(path), uri=True)
@@ -120,12 +120,12 @@ class NothingIsRefusedWhileTheVersionIsUnchanged(unittest.TestCase):
         self.home = own_home.for_test(self)
         self.path = self.home.library("harbour.db")
         library_actions.create(self.path)
-        schema._current.clear()
+        schema.forget(self.path)
         self.clock = Clock()
         patch = mock.patch.object(schema, "_clock", self.clock)
         patch.start()
         self.addCleanup(patch.stop)
-        self.addCleanup(schema._current.clear)
+        self.addCleanup(schema.forget)
 
     def test_hours_pass_the_version_is_asked_once_per_bound_and_nothing_is_refused(self):
         schema.ensure(self.path)
