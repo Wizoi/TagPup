@@ -97,7 +97,7 @@ class FaceDecisionCase(unittest.TestCase):
         index.load()
         meta = fake_meta(self.photo)
         meta["path"] = stored_as
-        index.build_or_update([[0.1] * expected_dim()], [meta], dim=expected_dim(), reload=False)
+        index.build_or_update([[0.1] * expected_dim()], [meta], dim=expected_dim())
         ids = {}
         for box, name, source, excluded, reason in CURATED:
             ids[str(box)] = add_face(index.conn, paths.stored(stored_as), box=str(box),

@@ -19,7 +19,6 @@ change it wrote.
   of nameless photos are not counted.
 """
 import logging
-import os
 
 from tagpup.core import paths, validation
 from tagpup.core.result import Conflict, Refused, Result
@@ -153,30 +152,6 @@ def plan_guesses(library, folder, named):
         if tag not in work.add[paths.key(path)]:
             work.add[paths.key(path)].append(tag)
     return Plan(GUESS, work, problems=sorted(problems))
-
-
-# ---- What an older version left ----------------------------------------------------------------------------------------
-
-_swept = set()
-
-
-def forget_old_jobs(library):
-    """Let go of the plans and states an older version kept of its face assignments, in the library's cache folder
-    (Library.bulk_jobs): they name people, and nothing reads them now. Once a process for each library; never raises."""
-    key = paths.key(library.path)
-    if key in _swept:
-        return
-    _swept.add(key)
-    try:
-        for name in os.listdir(library.bulk_jobs):
-            job = name.partition(".")[0]
-            if job.isdigit() and name.endswith((".plan.json", ".state.json", ".ids")) or ".tmp-" in name:
-                os.remove(os.path.join(library.bulk_jobs, name))
-        if not os.listdir(library.bulk_jobs):
-            os.rmdir(library.bulk_jobs)
-    except OSError as problem:
-        if not isinstance(problem, FileNotFoundError):
-            logger.warning("Could not let go of the old assignment records of %s: %s", library.name, problem)
 
 
 # ---- Carrying it out ----------------------------------------------------------------------------------------------------

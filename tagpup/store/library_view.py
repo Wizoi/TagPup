@@ -123,10 +123,7 @@ INDEXES = ("idx_photos_taken", "idx_photos_year")
 
 
 def ready(conn):
-    """Has the library on `conn` what the views stand on: the derived tables (migration 19) and the indexes
-    the pages are ordered by (migration 20)?"""
-    if not derived.present(conn):
-        return False
+    """Has the library on `conn` the indexes the pages are ordered by (migration 20)?"""
     found = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (%s)"
                          % ",".join("?" * len(INDEXES)), INDEXES).fetchone()[0]
     return found == len(INDEXES)

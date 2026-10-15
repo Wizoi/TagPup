@@ -279,22 +279,6 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         images_to_process = [path for path in all_images if paths.key(path) not in current]
     skipped_count = len(all_images) - len(images_to_process)
 
-    # A photo whose faces are still to be detected (tagpup.store.faces_pending) is indexed even with a vector:
-    # Suggest may have made one since.
-    if not skip_faces:
-        chosen = {paths.key(path) for path in images_to_process}
-        again = []
-        for path in face_records.faces_to_detect(Library(db_path)):
-            if paths.key(path) in chosen or not os.path.exists(path):
-                continue
-            if any(paths.same(os.path.dirname(path), directory)
-                   or (not no_subfolders and paths.is_under(path, directory)) for directory in directories):
-                again.append(path)
-        if again:
-            console.print(f"[cyan]Detecting the faces of {len(again)} photo(s) again.[/cyan]")
-            images_to_process += again
-            skipped_count -= len(again)
-
     if skipped_count > 0:
         console.print(f"[green]Skipped {skipped_count} unchanged image(s) already present in the index.[/green]")
 
@@ -449,7 +433,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 
                 # Save progress incrementally in batches of 100
                 if len(batch_embeddings) >= 100:
-                    photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=False)
+                    photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
                     
                     # Save faces for the batch in a single transaction
                     if batch_faces:
@@ -474,7 +458,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
             # Not reloaded: nothing below searches this index, and a reload reads every vector again.
-            photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=False)
+            photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
             
             # Save the remaining face embeddings
             if batch_faces:

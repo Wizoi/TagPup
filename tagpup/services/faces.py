@@ -24,7 +24,7 @@ from tagpup.services import identify
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_files
 from tagpup.services import thumbnails
-from tagpup.store import db, face_tags, faces, faces_detected, faces_pending, person_ids, photos, removals
+from tagpup.store import db, face_tags, faces, faces_detected, person_ids, photos, removals
 from tagpup.store import embeddings as store_embeddings
 from tagpup.store import folders as store_folders
 
@@ -646,26 +646,16 @@ def record_detected(db_path, photo_path, detected, detector=None):
     if not ran(detected):
         return 0
     if not detected:
-        # Detection ran and found no face: no face to record, and no longer anything still
-        # to detect (store.faces_pending); that it ran is recorded, given its detector.
+        # Detection ran and found no face: no face to record; that it ran is recorded, given its detector.
         if detector is None:
-            conn = db.connect(db.readonly_uri(db_path), uri=True)
-            try:
-                marked = faces_pending.count(conn)
-            finally:
-                conn.close()
-            if not marked:
-                return 0
+            return 0
 
         def none_found(conn):
-            faces_pending.clear(conn, [photo_path])
             _record_detection(conn, photo_path, detector, detected)
         db.write_with_connection(db_path, none_found, label="faces detected in %s" % os.path.basename(photo_path))
         return 0
 
     def insert(conn):
-        # Detection ran: the photo's faces are no longer still to detect (store.faces_pending).
-        faces_pending.clear(conn, [photo_path])
         _record_detection(conn, photo_path, detector, detected)
         if faces.count_for_photo(conn, photo_path) > 0:
             return 0  # already recorded; leave it alone
@@ -690,17 +680,6 @@ def record_detected(db_path, photo_path, detected, detector=None):
             "recover them.", photo_path, e
         )
         return 0
-
-
-def faces_to_detect(library):
-    """The paths of the photos whose faces are still to be detected (store.faces_pending): the indexer detects them
-    whether or not they have a vector."""
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        return faces_pending.pending(conn)
-    finally:
-        conn.close()
-
 
 def record_batch(conn, batch, overwrite=False, detector=None):
     """Record the faces found in a batch of photos ({path: faces}) in one transaction.
@@ -733,8 +712,6 @@ def record_batch(conn, batch, overwrite=False, detector=None):
                 recorded.append(photo_path)
         # The photos' person tags name their faces (#788), once the batch's faces are all there.
         face_tags.name_paths(conn, recorded)
-        # Detection ran on each photo of the batch: none is still to detect (store.faces_pending).
-        faces_pending.clear(conn, list(batch))
         conn.commit()
     except Exception as e:
         logger.error(f"Error saving faces batch to SQLite: {e}")

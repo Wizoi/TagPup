@@ -7,8 +7,7 @@ nothing at all, so Suggest could not tell it from one never looked at: it took t
 graphics card, loaded the face model and detected again, every time (10,732 of
 photo_index's 68,324 photos had no face). A row here says detection ran, so Suggest asks
 it before detecting (tagpup.services.suggester). Written by the indexer (record_batch) and
-by Suggest (record_detected) for every photo they detect; a photo marked as having faces
-still to detect (tagpup.store.faces_pending) has its row taken away.
+by Suggest (record_detected) for every photo they detect.
 
 A row is read only under the detector it names: detected again under other face settings,
 a photo may find faces it did not. The stamp is kept, not compared: a write of a photo's
@@ -18,7 +17,7 @@ more, by the next Suggest that looks at them: no rule tells from the library tha
 index detected a photo's faces (an index run with --skip-faces made vectors without, and
 Suggest makes vectors of photos it never detected faces in).
 
-Like faces_pending: no foreign key and no trigger -- a row whose photo is gone is read as
+No foreign key and no trigger -- a row whose photo is gone is read as
 none, a photo's id never being handed out again -- so deleting a photo takes nothing the
 journal must account for; not journaled, as indexing is not.
 """
@@ -91,9 +90,3 @@ def forget_faceless(conn, photo_ids):
             " AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = faces_detected.photo_id)"
             % ",".join("?" * len(chunk)), chunk).rowcount
     return removed
-
-
-def forget(conn, photo_id):
-    """Take the photo's row away: its faces are to be detected again. The caller commits."""
-    if _there(conn):
-        conn.execute("DELETE FROM faces_detected WHERE photo_id = ?", (photo_id,))

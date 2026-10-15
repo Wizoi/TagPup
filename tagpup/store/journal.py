@@ -317,7 +317,7 @@ def _canonical_value(roots, table, key, column, value):
 
 
 def has_journal(conn):
-    """Has the library on `conn` the journal's tables (migration 9)?"""
+    """Has the library on `conn` the journal's tables (migration 9)? Asked by the migrations (tagpup.store.schema) only."""
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'changes'").fetchone() is not None
 
 
@@ -338,10 +338,6 @@ def _resolve(conn, edits):
 
     refusals, top, seen, skipped = [], [], set(), []
     deletes = collections.defaultdict(dict)
-    #: (table, key) -> the columns an update of this change writes: a child whose column naming its parent is
-    #: written here has been given to another parent, and goes with neither (a face moved to another photo
-    #: before the photo is deleted).
-    rewritten = {}
     for edit in edits:
         if edit.table not in KEYS:
             raise ValueError("%s is not a table a change writes%s" % (
@@ -397,9 +393,8 @@ def _resolve(conn, edits):
                        if not _same(_canonical_value(roots, edit.table, key, column, row[column]), value)}
             if changed:
                 top.append(RowChange("update", edit.table, key, {c: row[c] for c in changed}, changed, edit.kind))
-                rewritten[(edit.table, key)] = set(changed)
             continue
-        if edit.table == "tag_taxonomy" and person_ids.present(conn) and conn.execute(
+        if edit.table == "tag_taxonomy" and conn.execute(
                 "SELECT 1 FROM faces WHERE tag_id = ? LIMIT 1", (key[0],)).fetchone():
             refusals.append("%s is the person of faces: unname them first (or merge it into the person they are)"
                             % _named(edit.table, key))
@@ -428,7 +423,7 @@ def _resolve(conn, edits):
                         chunk).fetchall():
                     row = dict(zip(child_columns, row))
                     child_key = tuple(row[c] for c in KEYS[child])
-                    if (child, child_key) in planned or column in rewritten.get((child, child_key), ()):
+                    if (child, child_key) in planned:
                         continue
                     owner = by_value[row[column]]
                     if how == FORBIDDEN:
@@ -714,7 +709,7 @@ def _not_as_left(conn, change_id, changes):
                 if conn.execute('SELECT 1 FROM "%s" WHERE "%s" = ? LIMIT 1' % (child, column),
                                 (change.new[KEYS[parent][0]],)).fetchone():
                     reasons.append("%s has rows in %s made since" % (_named(change.table, change.key), child))
-            if change.table == "tag_taxonomy" and person_ids.present(conn) and conn.execute(
+            if change.table == "tag_taxonomy" and conn.execute(
                     "SELECT 1 FROM faces WHERE tag_id = ? AND name_source = 'manual' LIMIT 1", (change.key[0],)).fetchone():
                 # The faces linked to it by their name, or named by a guess, go back to the name alone; a face a person named
                 # is theirs (docs/ARCHITECTURE.md, "People by id, stage 2").
@@ -920,9 +915,8 @@ def record_faces(conn, operation, before):
     before the write -- as ONE applied change `operation` (counts only in its summary), so History can put the faces' names and
     who decided them back as they were. The person's id is recorded with them (cache_columns): an undo puts the id back, and when the
     node is gone (a force delete, a merge) the undo is refused (_unfiled): a face is never left with a name and no node. The tree rows
-    themselves are not journaled (as before). Nothing when no face changed or the library has
-    no journal. Returns the change's id or None. The caller commits."""
-    if not before or not has_journal(conn):
+    themselves are not journaled (as before). Nothing when no face changed. Returns the change's id or None. The caller commits."""
+    if not before:
         return None
     now = read_faces(conn, before)
     changes = []
@@ -970,8 +964,7 @@ def apply(db_path, operation, edits, summary=None):
 
 
 def _writes_files(conn, change_id):
-    return file_journal.has_table(conn) and conn.execute(
-        "SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is not None
+    return conn.execute("SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is not None
 
 
 def schema_gap_blocker(version, current):
@@ -1056,11 +1049,9 @@ def refusal(conn, change_id):
 
 def refusals(db_path, change_ids):
     """{change id: refusal(...)} of each of `change_ids`, read on one connection. Reads
-    only; {} for a library without a journal."""
+    only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_journal(conn):
-            return {}
         return {change_id: refusal(conn, change_id) for change_id in change_ids}
     finally:
         conn.close()
@@ -1070,8 +1061,6 @@ def _unfiled(conn, writes):
     """Why writing `writes` would leave a face, or a listed person, naming a person whose node is not in the tag tree (a person
     deleted or merged away since): [] when it would not. A person is the id of a node and no other way (owner, 2026-10-11), so
     such a row is not given back. A node the same writes insert counts as there. Names no one. Reads only."""
-    if not person_ids.present(conn):
-        return []
     wanted = {(change.new or {}).get("tag_id") for change in writes
               if change.table in person_ids.TABLES and change.action != "delete"}
     wanted.discard(None)
@@ -1248,7 +1237,7 @@ def rehearse_undo(db_path, change_id):
             db.begin(conn, immediate=True)
             try:
                 try:
-                    changes = _load(conn, change_id) if has_journal(conn) else []
+                    changes = _load(conn, change_id)
                 except paths.RootsError as e:
                     return Rehearsal(refused=str(e))
                 stale = _derive(conn, changes)
@@ -1278,8 +1267,6 @@ def settle(db_path):
     it touched and mark it applied, or undone. Returns how many were finished."""
     conn = db.connect(db_path)
     try:
-        if not has_journal(conn):
-            return 0
         pending = [change_id for (change_id,) in conn.execute(
             "SELECT id FROM changes WHERE status = 'derived_pending' ORDER BY id")]
         finished = 0
@@ -1313,11 +1300,9 @@ def _shown(value):
 
 def operation(db_path, change_id):
     """The name change `change_id` was applied under, or None for a change the library
-    at `db_path` has not (or a library without a journal)."""
+    at `db_path` has not."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_journal(conn):
-            return None
         row = conn.execute("SELECT operation FROM changes WHERE id = ?", (change_id,)).fetchone()
         return row[0] if row else None
     finally:
@@ -1330,11 +1315,9 @@ def history(db_path, limit=20, change_id=None, values=False):
     of each table it inserted, updated and deleted, and how many photo files it planned
     in each state (tagpup.store.file_journal). One change also lists its row keys,
     and with `values` each column's old and new value (a BLOB by its size): these can
-    hold names. [] for a library without a journal."""
+    hold names."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_journal(conn):
-            return []
         query = ("SELECT id, operation, status, schema_version, created, applied, undone, summary FROM changes")
         if change_id is None:
             found = conn.execute(query + " ORDER BY id DESC LIMIT ?", (max(0, limit),)).fetchall()

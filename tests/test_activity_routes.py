@@ -234,7 +234,7 @@ class RunNow(Base):
         registry = recurring.Registry()
         self.calls = []
 
-        @registry.job("tidy", recurring.DAILY, reason=recurring.RETENTION)
+        @registry.job("tidy", recurring.DAILY, reason=recurring.SAFETY)
         def _tidy(library, run):
             self.calls.append((library.name, run.forced))
             if gate is not None:

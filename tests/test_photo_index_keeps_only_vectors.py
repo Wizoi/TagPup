@@ -93,12 +93,7 @@ class ASearch(Base):
         gone = self.add("Gone.jpg", unit(1, 0))
         kept = self.add("Kept.jpg", unit(0.9, 0.1))
         index = self.index()
-        conn = db.connect(self.db_path)
-        try:
-            store_photos.remove(conn, [gone])
-            conn.commit()
-        finally:
-            conn.close()
+        store_photos.forget_photo(self.db_path, gone)
         self.assertEqual([kept], [record["path"] for _sim, record in index.search(unit(1, 0).tolist(), k=2)])
 
 

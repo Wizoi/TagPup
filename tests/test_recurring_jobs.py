@@ -144,7 +144,7 @@ class WhatIsDue(Base):
         cove = made(self.home, "cove")
         seen = []
         registry = recurring.Registry()
-        registry.job("everywhere", recurring.WEEKLY, reason=recurring.RETENTION, per_library=False)(
+        registry.job("everywhere", recurring.WEEKLY, reason=recurring.SAFETY, per_library=False)(
             lambda libraries, run: seen.append([lib.name for lib in libraries]) or Result())
         runner = recurring.Runner(lambda: [self.harbour, cove], registry, clock=self.clock)
         self.assertEqual(1, len([o for o in runner.run_due() if o.ran]))
@@ -204,7 +204,7 @@ class EachJobSaysWhyItIsScheduled(unittest.TestCase):
     def test_each_registered_job_has_one_and_the_apps_are_told_it(self):
         self.assertEqual({"snapshots": "safety", "sync": "catch-up"},
                          {job.name: job.reason for job in recurring.JOBS})
-        self.assertEqual(("safety", "retention", "catch-up"), recurring.REASONS)
+        self.assertEqual(("safety", "catch-up"), recurring.REASONS)
         registry = recurring.Registry()
         registry.job("sync", recurring.DAILY, reason=recurring.CATCH_UP)(lambda library, run: Result())
         home = own_home.for_test(self, prefix="jobs_")

@@ -22,12 +22,6 @@ TABLE = "added_folders"
 TIME = "%Y-%m-%d %H:%M:%S"
 
 
-def _there(conn):
-    """Has the library the table? One behind this version's schema, opened read-only for a
-    look, has none, and has added nothing."""
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE,)).fetchone() is not None
-
-
 def record(conn, folder, subfolders=True):
     """Record `folder` as added, with the folders under it unless not `subfolders`. Returns
     1 when that added something -- a folder not added before, or its subfolders now -- else
@@ -47,8 +41,6 @@ def record(conn, folder, subfolders=True):
 
 def every(conn):
     """[(folder, with its subfolders)] of every folder added."""
-    if not _there(conn):
-        return []
     return [(path, bool(subfolders)) for path, subfolders in store_roots.natives(
         conn, conn.execute("SELECT path, subfolders FROM added_folders").fetchall(), 0)]
 
@@ -56,8 +48,6 @@ def every(conn):
 def covers(conn, folder):
     """Was `folder` added: it, or a folder above it added with its subfolders? The table
     holds the folders asked for, a handful, so it is read whole."""
-    if not _there(conn):
-        return False
     for path, subfolders in store_roots.natives(
             conn, conn.execute("SELECT path, subfolders FROM added_folders").fetchall(), 0):
         if paths.same(folder, path) or (subfolders and paths.is_under(folder, path)):
@@ -68,8 +58,6 @@ def covers(conn, folder):
 def forget_under(conn, folder):
     """Forget what was added at `folder` or under it: it is taken out of the library.
     Returns the records removed. The caller commits."""
-    if not _there(conn):
-        return 0
     at, at_params = store_roots.sql_equals(conn, "path", folder)
     under, under_params = store_roots.sql_under(conn, "path", folder)
     return conn.execute("DELETE FROM added_folders WHERE (" + at + ") OR (" + under + ")",

@@ -451,18 +451,6 @@ class InterruptedAndAtOnce(Bulk):
 
 
 class TheOldAssignmentRecordsAreLetGo(Bulk):
-    def test_what_an_older_version_kept_is_removed_once_and_nothing_else(self):
-        folder = self.library.bulk_jobs
-        os.makedirs(folder)
-        for name in ("21.plan.json", "21.state.json", "7.ids", "3.state.json.tmp-1-2"):
-            with open(os.path.join(folder, name), "w", encoding="utf-8") as handle:
-                handle.write("{}")
-        with open(os.path.join(folder, "keep.txt"), "w", encoding="utf-8") as handle:
-            handle.write("not ours")
-        face_assignment._swept.discard(paths.key(self.library.path))
-        face_assignment.forget_old_jobs(self.library)
-        self.assertEqual(["keep.txt"], os.listdir(folder))
-
     def test_a_run_an_older_version_recorded_is_still_listed_in_activity(self):
         claim = job_runs.claim(self.library, "assign faces", self.library.name, time.time())
         job_runs.end(self.library, claim.run_id, time.time(), {"what": "assign faces to a person: 60 of 60 faces", "state": "done"})

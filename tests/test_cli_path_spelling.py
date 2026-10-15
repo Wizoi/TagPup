@@ -96,7 +96,7 @@ class CliDatabaseCase(unittest.TestCase):
             metas.append({"path": stored_as, "mtime": stat.st_mtime, "size": stat.st_size,
                           "tags": [], "people": [], "captions": [], "raw_metadata": {}})
         index.build_or_update([[0.1] * expected_dim()] * len(metas), metas,
-                              dim=expected_dim(), reload=False)
+                              dim=expected_dim())
         index.close()
 
     def photo_rows(self):

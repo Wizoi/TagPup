@@ -119,19 +119,6 @@ class TheRules(ALibraryAtRest):
         self.conn.commit()
         self.assertEqual([], checks.empty_folders(self.conn))
 
-    def test_the_new_rules_wait_for_the_migration(self):
-        from test_migrations import at_version
-        older = self.home.library("older.db")
-        at_version(older, 18)
-        conn = db.connect(db.readonly_uri(older), uri=True)
-        try:
-            for name in RULES:
-                self.assertEqual(0, getattr(checks, name)(conn).count, name)
-            self.assertEqual((0, 0, 0, []), checks.tags_without_a_node(conn))
-            self.assertEqual([], checks.empty_folders(conn))
-        finally:
-            conn.close()
-
 
 class KeywordsWithNoNode(ALibraryAtRest):
     """A keyword the index reads gets its node (2026-10-10); one with none is a photo read before that, or a node deleted

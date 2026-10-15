@@ -64,10 +64,9 @@ def every_hours(hours):
 #: Why a job runs on a schedule. Work that follows an event is done when the event
 #: happens, never left for a schedule to find (docs/ARCHITECTURE.md, phase 8, "Event-driven
 #: first"); a schedule is only for what no event announces -- the library's safety (the
-#: snapshots), the retention of what it keeps (the journal), and a catch-up in case an
-#: event was missed (sync). A job that names none of these is refused as it is registered.
-SAFETY, RETENTION, CATCH_UP = "safety", "retention", "catch-up"
-REASONS = (SAFETY, RETENTION, CATCH_UP)
+#: snapshots) and a catch-up in case an event was missed (sync). A job that names none of these is refused as it is registered.
+SAFETY, CATCH_UP = "safety", "catch-up"
+REASONS = (SAFETY, CATCH_UP)
 
 #: How much sooner than its period a job of a day or more is due. The server looks every
 #: CHECK_EVERY, not on the second: a daily that started at 09:00 was not due at 08:55 the

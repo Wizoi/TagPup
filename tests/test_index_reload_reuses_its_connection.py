@@ -1,6 +1,6 @@
 """Reloading the index keeps the connection it has.
 
-build_or_update() reload the index, and every reload opened a new
+load() rebuilds the index, and every load opened a new
 connection and dropped the old one unclosed. On Windows an unclosed handle keeps the
 database file locked, which is how test directories and sandboxes could not be
 deleted afterwards.

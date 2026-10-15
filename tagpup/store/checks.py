@@ -104,16 +104,12 @@ def photo_tags_out_of_date(conn):
     """Photos whose keyword rows (`photo_tags`) are not what their keywords and the tag tree give: a
     writer that changed one and did not refresh (tagpup.store.derived), or rows made by an older
     version of the app that did not know them. `tools/doctor.py --rebuild-derived --apply` makes
-    them so. Waits for migration 19."""
-    if not derived.present(conn):
-        return _check("photos whose keyword rows are out of date", [])
+    them so."""
     return _check("photos whose keyword rows are out of date", derived.stale_tags(conn))
 
 
 def photo_folders_out_of_date(conn):
     """Photos not in the folder their path names (`photo_folder`), or in one though it names none."""
-    if not derived.present(conn):
-        return _check("photos not in the folder their path names", [])
     return _check("photos not in the folder their path names", derived.stale_folders(conn)[0])
 
 
@@ -121,8 +117,6 @@ def folders_out_of_date(conn):
     """Folders whose parent is not the folder above them (the chain to the top is complete), or that a
     photo needs and the table has not (counted, with no id to show). A folder holding no photo is
     `empty_folders`'s: reported, not broken."""
-    if not derived.present(conn):
-        return _check("folders that are not what the photos' paths give", [])
     stale = derived.stale_folders(conn)
     return Check("folders that are not what the photos' paths give", len(stale.folders) + stale.missing,
                  stale.folders[:EXAMPLES])
@@ -132,7 +126,7 @@ def empty_folders(conn):
     """The ids of the folders with no photo at or below them: what a delete that did not come through the
     store leaves (its own prune takes them). Reported, not broken: a count of the photos in a folder is the
     same with one there. `tools/doctor.py --rebuild-derived --apply` takes them."""
-    return derived.stale_folders(conn).strays if derived.present(conn) else []
+    return derived.stale_folders(conn).strays
 
 
 def search_index_out_of_date(conn):
@@ -149,9 +143,7 @@ def tags_without_a_node(conn):
     """(distinct keywords, uses, photos, [(keyword, photos carrying it)] the most used first) of the
     keywords photos carry that name no node of the tag tree, so have no row in `photo_tags`. Reported,
     not broken: the tree is the owner's, indexing never adds to it, and a node made for the keyword
-    gives its photos their rows. A library without the tables says none."""
-    if not derived.present(conn):
-        return 0, 0, 0, []
+    gives its photos their rows."""
     found = derived.unnamed_keywords(conn)
     ranked = sorted(found.by_tag.items(), key=lambda pair: (-pair[1], pair[0]))
     return len(ranked), sum(found.by_tag.values()), found.photos, ranked
@@ -188,8 +180,6 @@ def keywords_under_a_person(conn):
     """How many distinct keywords the photos hold that would go under a person faces or photos use, so are left without a node
     (a node would turn the person into a group, rule a). Reported, not broken: the keyword is the file's, the person the
     owner's. Reads every photo's keywords, as `tags_without_a_node` does."""
-    if not derived.present(conn):
-        return 0
     return len(tree_scan.keywords(conn, derived.Tree.read(conn)).under)
 
 
@@ -276,13 +266,6 @@ def without_a_vector(conn, model):
     return conn.execute("SELECT COUNT(*) FROM photos p WHERE NOT EXISTS"
                         " (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)",
                         (model,)).fetchone()[0]
-
-
-def faces_to_detect(conn):
-    """How many photos have faces still to be detected (tagpup.store.faces_pending).
-    Reported, not broken: the next index of their folders detects them."""
-    from tagpup.store import faces_pending
-    return faces_pending.count(conn)
 
 
 def missing_files(conn):
@@ -395,5 +378,7 @@ RULES = (schema_current, generations_kept, faces_without_a_photo, named_and_excl
 
 
 def run(conn):
-    """Every rule's Check, in RULES order."""
-    return [rule(conn) for rule in RULES]
+    """Every rule's Check, in RULES order. A library behind the code's schema has none of the tables the other rules read:
+    it is migrated first (a started TagPup does so), and only the migrations not applied are said."""
+    behind = schema_current(conn)
+    return [behind] if behind.count else [rule(conn) for rule in RULES]

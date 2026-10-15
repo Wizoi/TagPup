@@ -152,6 +152,14 @@ class TheDoctor(Library):
         self.assertEqual(0, broken)
         self.assertEqual(0, doctor.main(["--db", self.db_path]))
 
+    def test_a_library_not_yet_migrated_is_said_so_and_nothing_else_is_read(self):
+        from test_schema import make_unmigrated_library
+        older = os.path.join(self.dir, "older.db")
+        make_unmigrated_library(older)
+        lines = []
+        self.assertEqual(1, doctor.report(older, out=lines.append))
+        self.assertIn("migrations not applied", "\n".join(lines))
+
     def test_counts_without_naming_anyone_unless_asked(self):
         self.face(self.photo("Wren Halloway at the lake.jpg"), name="Wren Halloway", rebuilt=False)
         broken, lines = self.run_doctor()

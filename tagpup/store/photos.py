@@ -463,11 +463,9 @@ def tag_usage(db_path):
     Once per photo: a photo carrying two tags under a node counted twice toward it and
     toward everything above it (docs/findings.md, #41).
 
-    From `photo_tags` (migration 19) when the library has it: one pass of an index rolled up the tree's
-    parents (store.library_view.keyword_counts), 40 ms on photo_index's scale where reading and parsing every
-    photo's tags JSON was 350 ms, which held the Python process at page start and made every other first request
-    wait behind it (docs/findings.md, #534). A library without the derived tables is counted from the JSON as it
-    always was. The same counts, node for node (tests/test_tag_usage_from_photo_tags.py).
+    From `photo_tags`: one pass of an index rolled up the tree's parents (store.library_view.keyword_counts), 40 ms on
+    photo_index's scale where reading and parsing every photo's tags JSON was 350 ms, which held the Python process at
+    page start and made every other first request wait behind it (docs/findings.md, #534).
     """
     counts = {}
     if not os.path.exists(db_path):
@@ -475,16 +473,8 @@ def tag_usage(db_path):
     try:
         conn = db.connect(db.readonly_uri(db_path), uri=True)
         try:
-            if derived.present(conn):
-                from tagpup.store import library_view   # library_view imports this module's neighbours
-                return {node["tag"]: node["count"] for node in library_view.keyword_counts(conn) if node["count"]}
-            for (tags_json,) in conn.execute("SELECT tags FROM photos WHERE tags IS NOT NULL"):
-                try:
-                    levels = {level for tag in json.loads(tags_json) for level in vocabulary.lineage(tag)}
-                except Exception:
-                    continue
-                for level in levels:
-                    counts[level] = counts.get(level, 0) + 1
+            from tagpup.store import library_view   # library_view imports this module's neighbours
+            return {node["tag"]: node["count"] for node in library_view.keyword_counts(conn) if node["count"]}
         finally:
             conn.close()
     except Exception:
@@ -690,19 +680,6 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         embeddings.put(conn, stored, model, row.get("mtime", 0.0), row.get("size", 0), row["embedding"])
 
 
-def remove(conn, photo_paths):
-    """Delete the rows of `photo_paths` and their faces, whether or not the connection
-    enforces foreign keys. Returns photo rows deleted. The caller commits."""
-    store_roots.begin_write(conn)
-    removed = 0
-    for photo_path in photo_paths:
-        faces.remove_for_photo(conn, photo_path)
-        clause, params = store_roots.sql_equals(conn, "path", photo_path)
-        removed += conn.execute("DELETE FROM photos WHERE " + clause, params).rowcount
-    derived.prune(conn)
-    return removed
-
-
 def clear_embeddings(conn):
     """Forget every photo's CLIP vectors. Returns rows deleted. The caller commits."""
     return embeddings.clear(conn)
@@ -864,12 +841,6 @@ def row_as_recorded(conn, stored_path):
 
 
 # ---- What pairing a missing row with a file reads ---------------------------------------------------
-
-def all_paths(conn):
-    """Every photo's path, as stored."""
-    roots = store_roots.roots_for(conn)
-    return [paths.from_row(path, roots) for (path,) in conn.execute("SELECT path FROM photos")]
-
 
 def identities(conn):
     """{path as stored: document_id} for every photo whose identity is recorded."""

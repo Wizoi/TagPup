@@ -115,7 +115,7 @@ class DerivedTablesAreKeptByTheirWriters(unittest.TestCase):
         """A guard that matches nothing passes forever."""
         found = {name for _module, name, _node in self.photos}
         for known in ("record_indexed", "record_tags", "move_rows_in", "follow_fields", "record_saved",
-                      "forget_photo", "remove", "remove_under"):
+                      "forget_photo", "remove_under"):
             self.assertIn(known, found)
         self.assertIn("add_path", {name for _module, name, _node in self.tree})
         self.assertTrue(writes_photos("UPDATE photos SET tags = ?, raw_metadata = ? WHERE id = ?"))

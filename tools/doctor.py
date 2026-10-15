@@ -73,6 +73,10 @@ def report(db_path, show=0, out=print):
         unplaced, model = str(problem), None
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
+        if checks.schema_current(conn).count:
+            out("library: %s" % db_path)
+            out("migrations not applied: start TagPup, which brings the library up to date, and ask again.")
+            return 1
         held = checks.summary(conn)
         results = checks.run(conn)
         try:
@@ -80,7 +84,6 @@ def report(db_path, show=0, out=print):
         except paths.RootsError as problem:
             unplaced, missing = unplaced or str(problem), []
         unembedded = checks.without_a_vector(conn, model) if model else None
-        undetected = checks.faces_to_detect(conn)
         on_faces_alone = checks.people_on_faces_alone(conn)
         unrooted = checks.unrooted_by_folder(conn)
         unnamed = checks.tags_without_a_node(conn)
@@ -111,8 +114,6 @@ def report(db_path, show=0, out=print):
     if unembedded is not None:
         out("photos without a vector for the configured model: %d (the next index of their folders "
             "computes them)" % unembedded)
-    out("photos whose faces are still to be detected: %d (indexed from a damaged copy; the next index "
-        "of their folders detects them)" % undetected)
     if on_faces_alone[0]:
         out("photos listing a person from a face alone: %d, %d people (reported, not broken: a face was named and the "
             "photo's keywords do not say so; `tagpup_cli.py tags-from-faces` counts them, and with --apply writes the "
