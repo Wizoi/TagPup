@@ -10,6 +10,11 @@ ExifTool's "[minor]" refusal is retried, and the keyword fields the write does n
 go in the same -m command with the values they hold. Real ExifTool on a JPEG made with
 two XMP blocks here; a stand-in for the refusal that is not minor.
 
+The identity the indexer mints for a new photo (identity.ensure_document_id, #1355, #310) goes the same way: it
+went past ANY failed mint with -m, which rewrites the XMP, and put back the keywords that cost in a second command,
+outside any record, whose failure was only logged. Now a lock or a timeout leaves the photo as it was, and a minor
+refusal is one forced command carrying the keywords.
+
 One command (#271): the values set and the cleared fields (`-FIELD=`) were two commands, and a crash between them left a file
 holding neither what the plan read nor what it was to hold, which settling calls a conflict and never finishes; a DocumentID
 went in a command of its own too (#282). Real ExifTool, on a JPEG made here: the clears still happen, in the one command that
@@ -39,6 +44,11 @@ TWO_BLOCKS = ('<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
               '<rdf:Description rdf:about="two" xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/">'
               '<xmpMM:DocumentID>xmp.did:harbour-old</xmpMM:DocumentID></rdf:Description>'
               '</rdf:RDF></x:xmpmeta><?xpacket end="w"?>')
+
+
+#: A new photo: two XMP blocks, and no identity in either.
+NO_IDENTITY = TWO_BLOCKS.replace("<xmpMM:DocumentID>xmp.did:harbour-old</xmpMM:DocumentID>",
+                                 "<xmpMM:InstanceID>xmp.iid:harbour-old</xmpMM:InstanceID>")
 
 
 class Refusal(Exception):
@@ -98,6 +108,59 @@ class APhotoWithTwoXmpBlocks(unittest.TestCase):
         self.assertTrue(fields.same_fields(held, plan), held)
         self.assertEqual((["Places/Harbour"], ["Places/Harbour"]),
                          (held["XMP:Subject"], held["XMP:HierarchicalSubject"]))
+
+
+@unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
+class ANewPhotoWithTwoXmpBlocksIsGivenAnIdentity(unittest.TestCase):
+    """The indexer reads a photo with no identity, and ExifTool objects to its XMP."""
+
+    def setUp(self):
+        from PIL import Image
+
+        home = own_home.for_test(self, prefix="mint_")
+        self.photo = os.path.join(home.root, "a.jpg")
+        Image.new("RGB", (16, 12), (90, 110, 130)).save(self.photo, "JPEG")
+        xmp = os.path.join(home.root, "two.xmp")
+        with open(xmp, "w", encoding="utf-8") as handle:
+            handle.write(NO_IDENTITY)
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            et.execute("-overwrite_original", "-xmp<=" + xmp, self.photo)
+
+    def held(self, et):
+        return field_values.read_one(et, self.photo, [identity.DOCUMENT_ID_FIELD, "XMP:Subject",
+                                                      "XMP:HierarchicalSubject", "IPTC:Keywords"])
+
+    def test_a_minor_refusal_mints_in_one_forced_command_that_keeps_the_keywords(self):
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            with mock.patch.object(et, "set_tags", wraps=et.set_tags) as set_tags, \
+                    mock.patch.object(et, "execute", wraps=et.execute) as execute:
+                minted = identity.ensure_document_id(et, self.photo, {})
+            held = self.held(et)
+        self.assertTrue(minted and minted.startswith("xmp.did:"), minted)
+        self.assertEqual(2, set_tags.call_count, "the refused mint, and one forced: %s" % set_tags.call_args_list)
+        forced = set_tags.call_args_list[1].kwargs
+        self.assertIn("-m", forced["params"])
+        self.assertEqual(["Places/Harbour"], forced["tags"]["XMP:Subject"], "the keywords were not in the forced command")
+        # No command writes the file but those two: nothing put back afterwards.
+        self.assertEqual(2, len([c for c in execute.call_args_list if "-overwrite_original" in c.args]))
+        self.assertEqual([minted], held[identity.DOCUMENT_ID_FIELD])
+        self.assertEqual((["Places/Harbour"], ["Places/Harbour"]),
+                         (held["XMP:Subject"], held["XMP:HierarchicalSubject"]))
+
+    def test_a_locked_file_or_a_timeout_is_not_forced(self):
+        for error in (Refusal("Error: Error opening file - a.jpg"), TimeoutError("ExifTool did not answer within 60s")):
+            with self.subTest(error=type(error).__name__), ExifToolSession(executable=EXIFTOOL) as et:
+                before = self.held(et)
+                with mock.patch.object(et, "set_tags", side_effect=error) as set_tags, \
+                        mock.patch.object(et, "execute", wraps=et.execute) as execute:
+                    minted = identity.ensure_document_id(et, self.photo, {})
+                after = self.held(et)
+            self.assertIsNone(minted, "a photo that took no identity reported one")
+            self.assertEqual(1, set_tags.call_count, "a mint that failed for a lock or a timeout was made again")
+            self.assertEqual([], [c.args for c in execute.call_args_list if "-overwrite_original" in c.args],
+                             "a second command wrote the file")
+            self.assertEqual(before, after, "the photo's keywords changed")
+            self.assertEqual([], after[identity.DOCUMENT_ID_FIELD])
 
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
