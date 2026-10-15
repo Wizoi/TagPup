@@ -130,8 +130,8 @@ _FILES = {
         "unit": (
             "tag-rules test_a_changes_owner_is_known_by_its_start test_a_copy_is_not_written_through_a_wal "
             "test_a_withdrawn_change_is_finished test_backups_are_kept_to_five test_bulk_scripts_back_up "
-            "test_compact_gives_back_free_space test_derived_batches test_derived_checks test_derived_tables test_doctor "
-            "test_doctor_sees_the_derived_tables test_every_face_has_a_photo_row test_face_save_retries_a_lock "
+            "test_compact_gives_back_free_space test_derived_batches test_derived_tables test_doctor "
+            "test_every_face_has_a_photo_row test_face_save_retries_a_lock "
             "test_faces_detected_follows_the_faces test_faces_detected_record "
             "test_folder_membership test_journal_undo_refusals "
             "test_mcp_photo_against_file test_name_index test_path_locker test_roots_share_spelling_and_cli_index "
