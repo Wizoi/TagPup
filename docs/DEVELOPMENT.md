@@ -174,7 +174,7 @@ shapes and they are not interchangeable: their identity is a leaf (`Hazel Brookm
 which is what the faces table, the suggester and `photo.people` speak in, and their tag
 is a path (`People/Hazel Brookmire`), which is what the keywords must hold and what the
 server matches on, exactly. Use `leafOf`, `rootOf`, `samePerson` and `photoAlreadyHas`
-in `web/common/vocabulary.js`, `ancestorsOf` and `preferPathed` in `web/tagpup/main.js`,
+in `web/common/vocabulary.js`, `preferPathed` in `web/tagpup/tags.js`,
 and `taxonomy.person_paths()` in Python.
 
 Every bug in this area was a site doing the conversion itself, and none of them looked

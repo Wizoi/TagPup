@@ -20,7 +20,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf } from "./harness.mjs";
 
 const FOLDER = "D:/Library/2020";
 
@@ -35,6 +35,7 @@ function build(photos, suggestions) {
     .on("/api/tags", ["People/Kira Bao", "People/Rory Olwen", "Cross Country"])
     .on("/api/people", ["Kira Bao", "Rory Olwen"])
     .on("/api/taxonomy/tree", TAXONOMY)
+    .first("/api/people?records=1", peopleRecordsOf(TAXONOMY))
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
     .on("/api/folder/scan", photos)

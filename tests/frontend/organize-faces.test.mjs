@@ -10,15 +10,16 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, REAL, realLibrary, until } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, REAL, realLibrary, until, peopleRecordsOf } from "./harness.mjs";
 import { boxInContainedImage } from "../../web/common/image-zoom.js";
+import { leafOf } from "../../web/common/vocabulary.js";
 
 afterEach(() => closeAllApps());
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
-  { id: 2, tag: "People/Hazel Brookmire", name: "Hazel Brookmire", parent_id: 1, has_face: 1 },
-  { id: 3, tag: "People/Anh Tran", name: "Anh Tran", parent_id: 1, has_face: 1 },
+  { id: 21, tag: "People/Hazel Brookmire", name: "Hazel Brookmire", parent_id: 1, has_face: 1 },
+  { id: 22, tag: "People/Anh Tran", name: "Anh Tran", parent_id: 1, has_face: 1 },
   { id: 4, tag: "Trips", name: "Trips", parent_id: null, has_face: 0 },
 ];
 
@@ -46,13 +47,24 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
   const written = (server) => server.calls[server.calls.length - 1].body;
   // What the server holds of the photo's keywords: its own saves change it, and it says which tags go with a face (face_people).
   let keywords = [...shown.tags];
+  // The tree as the server holds it: a tag created is a node of it, and a person in it (taxonomy/create, then the people read).
+  const nodes = structuredClone(tree);
+  const create = (body) => {
+    const parent = nodes.find((node) => node.tag === body.name.slice(0, body.name.lastIndexOf("/")));
+    if (!nodes.some((node) => node.tag === body.name)) {
+      nodes.push({ id: 100 + nodes.length, tag: body.name, name: leafOf(body.name), parent_id: parent ? parent.id : null,
+        has_face: parent ? parent.has_face : (body.has_face || 0) });
+    }
+    return { success: true };
+  };
   const untag = (name) => (held.faces.some((other) => other.name === name) ? {}
     : { [shown.path]: keywords.filter((tag) => tag.endsWith("/" + name)) });
   const server = new FakeServer()
     .on("/api/tags", ["Trips", "People/Hazel Brookmire", "People/Anh Tran"])
     .on("/api/people", ["Hazel Brookmire", "Anh Tran"])
-    .on("/api/taxonomy/tree", tree)
-    .on("/api/taxonomy/create", { success: true })
+    .on("/api/taxonomy/tree", () => structuredClone(nodes))
+    .first("/api/people?records=1", () => peopleRecordsOf(nodes))
+    .on("/api/taxonomy/create", () => create(written(server)))
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100 })
     .on("/api/folder/suggest-status", { status: "idle" })
@@ -68,7 +80,8 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
       if (busy.on) return Promise.reject(new Error("the library is busy"));
       const body = written(server);
       const id = body.face_id;
-      const name = body.person_name ?? (body.person_id === HAZEL.id ? HAZEL.name : null);   // a person by the id of their node
+      // A person by the id of their node.
+      const name = body.person_name ?? (peopleRecordsOf(nodes).find((each) => each.id === body.person_id) || {}).name ?? null;
       const was = held.faces.find((f) => f.id === id).name;
       held.faces.find((f) => f.id === id).name = name;
       // A face that was another person's: the server says which tags go with that name (face_people.name_face).
@@ -663,7 +676,7 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
     click(ctx.window, card);
     await flush(ctx.window, 14);
     assert.equal(ctx.posts("/api/photo/save-metadata").length, 0);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_name: "Hazel Brookmire", page_writes_tags: true });
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 2, person_id: HAZEL.id, page_writes_tags: true });
     assert.match(ctx.boxes()[1].getAttribute("aria-label"), /Hazel Brookmire/);
   });
 
@@ -676,7 +689,7 @@ describe("the strip under the photo and the boxes are one decision (#860)", () =
     click(ctx.window, card);
     await flush(ctx.window, 14);
     assert.deepEqual(ctx.posts("/api/photo/save-metadata")[0].body.tags, ["People/Anh Tran"]);
-    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 1, person_name: "Anh Tran", page_writes_tags: true });
+    assert.deepEqual(ctx.posts("/api/face/match")[0].body, { face_id: 1, person_id: 22, page_writes_tags: true });
   });
 
   test("a card that would change nothing is settled", async (t) => {

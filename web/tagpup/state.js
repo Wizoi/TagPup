@@ -102,7 +102,6 @@ export const state = {
     folderSuggestions: {},
     progressTimer: null,
     knownTags: [],
-    knownPeople: [],
     // The same people without those hidden from autocomplete: what the add-person field offers while typing.
     offeredPeople: new PeopleDirectory([]),
     // Everyone with a person tag, as /api/people?records=1 answers (a PeopleDirectory): who a tag or a typed name is, by id,

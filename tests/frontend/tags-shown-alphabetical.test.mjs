@@ -7,7 +7,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -18,6 +18,8 @@ const TAXONOMY = [
   { id: 4, tag: "Zoo", name: "Zoo", parent_id: null, has_face: 0 },
   { id: 5, tag: "apple", name: "apple", parent_id: null, has_face: 0 },
   { id: 6, tag: "Banana", name: "Banana", parent_id: null, has_face: 0 },
+  { id: 7, tag: "People/Bao Le", name: "Bao Le", parent_id: 1, has_face: 1 },
+  { id: 8, tag: "People/Émile Roy", name: "Émile Roy", parent_id: 1, has_face: 1 },
 ];
 
 // In the order a file would hold them: how they were added, not the alphabet.
@@ -29,6 +31,7 @@ async function open(t, { photos, suggestions = {}, tags = [], people = [] } = {}
     .on("/api/tags", tags)
     .on("/api/people", people)
     .on("/api/taxonomy/tree", TAXONOMY)
+    .first("/api/people?records=1", peopleRecordsOf(TAXONOMY))
     .on("/api/taxonomy/create", { success: true })
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100 })

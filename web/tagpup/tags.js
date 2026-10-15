@@ -13,19 +13,12 @@ export function fetchKnownTagsAndPeople() {
     loadTaxonomy().then(() => {
         api.json('/api/tags')
             .then(data => {
-                state.knownTags = Array.isArray(data) ? data : [];   // see knownPeople below
+                state.knownTags = Array.isArray(data) ? data : [];
                 updateTagsDatalist();
                 updatePeopleDatalist();
             })
             .catch(err => console.error("Error loading tags taxonomy:", err));
 
-        // The people with a tag, by id: a tag path names exactly one, and two called alike are two (identity by id).
-        api.json('/api/people?records=1&include_hidden=1')
-            .then(data => {
-                state.people = new PeopleDirectory(data);
-                updatePeopleDatalist();
-            })
-            .catch(err => console.error("Error loading the people records:", err));
         // The ones offered while typing: those not hidden from autocomplete.
         api.json('/api/people?records=1')
             .then(data => {
@@ -33,47 +26,14 @@ export function fetchKnownTagsAndPeople() {
                 updatePeopleDatalist();
             })
             .catch(err => console.error("Error loading the people offered:", err));
-
-        api.json('/api/people')
-            .then(data => {
-                // A failed lookup answers {error: ...}. Taken as the list, it made
-                // namesAPerson throw, and with it every save that checks for a
-                // person already on the photo -- on a library with no faces yet.
-                state.knownPeople = Array.isArray(data) ? data : [];
-                updatePeopleDatalist();
-            })
-            .catch(err => console.error("Error loading database people:", err));
     }).catch(err => console.error("Error loading taxonomy tree:", err));
 }
 
 export function namesAPerson(tag) {
-    if (!tag) return false;
-    // Which roots hold people is the tree's has_face flag, below; a list of root
-    // names here said Pets and Friends were people whatever the tree said
-    // (docs/findings.md, #66).
-    if (state.people.ofText(tag)) {
-        return true;
-    }
-    const leaf = leafOf(tag);
-    if (state.knownPeople.includes(leaf)) {
-        return true;
-    }
-    // Fallback: search taxonomyNodes dynamically for has_face flag
-    if (state.taxonomyNodes && Array.isArray(state.taxonomyNodes)) {
-        const foundNode = state.taxonomyNodes.find(n => n.tag === tag);
-        if (foundNode && foundNode.has_face === 1) {
-            return true;
-        }
-        if (tag.includes('/')) {
-            for (const ancestorTag of ancestorsOf(tag)) {
-                const ancestorNode = state.taxonomyNodes.find(n => n.tag === ancestorTag);
-                if (ancestorNode && ancestorNode.has_face === 1) {
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
+    // A person is a node of the tree with no node under it, as the people records say (PeopleDirectory): a face root, a
+    // group, or a keyword whose leaf is a face's name is none (docs/findings.md, #1358). The roots' has_face flag and the
+    // names given to faces both said yes to those.
+    return Boolean(state.people.ofText(tag));
 }
 
 // ---- Talking about a tag ------------------------------------------------
@@ -97,7 +57,7 @@ export function namesAPerson(tag) {
 //
 // So the conversions live in one place: leafOf, rootOf, samePerson and
 // photoAlreadyHas in web/common/vocabulary.js, with this page's own normalizeTag
-// and ancestorsOf below. `tests/frontend/tag-vocabulary.test.mjs` fails on a raw
+// below. `tests/frontend/tag-vocabulary.test.mjs` fails on a raw
 // `.split('/')` anywhere else, the same way tests/test_db_access.py fails on a raw
 // sqlite3.connect.
 
@@ -108,12 +68,6 @@ export function namesAPerson(tag) {
  */
 export function normalizeTag(tag) {
     return String(tag || '').split('/').map(level => level.trim()).filter(Boolean).join('/');
-}
-
-/** Each tag on the way down to this one: People, then People/Hazel Brookmire. */
-export function ancestorsOf(tag) {
-    const parts = String(tag || '').split('/');
-    return parts.map((_part, i) => parts.slice(0, i + 1).join('/'));
 }
 
 /**
@@ -180,8 +134,8 @@ export function updatePeopleDatalist() {
         }
     });
 
-    // One entry per person, whatever shape their tag arrived in. The list was
-    // built from three sources -- person tags, known people, and the tags on the
+    // One entry per person, whatever shape their tag arrived in. The list is
+    // built from three sources -- person tags, the people offered, and the tags on the
     // photos in view -- and a person recorded both as "Josephine Sandoval" and as
     // "People/Josephine Sandoval" appeared twice, which is a choice nobody can make
     // correctly because both do the same thing.
@@ -207,8 +161,20 @@ export function updatePeopleDatalist() {
     });
 }
 
+/**
+ * The tag tree, and the people in it: read together, so a person filed a moment ago (resolveTagOrPerson creates the node,
+ * then reads the tree) is a person at once (namesAPerson asks the people, not the tree).
+ */
 export function loadTaxonomy() {
-    return api.json('/api/taxonomy/tree')
+    // The people with a tag, by id: a tag path names exactly one, and two called alike are two (identity by id). A failed
+    // read keeps the people the page had: taken as nobody, every person tag would be offered as a keyword.
+    const people = api.json('/api/people?records=1&include_hidden=1')
+        .then(data => {
+            if (Array.isArray(data)) state.people = new PeopleDirectory(data);
+            else console.error('Could not load the people records:', data);
+        })
+        .catch(err => console.error('Could not load the people records:', err));
+    const tree = api.json('/api/taxonomy/tree')
         .then(data => {
             // An error reply is an object, not the list of nodes. Storing it
             // raw made the next tag you typed throw a TypeError out of
@@ -221,6 +187,7 @@ export function loadTaxonomy() {
             console.error('Could not load the taxonomy:', err);
             state.taxonomyNodes = [];
         });
+    return Promise.all([tree, people]);
 }
 
 export function showPlacementModal(title, message, options, allowNewRoot = false) {
