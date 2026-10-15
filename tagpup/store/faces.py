@@ -406,15 +406,20 @@ def set_names(conn, persons_by_id, as_read):
             gone.add(person)
     targets, known = _targets(conn, [person for person in persons_by_id.values() if person not in gone], known)
     written = []
-    for face_id, person in persons_by_id.items():
-        if person in gone:
-            continue
-        tag_id, name = targets[person]
-        if conn.execute("UPDATE faces SET " + ASSIGN + " WHERE id = ? AND COALESCE(name_source, '') <> 'manual'"
-                        " AND tag_id IS ? AND NOT EXISTS (SELECT 1 FROM faces other WHERE other.photo_id = faces.photo_id"
-                        " AND other.id <> faces.id AND other.tag_id = ?)",
-                        (name, tag_id, face_id, as_read[face_id], tag_id)).rowcount:
-            written.append(face_id)
+    # Takings-off first: a person moved from one face of a photo to another is off the first before the second is given them,
+    # or the second would be refused for a person the first still carried. The index is named: the sibling test must read the
+    # photo's faces (idx_faces_photo_id), not the person's (idx_faces_tag: 23 ms for a person of 7,468 faces).
+    for want_off in (True, False):
+        for face_id, person in persons_by_id.items():
+            if person in gone or (person is None) != want_off:
+                continue
+            tag_id, name = targets[person]
+            if conn.execute("UPDATE faces SET " + ASSIGN + " WHERE id = ? AND COALESCE(name_source, '') <> 'manual'"
+                            " AND tag_id IS ? AND (? IS NULL OR EXISTS (SELECT 1 FROM tag_taxonomy WHERE id = ?))"
+                            " AND NOT EXISTS (SELECT 1 FROM faces other INDEXED BY idx_faces_photo_id"
+                            " WHERE other.photo_id = faces.photo_id AND other.id <> faces.id AND other.tag_id = ?)",
+                            (name, tag_id, face_id, as_read[face_id], tag_id, tag_id, tag_id)).rowcount:
+                written.append(face_id)
     _rebuilt(conn, _photos_of(conn, written), bool(written), known=known)
     done = set(written)
     return written, [face_id for face_id in persons_by_id if face_id not in done]

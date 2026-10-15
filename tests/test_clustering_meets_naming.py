@@ -7,6 +7,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 from test_face_clustering_rules import FaceClusteringTestBase, identity_vector, near  # noqa: E402
 
 from tagpup.services.search import PhotoIndex  # noqa: E402
@@ -30,7 +31,7 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
             if stage == "left":
                 heard.append(done)
         from tagpup.services import identities
-        identities.resolve(self.index, on_step=on_step)
+        self.stats = identities.resolve(self.index, on_step=on_step)
         return heard
 
     def row(self, face_id):
@@ -94,6 +95,40 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
         self.assertEqual(1, len({self.id_of(first), self.id_of(second)}))
         self.assertIsNotNone(self.id_of(first))
 
+    def test_a_guess_moved_from_one_face_of_a_photo_to_another_is_written_and_counted(self):
+        """A re-run that moves a person from face 2 of a photo to face 1: face 1 is not refused for the person face 2 carried a
+        moment before, and the photo does not end with nobody."""
+        photo = self.add_photo("pair.jpg", people=["Jane Doe"])
+        low = self.add_face(photo, identity_vector(1), box=(0, 0, 50, 50))
+        high = self.add_face(photo, identity_vector(5), box=(60, 0, 110, 50))
+        from tagpup.store import person_ids
+
+        def guessed(conn):
+            conn.execute("UPDATE faces SET name = 'Jane Doe', tag_id = ? WHERE id = ?", (face_rows.person_of(conn, "Jane Doe"), high))
+
+        db.write_with_connection(self.db_path, guessed, label="an earlier run guessed")
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            jane = person_ids.read(conn).person("Jane Doe").id
+        finally:
+            conn.close()
+
+        written, left = db.write_with_connection(
+            self.db_path, lambda conn: store_faces.set_names(conn, {low: jane, high: None}, {low: None, high: jane}),
+            label="a run moves the guess")
+
+        self.assertEqual([low, high], sorted(written))
+        self.assertEqual([], left)
+        self.assertEqual(jane, self.id_of(low))
+        self.assertIsNone(self.id_of(high))
+
+    def test_the_summary_counts_the_faces_written_not_the_faces_meant(self):
+        first, second = self.two_faces_of_jane()
+
+        self.run_while(lambda conn: store_faces.name(conn, [second], "Bob Roe"))
+
+        self.assertEqual({"Jane Doe": 1}, self.stats, "a face the owner named meanwhile was counted as linked")
+
     def test_a_person_named_by_hand_on_one_face_is_not_guessed_on_another_of_the_photo(self):
         """#1272: the owner names face B of a photo while the run guesses the same person for face A of it."""
         jane = identity_vector(1)
@@ -106,7 +141,7 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
 
         self.assertEqual(("Jane Doe", "manual"), self.row(chosen))
         self.assertEqual((None, None), self.row(guessed), "the photo ended with two faces of one person")
-        self.assertEqual([2], heard, "the run says it left both: the one the owner named, and the one that would double the person")
+        self.assertEqual([1], heard, "the run says it left the one face that would double the person")
 
     def test_a_person_merged_away_while_clustering_runs_is_nobody_to_give_and_the_run_finishes(self):
         first, second = self.two_faces_of_jane()

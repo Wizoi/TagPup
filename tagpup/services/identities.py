@@ -96,12 +96,12 @@ def _person_id(people, name):
 def _save_face_names(photo_index, face_updates, as_read, people_read):
     """Write the names resolved, (name, face id) each, as the people they were when the faces were read (`people_read`, person_ids.read
     then: an id, never the spelling, goes to the write): a name two people are called, or a group's, is nobody here --
-    clustering cannot say which -- so its face is left unnamed, and a name no person was called is not written (the photos'
-    people and the faces' all have an id: 0 of 82,831 listed people in the three libraries have none). A face is written only
-    while it is still what was read (`as_read`: {face id: the person's id it carried}, store_faces.set_names): one a person
-    named meanwhile keeps its name. Returns (faces written, faces left)."""
+    clustering cannot say which -- so its face is left unnamed. (Every name here is a person: 0 of 82,831 listed people in the
+    three libraries lack an id, so a name that is none is an error, not a case.) A face is written only while it is still what
+    was read (`as_read`: {face id: the person's id it carried}, store_faces.set_names): one a person named meanwhile keeps its
+    name. Returns (the ids of the faces written, how many were left)."""
     if photo_index.conn is None or not face_updates:
-        return 0, 0
+        return [], 0
     try:
         conn = photo_index.conn
         resolved = {}
@@ -109,16 +109,13 @@ def _save_face_names(photo_index, face_updates, as_read, people_read):
             if name is None or name in resolved:
                 continue
             try:
-                found = people_read.person(name)
-                resolved[name] = found.id if found else False
+                resolved[name] = people_read.person(name).id
             except person_ids.PersonProblem:
                 resolved[name] = None
         wanted = {face_id: None if name is None else resolved[name] for name, face_id in face_updates}
-        written, left = store_faces.set_names(conn, {face_id: person for face_id, person in wanted.items()
-                                                     if person is not False}, as_read)
-        left += [face_id for face_id, person in wanted.items() if person is False]
+        written, left = store_faces.set_names(conn, wanted, as_read)
         conn.commit()
-        return len(written), len(left)
+        return written, len(left)
     except Exception as e:
         logger.error(f"Error updating face names: {e}")
         photo_index.conn.rollback()
@@ -135,7 +132,7 @@ MAX_ITERATIONS = 5
 
 def resolve(photo_index, on_step=None):
     """Cluster a library's faces with DBSCAN, name each cluster from the people its photos'
-    tags name, and write the names back; returns {name: faces named}.
+    tags name, and write the names back; returns {name: faces it newly named}.
 
     `photo_index` is the library's, loaded (tagpup.services.search.PhotoIndex): its
     connection, its photos' metadata and its path. Names given by hand are never
@@ -737,16 +734,19 @@ def resolve(photo_index, on_step=None):
         # A face a person decided is not written; nor is one that already carries a person of the name found.
         carried = face.get("person")
         if face["id"] not in manual_names and not (
-                final_name and carried and carried.id is not None and carried.id == _person_id(people_read, final_name)):
+                final_name and carried and carried.id is not None and carried.id == _person_id(people_read, final_name)
+        ) and not (final_name is None and carried is None):   # nobody over nobody is no change
             face_updates.append((final_name, face["id"]))
-        if final_name:
-            resolved_stats[final_name] = resolved_stats.get(final_name, 0) + 1
 
     # Apply name updates to the SQLite database: the last place to stop
     step("saving", 0, 1)
     if face_updates:
         written, left = _save_face_names(photo_index, face_updates, as_read, people_read)
-        logger.info("Named %d face(s); %d left as they were.", written, left)
+        names = dict((face_id, name) for name, face_id in face_updates)
+        for face_id in written:
+            if names[face_id]:
+                resolved_stats[names[face_id]] = resolved_stats.get(names[face_id], 0) + 1
+        logger.info("Wrote %d face(s); %d left as they were.", len(written), left)
         if left:
             step("left", left, len(face_updates))   # the library changed under them while this ran
         

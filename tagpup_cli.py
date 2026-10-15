@@ -993,12 +993,12 @@ def cluster_faces(ctx):
         resolved_stats = identities.resolve(photo_index, on_step=heard)
         
         if not resolved_stats:
-            console.print("[yellow]No faces were resolved to identities. Try tagging photos with people names first.[/yellow]")
+            console.print("[yellow]No face was newly named. Try tagging photos with people names first.[/yellow]")
             return
 
         table = Table(title="Resolved Face Identities Summary")
         table.add_column("Person Name", style="green")
-        table.add_column("Faces Linked", justify="right", style="cyan")
+        table.add_column("Faces Named", justify="right", style="cyan")
 
         for name, count in sorted(resolved_stats.items(), key=lambda x: -x[1]):
             table.add_row(name, str(count))
