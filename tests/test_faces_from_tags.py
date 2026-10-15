@@ -527,15 +527,6 @@ class Backfill(Case):
             self.path, "SELECT pp.name FROM photo_people pp JOIN photos p ON p.id = pp.photo_id"
             " WHERE p.path = ?", (self.single,))])
 
-    def test_a_face_the_owner_marked_nobody_meanwhile_is_not_written(self):
-        self.seed()
-        planned = faces_from_tags._plan(self.library)
-        write(self.path, lambda conn: faces.unname(conn, [self.single_face]))   # "nobody", by hand
-        from tagpup.store import journal
-        with self.assertRaises(journal.Refusal):
-            journal.apply(self.path, "faces_from_tags", faces_from_tags._edits(planned), {})
-        self.assertEqual((None, "manual"), self.row(self.single_face)[:2])
-
     def test_counts_never_carry_a_name(self):
         self.seed()
         details = self.run_it().details

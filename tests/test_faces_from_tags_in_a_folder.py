@@ -155,7 +155,10 @@ class TheFoldersWrite(InFolders):
         self.assertIsNone(self.name(late_face), "not in the plan, so not written")
 
     def test_a_face_named_meanwhile_refuses_the_whole_change(self):
-        """Interrupted by a name given while the question was open: nothing is written, the guards as ever."""
+        """Interrupted by a name given while the question was open: nothing is written, the guards as ever.
+
+        Lifted: test_faces_from_tags.Backfill's marked-nobody-meanwhile test (the same guard, one face). Mutation:
+        faces_from_tags._edits expecting no name_source of a face (a face marked nobody since is written over)."""
         planned = faces_from_tags.plan(self.library, folder=self.run)
         write(self.path, lambda conn: faces.unname(conn, [self.named["Run/a1.jpg"]]))     # "nobody", by hand
         result = faces_from_tags.faces_from_tags(self.library, apply=True, planned=planned)
