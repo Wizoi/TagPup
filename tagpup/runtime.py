@@ -54,7 +54,7 @@ from tagpup.jobs import naming_faces
 from tagpup.jobs import recurring, watching
 from tagpup.services import file_changes, indexing, search
 from tagpup.services import settings as library_settings_service
-from tagpup.services import suggester as suggestions
+from tagpup.services import suggester
 from tagpup.services import sync as sync_service
 from tagpup.store import embeddings as store_embeddings
 
@@ -890,10 +890,10 @@ class Runtime:
         try:
             photo_index.reload_if_changed()
             if remember:
-                model = suggestions.model_for_run(photo_index, clip, faces, settings.candidate_words)
+                model = suggester.model_for_run(photo_index, clip, faces, settings.candidate_words)
             else:
-                model = suggestions.model_for_run(photo_index, clip, faces, settings.candidate_words,
-                                                  remember=False)
+                model = suggester.model_for_run(photo_index, clip, faces, settings.candidate_words,
+                                                remember=False)
         except BaseException:
             end()
             raise

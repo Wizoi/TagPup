@@ -1,5 +1,6 @@
-"""Suggesting tags for a photo: TagSuggester, and what a folder's run calls
-(SuggestionModel, model_for_run).
+"""Suggesting tags for a photo: TagSuggester, what a folder's run calls (SuggestionModel,
+model_for_run), and what Suggest offered each photo as the runs (tagpup.jobs.suggestions) read
+and keep it: in the library, by the photo's id (saved_in, keep, offer; tagpup.store.suggestions).
 
 The rules it applies -- the value a tag is offered from, the words CLIP is asked about,
 the sentence each is put in, how alike a face must be -- are tagpup.core.suggesting's
@@ -24,6 +25,7 @@ from tagpup.services import search
 from tagpup.store import db, person_ids
 from tagpup.store import faces as store_faces
 from tagpup.store import faces_detected as store_faces_detected
+from tagpup.store import suggestions as store_suggestions
 from tagpup.store.taxonomy import TagTaxonomy
 
 logger = logging.getLogger("tagpup_cli.suggester")
@@ -72,6 +74,32 @@ def forget_looking_text_embeddings(db_path):
     """Let go of a library's: it is forgotten."""
     with _looking_text_lock:
         _looking_text.pop(paths.key(str(db_path)), None)
+
+
+def saved_in(db_path, folder):
+    """{photo as stored: entry} of what the library holds for the photos directly in
+    `folder`; nothing for a library that is not there."""
+    if not os.path.exists(db_path):
+        return {}
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
+    try:
+        return store_suggestions.in_folder(conn, folder)
+    finally:
+        conn.close()
+
+
+def keep(db_path, photo, found, model_key=None):
+    """Keep `found` as what was suggested for `photo`, through the write lock."""
+    db.write_with_connection(db_path, lambda conn: store_suggestions.put(conn, photo, found, model_key),
+                             label="suggestions for %s" % os.path.basename(photo))
+
+
+def offer(db_path, offered, label="folder consensus"):
+    """Change what is offered for each photo in `offered`, [(photo, (tags, people,
+    title))], leaving what the suggester made as it was. Returns rows changed."""
+    return db.write_with_connection(
+        db_path, lambda conn: sum(store_suggestions.offer(conn, photo, tags, people, title)
+                                  for photo, (tags, people, title) in offered), label=label)
 
 
 def extract_path_hints(file_path: str) -> List[str]:
