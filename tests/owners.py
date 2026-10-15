@@ -174,7 +174,7 @@ _FILES = {
             "test_people_vocabulary test_person_face_samples test_person_ids "
             "test_person_rename_reaches_the_files test_queued_clustering_is_guarded "
             "test_reindex_keeps_face_decisions test_server_lists_are_alphabetical test_service_faces test_service_tags "
-            "test_shared_taxonomy_routes test_stability test_store_people test_store_taxonomy_add_path test_tag_order "
+            "test_shared_taxonomy_routes test_store_people test_store_taxonomy_add_path test_tag_order "
             "test_tag_sort_key_edges test_tag_view_api test_tags_are_checked_where_they_are_set test_tags_from_faces "
             "test_taxonomy_edits_report_what_they_wrote test_top_level_person "
             "test_trace_file_per_library test_tuner_photo_copy_upright test_tuner_reads "

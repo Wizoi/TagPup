@@ -1,8 +1,6 @@
-"""Coverage for the TagTuner face-tuning endpoints that `test_stability.py` leaves out.
-
-`test_stability.py` concentrates on matching and clustering rules. The read paths the
-UI is actually built on -- photo details, face crops, similarity ranking, the unmatched
-queue -- plus the unmatch and person-rename writes had no coverage at all.
+"""Coverage for the TagTuner face-tuning endpoints: the read paths the UI is actually built on --
+photo details, face crops, similarity ranking, the unmatched queue -- plus the unmatch and
+person-rename writes. (The matching and clustering rules are test_face_clustering_rules.)
 
 Face embeddings here are synthetic unit vectors, chosen so similarity ordering is exact
 and assertions can be about *which* identity ranks first rather than about a threshold.
@@ -459,6 +457,17 @@ class TestMatchBulkListsThePerson(TunerAPITestBase):
         status, body = self.post("/api/faces/match-bulk", {"face_ids": [face], "person_name": "Jane"})
         self.assertEqual(status, 200, body)
         self.assertEqual(self.photo_people(photo), ["Bob", "Jane"])
+
+
+class TestMatchValidation(TunerAPITestBase):
+    """Lifted: test_stability's malformed-JSON and missing-parameter tests. Mutation: face_match not refusing a body
+    with no face or no person."""
+
+    def test_a_match_with_no_json_or_no_person_is_refused(self):
+        status, _ = self.requests.post("/api/face/match", data=b"not-json-format")
+        self.assertEqual(400, status)
+        status, _ = self.post("/api/face/match", {"face_id": 1})
+        self.assertEqual(400, status)
 
 
 class TestUnmatchBulk(TunerAPITestBase):
