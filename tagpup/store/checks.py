@@ -8,8 +8,8 @@ saying whose.
 import collections
 import os
 
-from tagpup.core import paths
-from tagpup.store import derived, generations, people, person_ids, schema, search_index, taxonomy, tree_scan
+from tagpup.core import paths, vocabulary
+from tagpup.store import derived, generations, people, person_ids, schema, search_index, taxonomy
 from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
@@ -180,7 +180,13 @@ def keywords_under_a_person(conn):
     """How many distinct keywords the photos hold that would go under a person faces or photos use, so are left without a node
     (a node would turn the person into a group, rule a). Reported, not broken: the keyword is the file's, the person the
     owner's. Reads every photo's keywords, as `tags_without_a_node` does."""
-    return len(tree_scan.keywords(conn, derived.Tree.read(conn)).under)
+    tree = derived.Tree.read(conn)
+    under = set()
+    for (tags_json,) in conn.execute("SELECT tags FROM photos WHERE tags IS NOT NULL AND tags != '[]'"):
+        for text in set(derived.keywords_of(tags_json)):
+            if vocabulary.normalize(text) and tree.find(text) is None and taxonomy.under_a_used_person(conn, tree, text):
+                under.add(derived.keyword(text))
+    return len(under)
 
 
 def people_at_the_top(conn):

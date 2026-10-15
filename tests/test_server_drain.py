@@ -5,13 +5,26 @@ Owner, 2026-09-26: it "auto updates at next available request, completing curren
 and actions first". So a drain turns new requests away (503, which the pages wait out),
 lets the ones in flight finish -- a write among them -- and is refused outright while a
 Suggest run, an index or a recurring job is under way. A deadline that passes gives the
-server back its work; an update never interrupts a write.
+server back its work; an update never interrupts a write. Only a launcher on this machine
+drains (the token of the server's record), always with a lease: a launcher whose window
+closes between its drain and the end it would have made does not leave the server turning
+requests away. Every response says which version answers.
+
+Lifted: test_launcher_hands_over's WhoMayDrain (#747 the lease, #664 the startup migrations) and
+TheVersionOnEveryResponse, and the resume route's test (the route is deleted, DECISIONS 2026-10-15). Breaks that fail
+the kept tests, each applied to a copy of the code: `self._lease = lease` read as LEFT_DRAINED fails
+test_a_drain_left_undone_by_a_launcher_that_went_away_ends_at_its_lease; security.from_this_pc always True fails
+test_only_this_machine_may_drain; `bringing` dropped from lifecycle.long_work fails
+test_is_refused_while_the_startup_migrations_run; the version label dropped from the gate's start_response fails
+test_each_response_names_the_version_answering_also_when_turned_away; the lease check dropped from the drain route
+fails test_a_deadline_and_a_lease_must_be_numbers_of_seconds.
 """
 import os
 import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 from flask import jsonify
 
@@ -29,6 +42,8 @@ from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
 TOKEN = "a-token-of-the-launchers"
 HEADERS = {launcher.HEADER: TOKEN}
+#: What the launcher asks for (launcher.LEASE): the drain requires one.
+LEASE = 20
 
 
 class FakeBackground:
@@ -70,6 +85,7 @@ class Base(unittest.TestCase):
                                    work=lambda: list(self.long))
         self.app = web.create_app("tagpup", startup=self.library, lifecycle=self.lifecycle)
         self.app.testing = True
+        self.addCleanup(self.lifecycle.resume)      # a drain asks the batches to stop, and keeps asking until it resumes
         # A write that takes a while: what is in flight when the drain begins.
         self.entered, self.release, self.written = threading.Event(), threading.Event(), []
 
@@ -95,7 +111,7 @@ class Base(unittest.TestCase):
         return thread, found
 
     def drain(self, seconds=30):
-        return self.client().post("/api/server/drain", json={"seconds": seconds}, headers=HEADERS)
+        return self.client().post("/api/server/drain", json={"seconds": seconds, "lease": LEASE}, headers=HEADERS)
 
     def wait_until(self, check, seconds=10):
         deadline = time.time() + seconds
@@ -154,18 +170,27 @@ class ADrain(Base):
         writing.join(10)
         self.assertEqual(["row"], self.written)
 
-    def test_left_undone_by_a_supervisor_that_went_away_ends_by_itself(self):
+    def test_a_drain_left_undone_by_a_launcher_that_went_away_ends_at_its_lease(self):
+        """#747: a launcher's window closed between its drain and the end left the server turning every request away
+        for LEFT_DRAINED (180 s), past the pages' two minutes; the launcher asks for LEASE."""
         self.lifecycle._clock = self.clock
         self.assertTrue(self.drain().get_json()["drained"])
         self.assertEqual(503, self.client().get("/harbour/api/tags").status_code)
-        self.clock.now += lifecycles.LEFT_DRAINED + 1
-        self.assertEqual(200, self.client().get("/harbour/api/tags").status_code)
+        self.clock.now += LEASE - 1
+        self.assertEqual(503, self.client().get("/harbour/api/tags").status_code, "taken back before its lease")
+        self.clock.now += 2
+        self.assertEqual(200, self.client().get("/harbour/api/tags").status_code, "still drained past its lease")
         self.assertEqual(["stop", "start"], self.background.calls)
 
-    def test_can_be_resumed_by_the_supervisor(self):
-        self.assertTrue(self.drain().get_json()["drained"])
-        self.assertTrue(self.client().post("/api/server/resume", headers=HEADERS).get_json()["resumed"])
-        self.assertEqual(200, self.client().get("/harbour/api/tags").status_code)
+    def test_is_refused_while_the_startup_migrations_run(self):
+        """#664: the startup migration thread is long work."""
+        lifecycle = Lifecycle(version="v", launcher_token=TOKEN)
+        app = web.create_app("tagpup", lifecycle=lifecycle)
+        with mock.patch.object(lifecycles.library_actions, "bringing_up_to_date", return_value=1):
+            reply = app.test_client().post("/api/server/drain", json={"seconds": 5, "lease": LEASE}, headers=HEADERS)
+        self.assertEqual({"drained": False, "success": True,
+                          "waiting_for": ["bringing 1 library(ies) up to date"]}, reply.get_json())
+        self.assertTrue(lifecycle.status()["taking_work"])
 
 
 class ThroughALibrarysAddress(Base):
@@ -185,14 +210,11 @@ class ThroughALibrarysAddress(Base):
         self.assertEqual("1", refused.headers[lifecycles.UPDATING_HEADER])
         self.assertEqual(200, self.client().get("/api/server").status_code)
 
-    def test_a_drain_and_a_resume_through_it_do_not_wait_for_themselves(self):
+    def test_a_drain_through_it_does_not_wait_for_itself(self):
         started = time.monotonic()
-        answer = self.client().post("/harbour/api/server/drain", json={"seconds": 3}, headers=HEADERS)
+        answer = self.client().post("/harbour/api/server/drain", json={"seconds": 3, "lease": LEASE}, headers=HEADERS)
         self.assertTrue(answer.get_json()["drained"], answer.get_json())
         self.assertLess(time.monotonic() - started, 2, "the drain waited for itself")
-        resumed = self.client().post("/harbour/api/server/resume", headers=HEADERS)
-        self.assertEqual(200, resumed.status_code)
-        self.assertTrue(resumed.get_json()["resumed"])
 
 
 class OneDrainAtATime(Base):
@@ -216,7 +238,7 @@ class OneDrainAtATime(Base):
         draining, answer = self.in_thread(lambda: self.drain(seconds=30))
         self.wait_until(lambda: not self.lifecycle.status()["taking_work"])
         started = time.monotonic()
-        self.lifecycle.resume()
+        self.lifecycle.resume()      # the server's own: a lease ended
         draining.join(10)
         self.assertLess(time.monotonic() - started, 2, "the drain went on waiting after it was taken back")
         self.assertFalse(answer[0].get_json()["drained"])
@@ -231,7 +253,8 @@ class AQuietMoment(Base):
     update has waited an hour."""
 
     def drain_quietly(self, quiet):
-        return self.client().post("/api/server/drain", json={"seconds": 5, "quiet": quiet}, headers=HEADERS)
+        return self.client().post("/api/server/drain", json={"seconds": 5, "quiet": quiet, "lease": LEASE},
+                                  headers=HEADERS)
 
     def test_is_refused_while_someone_is_using_the_app(self):
         self.lifecycle._clock = self.clock
@@ -256,11 +279,20 @@ class AQuietMoment(Base):
 
 
 class OnlyTheLauncher(Base):
-    def test_may_drain_or_resume_the_server(self):
+    def test_may_drain_the_server(self):
         for headers in ({}, {launcher.HEADER: "a guess"}):
             self.assertEqual(403, self.client().post("/api/server/drain", json={}, headers=headers).status_code)
-            self.assertEqual(403, self.client().post("/api/server/resume", headers=headers).status_code)
         self.assertTrue(self.lifecycle.status()["taking_work"])
+
+    def test_only_this_machine_may_drain(self):
+        """Another machine is refused whatever it sends; over IPv6 loopback it is this one."""
+        elsewhere = self.client().post("/api/server/drain", json={"seconds": 5, "lease": LEASE}, headers=HEADERS,
+                                       environ_base={"REMOTE_ADDR": "192.168.1.20"})
+        self.assertEqual(403, elsewhere.status_code)
+        self.assertTrue(self.lifecycle.status()["taking_work"])
+        here = self.client().post("/api/server/drain", json={"seconds": 5, "lease": LEASE}, headers=HEADERS,
+                                  environ_base={"REMOTE_ADDR": "::1"})
+        self.assertTrue(here.get_json()["drained"])
 
     def test_and_a_server_it_did_not_start_is_drained_by_nobody(self):
         app = web.create_app("tagpup", startup=self.library)
@@ -268,10 +300,14 @@ class OnlyTheLauncher(Base):
         self.assertEqual(403, app.test_client().post("/api/server/drain", json={},
                                                      headers={launcher.HEADER: ""}).status_code)
 
-    def test_a_deadline_must_be_a_number_of_seconds(self):
+    def test_a_deadline_and_a_lease_must_be_numbers_of_seconds(self):
         for seconds in (0, -1, "60", True, lifecycles.MAX_DRAIN_SECONDS + 1):
-            answer = self.client().post("/api/server/drain", json={"seconds": seconds}, headers=HEADERS)
+            answer = self.client().post("/api/server/drain", json={"seconds": seconds, "lease": LEASE}, headers=HEADERS)
             self.assertEqual(400, answer.status_code, seconds)
+        for lease in (0, -1, lifecycles.LEFT_DRAINED + 1, "20", True, None):     # None: a drain with no lease
+            answer = self.client().post("/api/server/drain", json={"seconds": 5, "lease": lease}, headers=HEADERS)
+            self.assertEqual(400, answer.status_code, lease)
+        self.assertEqual(400, self.client().post("/api/server/drain", json={"seconds": 5}, headers=HEADERS).status_code)
         self.assertTrue(self.lifecycle.status()["taking_work"])
 
 
@@ -283,6 +319,18 @@ class WhichVersionAnswers(Base):
                 status = app.test_client().get(url).get_json()
                 self.assertEqual("20260926-101500-abc1234", status["version"])
                 self.assertTrue(status["taking_work"])
+
+    def test_each_response_names_the_version_answering_also_when_turned_away(self):
+        for path in ("/api/server", "/harbour/api/tags", "/"):
+            self.assertEqual(self.lifecycle.version, self.client().get(path).headers.get(launcher.VERSION_HEADER), path)
+        self.assertTrue(self.drain().get_json()["drained"])
+        refused = self.client().get("/harbour/api/tags")
+        self.assertEqual(503, refused.status_code)
+        self.assertEqual(self.lifecycle.version, refused.headers.get(launcher.VERSION_HEADER))
+
+    def test_one_run_from_a_checkout_says_so(self):
+        client = web.create_app("tuner", lifecycle=Lifecycle(version=None)).test_client()
+        self.assertEqual(launcher.FROM_A_CHECKOUT, client.get("/api/server").headers.get(launcher.VERSION_HEADER))
 
     def test_an_app_made_without_a_lifecycle_says_its_code_folders(self):
         from tagpup import config as tagpup_config

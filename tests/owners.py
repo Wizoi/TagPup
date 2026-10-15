@@ -167,7 +167,7 @@ _FILES = {
             "test_shared_taxonomy_routes test_stability test_store_people test_store_taxonomy_add_path test_tag_order "
             "test_tag_sort_key_edges test_tag_view_api test_tags_are_checked_where_they_are_set test_tags_from_faces "
             "test_taxonomy_edits_report_what_they_wrote test_top_level_person "
-            "test_trace_file_per_library test_tree_fill test_tuner_photo_copy_upright test_tuner_reads "
+            "test_trace_file_per_library test_tuner_photo_copy_upright test_tuner_reads "
             "test_tuner_server_api test_two_people_one_leaf_on_a_photo test_vocabulary tuner-assign-label-tells-the-truth "
             "tuner-face-zoom tuner-hidden-people-exist tuner-lists-alphabetical tuner-new-person-group "
             "tuner-people-by-face tuner-people-by-id tuner-reexamine-folder tuner-refresh-keeps-the-grid-loading "
@@ -207,8 +207,8 @@ _FILES = {
             "test_smart_rename_stays_put test_sync_counts_a_size_change test_tag_write_follows_the_keyword_rules "
             "test_tag_write_is_journaled test_tag_writes_keep_the_index_true test_tagpup_server_finds_native_rows "
             "test_thumbnails test_time_shift_records_every_date test_time_shift_tells_the_index "
-            "test_tree_grows_only_from_folders_added test_unreachable_is_not_missing test_what_counts_as_a_photo "
-            "test_when_a_photo_was_taken_is_kept test_writes_only_in_folders_held tuner-picker-and-queue "
+            "test_unreachable_is_not_missing test_what_counts_as_a_photo "
+            "test_when_a_photo_was_taken_is_kept tuner-picker-and-queue "
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),
     },
@@ -251,7 +251,7 @@ _FILES = {
             "test_library_registry_race test_local_server_socket test_log_runs test_logs "
             "test_mcp_config_resolves test_mcp_write_tools "
             "test_patch_tool test_photo_open test_recurring_jobs test_result "
-            "test_roots_ingress_keys_cover_the_routes test_roots_map test_roots_open_check test_roots_routes "
+            "test_roots_ingress_keys_cover_the_routes test_roots_map "
             "test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library "
             "test_unload_models_now "
             "test_web_app undo-from-reply validation"

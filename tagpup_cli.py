@@ -66,7 +66,6 @@ from tagpup.services import settings as library_settings
 from tagpup.services import libraries as library_actions
 from tagpup.services import faces as face_records
 from tagpup.services import tags_from_faces as tags_from_faces_service
-from tagpup.services import tree_fill as tree_fill_service
 from tagpup.services import identities
 from tagpup.services import indexing as indexing_service
 from tagpup.services import thumbnails
@@ -787,59 +786,6 @@ def tags_from_faces(ctx, apply_, guesses, folder):
             console.print("  %d x %s" % (count, why), markup=False, soft_wrap=True)
     if result.refused or result.errors:
         raise SystemExit(1)
-
-
-@cli.command("tree-fill")
-@click.option("--apply", "apply_", is_flag=True,
-              help="Back the library up, then make the nodes in one transaction. Without it, only says how many it would.")
-@click.option("--reveal", is_flag=True, help="Also list the keywords (a library is photographs of real people).")
-@click.option("--skip-root", "skip_roots", multiple=True,
-              help="Leave out the keywords under this root of the tag tree (repeat it): for a root you removed on purpose.")
-@click.pass_context
-def tree_fill(ctx, apply_, reveal, skip_roots):
-    """Give the file keywords the library holds without a node their nodes, once (every tag has an id): a keyword no node of
-    the tag tree is gets its own path, a bare one a node of its own at the top, never a person. Merge them into the right
-    branch afterwards in the library's tag view (the tag merge moves faces and photo lists by id).
-
-    Left, and counted: a keyword under a person that faces or photos use. A dry run unless --apply; counts only, and a
-    second --apply finds nothing. The tag tree is not journaled: `undo` cannot take this back; --apply takes a backup of
-    the library first."""
-    library = _existing_library(ctx)
-    report = tree_fill_service.run(library, apply=False, skip_roots=skip_roots)
-    words = report["keywords"]
-    console.print("%d keyword(s) hold no node of the tag tree: %d use(s) on %d photo(s)."
-                  % (words["without_a_node"], words["uses"], words["photos"]), markup=False)
-    if words["without_a_node"] and words["largest_missing_root"] * 2 >= words["without_a_node"] \
-            and words["largest_missing_root"] >= tree_fill_service.SHARED_ROOT_MIN:
-        console.print("  %d keyword(s) share one root that is not in the tag tree: if you removed it on purpose, do not apply "
-                      "(--skip-root NAME leaves it out; --reveal gives its name)." % words["largest_missing_root"], markup=False)
-    for count, why in ((words["skipped_by_root"], "keyword(s) under a --skip-root: left out"),
-                       (words["left_under_a_person"], "keyword(s) under a person that faces or photos use: left without a node")):
-        if count:
-            console.print("  %d %s." % (count, why), markup=False)
-    if reveal:
-        for name, count in report["reveal"]["missing_roots"]:
-            console.print("    root not in the tree: %s (%d keyword(s))" % (name, count), markup=False, soft_wrap=True)
-        for text in report["reveal"]["keywords"]:
-            console.print("    " + text, markup=False, soft_wrap=True)
-    if not report["made"]["nodes"]:
-        console.print("Nothing to make.")
-        return
-    if not apply_:
-        _tree_fill_said("Would make", report)
-        console.print("Nothing changed. --apply backs the library up and makes them (not journaled).")
-        return
-    copy = tagpup_db.backup(library.path, "tree-fill")
-    console.print("Backed up to %s." % copy, markup=False, soft_wrap=True)
-    done = tree_fill_service.run(library, apply=True, skip_roots=skip_roots)
-    _tree_fill_said("Made", done)
-    console.print("The tag tree is not journaled: `undo` cannot take this back; the backup can.")
-
-
-def _tree_fill_said(verb, report):
-    """What a tree-fill made or would make, in counts."""
-    console.print("%s %d node(s) for keywords (with their levels); %d keyword row(s) added to photos."
-                  % (verb, report["made"]["nodes"], report["keyword_rows_added"]), markup=False)
 
 
 def _machine():

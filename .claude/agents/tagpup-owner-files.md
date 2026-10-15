@@ -44,7 +44,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 | Check the destination before moving data into it | `tests/test_relink_checks_the_destination.py` |
 | Nothing written into a photo cut short | `tests/test_no_writes_to_damaged_photos.py`, `tests/test_writes_refuse_cut_short_photos.py` |
 | A share that does not answer is not missing | `tests/test_unreachable_is_not_missing.py` |
-| Rows only in folders held or asked to add | `tests/test_writes_only_in_folders_held.py`, `tests/test_rows_only_in_folders_added.py` |
+| Rows only in folders held or asked to add | `tests/test_roots_scenarios.py` (AFolderTheLibraryDoesNotHold), `tests/test_rows_only_in_folders_added.py` |
 | A row nobody read is never stamped | `tests/test_partial_writes_leave_rows_unread.py` |
 | Paths have one owner | `tests/test_rules_have_one_owner.py` |
 | Sync never removes, never writes a file | `tests/test_sync.py` |
