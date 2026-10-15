@@ -200,7 +200,7 @@ def _baseline(conn):
     """A NEW library, made directly in the schema a library had after migration 14 (owner, 2026-10-15: migrations 1 to 14 are
     collapsed; the steps from 15 on remain). Every table, index and trigger of that schema, in the one transaction the runner
     gives it: a failure leaves a library with no table, which the next open makes again. Not a migration of an older library:
-    one below BASELINE is refused (`_migrate`). tests/test_schema.py holds this to the schema the old chain made."""
+    one below BASELINE is refused (`_migrate`). It was checked once against the schema the old chain made at 14 (2026-10-15: every object identical), and migrations 15 to 32 run on it in tests/test_migrations.py."""
     for statement in (
         "CREATE TABLE photos (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE, mtime REAL, size INTEGER,"
         " tags TEXT, captions TEXT, raw_metadata TEXT, document_id TEXT, taken TEXT, year INTEGER)",
