@@ -389,14 +389,19 @@ def _pair(target):
 
 
 def set_names(conn, persons_by_id, as_read):
-    """Give each face in {id: person} its person (an id, a tag path or a name: person_ids.target) -- only where the face
+    """Give each face in {id: a person's id, or None} that person -- only where the face
     is still what the caller read: `as_read` is {id: the person's id the face carried then, or None}, and a face a person
     decided meanwhile (name_source 'manual') or one that carries another person now is left alone. Clustering reads the
     faces at its start and writes at its end, 53 minutes later on the 68,000-photo library; a face the owner named in
     between is theirs. So is a photo's person: a face is not given a person another face of its photo carries now (the
     owner named that one meanwhile), and a person merged away meanwhile is nobody to give (#1271, #1272). The persons
-    are ids, read when the caller read the faces: a rename meanwhile changes no id. Returns (the ids written, the ids
+    are ids, read when the caller read the faces: a rename meanwhile changes no id. A name or a tag path is refused before
+    anything is written: a name two people have is one of them only by chance (#1357). Returns (the ids written, the ids
     skipped). The caller commits."""
+    named_otherwise = [person for person in persons_by_id.values()
+                       if person is not None and (isinstance(person, bool) or not isinstance(person, int))]
+    if named_otherwise:
+        raise TypeError("a face is given the id of a person here, not %r" % (named_otherwise[0],))
     known = person_ids.read(conn)
     gone = set()
     for person in set(persons_by_id.values()):
