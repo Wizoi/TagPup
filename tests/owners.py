@@ -104,7 +104,7 @@ _SCENARIO_FILES = {
     "I4": "test_server_migrates_at_start",
     "I5": "test_pages_against_the_real_server",
     "I6": "test_roots_scenarios",
-    "I7": "test_mcp_server",
+    "I7": "test_mcp_server test_one_library_three_programs",
     "I8": "test_stale_record_precondition",
     "P1": "test_people_by_id_at_once",
     "P2": (
