@@ -84,8 +84,7 @@ def work_for(library, photos, models, looking=False, held_now=None):
     for the library -- something with `begin(library)` (tagpup.runtime.Runtime), which
     returns what a run calls (`suggest`, `offered`, `consensus`, `model_key`; see
     SuggestionRuns.start). Everything the run's thread needs is handed to it here; it
-    never asks which library a request was for (docs/findings.md, #44). Without models,
-    a run over a folder with photos fails with a message saying so. `looking`: the folder is
+    never asks which library a request was for (docs/findings.md, #44). `looking`: the folder is
     not the library's, and the run keeps what it finds in memory and adds nothing to the
     library (decided by the route, from the library's own answer). `held_now()`, for such a run: does
     the library hold every folder of it now (suggest_how no longer says to look)? Asked when the run ends: a folder added meanwhile, whose
@@ -110,9 +109,6 @@ def work_for(library, photos, models, looking=False, held_now=None):
                           "report": report}
 
         def begin(self):
-            if models is None:
-                raise RuntimeError("Suggest has no model: this app was made without a runtime "
-                                   "(tagpup.web.app.create_app(runtime=...))")
             return models.begin(library, remember=False, **self._turn) if looking \
                 else models.begin(library, **self._turn)
 

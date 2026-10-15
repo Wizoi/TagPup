@@ -1,8 +1,9 @@
-"""The library views' routes (tagpup.web.tagpup_routes: /api/library/navigator, /api/library/ids, /api/photo-thumb;
-docs/SPEC_TAGPUP_GUI.md): Flask's test client, no port, no thread, no sleep, in a home of its own.
+"""The thumbnail route (tagpup.web.tagpup_routes: /api/photo-thumb; docs/SPEC_TAGPUP_GUI.md) and the Roots gate in front
+of the library views' routes: Flask's test client, no port, no thread, no sleep, in a home of its own.
 
 What the owner is told, in a sentence and not a traceback, is asserted for each refusal; the thumbnail's cache headers
-are what let the browser keep it; every request goes through the Roots gate and ingress like the rest.
+are what let the browser keep it; every request goes through the Roots gate and ingress like the rest. The ids, cards,
+find and navigator of the views are scenarios (tests/test_library_views_scenarios.py, test_selection_scenarios.py).
 Photos are rows as the indexer records them; fictional names only.
 """
 import os
@@ -16,17 +17,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
 import web_client  # noqa: E402
-from test_migrations import at_version  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup import config  # noqa: E402
-from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import images, thumbs  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
-from tagpup.web import libraries as web_libraries  # noqa: E402
 from tagpup.web import roots_gate  # noqa: E402
-
-REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
 
 
 class Routes(unittest.TestCase):
@@ -34,108 +30,12 @@ class Routes(unittest.TestCase):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
-        self.vl.tree("Trips/Coast", "Trips/Lakes", "People/Wren Halloway", face_root="People")
-        self.a = self.vl.photo("2024 Coast", "a.jpg", taken="2024:06:01 10:00:00", tags=["Trips/Coast", "People/Wren Halloway"],
-                               real=True, size=(900, 600))
-        self.b = self.vl.photo("2024 Coast", "b.jpg", taken="2024:06:02 10:00:00", tags=["Trips/Lakes"], real=True)
+        self.a = self.vl.photo("2024 Coast", "a.jpg", taken="2024:06:01 10:00:00", real=True, size=(900, 600))
         self.c = self.vl.photo(os.path.join("2024 Coast", "Day 2"), "c.jpg", taken="2023:01:02 10:00:00")
         self.d = self.vl.photo("Misc", "d.jpg")
-        self.folder = os.path.join(self.vl.pictures, "2024 Coast")
 
     def get(self, path, **kwargs):
         return self.client.get("/library" + path, **kwargs)
-
-    def view(self, **query):
-        reply = self.get("/api/library/ids", query_string=query)
-        return reply, reply.get_json()
-
-
-class TheView(Routes):
-    def test_all_is_ordered_by_date_taken_with_the_undated_last_and_has_a_total(self):
-        reply, found = self.view(kind="all")
-        self.assertEqual(200, reply.status_code)
-        self.assertEqual([self.c, self.a, self.b, self.d], found["ids"])
-        self.assertEqual((4, True), (found["total"], found["complete"]))
-        self.assertEqual({"kind": "all", "value": None, "recursive": False}, found["source"])
-
-    def test_a_json_answer_is_never_kept_by_the_browser(self):
-        self.assertIn("no-store", self.view(kind="all")[0].headers["Cache-Control"])
-
-    def test_a_folder_is_named_by_folder_and_recursive_takes_its_subfolders(self):
-        _, found = self.view(kind="folder", folder=self.folder)
-        self.assertEqual([self.a, self.b], found["ids"])
-        _, found = self.view(kind="folder", folder=self.folder, recursive="true")
-        self.assertEqual([self.c, self.a, self.b], found["ids"])
-        _, found = self.view(kind="folder", folder=self.folder, recursive="false")
-        self.assertEqual(2, found["total"])
-
-    def test_a_folder_may_also_be_given_as_value(self):
-        self.assertEqual([self.a, self.b], self.view(kind="folder", value=self.folder)[1]["ids"])
-
-    def test_a_folder_typed_in_another_case_is_the_same_folder(self):
-        if os.name != "nt":
-            self.skipTest("a filesystem with case")
-        self.assertEqual([self.a, self.b], self.view(kind="folder", folder=self.folder.lower())[1]["ids"])
-        self.assertEqual([self.a, self.b], self.view(kind="folder", folder=self.folder.replace("\\", "/"))[1]["ids"])
-
-    def test_a_keyword_a_person_a_year_and_a_month(self):
-        self.assertEqual([self.a, self.b], self.view(kind="keyword", value="Trips")[1]["ids"])
-        self.assertEqual([self.a], self.view(kind="person", value="People/Wren Halloway")[1]["ids"])
-        self.assertEqual([self.a, self.b], self.view(kind="year", value="2024")[1]["ids"])
-        self.assertEqual([self.a, self.b], self.view(kind="month", value="2024-06")[1]["ids"])
-        self.assertEqual([self.c], self.view(kind="month", value="2023-01")[1]["ids"])
-
-    def test_a_keyword_with_a_percent_or_a_quote_or_no_node_is_an_empty_page(self):
-        for tag in ("Trips/%", "Trips/O'Brien", "No/Such/Tag", "Trips/_oast"):
-            with self.subTest(tag=tag):
-                reply, found = self.view(kind="keyword", value=tag)
-                self.assertEqual((200, [], 0), (reply.status_code, found["ids"], found["total"]))
-
-    def test_a_request_that_means_nothing_is_a_400_with_a_sentence(self):
-        for query, said in ((dict(kind="nope"), "kind must be one of"), (dict(), "kind must be one of"),
-                            (dict(kind="folder"), "needs a value"), (dict(kind="year", value="x"), "A year is"),
-                            (dict(kind="month", value="2024-13"), "A month is"),
-                            (dict(kind="keyword", value="   "), "needs a value")):
-            with self.subTest(query=query):
-                reply, found = self.view(**query)
-                self.assertEqual(400, reply.status_code)
-                self.assertFalse(found["success"])
-                self.assertIn(said, found["error"])
-                self.assertNotIn("Traceback", found["error"])
-
-    def test_it_answers_this_pc_only(self):
-        for path in ("/api/library/ids?kind=all", "/api/library/navigator?section=dates", "/api/photo-thumb?id=%d" % self.a):
-            with self.subTest(path=path):
-                self.assertEqual(403, self.get(path, environ_overrides=REMOTE).status_code)
-
-    def test_a_library_no_photo_was_indexed_in_is_an_empty_list(self):
-        ViewLibrary(self, "emptied", home=self.home)
-        found = self.client.get("/emptied/api/library/ids?kind=all").get_json()
-        self.assertEqual(([], 0), (found["ids"], found["total"]))
-
-
-class TheNavigator(Routes):
-    def nav(self, section):
-        reply = self.get("/api/library/navigator", query_string={"section": section})
-        return reply, reply.get_json()
-
-    def test_each_section_answers_its_counts(self):
-        _, found = self.nav("folders")
-        self.assertIn(self.folder, [each["path"] for each in found["folders"]])
-        _, found = self.nav("keywords")
-        self.assertEqual(2, {each["tag"]: each["count"] for each in found["keywords"]}["Trips"])
-        _, found = self.nav("people")
-        self.assertEqual([("Wren Halloway", 1)], [(each["name"], each["count"]) for each in found["people"]])
-        self.assertEqual({"people", "groups", "unfiled"}, set(found))
-        _, found = self.nav("dates")
-        self.assertEqual([2023, 2024], [each["year"] for each in found["years"]])
-        self.assertEqual(1, found["undated"])
-
-    def test_an_unknown_or_missing_section_is_a_400_with_a_sentence(self):
-        for section in ("nope", "", None):
-            reply = self.get("/api/library/navigator", query_string={"section": section} if section is not None else {})
-            self.assertEqual(400, reply.status_code)
-            self.assertIn("section must be one of", reply.get_json()["error"])
 
 
 class TheThumbnail(Routes):
@@ -253,28 +153,6 @@ class TheThumbnail(Routes):
                           ).convert("RGB").getpixel((5, 5))
         self.assertGreater(red[0], 200)
         self.assertGreater(blue[2], 200)
-
-
-class ALibraryThatIsNotReady(unittest.TestCase):
-    def test_a_library_behind_is_a_sentence_and_never_a_traceback(self):
-        home = own_home.for_test(self)
-        path = home.library("behind.db")
-        at_version(path, 19)   # before the indexes the views page by (migration 20)
-        app = web.create_app("tagpup", startup=Library(path))
-        app.testing = True
-        client = app.test_client()
-        with mock.patch.object(web_libraries.library_actions, "bring_up_to_date", side_effect=RuntimeError("locked")):
-            for url in ("/behind/api/library/ids?kind=all", "/behind/api/library/navigator?section=folders",
-                        "/behind/api/photo-thumb?id=1"):
-                reply = client.get(url)
-                self.assertIn(reply.status_code, (409, 404), url)
-                if reply.status_code == 409:
-                    self.assertIn("has not been brought up to date", reply.get_json()["error"])
-            reply = client.get("/behind/api/library/ids?kind=all")
-            self.assertEqual(409, reply.status_code)
-            self.assertIn("behind", reply.get_json()["error"])
-        reply = client.get("/behind/api/library/ids?kind=all")
-        self.assertEqual(200, reply.status_code, "opened by the app as it opens any library, it is ready")
 
 
 @unittest.skipUnless(os.name == "nt", "the spellings are Windows paths")

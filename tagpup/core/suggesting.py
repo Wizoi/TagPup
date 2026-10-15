@@ -70,8 +70,8 @@ def offered_tags(entry, threshold=0.0, file_person=None):
     written as (tagpup.services.tagging.person_filer): the one rule a click on the chip
     follows too.
     """
-    offered = list(entry.get("tags") or [])
-    offered_people = list(entry.get("people") or [])
+    offered = list(entry["tags"])
+    offered_people = list(entry["people"])
     chosen = [t["tag"] for t in offered if t.get("score", 0.0) >= threshold]
     chosen += [file_person(p["name"]) if file_person else p["name"]
                for p in offered_people if p.get("score", 0.0) >= threshold and (p.get("name") or "").strip()]

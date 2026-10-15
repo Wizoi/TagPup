@@ -50,13 +50,6 @@ class TheRuntimeReachesSuggest(unittest.TestCase):
         started[0].begin()
         self.runtime.begin.assert_called_once_with(Library(self.home.library("library.db")))
 
-    def test_an_app_made_without_one_says_so_when_a_run_begins(self):
-        app, home = web_client.app_for(self, "tagpup")
-        self.assertIsNone(app.config["RUNTIME"])
-        work = suggestion_jobs.work_for(Library(home.library("library.db")), dict, None)
-        with self.assertRaisesRegex(RuntimeError, "without a runtime"):
-            work.begin()
-
 
 class ARuntime(unittest.TestCase):
     """Each library's models, from the library's settings (tagpup.services.settings)."""
