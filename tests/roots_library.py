@@ -89,8 +89,7 @@ def convert_to_root(db_path, location, name=NAME, address=ADDRESS):
         conn = db.connect(db_path)
         try:
             conn.execute("BEGIN IMMEDIATE")
-            store_roots._forget(conn)
-            logical = dict(store_roots._rows(conn))
+            logical = store_roots.logical(conn)
             existing = core_machine.roots_of(logical) if logical else core_machine.IDENTITY
             places = {each: list(found) for each, found in existing.locations.items()}
             places[name] = [location]
@@ -134,7 +133,6 @@ def convert_to_root(db_path, location, name=NAME, address=ADDRESS):
             derived.rebuild_folders(conn)
             journal.record(conn, "roots adopt: %s" % name, [], {"root": name})
             conn.commit()
-            store_roots._forget(conn)
         finally:
             conn.close()
     return result

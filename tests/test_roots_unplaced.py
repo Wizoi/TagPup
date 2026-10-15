@@ -49,8 +49,6 @@ class WithoutTheMap(RootedCase):
             with self.assertRaises(paths.UnmappedRoot) as raised:
                 store_photos.rows_under(conn, self.side.pictures)
             with self.assertRaises(paths.UnmappedRoot):
-                store_photos.all_paths(conn)
-            with self.assertRaises(paths.UnmappedRoot):
                 store_roots.sql_equals(conn, "path", os.path.join(self.side.outside_folder, "x.jpg"))
         finally:
             conn.close()
@@ -70,7 +68,7 @@ class WithoutTheMap(RootedCase):
         before = self.fingerprint()
         conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
         try:
-            for ask in (lambda: store_photos.rows_under(conn, self.side.pictures), lambda: store_photos.all_paths(conn)):
+            for ask in (lambda: store_photos.rows_under(conn, self.side.pictures),):
                 try:
                     ask()
                 except Exception:
@@ -112,7 +110,7 @@ class WithoutTheMap(RootedCase):
         config.add_machine_root("pictures", self.side.pictures)
         conn = db.connect(db.readonly_uri(self.side.db_path), uri=True)
         try:
-            self.assertEqual(42 + 2, len(store_photos.all_paths(conn)))
+            self.assertEqual(42 + 2, len(store_photos.tags_by_photo(conn)))
         finally:
             conn.close()
 

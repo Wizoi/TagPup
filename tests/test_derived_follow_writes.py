@@ -282,13 +282,6 @@ class APhotoDeleted(WithALibrary):
                       "still holds b.jpg")
         self.agrees()
 
-    def test_removing_photos_by_path_in_the_index_transaction(self):
-        self.conn.execute("BEGIN IMMEDIATE")
-        photos.remove(self.conn, [self.where(os.path.join("2024", "Lake"), "c.jpg")])
-        self.conn.commit()
-        self.gone("c.jpg")
-        self.agrees()
-
     def test_removing_a_folder_takes_everything_under_it_and_only_that(self):
         self.conn.execute("BEGIN IMMEDIATE")
         result = photos.remove_under(self.conn, os.path.join(self.pictures, "2024"))

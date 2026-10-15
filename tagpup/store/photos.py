@@ -690,19 +690,6 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         embeddings.put(conn, stored, model, row.get("mtime", 0.0), row.get("size", 0), row["embedding"])
 
 
-def remove(conn, photo_paths):
-    """Delete the rows of `photo_paths` and their faces, whether or not the connection
-    enforces foreign keys. Returns photo rows deleted. The caller commits."""
-    store_roots.begin_write(conn)
-    removed = 0
-    for photo_path in photo_paths:
-        faces.remove_for_photo(conn, photo_path)
-        clause, params = store_roots.sql_equals(conn, "path", photo_path)
-        removed += conn.execute("DELETE FROM photos WHERE " + clause, params).rowcount
-    derived.prune(conn)
-    return removed
-
-
 def clear_embeddings(conn):
     """Forget every photo's CLIP vectors. Returns rows deleted. The caller commits."""
     return embeddings.clear(conn)
@@ -864,12 +851,6 @@ def row_as_recorded(conn, stored_path):
 
 
 # ---- What pairing a missing row with a file reads ---------------------------------------------------
-
-def all_paths(conn):
-    """Every photo's path, as stored."""
-    roots = store_roots.roots_for(conn)
-    return [paths.from_row(path, roots) for (path,) in conn.execute("SELECT path FROM photos")]
-
 
 def identities(conn):
     """{path as stored: document_id} for every photo whose identity is recorded."""

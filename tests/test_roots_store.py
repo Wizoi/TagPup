@@ -181,7 +181,6 @@ class EveryReadAnswersNative(TwoLibraries):
         self.assertTrue(entry["raw_suggestions"]["nearest_neighbors"][0]["path"].startswith("<BASE>"))
 
     def test_the_whole_library_read_row_by_row(self):
-        self.same(lambda conn, side: sorted(store_photos.all_paths(conn)))
         self.same(lambda conn, side: sorted(store_photos.identities(conn).items()))
         self.same(lambda conn, side: sorted(store_photos.tags_by_photo(conn)))
         self.same(lambda conn, side: store_photos.with_tag(conn, "Activity/Sailing"))
@@ -608,7 +607,7 @@ class TheMapProviderIsNeverForgotten(unittest.TestCase):
         "before = 'tagpup.config' in sys.modules\n"
         "from tagpup.store import db, photos\n"
         "conn = db.connect(db.readonly_uri(library), uri=True)\n"
-        "print(before, len(photos.all_paths(conn)))\n")
+        "print(before, len(photos.tags_by_photo(conn)))\n")
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="roots_provider_")
