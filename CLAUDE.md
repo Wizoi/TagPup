@@ -19,8 +19,8 @@ New code imports from the package (`from tagpup.store import db`). `scripts/` ho
 programs to run, each with a `__main__` block, and the few helpers they share (`_root`,
 `code_snapshot`, `reloader`); nothing but a script's own tests imports from it. A module
 that moves takes every importer with it in the same commit and leaves nothing at its old
-name. `tests/test_scripts_are_entry_points.py` fails a module in `scripts/` that is
-neither, and `tests/test_layers.py` fails package code that imports from `scripts/` or
+name. `tests/test_layers.py` fails a module in `scripts/` that is
+neither, and also package code that imports from `scripts/` or
 goes up a layer.
 
 ## Running things
@@ -83,7 +83,7 @@ enforces it.
 `tagpup/files/exiftool_session.py`. pyexiftool reads stdout to the end before stderr; a batch
 with ~4 KB of warnings fills the stderr pipe and both sides wait forever -- two scripts
 sat at 0% CPU for two days. The session drains both and gives each command a deadline.
-`tests/test_exiftool_single_owner.py` enforces it.
+`tests/test_rules_have_one_owner.py` enforces it.
 
 **Never load a model on the GPU yourself.** `tagpup/ml/gpu.py` owns the graphics card: one
 process at a time on the machine has a model on it, in turn, and a waiter says who has it
@@ -97,7 +97,7 @@ for anything written to the database, walked or sent to the browser; `key()` for
 in-memory comparison; `sql_equals()` / `sql_under()` for SQL. A helper that turned
 `D:\x` into `D:/x` made tag writes, renames and deletes match no row for three
 months while reporting success. In the pages, `pathKey` / `samePath` (`web/common/paths.js`).
-`tests/test_paths_single_owner.py` and `tests/frontend/path-helpers.test.mjs` enforce it.
+`tests/test_rules_have_one_owner.py` and `tests/frontend/path-helpers.test.mjs` enforce it.
 
 **A library's settings live in the library.** The CLIP model, face detection, Suggest's
 words, the rename format and ExifTool's path are each library's own (`settings`, read
