@@ -98,6 +98,7 @@ _SCENARIO_FILES = {
     "F7": "test_a_share_asleep",
     "F8": "test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules test_just_look_edits",
     "F9": "test_roots_old_place test_roots_pinned_runs",
+    "F10": "test_one_photo_whatever_its_spelling",
     "F11": "test_index_progress_end_to_end",
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
@@ -190,13 +191,13 @@ _FILES = {
             "test_a_row_describes_its_file_one_way "
             "test_batches_go_through_the_model "
             "test_bulk_delete test_bulk_writes_update_the_index "
-            "test_cli_path_spelling test_dates test_delete_through_this_pc test_derived_file_changes "
+            "test_dates test_delete_through_this_pc test_derived_file_changes "
             "test_exiftool_encoding test_exiftool_says_why test_exiftool_session "
             "test_index_adds_the_folder_it_is_given "
             "test_index_startup_reads test_jobs_indexing "
             "test_keyword_fields test_lock_owners "
             "test_metadata_extraction test_minor_errors_in_a_journaled_write test_one_answer_to_the_librarys_folders "
-            "test_path_spelling_in_faces_and_records test_paths "
+            "test_paths "
             "test_paths_roots test_photo_identity test_photo_meta test_refresh_rows_guards "
             "test_relink_checks_the_destination test_remove_folder_lists_the_library "
             "test_renaming "
@@ -204,7 +205,7 @@ _FILES = {
             "test_service_delete test_service_indexing test_service_page_images test_service_replace_tag "
             "test_service_save_photo test_service_smart_rename "
             "test_settling_carries_vectors "
-            "test_tag_writes_keep_the_index_true test_tagpup_server_finds_native_rows "
+            "test_tag_writes_keep_the_index_true "
             "test_thumbnails "
             "test_what_counts_as_a_photo "
             "test_when_a_photo_was_taken_is_kept tuner-picker-and-queue "

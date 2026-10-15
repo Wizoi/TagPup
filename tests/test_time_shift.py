@@ -112,9 +112,12 @@ class TheTimeShiftPage(unittest.TestCase):
         conn.commit()
         conn.close()
         status, reply = lib.post("/api/folder/time-shift", {
-            "folder_path": lib.photos, "camera_model": "All Cameras", "shift_minutes": 30})
+            "folder_path": lib.photos.replace(os.sep, "/"), "camera_model": "All Cameras", "shift_minutes": 30})
         self.assertEqual(200, status, reply)
         self.assertEqual((True, 2, 3), (reply["success"], reply["updated_count"], reply["requested_count"]))
+        # The folder is typed as the browser sends it, walked cold, and its photos come back in their own case (the walk
+        # once used the lower-cased key).
+        self.assertLessEqual(set(made), {photo["path"] for photo in reply["updated_photos"]})
         for path in made:
             raw, mtime, size = lib.rows("SELECT raw_metadata, mtime, size FROM photos WHERE path = ?", (path,))[0]
             self.assertEqual(SHIFTED, json.loads(raw)["EXIF:DateTimeOriginal"], path)

@@ -91,6 +91,9 @@ class TheBarReachesTheEnd(unittest.TestCase):
             self.assertEqual(3, conn.execute("SELECT COUNT(*) FROM photos WHERE COALESCE(tags, '[]') = '[]'").fetchone()[0])
         finally:
             conn.close()
+        # The per-photo write locks are beside the library, not under the working directory: a server's indexer and one
+        # started by hand from anywhere else must lock in one place (the child runs from the code's folder, not the home).
+        self.assertTrue(os.path.isdir(os.path.join(os.path.dirname(library.path), "locks")))
         again, heard_again = index()
         self.assertTrue(again.ok, (again.errors, heard_again))
         self.assertIn("All images are up to date! Index is current.", [message for message, _p in heard_again], heard_again)
