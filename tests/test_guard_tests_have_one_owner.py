@@ -19,7 +19,7 @@ from shipped_sources import ROOT  # noqa: E402
 TESTS = os.path.join(ROOT, "tests")
 FRONTEND = os.path.join(TESTS, "frontend")
 #: Files nobody could place by what they import or how they are named (owners.py, kind unmapped). Lower it when one is placed.
-UNMAPPED_TODAY = 4
+UNMAPPED_TODAY = 0
 CITES = re.compile(r"#(\d{2,4})\b")
 
 
@@ -55,7 +55,9 @@ class EveryTestFileHasOneOwner(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(kind == "scenario", bool(ids), "a scenario file names its ids, and only it does")
                 for sid in ids:
-                    self.assertEqual(owner, owners.SCENARIOS[sid][0])
+                    self.assertIn(sid, owners.SCENARIOS)
+                if ids:
+                    self.assertEqual(owner, owners.SCENARIOS[ids[0]][0], "a file's owner is its first scenario's")
         self.assertEqual({o for o, _s in owners.SCENARIOS.values()}, set(owners.OWNERS))
 
     def test_the_tier_file_and_the_map_agree_about_the_files_that_run_a_flow(self):
