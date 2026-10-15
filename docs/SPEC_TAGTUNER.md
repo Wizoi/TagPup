@@ -93,7 +93,7 @@ The page opened with `?review=1` opens the dialog as it starts: the Activity pag
 - **Scheduled jobs**: each job with why it is scheduled (`safety`, `retention`, `catch-up`) and, for each library, its last run -- when, how long, how it ended, what it changed as counts, why it failed -- and when it is due; **Run now**, asked first; its last runs, unfolded; a failed last run flagged until a later one is done. **Logs for this run** shows the lines the run logged.
 - **Sync & watcher**: each library's root folders (on disk or missing, watched), when a change was last noticed, its last sync of one folder and of the whole library ("last in step"), and the folders to review, opening TagTuner's dialog.
 - **Snapshots**: each library's, with kind, age and size, and the disk they take.
-- **Always on**: the version answering, running since and the background tasks.
+- **Server**: the version answering, running since and the background tasks.
 - **Recent activity**: one timeline of what was done -- changes of the journal, job runs, syncs, runs of the indexer, updates -- newest first, with their counts; **More** reads further back.
 - **Logs**: a tab for each log in `data/logs`, newest lines first, each as time, level, logger and message, filtered by level (warnings and worse unless asked) and by text; **Follow** asks for new lines every three seconds; **Raw** shows the end of the file as written, **Download** saves it.
 
