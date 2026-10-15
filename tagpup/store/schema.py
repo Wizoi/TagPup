@@ -639,6 +639,16 @@ RECHECK_SECONDS = 2.0
 _clock = time.monotonic
 
 
+def forget(db_path=None):
+    """Forget that this process found the library at `db_path` current -- every library, without one -- so the next
+    `ensure` reads the file: for a test that changes a library, or the code's migrations, behind the process's back."""
+    with _current_guard:
+        if db_path is None:
+            _current.clear()
+        else:
+            _current.pop(db._key(db_path), None)
+
+
 def _still_current(path):
     """False when the library at `path`, found current, is now newer than this version knows (or cannot
     be read just now: `ensure` then looks at it in full and says why)."""

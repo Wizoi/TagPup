@@ -35,7 +35,7 @@ def take(library, now=None, force=False):
 def _described(library, snapshot):
     """A snapshot as `listing` shows it. `too_old`: its schema is below the baseline, so a restore of it is refused
     (schema.BASELINE; owner, 2026-10-15)."""
-    made_at = snapshots.schema_version(snapshot.path)
+    made_at = schema.version_of(snapshot.path)
     return {"name": snapshot.name, "kind": snapshot.kind,
             "taken": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(snapshot.taken)),
             "bytes": snapshot.size, "changes_since": len(snapshots.changes_since(library.path, snapshot.path)),
@@ -66,7 +66,7 @@ def restore(library, name, apply=False, now=None):
     result = Result(attempted=1, details={
         "dry_run": not apply, "snapshot": snapshot.name, "bytes": snapshot.size,
         "lost": [{"id": cid, "created": created, "operation": operation} for cid, created, operation in lost]})
-    made_at = snapshots.schema_version(snapshot.path)
+    made_at = schema.version_of(snapshot.path)
     if made_at < schema.BASELINE:
         # Its steps are gone: nothing could bring it forward. Refused before anything is copied over the library.
         result.refuse(schema.too_old_sentence("The snapshot " + name, made_at))

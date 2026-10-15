@@ -247,7 +247,7 @@ class Crashes(JournalLibrary):
     def start_again(self):
         """What the next process does when it opens the library."""
         journal._settled.clear()
-        schema._current.clear()
+        schema.forget()
         schema.ensure(self.db_path)
 
     def test_after_the_write_before_the_commit(self):

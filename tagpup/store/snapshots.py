@@ -292,14 +292,6 @@ def changes_since(db_path, snapshot_path):
     return sorted(_changes(db_path) - _changes(snapshot_path))
 
 
-def schema_version(path):
-    conn = db.connect(db.readonly_uri(path), uri=True)
-    try:
-        return schema.version(conn)
-    finally:
-        conn.close()
-
-
 def library_bytes(db_path):
     """The bytes the library at `db_path` takes, its -wal included."""
     return sum(os.path.getsize(db_path + suffix) for suffix in ("", "-wal") if os.path.exists(db_path + suffix))

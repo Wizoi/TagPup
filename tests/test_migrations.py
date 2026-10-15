@@ -400,7 +400,7 @@ class ALibraryBelowTheBaseline(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
-        schema._current.clear()
+        schema.forget()
         return path
 
     def test_is_refused_with_a_sentence_and_nothing_is_written_or_backed_up(self):
@@ -433,7 +433,7 @@ class ALibraryBelowTheBaseline(unittest.TestCase):
         home = own_home.for_test(self)
         path = home.library("harbour.db")
         schema.ensure(path)
-        schema._current.clear()
+        schema.forget(path)
         before = digest(path)
         self.assertIsNone(schema.newer_problem(path))
         self.assertEqual([], schema.ensure(path))

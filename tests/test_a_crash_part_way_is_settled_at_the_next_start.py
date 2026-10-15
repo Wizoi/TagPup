@@ -56,7 +56,7 @@ class ACrashAndTheNextStart(FilesCase):
     def start_again(self):
         """What the next process does with the library: opens it (rows settled), reads its settings (files settled)."""
         journal._settled.clear()
-        schema._current.clear()
+        schema.forget()
         schema.ensure(self.library.path)
         with mock.patch.object(file_changes, "_settled", set()):
             runtime.library_settings(self.library)

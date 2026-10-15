@@ -114,7 +114,7 @@ class ANewLibrary(SchemaTestCase):
             with self.assertRaises(RuntimeError):
                 schema.ensure(self.db_path)
         self.assertEqual({"schema_version"}, tables(self.connect()))
-        schema._current.clear()
+        schema.forget()
         self.assertEqual([m.name for m in schema.MIGRATIONS], schema.ensure(self.db_path))
         self.assertFalse(os.path.exists(os.path.join(self.dir, "backups")))
 
