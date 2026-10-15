@@ -138,7 +138,7 @@ def _ends_with(tag, tail):
 
 
 def _is_above(branch, tag):
-    """Is `branch` a path above `tag` (not the tag itself), without case: "Trips" is above "Trips/Coast"."""
+    """Is `branch` a path above `tag` (not the tag itself), without case: "Coast" is above "Coast/Pier"."""
     wanted = vocabulary.keyword_key(vocabulary.normalize(branch))
     return any(vocabulary.keyword_key(each) == wanted for each in vocabulary.lineage(tag)[:-1])
 
