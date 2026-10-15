@@ -224,7 +224,7 @@ class MigrationTwentyThree(unittest.TestCase):
                                                        "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
         tables = [table for table in tables if table not in ("schema_version", "changes", "change_rows")]
         before = {table: look(self.path, "SELECT * FROM %s" % table) for table in tables}
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:23]), mock.patch.object(schema, "LATEST", 23):
+        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(23)), mock.patch.object(schema, "LATEST", 23):
             self.assertEqual(migration_names.named(23), schema.ensure(self.path))
         added = [row for row in self.schema_rows() if row not in before_schema]
         self.assertEqual([("index", store.CAPTION_INDEX, "photos")], [row[:3] for row in added], "one index, no column or trigger")

@@ -13,6 +13,18 @@ def after(version):
     return [m.name for m in schema.MIGRATIONS if m.version > version]
 
 
+def upto(version):
+    """The migrations up to and including `version`, oldest first: what a test patches `schema.MIGRATIONS` with (and
+    `schema.LATEST` with `version`) to hold a library at that schema. The list starts at the baseline, so its index is not
+    the version: never `MIGRATIONS[:n]`."""
+    return tuple(m for m in schema.MIGRATIONS if m.version <= version)
+
+
+def get(version):
+    """The migration `version`."""
+    return next(m for m in schema.MIGRATIONS if m.version == version)
+
+
 def named(*versions):
     """The names of those migrations, in the order given."""
     by_version = {m.version: m.name for m in schema.MIGRATIONS}

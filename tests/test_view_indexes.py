@@ -61,13 +61,13 @@ class TheIndexesALibraryViewPagesBy(unittest.TestCase):
 
     def migrate_to(self, version):
         before_objects, before_rows = self.objects(), self.rows()
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:version]), mock.patch.object(schema, "LATEST", version):
+        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(version)), mock.patch.object(schema, "LATEST", version):
             applied = schema.ensure(self.path)
         schema._current.clear()
         return applied, self.objects() - before_objects, before_rows
 
     def test_a_library_at_19_gets_the_indexes_one_step_at_a_time(self):
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:19]), mock.patch.object(schema, "LATEST", 19):
+        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(19)), mock.patch.object(schema, "LATEST", 19):
             change = journal.apply(self.path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
         schema._current.clear()
         applied, added, was = self.migrate_to(20)

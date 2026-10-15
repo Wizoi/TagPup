@@ -87,24 +87,6 @@ class TestFacesTableIsIndexedForIdentifying(unittest.TestCase):
             "the index has to lead with `excluded` so a covering count is possible",
         )
 
-    def test_an_existing_database_gains_the_index_on_open(self):
-        """The libraries that need this most are the ones that already exist."""
-        # A library from before the index, and so before migrations were recorded:
-        # one that has had migration 1 is not looked at again (tagpup.store.schema).
-        # Made in the shape such a library has, faces by photo_path: dropping
-        # schema_version from a library made today leaves a shape no library had.
-        from test_schema import make_unmigrated_library
-        make_unmigrated_library(self.db)
-        self.assertNotIn("idx_faces_identify", self.indexes_on_faces(self.db))
-
-        pi = PhotoIndex(db_path=self.db)
-        pi.load()
-        pi.close()
-        self.assertIn(
-            "idx_faces_identify", self.indexes_on_faces(self.db),
-            "opening an older database did not add the index it is missing",
-        )
-
     def test_the_excluded_count_is_answered_from_the_index_alone(self):
         """A covering index means the count never reaches the row, crop and all."""
         pi = PhotoIndex(db_path=self.db)

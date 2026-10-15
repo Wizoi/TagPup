@@ -976,9 +976,14 @@ def schema_gap_blocker(version, current):
     (schema.ONLY_DROPS), or a column the migration took out of the journal (schema.COLUMNS_DROPPED). Every
     other migration blocks, and so does one that is not
     in the list: what cannot be classified is never exempt. A change made at a schema NEWER than
-    the library's blocks too (an older version of the app opened it)."""
+    the library's blocks too (an older version of the app opened it), and so does one made BELOW the
+    baseline (schema.BASELINE): its steps are gone."""
     if version > current:
         return "migration %d is not applied here" % version
+    if version < schema.BASELINE:
+        # The steps below the baseline are deleted (owner, 2026-10-15): what they did to this change's rows is not known.
+        # Live: the oldest changes of the three libraries are at 9, 10 and 20.
+        return "it was made before the baseline, schema %d, whose steps TagPup no longer has" % schema.BASELINE
     known = {migration.version: migration for migration in schema.MIGRATIONS}
     # Not DERIVED: every undo rebuilds the derived tables from the rows it wrote (_derive), so a
     # migration that makes or fills one changes nothing an older change's rows mean.

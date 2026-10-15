@@ -169,12 +169,29 @@ class TheDoctor(Library):
         self.assertEqual(0, doctor.main(["--db", self.db_path]))
 
     def test_a_library_not_yet_migrated_is_said_so_and_nothing_else_is_read(self):
-        from test_schema import make_unmigrated_library
+        from test_migrations import at_version
         older = os.path.join(self.dir, "older.db")
-        make_unmigrated_library(older)
+        at_version(older, schema.LATEST - 1)
         lines = []
         self.assertEqual(1, doctor.report(older, out=lines.append))
         self.assertIn("migrations not applied", "\n".join(lines))
+
+    def test_a_library_below_the_baseline_is_said_to_be_too_old_not_to_be_migrated(self):
+        from test_migrations import at_version
+        too_old = os.path.join(self.dir, "too_old.db")
+        at_version(too_old, schema.BASELINE)
+        conn = db.connect(too_old)
+        conn.execute("UPDATE schema_version SET version = 13")
+        conn.commit()
+        conn.close()
+        lines = []
+        self.assertEqual(1, doctor.report(too_old, out=lines.append))
+        said = "\n".join(lines)
+        self.assertIn("older than TagPup can bring forward", said)
+        self.assertNotIn("start TagPup", said)
+        with self.assertRaises(SystemExit) as refused:
+            doctor.main(["--db", too_old, "--rebuild-derived"])
+        self.assertIn("older than TagPup can bring forward", str(refused.exception))
 
     def test_counts_without_naming_anyone_unless_asked(self):
         self.face(self.photo("Wren Halloway at the lake.jpg"), name="Wren Halloway", rebuilt=False)

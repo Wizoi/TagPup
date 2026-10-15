@@ -21,6 +21,11 @@ KINDS = ("scenario", "unit", "migration", "guard", "unmapped")
 #: Finding numbers a test file once cited and may stop citing: only a number listed here may leave tests/findings_cited.txt's set.
 RETIRED = frozenset({
     745,   # the supervisor's hung-path finding: the supervisor is deleted (DECISIONS 2026-10-11); its test went with it
+    80,    # migration below the baseline deleted (migration 4's face counter); its test went with it (owner, 2026-10-15)
+    81,    # migration below the baseline deleted (migration 4's photo id counter); its test went with it
+    82,    # migration below the baseline deleted (migration 4's stored form of a never-indexed photo); its test went with it
+    83,    # migration below the baseline deleted (migration 4 with foreign keys on); its test went with it
+    96,    # migration below the baseline deleted (migration 7's saved suggestions under two folders); its test went with it
 })
 
 SCENARIOS = {
@@ -78,6 +83,7 @@ _SCENARIO_FILES = {
     "D4": "test_snapshots",
     "D5": "test_derived_follow_writes test_photo_people_follow_their_sources",
     "D6": "test_a_librarys_settings_are_its_own",
+    "D8": "test_migrations",
     "D7": (
         "test_library_roots test_roots_at_scale test_roots_ingress test_roots_location test_roots_scenarios "
         "test_roots_store"
@@ -142,7 +148,7 @@ _FILES = {
             "test_sync_records test_the_tree_is_the_librarys test_unused_tables test_unused_tables_31 "
             "test_unused_tables_32 test_validation test_view_indexes"
         ),
-        "migration": "test_a_library_that_cannot_be_migrated_is_still_served test_migrations test_schema",
+        "migration": "test_a_library_that_cannot_be_migrated_is_still_served test_schema",
         "guard": "test_db_access test_derived_writers test_journal_keys_and_cascades test_photo_rows test_sandbox_roots",
     },
     "people": {

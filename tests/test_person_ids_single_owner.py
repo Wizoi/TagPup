@@ -44,8 +44,6 @@ IDS_WRITTEN_WITH_THE_PAIR = {
 
 #: (module, function) that write names and say so, with the function that gives the ids.
 COVERED_ELSEWHERE = {
-    # Migration 4 rebuilt faces before the column existed; migration 21 fills it (_person_ids).
-    ("tagpup/store/schema.py", "_photo_ids"): ("tagpup/store/schema.py", "_person_ids"),
     # The journal writes any row of a journaled table; _derive follows what it wrote.
     ("tagpup/store/journal.py", "_write"): ("tagpup/store/journal.py", "_derive"),
 }

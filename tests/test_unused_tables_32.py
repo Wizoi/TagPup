@@ -18,7 +18,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from migration_names import after  # noqa: E402
+from migration_names import after, upto  # noqa: E402
 from test_unused_tables import backups, names, query  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
@@ -205,7 +205,7 @@ class TheColumn(AtThirtyOne):
         """The fixtures above rebuild the table with schema.rebuild_table, the code under test. This one is made by the
         migrations up to 31 and gains the column by ALTER TABLE, a path of its own (the column lands last, as it did in no live
         library, but nothing here is the rebuild)."""
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:31]), mock.patch.object(schema, "LATEST", 31):
+        with mock.patch.object(schema, "MIGRATIONS", upto(31)), mock.patch.object(schema, "LATEST", 31):
             old = ViewLibrary(self, "older")
             old.tree("People/Rowan Thackeray", "Trips/Coast", face_root="People")
             old.photo("Trip", "a.jpg", tags=["Trips/Coast"])
@@ -481,7 +481,7 @@ class HowItFails(AtThirtyOne):
 
     def test_an_older_app_will_not_open_the_migrated_library(self):
         self.migrate()
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:31]), mock.patch.object(schema, "LATEST", 31):
+        with mock.patch.object(schema, "MIGRATIONS", upto(31)), mock.patch.object(schema, "LATEST", 31):
             schema._current.clear()
             with self.assertRaises(schema.NewerLibrary) as refused:
                 schema.ensure(self.path)

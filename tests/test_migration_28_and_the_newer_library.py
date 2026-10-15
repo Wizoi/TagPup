@@ -134,7 +134,7 @@ class MigrationTwentyEight(unittest.TestCase):
             schema._person_indexes(conn)
             raise RuntimeError("the power went")
 
-        broken = [m for m in schema.MIGRATIONS[:27]] + [schema.MIGRATIONS[27]._replace(apply=crashes)]
+        broken = list(migration_names.upto(27)) + [migration_names.get(28)._replace(apply=crashes)]
         with mock.patch.object(schema, "MIGRATIONS", tuple(broken)):
             with self.assertRaises(RuntimeError):
                 schema.ensure(self.path)
@@ -204,7 +204,7 @@ class AnOlderAppAndALibraryItHasNotSeen(unittest.TestCase):
         # recovery (RecoveryOfANewerLibrary).
         path = self.home.library("older.db")
         library_actions.create(path)
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:27]), mock.patch.object(schema, "LATEST", 27):
+        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(27)), mock.patch.object(schema, "LATEST", 27):
             schema._current.clear()
             with self.assertRaises(schema.NewerLibrary):
                 schema.ensure(path)
@@ -314,8 +314,7 @@ class TwoProcessesBringingALibraryAt26UpToDate(unittest.TestCase):
             from tagpup.core.library import Library
             from tagpup.services import libraries
             from tagpup.store import schema
-            real = schema.MIGRATIONS[26]
-            assert real.version == 27
+            real = [m for m in schema.MIGRATIONS if m.version == 27][0]
 
             def hold(conn):
                 open(%(a_in)r, "w").close()
@@ -325,7 +324,8 @@ class TwoProcessesBringingALibraryAt26UpToDate(unittest.TestCase):
                 time.sleep(3)
                 real.apply(conn)
 
-            schema.MIGRATIONS = schema.MIGRATIONS[:26] + (real._replace(apply=hold),) + schema.MIGRATIONS[27:]
+            schema.MIGRATIONS = (tuple(m for m in schema.MIGRATIONS if m.version < 27) + (real._replace(apply=hold),)
+                                 + tuple(m for m in schema.MIGRATIONS if m.version > 27))
             libraries.bring_up_to_date_in_background([Library(%(path)r)]).join()
             print("server done")
             """) % {"root": ROOT, "a_in": a_in, "b_ready": b_ready, "path": path}

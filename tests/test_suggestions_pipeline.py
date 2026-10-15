@@ -30,7 +30,6 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shipped_sources import python_sources  # noqa: E402
 
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
@@ -40,7 +39,7 @@ from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import suggester as suggester_service  # noqa: E402
 from tagpup.services.suggester import TagSuggester as RealSuggester  # noqa: E402
-from tagpup.store import db, schema  # noqa: E402
+from tagpup.store import schema  # noqa: E402
 
 
 class _LibraryFixture(unittest.TestCase):
@@ -215,27 +214,6 @@ class WithoutAModelProvider(_LibraryFixture):
         folder, photos = self._folder("2025-08 Sprints", 1)
         self.runs.run(folder, suggestion_jobs.work_for(self.library, lambda: {}, None))
         self.assertEqual(self.runs.status(folder)["message"], "No images found in this folder.")
-
-
-class OneFileOneOwner(unittest.TestCase):
-    def test_only_one_function_names_the_suggestions_cache_file(self):
-        owners = []
-        for module in python_sources():
-            with open(os.path.join(WORKSPACE_DIR, module), encoding="utf-8") as f:
-                if "gui_suggestions_cache" in f.read():
-                    owners.append(module.replace(os.sep, "/"))
-        # Migration 7 reads it once, into the library; nothing else names it.
-        self.assertEqual(owners, ["tagpup/store/schema.py"],
-                         "a second copy of the cache naming can drift or write over it")
-
-    def test_the_main_library_keeps_its_existing_file(self):
-        folder = tempfile.mkdtemp(prefix="sugg_file_")
-        self.addCleanup(shutil.rmtree, folder, True)
-        conn = db.connect(os.path.join(folder, "photo_index.db"))
-        try:
-            self.assertEqual(os.path.basename(schema._suggestions_file(conn)), "gui_suggestions_cache.json")
-        finally:
-            conn.close()
 
 
 if __name__ == "__main__":

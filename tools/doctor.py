@@ -62,6 +62,8 @@ def report(db_path, show=0, out=print):
     note = schema.newer_note(db_path)   # the report only reads: a newer library is shown as it is, with a note
     if note:
         out(note)
+        if schema.version_of(db_path) < schema.BASELINE:
+            return 1   # no rule can be asked of a schema this old, and "start TagPup" would not bring it forward
     # The library's CLIP model, read without writing: a library never stamped reads as
     # stamping would make it.
     # A library holding a root this machine does not place cannot spell its paths: what needs
