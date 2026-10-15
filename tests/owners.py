@@ -126,12 +126,13 @@ _SCENARIO_FILES = {
     "P6": "test_two_cousins_called_alike",
     "V1": "test_library_views_scenarios",
     "V2": "test_library_search",
-    "V3": "test_analyse_only_looks_are_kept test_analyse_only_suggest",
+    "V3": "test_analyse_only_looks_are_kept test_analyse_only_suggest test_suggest_then_apply_all",
     "V4": "test_one_gpu_at_a_time test_one_gpu_jobs",
     "V5": "test_selection_scenarios",
     "V6": "test_models_released_when_idle",
     "V7": "test_selection_scenarios",
     "V8": "test_library_views_scenarios",
+    "V9": "test_suggest_then_apply_all",
 }
 
 #: owner -> kind -> the unit, migration and guard files, a .mjs without its ".test.mjs".
@@ -225,19 +226,19 @@ _FILES = {
             "navigator-multi photo-camera photo-position photo-suggestions-panel search-page selection "
             "selection-follows-the-photo selection-panel selection-suggestions stale-cards suggest-cancel tagging-flow "
             "test_a_search_keeps_no_thread_buffers "
-            "test_auto_apply_writes_what_it_offers test_camera_words test_caption_order test_chip_keys_follow_the_server "
+            "test_camera_words test_caption_order test_chip_keys_follow_the_server "
             "test_clip_sees_photos_upright test_embeddings_follow_their_photo "
             "test_every_library_keeps_its_saved_suggestions "
             "test_index_reload_reuses_its_connection test_jobs_suggestions "
             "test_library_union_and_order test_library_view test_library_view_plans test_models_in_use_survive_an_unload "
-            "test_one_value_for_a_suggested_tag test_page_caches_released_when_idle "
-            "test_person_tag_edges test_photo_index_keeps_only_vectors test_rename_moves_suggestions_and_embeddings "
-            "test_saved_suggestions_do_not_cancel_a_run test_selection test_selection_tally test_settings "
+            "test_one_value_for_a_suggested_tag "
+            "test_person_tag_edges test_photo_index_keeps_only_vectors "
+            "test_selection test_selection_tally test_settings "
             "test_suggest_index_stays_current test_suggest_reads_people_once test_suggest_respects_face_decisions "
-            "test_suggest_status_poll_is_a_snapshot test_suggester_scoring test_suggestions_follow_their_photo "
-            "test_suggestions_keep_hierarchy test_suggestions_pipeline test_tag_usage_from_photo_tags "
-            "test_the_runtime_reaches_suggest test_thumbs_cli test_vector_index test_vectors_and_pool_released_when_idle "
-            "test_thumbnail_routes test_web_beside_its_requests test_zero_shot_skips_people vgrid"
+            "test_suggest_status_poll_is_a_snapshot test_suggester_scoring "
+            "test_suggestions_keep_hierarchy test_tag_usage_from_photo_tags "
+            "test_the_runtime_reaches_suggest test_thumbs_cli test_vector_index "
+            "test_thumbnail_routes test_zero_shot_skips_people vgrid"
         ),
         "guard": "test_gpu_single_owner test_no_test_loads_a_model",
     },
@@ -259,7 +260,6 @@ _FILES = {
             "test_patch_tool test_photo_open test_recurring_jobs test_result "
             "test_roots_ingress_keys_cover_the_routes test_roots_map "
             "test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library test_tagpup_routes "
-            "test_unload_models_now "
             "test_web_app undo-from-reply validation"
         ),
         "guard": (

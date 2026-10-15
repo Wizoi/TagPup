@@ -80,6 +80,7 @@ SCENARIO = frozenset({
     # Suggest and the analyse-only run, start to end.
     "test_analyse_only_looks_are_kept",
     "test_analyse_only_suggest",
+    "test_suggest_then_apply_all",
     # The real CLI's index in a process, read as the server reads it.
     "test_index_progress_end_to_end",
 })

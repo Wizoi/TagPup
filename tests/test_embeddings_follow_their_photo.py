@@ -5,6 +5,10 @@ Before, the same vector was kept twice. The cache Suggest read was keyed by path
 the file's mtime, so every keyword write made the next Suggest embed the photo again;
 a rotation left the vector describing the picture before the turn; and removing a
 folder left its photos' vectors behind.
+
+Lifted: test_rename_moves_suggestions_and_embeddings. Its two route tests are the rename in test_suggest_then_apply_all
+(mutation: a rename that deletes the suggestions row, or the vectors, fails it); its swap is below (mutation: the
+rename's placeholder step removed, so a swap collides on the unique path, fails it).
 """
 import os
 import sys
@@ -32,10 +36,10 @@ class Vectors(unittest.TestCase):
         self.lib.add_row(self.photo, mtime=stat.st_mtime, size=stat.st_size)
         self.keep(MODEL, stat.st_mtime, stat.st_size)
 
-    def keep(self, model, mtime, size, photo=None):
+    def keep(self, model, mtime, size, photo=None, vector=VECTOR):
         conn = db.connect(self.lib.library.path)
         try:
-            embeddings.put(conn, photo or self.photo, model, mtime, size, VECTOR)
+            embeddings.put(conn, photo or self.photo, model, mtime, size, vector)
             conn.commit()
         finally:
             conn.close()
@@ -108,6 +112,14 @@ class Vectors(unittest.TestCase):
         renamed = os.path.join(os.path.dirname(self.photo), "renamed.jpg")
         photos.move_rows(self.lib.library.path, {self.photo: renamed})
         self.assertEqual(VECTOR, self.stored(photo=renamed).vector)
+
+    def test_two_photos_swapping_names_swap_their_vectors(self):
+        # path is the photos table's unique key, so a swap passes through placeholders (the Smart Rename that
+        # shuffles numbered files among themselves). The rename's own suggestions: test_suggest_then_apply_all.
+        other, vector = self.lib.photo("dunes.jpg"), b"\x00\x00\x00\x40" * 4
+        self.keep(MODEL, 1.0, 1, photo=other, vector=vector)
+        photos.move_rows(self.lib.library.path, {self.photo: other, other: self.photo})
+        self.assertEqual((VECTOR, vector), (self.stored(photo=other).vector, self.stored(photo=self.photo).vector))
 
     def test_deleting_the_photo_takes_them(self):
         self.keep(OTHER, 1.0, 1)

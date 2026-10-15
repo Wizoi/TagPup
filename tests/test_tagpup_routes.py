@@ -2,7 +2,7 @@
 
 What a route answers to a request it must refuse (400 and 404) and what it lists (a scan, the autocomplete lists). What a
 write leaves in a photo's file is the services' scenarios': tests/test_tag_a_photo_read_it_back_and_undo.py (save, add, remove,
-clear, Date Taken, a deep tag whole), test_auto_apply_writes_what_it_offers.py (Apply All), test_photo_open.py (Explorer),
+clear, Date Taken, a deep tag whole), test_suggest_then_apply_all.py (Apply All), test_photo_open.py (Explorer),
 test_service_page_images.py (a photo's faces, a face's crop), test_service_indexing.py (the indexer's progress text); the pages
 against the real routes are test_pages_against_the_real_server.py's.
 """
