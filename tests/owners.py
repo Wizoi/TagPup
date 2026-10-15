@@ -95,6 +95,7 @@ _SCENARIO_FILES = {
     "F4": "test_folder_watcher test_sync",
     "F5": "test_scenario_two_libraries_share_a_folder",
     "F6": "test_index_progress_end_to_end test_partial_writes_leave_rows_unread test_refresh_rows",
+    "F7": "test_a_share_asleep",
     "F8": "test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules test_just_look_edits",
     "F9": "test_roots_old_place test_roots_pinned_runs",
     "F11": "test_index_progress_end_to_end",
@@ -193,7 +194,7 @@ _FILES = {
             "test_exiftool_encoding test_exiftool_says_why test_exiftool_session test_functional_cli "
             "test_index_adds_the_folder_it_is_given test_index_queue_active_is_one_read test_index_queue_is_locked "
             "test_index_reports_failed_clustering test_index_startup_reads test_jobs_indexing "
-            "test_keyword_fields test_lock_owners test_membership_is_bounded "
+            "test_keyword_fields test_lock_owners "
             "test_metadata_extraction test_minor_errors_in_a_journaled_write test_one_answer_to_the_librarys_folders "
             "test_path_spelling_in_faces_and_records test_paths "
             "test_paths_roots test_photo_identity test_photo_meta test_refresh_rows_guards "
@@ -206,7 +207,7 @@ _FILES = {
             "test_sync_counts_a_size_change "
             "test_tag_writes_keep_the_index_true test_tagpup_server_finds_native_rows "
             "test_thumbnails test_time_shift_records_every_date test_time_shift_tells_the_index "
-            "test_unreachable_is_not_missing test_what_counts_as_a_photo "
+            "test_what_counts_as_a_photo "
             "test_when_a_photo_was_taken_is_kept tuner-picker-and-queue "
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),
