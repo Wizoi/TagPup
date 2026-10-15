@@ -2,6 +2,12 @@
 
 The CLI is stood in for. What is checked is what it is asked to do, from where and for
 which library, and what the Result and the progress reports say.
+
+Contract row 16: the indexer's stdout is the interface, and `WhatTheProgressBarSays` is its table.
+
+Lifted: test_tagpup_server_api's TestIndexerNoiseFiltering and TestIndexerProgressText (22 tests, one per line shape).
+Broken in a scratch copy and the table fails: _INDEXER_NOISE emptied (every chatter row), _INDEXER_TQDM's percent group
+dropped (every bar row), _INDEXER_MAX_MESSAGE ignored (the long row).
 """
 import os
 import sys
@@ -110,6 +116,36 @@ class AddingAFolder(unittest.TestCase):
         self.assertTrue(result.ok, result.message())
         self.assertEqual(seen, [False, True])
         self.assertFalse(held[0])
+
+
+class WhatTheProgressBarSays(unittest.TestCase):
+    """One line of the CLI's stdout -> the text on the bar, or None for chatter nobody watching it wants (by shape, not wording)."""
+
+    BAR = "Generating embeddings:  %d%%|####  | %d/49 [00:30<00:40]"
+    CHATTER = (
+        "Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN.",
+        "WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub.",
+        "2026-09-19 22:55:30,914 [INFO] httpx - HTTP Request: HEAD https://x",
+        "2026-09-19 07:39:12,235 [INFO] tagpup_cli.index - Loaded 56959 entries",
+        "DEBUG:some.module:a message", "INFO:some.module:a message", "WARNING:some.module:a message",
+        "ERROR:some.module:a message", "CRITICAL:some.module:a message",
+        "C:" + chr(92) + "x" + chr(92) + "y.py:42: UserWarning: something happened",
+        "  warnings.warn(", '  File "C:/x/y.py", line 3, in f', "", "   " + chr(10), None)
+    SAID = (
+        (BAR % (42, 21), "Generating embeddings: 42% (21/49)"),
+        # tqdm redraws with carriage returns: the newest frame is the current one, and the bar's width is read from its percent
+        ((BAR % (10, 5)) + chr(13) + (BAR % (20, 10)), "Generating embeddings: 20% (10/49)"),
+        ("Scanning directory: D:/Training/Pictures", "Scanning directory: D:/Training/Pictures"),
+        ("Found 68083 image(s) total.", "Found 68083 image(s) total."),
+        ("Indexing 49 image(s) (24 already tagged, 25 untagged).", "Indexing 49 image(s) (24 already tagged, 25 untagged)."),
+        ("Indexing " + "x" * 300, "Indexing " + "x" * 80 + chr(0x2026)),
+    )
+
+    def test_chatter_is_dropped_and_progress_is_said_as_a_person_reads_it(self):
+        for line in self.CHATTER:
+            self.assertIsNone(indexing.summarize_indexer_line(line), repr(line))
+        for line, said in self.SAID:
+            self.assertEqual(said, indexing.summarize_indexer_line(line), repr(line[:40]))
 
 
 if __name__ == "__main__":

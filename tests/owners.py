@@ -102,7 +102,7 @@ _SCENARIO_FILES = {
     "I2": "scenario-write-through-a-server-update test_server_drain",
     "I3": "test_install_app test_install_hands_over test_launcher_hands_over",
     "I4": "test_server_migrates_at_start",
-    "I5": "test_pages_against_the_real_server test_tagpup_server_api",
+    "I5": "test_pages_against_the_real_server",
     "I6": "test_roots_scenarios",
     "I7": "test_mcp_server",
     "I8": "test_stale_record_precondition",
@@ -251,7 +251,7 @@ _FILES = {
             "test_mcp_config_resolves test_mcp_write_tools "
             "test_patch_tool test_photo_open test_recurring_jobs test_result "
             "test_roots_ingress_keys_cover_the_routes test_roots_map "
-            "test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library "
+            "test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library test_tagpup_routes "
             "test_unload_models_now "
             "test_web_app undo-from-reply validation"
         ),

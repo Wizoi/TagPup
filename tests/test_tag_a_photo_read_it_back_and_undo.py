@@ -13,6 +13,12 @@ indexers_shape (#251) and test_a_file_undo_waits_for_newer_changes. Each was bro
 fails: change_tags writing the loose parts of a path (tag write), save_photo opening a second session (one session),
 MetadataExtractor._structure dropping the bare names (the indexer's shape), file_changes._undoable skipping the
 newer-change check (undo order), save_photo's rename done outside the journal (rename after a caption).
+
+Lifted: tests/test_tagpup_server_api.py's TestSaveMetadata and TestBulkTags (what the save and bulk-tags routes left on the
+disk: a title, a tag whole and not in pieces, a deep tag, a clear, Date Taken, an add that keeps the keywords the photo
+carries, a remove) -- the routes call these services and the pages' flow against the real routes is
+test_pages_against_the_real_server's. Broken in a scratch copy and this file fails: change_tags dropping the keywords a
+photo carries before it adds (an add keeps them), save_photo writing no Date Taken (one save), a remove that takes nothing off.
 """
 import json
 import os
@@ -80,6 +86,17 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual(captions, {path: field_of(path, "XMP:Description") for path in (a, b)})
         self.assert_row_describes_file(b)
 
+    def test_a_remove_takes_off_only_what_it_names_and_a_save_with_no_tags_clears_the_photo(self):
+        a, b = self.make_read("a.jpg", ("Beach", "Relay")), self.make_read("b.jpg", ("Beach",))
+
+        result = tagging.change_tags(self.library, [a, b], [], ["Beach"], EXIFTOOL)
+
+        self.assertEqual([], result.errors)
+        self.assertEqual((["Relay"], []), (keywords_of(a), keywords_of(b)))
+        self.assertEqual(["Relay"], self.indexed(a))
+        self.assertTrue(tagging.save_photo(self.library, a, "", [], None, EXIFTOOL, "").ok)
+        self.assertEqual([], keywords_of(a))
+
     def test_a_photo_cut_short_is_skipped_and_said(self):
         a, b = self.make_read("a.jpg"), self.make_read("b.jpg")
         with open(b, "rb") as handle:
@@ -105,23 +122,24 @@ class TaggingAPhoto(ReadFilesCase):
             return session
 
         with mock.patch.object(exiftool_session, "ExifToolSession", side_effect=counted):
-            result = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay"],
+            result = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay/Pier"],
                                         "2019-06-15T10:30:00", EXIFTOOL, "")
 
         self.assertEqual((True, 1), (result.ok, result.changed), result.message())
+        self.assertEqual("2019:06:15 10:30:00", str(field_of(a, "EXIF:DateTimeOriginal")))
         self.assertEqual((1, 2, 1), (len(sessions), len(reads), len(writes)), "sessions, reads, writes of one save")
         change = self.last_change()
         self.assertEqual(change, result.details["change"])
         self.assertEqual(("save photo", "applied", ["done"]),
                          (self.rows("SELECT operation FROM changes WHERE id = ?", (change,))[0][0],
                           self.status(change), self.states(change)))
-        self.assertEqual(["Beach", "Places/Quay"], keywords_of(a))
+        self.assertEqual(["Beach", "Places/Quay/Pier"], keywords_of(a), "a deep tag whole, no level of it alone")
         raw = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
         self.assertEqual(MetadataExtractor(exiftool_path=EXIFTOOL).batch_read([a])[0]["raw_metadata"], raw)
         self.assertEqual("Quay at dusk", raw["Description"])
         self.assertTrue(any(":" not in key for key in raw), "a read records the bare names too")
         written = os.stat(a).st_mtime_ns
-        again = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay"],
+        again = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay/Pier"],
                                    "2019-06-15T10:30:00", EXIFTOOL, "")
         self.assertEqual((True, 0, None, written), (again.ok, again.changed, again.details["change"],
                                                     os.stat(a).st_mtime_ns), "a file holding it all was written")
