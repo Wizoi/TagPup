@@ -130,34 +130,20 @@ def _edits(planned):
     return edits
 
 
-def _remaining(library, folder=None):
-    return {"faces": len(_plan(library, folder=folder).work.choices)}
-
-
-def faces_from_tags(library, apply=False, again=False, planned=None, folder=None):
-    """Plan, and with `apply` make, the naming of every face a keyword person of its photo
-    names (see the module's docstring). A Result on the maintenance scaffold: `changed` is the
-    face rows written; details `counts` as _plan's, and `earlier_apply`. A second apply is refused
-    without `again` (#840), with the counts it would have named in the details.
-
-    With `planned`, a plan read earlier (`plan`), that plan is what is applied -- the faces a person was
-    asked about -- instead of one read again, which took 13.6 s on photo_index and could name other faces
-    than the question said; the counts after the write are not read again either. The write is as
-    guarded as ever: each face must still be what the plan read, or nothing is written.
-
-    With `folder`, the plan reads (and, read again after the write, counts what is still to be named in) the photos under that
-    folder only; a folder the library holds no photo under is refused. A second apply needs `again` whichever folder the
-    first was for (#995): the faces it named are references for the next."""
+def faces_from_tags(library, planned, apply=False, again=False):
+    """Make, with `apply`, the naming of every face a keyword person of its photo names (see the module's docstring), from `planned`,
+    the plan the person was asked about (`plan`: the job behind the dialog reads it, asks, then applies that one -- a plan read
+    again took 13.6 s on photo_index and could name other faces than the question said). A Result on the maintenance scaffold:
+    `changed` is the face rows written; details `counts` as `plan`'s, and `earlier_apply`. A second apply is refused without `again`
+    (#840), with the counts it would have named in the details; and for any folder (#995): the faces it named are references for
+    the next. The write is as guarded as ever: each face must still be what the plan read, or nothing is written."""
     earlier = earlier_apply(library)
-    plan_of = (lambda _library: _plan(_library, folder=folder)) if planned is None else (lambda _library: planned)
     if apply and earlier and not again:
-        planned = plan_of(library)
         result = Result(attempted=planned.size, details={"dry_run": True, "change": None, "counts": dict(planned.counts),
                                                          "ids": dict(planned.ids), "reveal": {}, "earlier_apply": not planned.refused})
         # A folder with no photo is the first thing to say; else the sentence, with where the earlier apply was.
         result.refuse(planned.refused or (AGAIN + " " + earlier_sentence(earlier_applies(library))).strip())
         return result
-    result = maintenance.run(library, "faces_from_tags", plan_of, _edits, apply=apply,
-                             remaining=(lambda _library: _remaining(_library, folder)) if planned is None else None)
+    result = maintenance.run(library, "faces_from_tags", lambda _library: planned, _edits, apply=apply)
     result.details["earlier_apply"] = earlier
     return result

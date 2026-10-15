@@ -47,6 +47,11 @@ def write(path, operation):
     return db.write_with_connection(path, operation)
 
 
+def from_tags(library, folder=None, **options):
+    """What the job behind the dialog does: read the plan (of `folder`, or the library), then apply that plan."""
+    return faces_from_tags.faces_from_tags(library, faces_from_tags.plan(library, folder=folder), **options)
+
+
 def at(degrees):
     """A unit vector `degrees` round a circle: two are as alike as the cosine of the gap."""
     angle = math.radians(degrees)
@@ -273,7 +278,7 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         speck = self.face(photo, at(0), box=[0, 0, 40, 40])
         self.tag(photo, "People/" + WREN)
         self.assertIsNone(self.name(speck))
-        counts = faces_from_tags.faces_from_tags(self.library).details["counts"]
+        counts = from_tags(self.library).details["counts"]
         self.assertEqual(0, counts["faces"])
 
     def test_a_second_run_names_nothing_the_first_would_not(self):
@@ -281,10 +286,10 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         both = self.photo("frame_009.jpg", ["People/" + WREN, "People/" + ODA])
         first, second = self.face(both, at(0)), self.face(both, at(150))
         self.decided(150, ODA)
-        run = faces_from_tags.faces_from_tags(self.library, apply=True)
+        run = from_tags(self.library, apply=True)
         self.assertEqual(2, run.changed)
         self.assertEqual((WREN, ODA), (self.name(first), self.name(second)))
-        self.assertEqual(0, faces_from_tags.faces_from_tags(self.library).details["counts"]["faces"])
+        self.assertEqual(0, from_tags(self.library).details["counts"]["faces"])
 
     def test_naming_one_face_does_not_let_the_tag_name_the_other_without_a_look(self):
         # Two faces, two people: the comparison names one; the other would then be "one face, one person".
@@ -292,11 +297,11 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         photo = self.photo("frame_010.jpg", ["People/" + WREN, "People/" + ODA])
         known, stranger = self.face(photo, at(0)), self.face(photo, at(120))
         self.decided(60, ODA)
-        faces_from_tags.faces_from_tags(self.library, apply=True)
+        from_tags(self.library, apply=True)
         self.assertEqual(WREN, self.name(known))
         # Oda's decided face is at 60 degrees; the stranger at 120 is 0.5 from it: not named.
         self.assertIsNone(self.name(stranger))
-        self.assertEqual(0, faces_from_tags.faces_from_tags(self.library).details["counts"]["faces"])
+        self.assertEqual(0, from_tags(self.library).details["counts"]["faces"])
 
     def one_pass_leaves_one_more(self):
         """Two faces, two people: A is Wren's alone, B is as like Wren as Oda (no comparison names it), but once A
@@ -306,37 +311,26 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
         both = self.photo("frame_011.jpg", ["People/" + WREN, "People/" + ODA])
         return self.face(both, at(0)), self.face(both, at(30))
 
-    def test_what_is_still_to_be_named_after_the_write_is_counted_after_it(self):
-        first, second = self.one_pass_leaves_one_more()
-        run = faces_from_tags.faces_from_tags(self.library, apply=True)
-        self.assertEqual(1, run.changed)
-        self.assertEqual(WREN, self.name(first))
-        self.assertEqual({"faces": 1}, run.details["remaining"], "the plan said 1 and nothing was recounted")
-        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True, again=True).changed)
-        self.assertEqual(ODA, self.name(second))
-        self.assertEqual(0, faces_from_tags.faces_from_tags(self.library, apply=True, again=True).changed,
-                         "a third run has nothing to do")
-
     def test_a_second_apply_needs_again_and_says_why(self):
         self.one_pass_leaves_one_more()
-        first = faces_from_tags.faces_from_tags(self.library, apply=True)
+        first = from_tags(self.library, apply=True)
         self.assertEqual(1, first.changed)
-        refused = faces_from_tags.faces_from_tags(self.library, apply=True)
+        refused = from_tags(self.library, apply=True)
         self.assertTrue(refused.refused.startswith(faces_from_tags.AGAIN))
         self.assertIn("applied to the whole library (change", refused.refused)
         self.assertEqual(0, refused.changed)
         self.assertEqual(1, refused.details["counts"]["faces"], "the counts it would have named are shown")
-        again = faces_from_tags.faces_from_tags(self.library, apply=True, again=True)
+        again = from_tags(self.library, apply=True, again=True)
         self.assertEqual(1, again.changed)
 
     def test_the_dry_run_says_it_was_applied_before_and_an_undo_forgives(self):
         self.one_pass_leaves_one_more()
-        self.assertFalse(faces_from_tags.faces_from_tags(self.library).details["earlier_apply"])
-        change = faces_from_tags.faces_from_tags(self.library, apply=True).details["change"]
-        self.assertTrue(faces_from_tags.faces_from_tags(self.library).details["earlier_apply"])
+        self.assertFalse(from_tags(self.library).details["earlier_apply"])
+        change = from_tags(self.library, apply=True).details["change"]
+        self.assertTrue(from_tags(self.library).details["earlier_apply"])
         journal_service.undo(self.library, change, apply=True)
-        self.assertFalse(faces_from_tags.faces_from_tags(self.library).details["earlier_apply"])
-        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True).changed)
+        self.assertFalse(from_tags(self.library).details["earlier_apply"])
+        self.assertEqual(1, from_tags(self.library, apply=True).changed)
 
     def test_the_dry_run_counts_the_bands(self):
         self.decided(0)
@@ -345,7 +339,7 @@ class TheTagAloneIsTrustedAsFarAsTheFaceLooksLikeThem(Case):
             self.face(photo, at(degrees))
         fresh = self.photo("band_d.jpg", ["People/" + ODA])
         self.face(fresh, at(5))
-        counts = faces_from_tags.faces_from_tags(self.library).details["counts"]
+        counts = from_tags(self.library).details["counts"]
         self.assertEqual((4, 1, 1, 1, 1), (counts["one_face_one_person"], counts["like_them_from_0.80"],
                                            counts["like_them_from_0.70_to_0.80"], counts["not_like_them"],
                                            counts["person_has_no_decided_face"]))
@@ -377,13 +371,13 @@ class APersonWithNoDecidedFace(Case):
 
     def test_one_photo_is_named_by_the_tag_alone(self):
         (only,) = self.several(1)
-        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True).changed)
+        self.assertEqual(1, from_tags(self.library, apply=True).changed)
         self.assertEqual([(ODA,)], self.named())
         self.assertIsNotNone(only)
 
     def test_several_photos_are_all_left_and_counted(self):
         self.several(3)
-        run = faces_from_tags.faces_from_tags(self.library, apply=True)
+        run = from_tags(self.library, apply=True)
         self.assertEqual(0, run.changed)
         counts = run.details["counts"]
         self.assertEqual((3, 0), (counts["not_decidable_yet"], counts["person_has_no_decided_face"]))
@@ -409,7 +403,7 @@ class APersonWithNoDecidedFace(Case):
         (first,) = self.several(1)
         other = self.photo("not_waiting.jpg", ["People/" + ODA])
         self.face(other, at(90), box=[0, 0, 30, 30])
-        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True).changed)
+        self.assertEqual(1, from_tags(self.library, apply=True).changed)
         self.assertEqual([(ODA,)], self.named())
         self.assertIsNotNone(first)
 
@@ -494,7 +488,7 @@ class Backfill(Case):
         self.face(also, at(60), name=ODA, name_source="manual")
 
     def run_it(self, apply=False):
-        return faces_from_tags.faces_from_tags(self.library, apply=apply)
+        return from_tags(self.library, apply=apply)
 
     def test_a_dry_run_counts_and_writes_nothing(self):
         self.seed()

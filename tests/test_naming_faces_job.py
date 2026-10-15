@@ -76,7 +76,7 @@ class ThePlanIsAJobAndWritesNothing(Case789):
 
     def test_the_plan_is_the_clis_plan(self):
         self.seed()
-        counts = faces_from_tags.faces_from_tags(self.library).details["counts"]
+        counts = faces_from_tags.plan(self.library).counts
         plan = self.start().status()["plan"]
         self.assertEqual(counts["faces"], plan["faces"])
         self.assertEqual(counts["named_by_the_tag_alone"], plan["by_tag"])

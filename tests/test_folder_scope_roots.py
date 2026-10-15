@@ -69,7 +69,7 @@ class AFolderOfARootedLibrary(unittest.TestCase):
         self.assertTrue(folder_scope.resolve(self.library, outside).photo_ids)
 
     def test_a_folder_the_library_never_indexed_is_refused(self):
-        refused = faces_from_tags.faces_from_tags(self.library, folder=os.path.join(self.first, "Never indexed"))
+        refused = faces_from_tags.plan(self.library, folder=os.path.join(self.first, "Never indexed"))
         self.assertIn("holds no photo", refused.refused)
 
     def test_the_whole_root_holds_every_photo_under_it_and_not_the_outside_ones(self):
