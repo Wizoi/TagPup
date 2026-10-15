@@ -45,9 +45,7 @@ def schema_current(conn):
 def generations_kept(conn):
     """What stops the generations moving as they should: a row or a trigger missing, or
     the counters of an older version, made again beside them (docs/findings.md, #55,
-    #60). Before migration 2 makes them, nothing: schema_current says why."""
-    if schema.version(conn) < 2:
-        return _check("generations not kept", [])
+    #60)."""
     objects = {(kind, name) for kind, name in conn.execute("SELECT type, name FROM sqlite_master")}
     broken = []
     if ("table", "generations") not in objects:
@@ -61,17 +59,9 @@ def generations_kept(conn):
     return _check("generations not kept", broken)
 
 
-def _faces_by_id(conn):
-    """Whether faces point at photos by id (migration 4). The doctor reads a library as it
-    is: on one from before, the face checks wait, and schema_current says why (#78)."""
-    return "photo_id" in {row[1] for row in conn.execute("PRAGMA table_info(faces)")}
-
-
 def faces_without_a_photo(conn):
     """Faces whose photo row is gone: a photo deleted on a connection without foreign
     keys, by something other than the store's own deletes."""
-    if not _faces_by_id(conn):
-        return _check("faces with no photo row", [])
     return _check("faces with no photo row", [face_id for (face_id,) in conn.execute(
         "SELECT f.id FROM faces f LEFT JOIN photos p ON p.id = f.photo_id"
         " WHERE p.id IS NULL ORDER BY f.id")])
@@ -86,9 +76,7 @@ def named_and_excluded(conn):
 def people_out_of_date(conn):
     """Photos whose people are not what the rule makes them from their keywords, faces
     and the tree (tagpup.store.people.rebuild): a writer that changed one of them and
-    did not rebuild (docs/findings.md, #42, #63). Waits for migration 6."""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photo_people'").fetchone():
-        return _check("photos whose people are out of date", [])
+    did not rebuild (docs/findings.md, #42, #63)."""
     stale = set(people.stale(conn))
     try:
         listed = store_roots.natives(conn, conn.execute("SELECT id, path FROM photos").fetchall(), 1)
@@ -133,7 +121,7 @@ def search_index_out_of_date(conn):
     """Photos whose rows of the word index (tagpup.store.search_index) are not what their rows give: a photo with no row,
     a row of no photo, and of a sample of SAMPLE photos those whose texts are not found in their rows. A writer that
     changed a photo's keywords, captions, people or path and did not refresh, or an older version of the app that does
-    not know the index. `tools/doctor.py --rebuild-derived --apply` makes it so. Waits for migration 24. What it cannot see
+    not know the index. `tools/doctor.py --rebuild-derived --apply` makes it so. What it cannot see
     -- a word left behind (a contentless table cannot be read back), a photo outside the sample -- is
     search_index.LIMITS, which a report says beside the count (#752)."""
     return _check("photos whose word index rows are out of date", search_index.stale(conn))
@@ -155,7 +143,7 @@ def face_person_ids_out_of_step(conn):
     """Faces whose name is not their person's: the id (`faces.tag_id`) is the person and `name` the cache of the node's leaf, so a
     name written without the id (a version of the app from before migration 29 that renamed a face) or an id of a node that is
     gone. (A name with no id is not this: `names_without_a_person` reports it.) The examples are face ids. `tools/doctor.py --rebuild-derived
-    --apply` puts them right, the id being the key. Waits for migration 21."""
+    --apply` puts them right, the id being the key."""
     found = person_ids.out_of_step(conn, "faces", EXAMPLES)
     return Check("faces whose name is not their person's", found.rows, found.examples)
 
@@ -198,10 +186,7 @@ def people_at_the_top(conn):
 
 def people_on_faces_alone(conn):
     """(photos, people) a photo lists from a face alone (tagpup.store.people.on_faces_alone): reported, not broken --
-    mending it writes the keywords into the photo files, which only the owner's `tags-from-faces --apply` does. Waits
-    for migration 6 (photo_people)."""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photo_people'").fetchone():
-        return 0, 0
+    mending it writes the keywords into the photo files, which only the owner's `tags-from-faces --apply` does."""
     photos, rows = conn.execute("SELECT COUNT(DISTINCT photo_id), COUNT(*) FROM photo_people WHERE source = 'face'").fetchone()
     return photos, rows
 
@@ -215,36 +200,27 @@ def orphan_nodes(conn):
 
 def crops_without_a_face(conn):
     """Crops whose face is gone. The trigger that takes a crop with its face makes this
-    none, whichever connection deletes the face. A library from before migration 3 keeps
-    its crops in faces, and has none to lose."""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'face_crops'").fetchone():
-        return _check("crops whose face is gone", [])
+    none, whichever connection deletes the face."""
     return _check("crops whose face is gone", [face_id for (face_id,) in conn.execute(
         "SELECT c.face_id FROM face_crops c LEFT JOIN faces f ON f.id = c.face_id"
         " WHERE f.id IS NULL ORDER BY c.face_id")])
 
 
-def _table(conn, name):
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone()
-
-
 def _without_a_photo(conn, table, label):
     """The photo ids `table` holds rows for that have no photo: what its trigger, which
-    takes them with their photo, makes none. Waits for the migration that makes it."""
-    if not _table(conn, table):
-        return _check(label, [])
+    takes them with their photo, makes none."""
     return _check(label, [photo_id for (photo_id,) in conn.execute(
         "SELECT DISTINCT t.photo_id FROM %s t LEFT JOIN photos p ON p.id = t.photo_id"
         " WHERE p.id IS NULL ORDER BY t.photo_id" % table)])
 
 
 def vectors_without_a_photo(conn):
-    """CLIP vectors whose photo is gone (migration 5; #65)."""
+    """CLIP vectors whose photo is gone (#65)."""
     return _without_a_photo(conn, "embeddings", "vectors whose photo is gone")
 
 
 def people_without_a_photo(conn):
-    """People listed for a photo that is gone (migration 6)."""
+    """People listed for a photo that is gone."""
     return _without_a_photo(conn, "photo_people", "people listed for a photo that is gone")
 
 
@@ -267,8 +243,6 @@ def one_file_two_rows(conn):
 def without_a_vector(conn, model):
     """How many photos have no CLIP vector under `model` (tagpup.store.embeddings), the one
     search reads. Reported, not broken: the next index of their folders computes them."""
-    if not _table(conn, "embeddings"):
-        return 0
     return conn.execute("SELECT COUNT(*) FROM photos p WHERE NOT EXISTS"
                         " (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)",
                         (model,)).fetchone()[0]
@@ -307,8 +281,6 @@ def _path_rows(conn):
     """(table, row id, the path) of every row of each ROOT_COLUMNS: the key of the row in its
     table (the id; the path itself, as a rowid, for the tables keyed by it)."""
     for table, column in ROOT_COLUMNS:
-        if not _table(conn, table):
-            continue
         key = "id" if table in ("photos", "change_files") else "rowid"
         for row_id, value in conn.execute("SELECT %s, %s FROM %s WHERE %s IS NOT NULL" % (key, column, table, column)):
             yield table, row_id, value
@@ -318,9 +290,6 @@ def rooted_rows_convert(conn):
     """Rooted rows -- `@name/...` in a path column -- that cannot be read: the root is not the
     library's, this machine does not place it (machine_roots.json), or the row is not what
     paths.to_row writes. A photo is named by its id, any other row by its table and key."""
-    if not _table(conn, "roots"):
-        # Behind migration 18: nothing can be rooted, and a row that says so is not a root's.
-        return _check("rooted rows that do not convert back", [])
     held = set(store_roots.logical(conn))
     roots, _why = _roots_or_why(conn)
     broken = []
@@ -348,7 +317,7 @@ def native_rows_under_a_root(conn):
     adoption converts every row under the root, and every write after it converts its own; one
     here was written between (docs/ARCHITECTURE.md, "Roots and machines"). A photo is named by
     its id."""
-    if not _table(conn, "roots") or not store_roots.logical(conn):
+    if not store_roots.logical(conn):
         return _check("native rows under a root", [])
     roots, _why = _roots_or_why(conn)
     if roots is None:
@@ -365,7 +334,7 @@ def unrooted_by_folder(conn):
     biggest first (paths.outside_roots). Reported, not broken: a folder outside the roots can be
     opened and tagged and uses the library (docs/ARCHITECTURE.md). A library with no roots has
     every photo native, and says nothing."""
-    if not _table(conn, "roots") or not store_roots.logical(conn):
+    if not store_roots.logical(conn):
         return []
     roots, _why = _roots_or_why(conn)
     if roots is None:

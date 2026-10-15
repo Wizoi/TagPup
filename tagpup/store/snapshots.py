@@ -179,8 +179,6 @@ def _abandon_runs(conn):
     them -- and a process still alive would hold the job "running" in the library the copy
     is restored into until that process ended (tagpup.store.job_runs.claim). Returns how
     many."""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'job_runs'").fetchone():
-        return 0
     marked = conn.execute("UPDATE job_runs SET outcome = 'abandoned', owner = NULL, note = ?,"
                           " finished = COALESCE(finished, started) WHERE outcome = 'running'",
                           (NOT_RUNNING,)).rowcount
@@ -281,8 +279,6 @@ def take(db_path, now=None, force=False):
 def _changes(path):
     conn = db.connect(db.readonly_uri(path), uri=True)
     try:
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'changes'").fetchone():
-            return set()
         return set(conn.execute("SELECT id, created, operation FROM changes").fetchall())
     finally:
         conn.close()
@@ -330,12 +326,11 @@ def restore(db_path, snapshot_path):
         source = db.connect(db.readonly_uri(snapshot_path), uri=True)
         destination = db.connect(db_path)
         try:
-            before = dict(destination.execute("SELECT name, value FROM generations").fetchall()) \
-                if _has_generations(destination) else {}
+            before = dict(destination.execute("SELECT name, value FROM generations").fetchall())
             source.backup(destination)
             # The snapshot's runs under way as it was taken are not under way now.
             _abandon_runs(destination)
-            if before and _has_generations(destination):
+            if before:
                 for name, value in before.items():
                     destination.execute("UPDATE generations SET value = ? WHERE name = ? AND value <= ?",
                                         (value + 1, name, value))
@@ -351,7 +346,3 @@ def restore(db_path, snapshot_path):
                        " (a reader held it up); the next checkpoint finishes it", db_path, done, log)
     schema.ensure(db_path)
     return checkpoint
-
-
-def _has_generations(conn):
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'generations'").fetchone()

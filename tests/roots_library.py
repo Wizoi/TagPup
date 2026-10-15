@@ -31,7 +31,7 @@ from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
-from tagpup.store import added_folders, db, derived, journal, suggestions  # noqa: E402
+from tagpup.store import added_folders, db, derived, suggestions  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -81,7 +81,8 @@ def convert_to_root(db_path, location, name=NAME, address=ADDRESS):
     (`roots adopt`, removed 2026-10-11): root `name` recorded, the map placing it at `location`,
     every path under it held as the root's row -- photos, the paths in raw_metadata and in
     suggestions.raw, change_files, added_folders and the two folder settings --
-    the folder tree rebuilt, and the change History lists. A test fixture, since nothing in the
+    the folder tree rebuilt. (Its record in the journal is below the baseline on every live library, so not made here.)
+    A test fixture, since nothing in the
     program converts a library any more; a Result whose `changed` is the paths converted."""
     machine().add(name, location)
     result = Result()
@@ -131,7 +132,6 @@ def convert_to_root(db_path, location, name=NAME, address=ADDRESS):
                                  (validation.FOLDER_SEPARATOR.join(lines), key))
             store_roots.insert(conn, name, address)
             derived.rebuild_folders(conn)
-            journal.record(conn, "roots adopt: %s" % name, [], {"root": name})
             conn.commit()
         finally:
             conn.close()

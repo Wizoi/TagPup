@@ -142,12 +142,6 @@ CASCADES = {
 #: What the name of the journal's record of a migration begins with ("migration 8: ...").
 MIGRATION = "migration "
 
-#: What the names of the changes the removed commands `roots adopt` and `roots repair-address` recorded
-#: begin with. They hold no rows and are still listed in History; their undo went with the commands
-#: (DECISIONS, 2026-10-11), so `refusal` says so.
-ADOPTION = "roots adopt"
-ADDRESS_REPAIR = "roots repair-address"
-
 #: The steps of an apply and an undo, in order; `_reached` is told of each.
 STEPS = ("forward written", "forward committed", "undo written", "undo committed")
 
@@ -1027,10 +1021,6 @@ def refusal(conn, change_id):
         if blocking is not None:
             return ["change %d was made at schema %d and the library is at %d: its rows may not mean"
                     " what they did (%s)" % (change_id, version, current, blocking)]
-    if _operation.startswith((ADOPTION, ADDRESS_REPAIR)):
-        return ["change %d (%s) converted the library's paths or a root's address by a command that has been "
-                "removed, and its undo with it: the copy of the library taken before it is the way back"
-                % (change_id, _operation)]
     return ["change %d (%s), applied after it, changed the same rows: undo it first" % (other, name)
             for other, name in _newer_overlapping(conn, change_id)]
 

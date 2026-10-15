@@ -8,9 +8,8 @@ that process's, and is settled; one owned by this very process is left to it.
 
 Lifted: test_a_changes_owner_is_known_by_its_start (#275) and test_a_withdrawn_change_is_finished (#274). Break that
 fails the kept tests: tagpup.store.file_journal.owner_alive ignoring the start time (the start read as None) fails
-test_the_next_start_finishes_what_the_crash_left_also_when_windows_reused_the_process_id. The start-less owner
-("host:pid", the old form) is not tested: the live libraries hold none (0 of 3, counted 2026-10-15), and the one writer
-that makes it is owner() when the OS cannot read a start (finding, not tested).
+test_the_next_start_finishes_what_the_crash_left_also_when_windows_reused_the_process_id. There is no start-less owner
+("host:pid", the old form): the live libraries hold none (0 of 3, counted 2026-10-15), and owner() refuses to name one.
 """
 import os
 import socket

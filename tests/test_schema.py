@@ -181,11 +181,6 @@ class Generations(SchemaTestCase):
     def test_a_new_node_moves_the_tree(self):
         self.assertTrue(self.moved("taxonomy", "INSERT INTO tag_taxonomy (tag, name) VALUES ('Pets', 'Pets')"))
 
-    def test_a_library_without_them_reads_zero(self):
-        other = db.connect(os.path.join(self.dir, "empty.db"))
-        self.addCleanup(other.close)
-        self.assertEqual((0, 0, 0), generations.values(other))
-
 
 class GenerationCache(SchemaTestCase):
     def setUp(self):

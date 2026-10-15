@@ -101,33 +101,29 @@ def owner():
     """This process, as `changes.owner` names it: "host:pid:start", its host, its id and
     when it started (tagpup.core.processes.started). Windows reuses an id soon after its
     process ends, and an id alone took a change a crash left for one a live process was
-    carrying out (docs/findings.md, #275). Libraries written before name "host:pid", as
-    does a process whose start cannot be read."""
+    carrying out (docs/findings.md, #275). A process that cannot read its own start is
+    refused (RuntimeError): an owner without one cannot be told from the next process given its id."""
     global _owner
     if _owner is None or _owner[0] != os.getpid():
-        named = "%s:%d" % (socket.gethostname(), os.getpid())
         started = processes.started(os.getpid())
-        _owner = (os.getpid(), named if started is None else "%s:%d" % (named, started))
+        if started is None:
+            raise RuntimeError("This process cannot read when it started, so it cannot own a change; nothing was written")
+        _owner = (os.getpid(), "%s:%d:%d" % (socket.gethostname(), os.getpid(), started))
     return _owner[1]
 
 
 def owner_parts(named):
-    """(host, pid, start) of an owner `named` by owner(); start is None for one named the
-    old way, "host:pid", and pid None for a name that is neither."""
-    parts = str(named).split(":")
-    numbers = []
-    while parts and len(numbers) < 2 and parts[-1].isdigit():
-        numbers.insert(0, int(parts.pop()))
-    if not numbers or not parts:
+    """(host, pid, start) of an owner `named` by owner(), "host:pid:start"; pid and start
+    None for a name that is not."""
+    host, _sep, rest = str(named).rpartition(":")
+    host, _sep, pid = host.rpartition(":")
+    if not host or not pid.isdigit() or not rest.isdigit():
         return str(named), None, None
-    if len(numbers) == 1:
-        return ":".join(parts), numbers[0], None
-    return ":".join(parts), numbers[0], numbers[1]
+    return host, int(pid), int(rest)
 
 
 def owner_alive(named):
-    """Is the process `named` by owner() ("host:pid:start", or "host:pid" as libraries
-    written before name it) still running? One on another machine is taken to be: this
+    """Is the process `named` by owner() ("host:pid:start") still running? One on another machine is taken to be: this
     one cannot tell. So is this process: what it holds is being carried out on another
     thread. A process with the id but another start is one that had the id before, and
     has ended (docs/findings.md, #275). Whoever takes over what a process left -- a
@@ -138,8 +134,6 @@ def owner_alive(named):
         return True
     if pid is None:
         return False
-    if start is None:
-        return pid == os.getpid() or processes.is_alive(pid)
     if pid == os.getpid():
         return named == owner()
     now = processes.started(pid)

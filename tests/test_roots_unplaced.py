@@ -145,24 +145,6 @@ class TheCommandLine(RootedCase):
         self.assertIn("machine_roots.json", checked.output)
 
 
-class TheHistoryOfTheRemovedCommands(RootedCase):
-    """The three live libraries hold a `roots adopt` change in their journal: History still lists it,
-    and its undo is refused with a sentence (the command and its undo are removed), never raised."""
-
-    def test_history_lists_the_adoption_and_its_undo_is_refused_in_words(self):
-        from tagpup.services import journal as journal_service
-        from tagpup.store import journal
-        self.assertTrue(self.side.adopt().ok)
-        entry = [e for e in journal.history(self.side.db_path, limit=50) if e["operation"].startswith("roots adopt")][0]
-        refused = journal.refusals(self.side.db_path, [entry["id"]])[entry["id"]]
-        self.assertEqual(1, len(refused), refused)
-        self.assertIn("removed", refused[0])
-        before = json.dumps(self.side.dump(), default=repr, sort_keys=True)
-        undone = journal_service.undo(self.side.library, entry["id"], apply=True)
-        self.assertTrue(undone.refused, "the undo of a removed command is refused, not raised")
-        self.assertEqual(before, json.dumps(self.side.dump(), default=repr, sort_keys=True))
-
-
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class AnUnplacedRootIsACheckResult(RootedCase):
     def setUp(self):

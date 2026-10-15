@@ -67,15 +67,8 @@ class RootsChanged(RuntimeError):
 # ---- The table -------------------------------------------------------------------------
 
 def _rows(conn):
-    """((name, address), ...) of the library's roots, by name; () for a library with none or
-    one behind migration 18 (a migration of an earlier version reads the roots too, building a library from nothing)."""
-    try:
-        return tuple((name, address or "") for name, address in
-                     conn.execute("SELECT name, address FROM roots ORDER BY name"))
-    except sqlite3.OperationalError as problem:
-        if "no such table" in str(problem):
-            return ()
-        raise
+    """((name, address), ...) of the library's roots, by name; () for a library with none."""
+    return tuple((name, address or "") for name, address in conn.execute("SELECT name, address FROM roots ORDER BY name"))
 
 
 def every(conn):
