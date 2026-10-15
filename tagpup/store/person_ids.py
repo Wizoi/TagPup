@@ -250,8 +250,8 @@ class People:
 
     def settle(self, name, held):
         """(the id, the name) a row naming `name` and holding `held` should hold: a set id stays, with the cache
-        the node's leaf (an id of a node gone is dropped and the name kept, an unresolved name); a name that is None holds
-        no id. **A row with a name and no id is NOT given one here**, however unique the name has become: this
+        the node's leaf (a FACE whose node is gone gets (None, name), an unresolved name; the caller deletes a listed person
+        whose node is gone: _sync_table, follow_listed); a name that is None holds no id. **A row with a name and no id is NOT given one here**, however unique the name has become: this
         function has no memory of what changed, and a name that became one person's because a same-named node left
         (a rename, a merge, a force delete) says nothing about who the row meant. An unresolved name is linked only by
         (a) the writer that wrote the row and knew the id, (b) `follow_tree`, when a node was ADDED under that name
@@ -371,8 +371,8 @@ def _marks(chunk):
 
 def follow_faces(conn, photo_ids, known=None):
     """Settle each face of the photos `photo_ids` (People.settle): an id that is set stays with its name the node's
-    leaf, the id of a node that is gone is dropped; a face with a name and no id stays an unresolved name (link_added is the
-    only thing that links one). Returns faces changed.
+    leaf, the id of a node that is gone is dropped; a face with a name and no id stays an unresolved name (follow_tree is the
+    only thing that links one, when a node is added). Returns faces changed.
     idx_faces_photo_id finds them; the embedding is not read."""
     if not photo_ids or not present(conn):
         return 0
@@ -398,16 +398,20 @@ def follow_listed(conn, photo_ids, known=None):
     if not photo_ids:
         return 0
     known = known or read(conn)
-    updates = []
+    updates, gone = [], []
     for chunk in _chunks(photo_ids):
         for photo_id, position, name, held in conn.execute(
                 "SELECT photo_id, position, name, tag_id FROM photo_people WHERE photo_id IN (%s)" % _marks(chunk),
                 chunk):
+            if held is not None and held not in known.node_names:
+                gone.append((photo_id, position))   # not a person without a node (as follow_tree and release)
+                continue
             wanted, cached = known.settle(name, held)
             if held != wanted or name != cached:
                 updates.append((wanted, cached, photo_id, position))
+    conn.executemany("DELETE FROM photo_people WHERE photo_id = ? AND position = ?", gone)
     conn.executemany("UPDATE photo_people SET tag_id = ?, name = ? WHERE photo_id = ? AND position = ?", updates)
-    return len(updates)
+    return len(updates) + len(gone)
 
 
 def _pairs(conn, table):
@@ -420,6 +424,9 @@ def _pairs(conn, table):
 def _sync_table(conn, table, known):
     changed = 0
     for name, held, _rows in _pairs(conn, table):
+        if table == "photo_people" and held is not None and held not in known.node_names:
+            changed += conn.execute("DELETE FROM photo_people WHERE tag_id = ?", (held,)).rowcount   # not a person without a node
+            continue
         wanted, cached = known.settle(name, held)
         if held != wanted or name != cached:
             changed += conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS ?" % table,
@@ -559,7 +566,7 @@ def unresolved(conn):
     *(owner, 2026-10-04; docs/findings.md, #660)* -- (`branch`: {name: ([the branches' ids], rows)}); and those exactly ONE
     person is called but whose rows are not linked to them (`one`: {name: (the person's id, faces decided by hand, other
     faces, listed people)}) -- a name that became one person's because a same-named node left, or a rename into a person's
-    name by something that did not know the id: nothing links it by itself (`link_added`), so it is on no person's page
+    name by something that did not know the id: nothing links it by itself (follow_tree links only a node ADDED), so it is on no person's page
     until the owner renames the person or makes the rows' person by hand.
     A row that holds an id is a person already, whatever its name is. Reported, not broken: no id is guessed, the
     names are left as they are, and the tree is the owner's to settle. Reads only."""
@@ -592,7 +599,7 @@ def unresolved(conn):
 def repair(db_path):
     """Settle every id and cached name, in one write under the library's write lock: drop the id of a node that is gone, give a
     row its node's name, take an id off a face with no name. A name with no id is NOT linked (People.settle: nothing links one
-    but `link_added`, for a name a person was ADDED under). Returns {table: rows changed}. Only the id and name columns of faces
+    but `follow_tree`, for a name a person was ADDED under). Returns {table: rows changed}. Only the id and name columns of faces
     and photo_people change: no photo, tag or file."""
     def write(conn):
         return sync(conn)
