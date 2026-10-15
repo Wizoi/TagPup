@@ -253,14 +253,14 @@ _FILES = {
             "test_only_the_server_runs_jobs test_patch_tool test_photo_open test_recurring_jobs test_result "
             "test_roots_ingress_keys_cover_the_routes test_roots_map test_roots_open_check test_roots_routes "
             "test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library "
-            "test_test_processes_are_ended test_test_servers_run_no_jobs test_the_reaper_is_quiet test_unload_models_now "
+            "test_test_servers_run_no_jobs test_unload_models_now "
             "test_web_app undo-from-reply validation"
         ),
         "guard": (
             "dom-contract no-heredoc-escapes page-modules page-shape test_config_single_owner test_database_axis_guard "
             "test_guard_tests_have_one_owner test_layers test_lint test_owner_charters_name_real_paths "
             "test_page_module_names test_processes_single_owner test_rules_have_one_owner test_sandbox_has_all_the_code "
-            "test_sandboxes_are_homes_of_their_own test_spec_accuracy test_sync_entry_points "
+            "test_spec_accuracy test_sync_entry_points "
             "test_tests_have_homes_of_their_own test_tiers_name_real_files test_verify_workflow_is_sandboxed"
         ),
     },
