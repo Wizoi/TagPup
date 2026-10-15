@@ -678,31 +678,6 @@ class TagTaxonomy:
         """The one spelling of a tag (tagpup.core.vocabulary.normalize)."""
         return vocabulary.normalize(tag)
 
-    def add_tag(self, tag: str):
-        """Add a tag to the taxonomy, building all of its ancestor paths.
-
-        A bare name that a people path already claims is not added as a root of its
-        own. Photo keywords carry both forms in the wild -- a file may say
-        "Cora Ingersoll" where the taxonomy says "People/Cora Ingersoll" -- and adding the
-        bare one gives that person a second home, which is a choice nobody reading
-        the Add Person list can make correctly. Only people are folded this way:
-        "Kentridge" beside "School/Kentridge" is left alone, because deciding that
-        for every tag is a different question and not this one.
-        """
-        normalized = self.normalize_tag(tag)
-        if not normalized:
-            return
-
-        if "/" not in normalized and self.person_paths(normalized):
-            return
-
-        self.paths.update(vocabulary.lineage(normalized))
-
-    def add_tags(self, tags: List[str]):
-        """Add multiple tags to the taxonomy."""
-        for tag in tags:
-            self.add_tag(tag)
-
     def people_roots(self) -> Set[str]:
         """Lowercased roots this library files people under (the module's people_roots)."""
         # Only a library that exists: opening one that does not creates it, and asking

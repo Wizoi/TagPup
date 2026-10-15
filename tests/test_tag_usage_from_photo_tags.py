@@ -3,7 +3,7 @@
 `/api/taxonomy/tree` parsed the tags of all 68,000 photos in Python (350 ms on a one-level tree), which held the
 process at page start and made the first library request wait behind it. The counts are now one pass of the
 derived table, and are the same counts, node for node, as the JSON gave: a photo counts once toward a node
-however many of its tags lie under it. A library with no derived tables is counted from the JSON as ever.
+however many of its tags lie under it.
 """
 import json
 import os

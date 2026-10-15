@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_faces_from_tags import Case, ODA, TAMSIN, WREN, at, look, write  # noqa: E402
+from test_faces_from_tags import Case, ODA, TAMSIN, WREN, at, from_tags, look, write  # noqa: E402
 
 
 from tagpup.core import paths  # noqa: E402
@@ -50,24 +50,24 @@ class InFolders(Case):
 
 class TheFoldersPlan(InFolders):
     def test_a_dry_run_counts_only_that_folder_and_its_subfolders(self):
-        everywhere = faces_from_tags.faces_from_tags(self.library)
-        in_run = faces_from_tags.faces_from_tags(self.library, folder=self.run)
+        everywhere = from_tags(self.library)
+        in_run = from_tags(self.library, folder=self.run)
         self.assertEqual(6, everywhere.details["counts"]["faces"])
         self.assertEqual(3, in_run.details["counts"]["faces"], "a1, the subfolder's a2 and the crowd's one face")
         self.assertEqual(0, in_run.changed)
         self.assertEqual({None}, set(self.names(*self.named).values()), "a dry run writes nothing")
 
     def test_a_subfolder_alone_is_its_own_folder(self):
-        sub = faces_from_tags.faces_from_tags(self.library, folder=os.path.join(self.run, "Heat1"))
+        sub = from_tags(self.library, folder=os.path.join(self.run, "Heat1"))
         self.assertEqual(1, sub.details["counts"]["faces"])
 
     def test_a_folder_whose_name_another_starts_with_is_not_the_other(self):
-        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, folder=self.sibling).details["counts"]["faces"])
-        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, folder=self.look_alike).details["counts"]["faces"])
+        self.assertEqual(1, from_tags(self.library, folder=self.sibling).details["counts"]["faces"])
+        self.assertEqual(1, from_tags(self.library, folder=self.look_alike).details["counts"]["faces"])
 
     @unittest.skipUnless(paths.CASE_INSENSITIVE, "a case-insensitive file system")
     def test_a_folder_spelled_in_another_case_is_the_same_folder(self):
-        spelled = faces_from_tags.faces_from_tags(self.library, folder=self.run.upper())
+        spelled = from_tags(self.library, folder=self.run.upper())
         self.assertEqual(3, spelled.details["counts"]["faces"])
 
     def test_the_plan_of_a_folder_is_the_library_plan_restricted_to_its_photos(self):
@@ -107,36 +107,29 @@ class TheFoldersPlan(InFolders):
         """The person's decided face is in another folder, and still the reference."""
         photo = self.photo(os.path.join("Run", "far.jpg"), ["People/" + WREN])
         unlike = self.face(photo, at(150))
-        faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.run)
+        from_tags(self.library, apply=True, folder=self.run)
         self.assertIsNone(self.name(unlike), "unlike Wren's decided face elsewhere: left")
         self.assertEqual(WREN, self.name(self.named["Run/a1.jpg"]))
 
 
 class TheFoldersWrite(InFolders):
     def test_apply_names_only_the_folders_faces(self):
-        result = faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.run)
+        result = from_tags(self.library, apply=True, folder=self.run)
         self.assertEqual(3, result.changed)
         self.assertEqual({"Run/a1.jpg": WREN, "Run/Heat1/a2.jpg": WREN, "Run/crowd.jpg": WREN},
                          self.names("Run/a1.jpg", "Run/Heat1/a2.jpg", "Run/crowd.jpg"))
         self.assertEqual({None}, set(self.names("Run2/b1.jpg", "Run_x/b2.jpg", "Elsewhere/c1.jpg").values()))
-        self.assertEqual({"faces": 0}, result.details["remaining"], "what is left is counted in the folder")
-
-    def test_what_is_left_after_the_write_is_counted_in_the_folder_only(self):
-        result = faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling)
-        self.assertEqual(1, result.changed)
-        self.assertEqual({"faces": 0}, result.details["remaining"], "the other folders' faces are not counted")
-        self.assertEqual(5, faces_from_tags.faces_from_tags(self.library).details["counts"]["faces"])
 
     def test_undo_takes_back_the_folders_change_and_no_other(self):
-        faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling)
-        other = faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.look_alike, again=True)
+        from_tags(self.library, apply=True, folder=self.sibling)
+        other = from_tags(self.library, apply=True, folder=self.look_alike, again=True)
         from tagpup.services import journal as journal_service
         self.assertFalse(journal_service.undo(self.library, other.details["change"], apply=True).refused)
         self.assertEqual({"Run2/b1.jpg": WREN, "Run_x/b2.jpg": None}, self.names("Run2/b1.jpg", "Run_x/b2.jpg"))
 
     def test_a_second_folder_is_a_second_apply_and_needs_again(self):
-        self.assertEqual(1, faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling).changed)
-        refused = faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.look_alike)
+        self.assertEqual(1, from_tags(self.library, apply=True, folder=self.sibling).changed)
+        refused = from_tags(self.library, apply=True, folder=self.look_alike)
         self.assertTrue(refused.refused.startswith(faces_from_tags.AGAIN))
         self.assertIn("applied to one folder (change", refused.refused)
         self.assertNotIn(self.sibling, refused.refused, "the folder is a path: behind the reveal")
@@ -162,7 +155,7 @@ class TheFoldersWrite(InFolders):
 
     def test_a_crash_in_the_write_leaves_no_half_change(self):
         with mock.patch.object(journal, "apply", side_effect=RuntimeError("the disk went")):
-            result = faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.run)
+            result = from_tags(self.library, apply=True, folder=self.run)
         self.assertTrue(result.errors)
         self.assertEqual({None}, set(self.names("Run/a1.jpg", "Run/Heat1/a2.jpg", "Run/crowd.jpg").values()))
 
@@ -172,19 +165,19 @@ class TheJournalSaysWhatItWasFor(InFolders):
         return journal_service.history(self.library, change_id=change, reveal=reveal)["changes"][0]["summary"]
 
     def test_a_folders_change_records_the_scope_and_the_folder_only_behind_the_reveal(self):
-        change = faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling).details["change"]
+        change = from_tags(self.library, apply=True, folder=self.sibling).details["change"]
         self.assertEqual("folder", self.summary_of(change)["scope"])
         self.assertNotIn("folder", self.summary_of(change), "History without reveal holds counts only")
         self.assertEqual(self.sibling, self.summary_of(change, reveal=True)["folder"])
 
     def test_the_whole_librarys_change_says_so(self):
-        change = faces_from_tags.faces_from_tags(self.library, apply=True).details["change"]
+        change = from_tags(self.library, apply=True).details["change"]
         self.assertEqual("whole library", self.summary_of(change)["scope"])
         self.assertNotIn("folder", self.summary_of(change, reveal=True))
 
     def test_the_history_dialog_never_gets_the_folder(self):
         from tagpup.web import app as web
-        faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling)
+        from_tags(self.library, apply=True, folder=self.sibling)
         app = web.create_app("tagpup", startup=self.library)
         app.testing = True
         body = app.test_client().get("/harbour/api/history").get_json()
@@ -196,7 +189,7 @@ class AFolderThatHoldsNothing(InFolders):
     def test_a_folder_with_no_photo_is_refused_and_nothing_is_written(self):
         nothing = os.path.join(self.folder, "Nowhere")
         for apply in (False, True):
-            result = faces_from_tags.faces_from_tags(self.library, apply=apply, folder=nothing)
+            result = from_tags(self.library, apply=apply, folder=nothing)
             self.assertIn("holds no photo", result.refused)
             self.assertIn(nothing, result.refused)
             self.assertEqual(0, result.changed)
@@ -204,13 +197,13 @@ class AFolderThatHoldsNothing(InFolders):
 
     def test_a_folder_outside_the_library_is_refused(self):
         outside = os.path.join(os.path.dirname(self.folder), "Somewhere else")
-        self.assertIn("holds no photo", faces_from_tags.faces_from_tags(self.library, folder=outside).refused)
+        self.assertIn("holds no photo", from_tags(self.library, folder=outside).refused)
         with self.assertRaises(folder_scope.NoPhotosThere):
             folder_scope.resolve(self.library, outside)
 
     def test_the_refusal_is_the_first_thing_said_even_when_it_was_applied_before(self):
-        faces_from_tags.faces_from_tags(self.library, apply=True, folder=self.sibling)
-        refused = faces_from_tags.faces_from_tags(self.library, apply=True, folder=os.path.join(self.folder, "Nowhere"))
+        from_tags(self.library, apply=True, folder=self.sibling)
+        refused = from_tags(self.library, apply=True, folder=os.path.join(self.folder, "Nowhere"))
         self.assertIn("holds no photo", refused.refused)
 
     def test_a_library_that_cannot_be_read_is_an_error_not_an_empty_folder(self):
@@ -243,11 +236,11 @@ class TwoLibrariesHoldingOneFolder(Case):
         second_face = self.seed()
         second = self.library
         run = os.path.join(self.folder, "Run")
-        self.assertEqual(1, faces_from_tags.faces_from_tags(first, apply=True, folder=run).changed)
+        self.assertEqual(1, from_tags(first, apply=True, folder=run).changed)
         self.assertEqual(WREN, look(first.path, "SELECT name FROM faces WHERE id = ?", (first_face,))[0][0])
         self.assertIsNone(look(second.path, "SELECT name FROM faces WHERE id = ?", (second_face,))[0][0],
                           "the other library holds the same folder and was not touched")
-        self.assertEqual(1, faces_from_tags.faces_from_tags(second, folder=run).details["counts"]["faces"])
+        self.assertEqual(1, from_tags(second, folder=run).details["counts"]["faces"])
 
 
 if __name__ == "__main__":

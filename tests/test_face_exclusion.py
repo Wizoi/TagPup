@@ -124,63 +124,6 @@ class ExclusionTestBase(unittest.TestCase):
 
 
 class TestExcludeEndpoint(ExclusionTestBase):
-    def test_excludes_a_face(self):
-        photo = self.add_photo("a.jpg")
-        face = self.add_face(photo, identity_vector(1))
-
-        status, body = self.post("/api/faces/exclude", {"face_ids": [face]})
-        self.assertEqual(status, 200, body)
-        self.assertEqual(self.row(face)["excluded"], 1)
-
-    def test_records_a_reason(self):
-        photo = self.add_photo("a.jpg")
-        face = self.add_face(photo, identity_vector(1))
-        self.post("/api/faces/exclude", {"face_ids": [face], "reason": "bad crop"})
-        self.assertEqual(self.row(face)["reason"], "bad crop")
-
-    def test_excluding_clears_any_name_it_carried(self):
-        photo = self.add_photo("a.jpg", people=["Jane Doe"])
-        face = self.add_face(photo, identity_vector(1), name="Jane Doe")
-
-        self.post("/api/faces/exclude", {"face_ids": [face]})
-        self.assertIsNone(self.row(face)["name"])
-
-    def test_the_person_leaves_the_photo_when_no_face_of_theirs_remains(self):
-        # In the photo by the face alone: no keyword names her (docs/findings.md, #63).
-        photo = self.add_photo("a.jpg")
-        face = self.add_face(photo, identity_vector(1), name="Jane Doe")
-        self.assertIn("Jane Doe", self.photo_people(photo))
-
-        self.post("/api/faces/exclude", {"face_ids": [face]})
-        self.assertNotIn("Jane Doe", self.photo_people(photo))
-
-    def test_the_keyword_goes_with_the_last_face_that_carried_the_person(self):
-        # #861 reverses "the person stays when a keyword still names them": a face ruled out is not them, and the photo
-        # is not tagged with someone no face of it carries.
-        photo = self.add_photo("a.jpg", people=["Jane Doe"])
-        self.files.keep_tags(photo, ["People/Jane Doe"])
-        face = self.add_face(photo, identity_vector(1), name="Jane Doe")
-
-        self.post("/api/faces/exclude", {"face_ids": [face]})
-        self.assertEqual([], self.photo_people(photo))
-        self.assertEqual([], self.files.tags_of(photo))
-
-    def test_the_person_stays_when_another_face_of_theirs_remains(self):
-        photo = self.add_photo("a.jpg")
-        first = self.add_face(photo, identity_vector(1), name="Jane Doe")
-        self.add_face(photo, identity_vector(2), name="Jane Doe", box=(200, 0, 300, 100))
-
-        self.post("/api/faces/exclude", {"face_ids": [first]})
-        self.assertIn("Jane Doe", self.photo_people(photo))
-
-    def test_excluding_many_at_once(self):
-        photo = self.add_photo("crowd.jpg")
-        ids = [self.add_face(photo, identity_vector(i), box=(i * 50, 0, i * 50 + 40, 40))
-               for i in range(5)]
-        status, body = self.post("/api/faces/exclude", {"face_ids": ids})
-        self.assertEqual(status, 200, body)
-        self.assertTrue(all(self.row(i)["excluded"] == 1 for i in ids))
-
     def test_accepts_a_single_face_id(self):
         photo = self.add_photo("a.jpg")
         face = self.add_face(photo, identity_vector(1))

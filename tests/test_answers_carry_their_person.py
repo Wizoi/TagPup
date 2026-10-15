@@ -101,10 +101,6 @@ class TheDirectory(Library):
         self.read().annotate(rows)
         self.assertEqual([None, None], [each["person"] for each in rows])
 
-    def test_a_library_with_no_tree_has_no_one(self):
-        other = ViewLibrary(self, "bare")
-        self.assertEqual([], person_ids.Directory.read(other.conn).records())
-
     def test_a_person_gaining_a_tag_under_them_is_a_group_and_leaves(self):
         taxonomy.add_path(self.vl.conn, WREN + "/Baby photos")
         self.vl.conn.commit()

@@ -174,8 +174,6 @@ class TestStability(unittest.TestCase):
         self.assertIn("clustering", error_body["error"].lower())
 
     def test_strict_tag_enforcement_in_clustering(self):
-        from tagpup.store.taxonomy import TagTaxonomy
-        
         # Open the index
         photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
@@ -222,10 +220,6 @@ class TestStability(unittest.TestCase):
         photo_index.conn.commit()
         photo_index.load()
         
-        # Initialize taxonomy file
-        taxonomy = TagTaxonomy(self.TEST_DB_PATH)
-        taxonomy.load()
-        taxonomy.add_tags(["Alice"])
         tagpup_db.write_with_connection(self.TEST_DB_PATH, lambda conn: store_taxonomy.add_node(conn, "Alice"))
         
         # Run clustering
@@ -249,8 +243,6 @@ class TestStability(unittest.TestCase):
         self.assertIsNone(face2[1], "Face in untagged photo must remain None under strict tag enforcement")
 
     def test_similarity_threshold_in_clustering(self):
-        from tagpup.store.taxonomy import TagTaxonomy
-        
         # Open the index
         photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
         photo_index.load()
@@ -313,10 +305,6 @@ class TestStability(unittest.TestCase):
         photo_index.conn.commit()
         photo_index.load()
         
-        # Initialize taxonomy
-        taxonomy = TagTaxonomy(self.TEST_DB_PATH)
-        taxonomy.load()
-        taxonomy.add_tags(["Alice"])
         tagpup_db.write_with_connection(self.TEST_DB_PATH, lambda conn: store_taxonomy.add_node(conn, "Alice"))
         
         # Run clustering

@@ -57,11 +57,11 @@ class ThePlanAndTheApply(InFolders):
         self.assertEqual(naming_faces.ASKING, found["state"])
         self.assertTrue(found["only_folder"])
         self.assertEqual(2, found["plan"]["faces"], "Run/a1 and Run/Heat1/a2; Run2 only starts like it")
-        self.assertEqual(4, faces_from_tags.faces_from_tags(self.library).details["counts"]["faces"],
+        self.assertEqual(4, faces_from_tags.plan(self.library).counts["faces"],
                          "the whole library would name every photo of the fixture")
 
     def test_it_is_the_clis_plan_for_the_folder(self):
-        counts = faces_from_tags.faces_from_tags(self.library, folder=self.run).details["counts"]
+        counts = faces_from_tags.plan(self.library, folder=self.run).counts
         plan = self.start().status()["plan"]
         self.assertEqual((counts["faces"], counts["named_by_the_tag_alone"]), (plan["faces"], plan["by_tag"]))
 

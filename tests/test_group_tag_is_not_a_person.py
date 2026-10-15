@@ -50,9 +50,6 @@ class TheRule(unittest.TestCase):
         self.assertEqual([], vocabulary.extract_people({}, ["Marlowe", FAMILY], known), "a bare name is a path of its own")
         self.assertEqual(["Marlowe"], vocabulary.extract_people({}, ["Friends/Marlowe", FAMILY], known))
 
-    def test_without_the_tree_a_path_under_a_face_root_is_a_person_as_before(self):
-        self.assertEqual(["Marlowe"], vocabulary.extract_people({}, [FAMILY.replace("Family", "People")]))
-
     def test_a_face_named_so_is_a_name_and_stays_listed(self):
         # Faces carry names, not tags: a name no person node has is the owner's to settle (#985), not dropped here.
         self.assertEqual(["Marlowe"], vocabulary.people_in_photo({}, [FAMILY], ["Marlowe"], self.known()))

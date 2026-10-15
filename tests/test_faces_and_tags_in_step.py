@@ -174,7 +174,7 @@ class NamingAddsThePersonToThePhoto(InStep):
     def test_undoing_the_tag_in_history_takes_the_name_off_the_face_too(self):
         # Decided 2026-10-08 (#908, reversing #834): History's Undo of an add is the owner taking the person off the photo, and the
         # face goes with the tag; nothing is left for the doctor to count or for `tags-from-faces` to put back.
-        # tests/test_taking_a_person_off_unnames_the_face.py has the rest.
+        # tests/test_face_people_follow_file_changes.py has the rest.
         photo = self.held("strip_012.jpg")
         face = self.face(photo)
         self.tuner_post("face/match", {"face_id": face, "person_name": WREN})
@@ -196,6 +196,55 @@ class NamingAddsThePersonToThePhoto(InStep):
         self.assertEqual(200, reply.status_code)
         self.assertEqual(1, reply.get_json()["tags_written"])
         self.assertEqual([(WREN, "keyword")], self.indexed_people())
+
+
+class AFaceAlonePutsAPersonOnThePhotoAndSettlesWhenItChanges(InStep):
+    """1,471 rows of the three libraries list a person from a face alone (photo_people source 'face'; counted 2026-10-15), so naming,
+    renaming, unmatching a face that no keyword backs must leave the photo listing exactly who its faces now name.
+
+    Lifted: test_service_faces.py's NamingAFace, NamingFacesInBulk.test_each_photo_lists_the_person (#42), TakingNamesOff (2 tests
+    in all, deleted). Breaks that fail this: store/faces.name, unname or unname_photo returning without _rebuilt."""
+
+    def listed(self, photo_path):
+        return self.look("SELECT pp.name, pp.source FROM photo_people pp JOIN photos p ON p.id = pp.photo_id WHERE p.path = ?"
+                         " ORDER BY pp.position", (photo_path,))
+
+    def test_renaming_unmatching_and_unmatching_all_leave_the_photo_listing_who_its_faces_name(self):
+        crowd = self.held("alone_001.jpg")
+        first = self.face(crowd, name=ODA, name_source="manual")
+        self.face(crowd, box=(70, 10, 110, 60), name=ODA)
+        sole, gone, both = self.held("alone_002.jpg"), self.held("alone_003.jpg"), self.held("alone_004.jpg")
+        renamed = self.face(sole, name=ODA, name_source="manual")
+        unmatched = self.face(gone, name=ODA, name_source="manual")
+        self.face(both, name=ODA, name_source="manual")
+        self.face(both, box=(70, 10, 110, 60), name=WREN, name_source="manual")
+        self.assertEqual([(ODA, "face")], self.listed(crowd))
+        self.tuner_post("face/match", {"face_id": first, "person_name": WREN})
+        self.assertEqual({(WREN, "keyword"), (ODA, "face")}, set(self.listed(crowd)), "Oda stays: another face of the photo is her")
+        self.tuner_post("face/match", {"face_id": renamed, "person_name": WREN})
+        self.assertEqual([(WREN, "keyword")], self.listed(sole), "the old name left the photo with its only face")
+        self.tuner_post("face/unmatch", {"face_id": unmatched})
+        self.assertEqual([], self.listed(gone))
+        self.tuner_post("photo/unmatch-all", {"photo_path": both})
+        self.assertEqual([], self.listed(both))
+
+
+class AKeywordWriteKeepsThePeopleOnlyAFaceNames(InStep):
+    """A person named on a face in Identify Faces has no keyword; tagging the photo, or the indexer reading its file again,
+    must not take them off the photo's people (found by a dry run of the row refresh: 33 rows would have lost people).
+
+    Lifted: test_face_names_survive_keyword_writes.py (2 tests, deleted; it also named an excluded face, which Exclude never
+    leaves named). Break that fails this and the old tests: tagpup/store/people.py `_differences` hands people_rows no
+    named faces (`named.get(photo_id, [])` becomes `[]`)."""
+
+    def test_tagging_and_reading_the_file_again_keep_a_person_only_a_face_names(self):
+        photo = self.held("kept_001.jpg", ["Regatta"])
+        self.face(photo, name=WREN, name_source="manual")
+        self.assertEqual([(WREN, "face")], self.indexed_people())
+        photos.record_tags(self.path, photo, ["Regatta", "Event/Classic"])
+        self.assertEqual([(WREN, "face")], self.indexed_people(), "a keyword write rebuilt the people from keywords alone")
+        self.photo("kept_001.jpg", ["Regatta"])               # the indexer reads the changed file again
+        self.assertEqual([(WREN, "face")], self.indexed_people(), "a re-index took the person off")
 
 
 class TakingANameOffTakesThePersonOff(InStep):
@@ -260,6 +309,30 @@ class TakingANameOffTakesThePersonOff(InStep):
         self.assertEqual(1, reply.get_json()["excluded"])
         self.assertEqual(1, reply.get_json()["tags_removed"])
         self.assertEqual([], self.tags(photo))
+
+    def test_not_important_clears_the_name_and_keeps_the_reason_and_the_person_leaves_with_the_last_face_that_carried_them(self):
+        """Lifted: test_face_exclusion.py's TestExcludeEndpoint (7 of 9 tests, deleted; #63 the person who is on the photo by a
+        face alone leaves it with that face). Breaks that fail this and them: face_people.exclude not taking the tag off (its
+        _finish_untag call removed), store/faces.exclude not rebuilding the photos' people (`return changed`), and
+        services/faces.exclude accepting any reason (the bulk path validates in face_assignment: its own test)."""
+        photo = self.held("off_013.jpg", [PEOPLE + WREN, "Regatta"])
+        first = self.face(photo, name=WREN, name_source="manual")
+        second = self.face(photo, box=(70, 10, 110, 60), name=WREN)
+        alone = self.held("off_014.jpg")                  # no keyword names her: she is on this photo by her face alone
+        by_face = self.face(alone, name=ODA, name_source="manual")
+        self.assertIn((ODA, "face"), self.indexed_people())
+        fuzzy = self.tuner_post("faces/exclude", {"face_ids": [first], "reason": "fuzzy"})      # free text got in once (#53)
+        self.assertEqual((400, (WREN, "manual", 0)), (fuzzy.status_code, self.row(first)[:3]), "refused, and nothing changed")
+        self.tuner_post("faces/exclude", {"face_ids": [first], "reason": "  Bad Crop "})
+        self.assertEqual((None, "manual", 1), self.row(first)[:3])
+        self.assertEqual("bad crop", self.look("SELECT excluded_reason FROM faces WHERE id = ?", (first,))[0][0],
+                         "kept as the page spells it")
+        self.assertEqual([PEOPLE + WREN, "Regatta"], self.tags(photo), "another face of the photo is still her")
+        self.tuner_post("faces/exclude", {"face_ids": [second, by_face]})
+        self.assertEqual(["Regatta"], self.tags(photo), "no face carries her now")
+        self.assertEqual([], self.indexed_people())
+        self.assertEqual("not a person", self.look("SELECT excluded_reason FROM faces WHERE id = ?", (second,))[0][0],
+                         "no reason says so")
 
     def test_tagpups_page_is_told_which_tags_go_when_it_rules_a_face_out_too(self):
         photo = self.held("off_010.jpg", [PEOPLE + WREN, "Regatta"])
