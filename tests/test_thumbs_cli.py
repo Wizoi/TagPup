@@ -55,9 +55,10 @@ class Warm(unittest.TestCase):
         self.assertIn("Made 1,", said)
 
     def test_a_library_that_is_behind_is_brought_up_to_date_only_by_apply(self):
-        from test_migrations import at_version
+        import migration_names
         old = self.vl.home.library("older.db")
-        at_version(old, schema.LATEST - 1)
+        schema.ensure(old)
+        self.enterContext(migration_names.ahead())   # the code knows a step the library has not had
         result = CliRunner().invoke(cli, ["--db", old, "thumbs", "warm"])
         self.assertEqual(0, result.exit_code, result.output)
         self.assertNotIn("Brought the library up to date", result.output)

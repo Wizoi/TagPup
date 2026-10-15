@@ -369,12 +369,6 @@ class WhatGoesWrong(Bulk):
         self.assertEqual((self.PHOTOS, 0), (done["error_count"], done["changed"]))
         self.assertEqual({}, self.files.reads)
 
-    def test_a_library_behind_is_a_409_and_nothing_is_written(self):
-        with mock.patch("tagpup.services.library_view.store.ready", return_value=False):
-            reply = self.tags_edit(add=["A"], expect=409)
-        self.assertIn("brought up to date", reply["error"])
-        self.assertEqual(0, self.files.writes)
-
     def test_a_root_this_machine_does_not_place_is_the_gates_409_before_the_route_runs(self):
         with mock.patch("tagpup.web.roots_gate.problem_of", return_value="This machine does not place the root pictures."):
             reply = self.post({"op": "tags", "selection": ALL, "params": {"add": ["A"]}})

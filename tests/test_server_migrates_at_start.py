@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
 import web_client  # noqa: E402
-from test_migrations import at_version  # noqa: E402
+import migration_names  # noqa: E402
 
 import tagpup_web  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
@@ -52,8 +52,8 @@ class TheServerMigratesAtStart(unittest.TestCase):
         self.home = own_home.for_test(self)
         self.behind = [self.home.library(name) for name in ("harbour.db", "regatta.db")]
         for path in self.behind:
-            at_version(path, schema.LATEST - 1)
-        schema._current.clear()
+            schema.ensure(path)
+        self.enterContext(migration_names.ahead())   # the code knows a step the libraries have not had
         self.addCleanup(schema._current.clear)
 
     def test_every_library_it_serves_is_brought_up_to_date_on_a_thread(self):
@@ -127,9 +127,11 @@ class ALibraryBeingMigrated(unittest.TestCase):
     def setUp(self):
         self.app, self.home = web_client.app_for(self, "tagpup")
         self.held = [self.home.library(name) for name in ("harbour.db", "regatta.db")]
-        for path in self.held:
-            at_version(path, schema.LATEST - 1)
-        schema._current.clear()
+        current = self.home.library("library.db")
+        for path in self.held + [current]:
+            schema.ensure(path)
+        self.enterContext(migration_names.ahead())   # the code knows a step the libraries have not had
+        schema.ensure(current)   # "a library already current" is one this step has been run on
         self.addCleanup(schema._current.clear)
         self.entered, self.release = threading.Event(), threading.Event()
         last = schema.MIGRATIONS[-1]

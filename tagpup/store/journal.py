@@ -316,11 +316,6 @@ def _canonical_value(roots, table, key, column, value):
     return store_roots.row_value(roots, table, column, value, key[0] if table == "settings" and key else None)
 
 
-def has_journal(conn):
-    """Has the library on `conn` the journal's tables (migration 9)? Asked by the migrations (tagpup.store.schema) only."""
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'changes'").fetchone() is not None
-
-
 # ---- Reading a change against the rows --------------------------------------------------
 
 def _resolve(conn, edits):
@@ -971,38 +966,26 @@ def schema_gap_blocker(version, current):
     """Why a change made at schema `version` may not mean what it did in a library at `current`:
     a sentence naming the first migration in between that could have changed it, or None when none
     could. A migration cannot have if it is ADDITIVE and touches no table a change can name or the
-    journal keys (KEYS): adding the roots table, the runs of jobs, a folder list, the derived tables, moves
-    no row a journaled change recorded; nor one that only drops tables nothing journaled names
-    (schema.ONLY_DROPS), or a column the migration took out of the journal (schema.COLUMNS_DROPPED). Every
-    other migration blocks, and so does one that is not
-    in the list: what cannot be classified is never exempt. A change made at a schema NEWER than
-    the library's blocks too (an older version of the app opened it), and so does one made BELOW the
-    baseline (schema.BASELINE): its steps are gone."""
+    journal keys (KEYS): adding a table, an index or a trigger moves no row a journaled change recorded.
+    Every other migration blocks, and so does one that is not in the list: what cannot be classified is
+    never exempt. A change made at a schema NEWER than the library's blocks too (an older version of the
+    app opened it), and so does one made BELOW the baseline (schema.BASELINE): its steps are gone."""
     if version > current:
         return "migration %d is not applied here" % version
     if version < schema.BASELINE:
         # The steps below the baseline are deleted (owner, 2026-10-15): what they did to this change's rows is not known.
-        # Live: the oldest changes of the three libraries are at 9, 10 and 20.
         return "it was made before the baseline, schema %d, whose steps TagPup no longer has" % schema.BASELINE
     known = {migration.version: migration for migration in schema.MIGRATIONS}
     # Not DERIVED: every undo rebuilds the derived tables from the rows it wrote (_derive), so a
     # migration that makes or fills one changes nothing an older change's rows mean.
     journaled = set(KEYS)
-    # A migration that only drops tables nothing journaled names (schema.ONLY_DROPS) is held to the same: a table in KEYS that it
-    # dropped would leave the rows of a recorded change with nowhere to go.
     for number in range(version + 1, current + 1):
         migration = known.get(number)
         if migration is None:
             return "migration %d is not known" % number
-        if migration.kind != schema.ADDITIVE and number not in schema.ONLY_DROPS and number not in schema.COLUMNS_DROPPED:
+        if migration.kind != schema.ADDITIVE:
             return "migration %d, %s, is %s" % (number, migration.name, migration.kind)
-        # What the migration added was derived when it was added (a change older than it cannot hold the column), whatever
-        # a later version made of it: tests hold the declaration to the columns the migration really adds.
-        derived_only = set(schema.ADDS_DERIVED_COLUMNS.get(number, {}))
-        # A column dropped (schema.COLUMNS_DROPPED): the rebuilt table keeps every row and key, and the migration took the
-        # journal's rows of the column out.
-        dropped_only = set(schema.COLUMNS_DROPPED.get(number, {}))
-        touched = sorted(set(migration.touches) & journaled - derived_only - dropped_only)
+        touched = sorted(set(migration.touches) & journaled)
         if touched:
             return "migration %d, %s, touches %s" % (number, migration.name, ", ".join(touched))
     return None

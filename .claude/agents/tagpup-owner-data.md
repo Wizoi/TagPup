@@ -23,7 +23,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 - Roots as data: `tagpup/store/roots.py`, `tagpup/store/root_rows.py`, `tagpup/store/roots_check.py`, `tagpup/services/roots.py`, `tagpup/services/roots_location.py`, `tagpup/services/roots_verify.py`
 - Small stores: `tagpup/store/added_folders.py`, `tagpup/store/faces_detected.py`, `tagpup/store/removals.py`
 - Tables: `schema_version`, `changes`, `change_rows`, `change_files`, `settings`, `generations`, `job_runs` (the syncs among them), `roots`, `added_folders`, `faces_detected`, every derived table (`photo_tags`, `folders`, `photo_folder`, `photo_people`, `search_words`, `search_names` and their FTS shadows) and every trigger. The schema file holds every domain's tables, so a new table anywhere is a Data review.
-- State on 2026-10-11 (counted): the three live libraries are at schema 31; migration 32 (drops `tag_taxonomy.is_people` by a rebuild and folds `sync_runs` into `job_runs`; `schema.COLUMNS_DROPPED`) waits for the owner's next start.
+- State on 2026-10-15 (counted): the three live libraries are at schema 32, which is the BASELINE: a new library is made whole at 32 and one below is refused (`schema.TooOld`); the migrations 1 to 32 and their probes are deleted (DECISIONS 2026-10-15). The next migration is 33; none is in flight.
 
 ## The contract other domains rely on, and must not bypass
 1. `db.connect/begin/write/write_with_connection/lock_for/backup/readonly_uri`: WAL, a 30 s busy timeout, one writer per file in a process, a lock error retried. Nobody else calls `sqlite3.connect`, writes SQL outside `tagpup/store`, or holds `db.lock_for` across a model call, a file write or a share read.
@@ -39,11 +39,11 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 |---|---|
 | Only `db.py` connects; SQL only in `tagpup/store` | `tests/test_db_access.py`, `tests/test_layers.py` |
 | Derived tables written only by their rebuild functions, in the writing transaction | `tests/test_derived_writers.py`, `tests/test_derived_follow_writes.py` |
-| A migration declares its kind; additive changes no row; destructive takes one backup; one transaction with checks | `tests/test_migrations.py`, `tests/test_schema.py` |
+| A migration declares its kind; additive changes no row; destructive takes one backup; one transaction with checks; a library below the baseline is refused untouched | `tests/test_migrations.py` (the runner on synthetic steps, D8), `tests/test_schema.py` |
 | One migration in flight (CLAUDE.md) | none: review only |
 | Journal keys never reused; every cascade recorded, rebuilt or forbidden | `tests/test_journal_keys_and_cascades.py`, `tests/test_journal.py` |
 | A photo file written only through the journaled path; a changed file is a conflict | `tests/test_file_journal.py` |
-| An older app refuses a newer library, also when it cached the library as current | `tests/test_newer_library_guard_in_a_long_lived_process.py`, `tests/test_migration_28_and_the_newer_library.py` |
+| An older app refuses a newer library, also when it cached the library as current | `tests/test_newer_library_guard_in_a_long_lived_process.py`, `tests/test_a_library_from_a_newer_tagpup.py` |
 | A request for a library being migrated gets 503, not a parked thread | `tests/test_server_migrates_at_start.py` |
 | Snapshot is one read transaction, placed after a quick check | `tests/test_snapshots.py` |
 | Nothing reads `config.ini`; settings only through a journaled change | `tests/test_config_single_owner.py`, `tests/test_a_librarys_settings_are_its_own.py` |
@@ -56,10 +56,10 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 3. Is it a journaled change with a dry run, and does it report rows changed (re-read), not attempted?
 4. If it deletes: which of `CASCADES` applies, is the dependent recorded or rebuilt, can a key be reused after the delete (AUTOINCREMENT)?
 5. `EXPLAIN QUERY PLAN` on `data/photo_index.db` (read-only) for every statement on `faces`, `photos`, `photo_people`; no BLOB it does not use (`faces.embedding`, `face_crops.jpeg`, `embeddings.vector`); no `LIKE` for equality; no per-item query for a per-run answer.
-6. A migration: right kind and `touches`; its cost timed cold on the largest library, under the write lock; run at startup on a thread the drain can see; no other migration unshipped; the name lists in tests updated. **A migration runs today's code, not the code of its day** (19 calls `derived.rebuild_all`, 21 `person_ids.fill`, 24 `search_index.rebuild`): does this change alter what an old migration does on an old library or snapshot?
+6. A migration: right kind and `touches`; its cost timed cold on the largest library, under the write lock; run at startup on a thread the drain can see; no other migration unshipped; the name lists in tests updated. **A migration runs today's code, not the code of its day**: does this change alter what an old migration does on an old library or snapshot? (None is left to alter below 33; a new one that calls a store function freezes what it needs.)
 7. What does an older, already-installed app do with the file after this runs? Can anything here make a migrated library look current to a running old process?
 8. Can opening, reading, `doctor`, an MCP read or a dry run reach `schema.ensure`'s write path?
-9. Does it add a "library before migration N" probe, or a silent zero for a missing table? Prefer refuse-or-migrate.
+9. Does it add a "library before migration N" probe, or a silent zero for a missing table? Prefer refuse-or-migrate: the probes `present`, `_there`, `has_table`, `has_journal` and `library_view.ready` were deleted with the baseline at 32, and a library below it is refused, so no caller asks.
 10. A new table or column: is it in every list (`journal.KEYS / CASCADES`, `checks`; a derived table in `derived.ALL`, from which `journal.DERIVED` and `schema.UNWATCHED` are made) and does a test hold the lists to each other? Is it a second statement of "which tables are derived"? `derived.ALL` owns it.
 11. Killed between two statements, which state does the next open finish (`derived_pending`, `writing`)? Two servers, or a server and a CLI, on one folder?
 12. Paths stored and compared in row form via `store.roots` and `core.paths`: correct for a library with and without roots?

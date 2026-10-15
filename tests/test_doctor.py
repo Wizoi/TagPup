@@ -169,19 +169,19 @@ class TheDoctor(Library):
         self.assertEqual(0, doctor.main(["--db", self.db_path]))
 
     def test_a_library_not_yet_migrated_is_said_so_and_nothing_else_is_read(self):
-        from test_migrations import at_version
+        import migration_names
         older = os.path.join(self.dir, "older.db")
-        at_version(older, schema.LATEST - 1)
+        schema.ensure(older)
         lines = []
-        self.assertEqual(1, doctor.report(older, out=lines.append))
+        with migration_names.ahead():   # the code knows a step the library has not had
+            self.assertEqual(1, doctor.report(older, out=lines.append))
         self.assertIn("migrations not applied", "\n".join(lines))
 
     def test_a_library_below_the_baseline_is_said_to_be_too_old_not_to_be_migrated(self):
-        from test_migrations import at_version
         too_old = os.path.join(self.dir, "too_old.db")
-        at_version(too_old, schema.BASELINE)
+        schema.ensure(too_old)
         conn = db.connect(too_old)
-        conn.execute("UPDATE schema_version SET version = 13")
+        conn.execute("UPDATE schema_version SET version = 31")
         conn.commit()
         conn.close()
         lines = []
@@ -378,21 +378,6 @@ class TheRepair(ALibraryAtRest):
         self.assertEqual(["the derived tables are what the photos say, and every person's name what their node is called"], lines)
         with open(self.path, "rb") as handle:
             self.assertEqual(before, hashlib.sha256(handle.read()).hexdigest(), "nothing written")
-
-    def test_a_library_behind_the_migration_is_told_to_open_it_and_not_migrated(self):
-        from test_migrations import at_version
-        older = self.home.library("older.db")
-        at_version(older, 18)
-
-        def digest():
-            with open(older, "rb") as handle:
-                return hashlib.sha256(handle.read()).hexdigest()
-
-        before = digest()
-        lines = []
-        self.assertEqual(1, doctor.rebuild_derived(older, apply=True, out=lines.append))
-        self.assertIn("schema 18", lines[0])
-        self.assertEqual(before, digest())
 
 
 @unittest.skipUnless(os.name == "nt", "spellings below are Windows paths")

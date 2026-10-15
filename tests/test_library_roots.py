@@ -107,12 +107,13 @@ class ADryRunOnALibraryBehind(unittest.TestCase):
     migrating and says how far behind the library is, as a maintenance dry run does."""
 
     def test_the_file_is_left_as_it_was(self):
-        from test_migrations import at_version
+        import migration_names
         from tagpup.store import schema
 
         home = own_home.for_test(self)
         older = home.library("older.db")
-        at_version(older, schema.LATEST - 1)
+        schema.ensure(older)
+        self.enterContext(migration_names.ahead())   # the code knows a step the library has not had
         conn = db.connect(older)
         try:
             conn.executemany("INSERT INTO settings (key, value) VALUES (?, ?)", sorted(settings.STAMPED.items()))

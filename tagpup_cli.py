@@ -930,11 +930,12 @@ def snapshots_list(ctx):
         console.print("%s has no snapshots yet; the Activity page's Run now takes one." % library.name, markup=False)
         return
     table = Table(title="Snapshots of %s" % library.name)
-    for column in ("Name", "Taken", "Size", "Changes since"):
+    for column in ("Name", "Taken", "Size", "Changes since", "Schema"):
         table.add_column(column)
     for snapshot in found["snapshots"]:
         table.add_row(snapshot["name"], snapshot["taken"], "%s MB" % format(snapshot["bytes"] // 1_000_000, ","),
-                      str(snapshot["changes_since"]))
+                      str(snapshot["changes_since"]),
+                      "%d (too old to restore)" % snapshot["schema"] if snapshot["too_old"] else str(snapshot["schema"]))
     console.print(table)
     console.print("They take %s MB." % format(found["bytes"] // 1_000_000, ","), markup=False)
 
@@ -957,10 +958,11 @@ def snapshots_restore(ctx, name, apply_):
         name, len(lost), ":" if lost else "."), markup=False)
     for change in lost:
         console.print("  %d  %s  %s" % (change["id"], change["created"], change["operation"]), markup=False)
-    console.print("It needs about %s MB free on the disk -- the library as it is, snapshotted first, and the copy"
-                  " back -- and the disk has %s MB free. photo_index takes about half a minute." % (
-                      format(result.details["needs"] // 1_000_000, ","), format(result.details["free"] // 1_000_000, ",")),
-                  markup=False, soft_wrap=True)
+    if "needs" in result.details:   # not for a snapshot refused for its schema, which is refused before the disk is asked
+        console.print("It needs about %s MB free on the disk -- the library as it is, snapshotted first, and the copy"
+                      " back -- and the disk has %s MB free. photo_index takes about half a minute." % (
+                          format(result.details["needs"] // 1_000_000, ","), format(result.details["free"] // 1_000_000, ",")),
+                      markup=False, soft_wrap=True)
     if result.refused:
         console.print("Refused: %s" % result.refused, markup=False, soft_wrap=True)
         raise SystemExit(1)

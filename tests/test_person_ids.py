@@ -1,29 +1,25 @@
 """People by their node's id (tagpup.store.person_ids; docs/ARCHITECTURE.md, "Identity by id").
 
 `faces.tag_id` and `photo_people.tag_id` sit beside `name` and hold the id of the person node a row means -- NULL for a name
-no person node is called, or that two are and nothing said which. Stage 1: migration 21 fills them, one lookup per distinct
+no person node is called, or that two are and nothing said which. Stage 1: they are filled, one lookup per distinct
 name. Stage 2: the id is the PERSON and the name beside it a cache of the node's leaf (a rename of the node changes it, the
 id never); a writer takes the person by id (or by a name that is one person's), a tree edit that renames, moves or merges a
 person keeps their faces by id, and a node that faces name is not deleted. Each case here is a way that goes wrong: the
-migration interrupted, a name recorded in the journal before the column existed, a snapshot from before it, the tree renamed
-or edited between two writes, a tag the tree lacks, a node deleted while faces name it, two libraries naming one person with
+tree renamed or edited between two writes, a tag the tree lacks, a node deleted while faces name it, two libraries naming one person with
 different ids.
 
 Rows are made as the code that makes them makes them: a face by tagpup.store.faces, a photo by the
-indexer's record (tests/photo_rows.py), the tree by tagpup.store.taxonomy; a library at version 20 by
-the migrations themselves (test_migrations.at_version), its faces named as version 20 stored them.
+indexer's record (tests/photo_rows.py), the tree by tagpup.store.taxonomy. (The migration that added the columns, 21, is in
+the baseline; its tests of a library at 20 went with it.)
 """
 import os
-import shutil
 import sys
 import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-import migration_names  # noqa: E402
 import photo_rows  # noqa: E402
-from test_migrations import at_version  # noqa: E402
 
 from tagpup.store import checks, db, faces, journal, people, person_ids, schema, taxonomy  # noqa: E402
 
@@ -283,83 +279,13 @@ class TwoLibraries(unittest.TestCase):
         self.assertNotEqual(made["north.db"][0], made["south.db"][0], "the same person, two ids")
 
 
-# ---- The migration -----------------------------------------------------------------------------
+# ---- The reads of names and ids ----------------------------------------------------------------
 
-class TheMigration(unittest.TestCase):
-    def library_at_20(self):
-        """A library as version 20 left it: its tree, faces named by version 20's own writes (no id),
-        and its people rebuilt."""
-        home = own_home.for_test(self)
-        path = home.library("harbour.db")
-        at_version(path, 20)
-        photo = os.path.join(os.path.dirname(path), "Pictures", "dunes.jpg")
-        conn = db.connect(path)
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            seed_tree(conn)
-            photo_rows.add_read(conn, photo, {"XMP:Subject": ["People/" + WREN]})
-            photo_id = conn.execute("SELECT id FROM photos").fetchone()[0]
-            made = [conn.execute("INSERT INTO faces (photo_id, box, embedding, prob) VALUES (?, ?, ?, NULL)",   # as version 20 wrote one
-                                 (photo_id, "[%d, 0, %d, 5]" % (n, n + 5), bytes([n]))).lastrowid for n in range(5)]
-            for face, who in zip(made, (ODA, WREN.lower(), ASH, NOBODY, "People")):
-                conn.execute("UPDATE faces SET name = ?, name_source = 'manual' WHERE id = ?", (who, face))   # no id yet
-            people.rebuild(conn)
-            conn.commit()
-        finally:
-            conn.close()
-        self.assertNotIn("tag_id", [row[1] for row in look(path, "PRAGMA table_info(faces)")])
-        return home, path, made
-
-    def test_fills_each_rows_id_from_its_name_and_changes_nothing_else(self):
-        _home, path, made = self.library_at_20()
-        before = look(path, "SELECT id, photo_id, box, embedding, name, prob, name_source, excluded FROM faces ORDER BY id")
-        listed = look(path, "SELECT photo_id, position, name, source FROM photo_people ORDER BY 1, 2")
-        schema._current.clear()
-        self.assertEqual(migration_names.after(20),
-                         schema.ensure(path))
-        self.assertEqual(before, look(path, "SELECT id, photo_id, box, embedding, name, prob, name_source, excluded"
-                                            " FROM faces ORDER BY id"))
-        self.assertEqual(listed, look(path, "SELECT photo_id, position, name, source FROM photo_people ORDER BY 1, 2"))
-        held = dict(look(path, "SELECT id, tag_id FROM faces"))
-        self.assertEqual([node_id(path, "Family/Coast/" + ODA), node_id(path, "People/" + WREN), None, None, None],
-                         [held[face] for face in made], "a root is a category, not a person")
-        self.assertEqual({node_id(path, "People/" + WREN)}, ids_of(path, "photo_people")[WREN])
-        # The migration changes no name: the face spelled in lower case still is, and the doctor says so.
-        self.assertEqual([1, 0], in_step(path))
-        self.assertEqual("wren halloway", look(path, "SELECT name FROM faces WHERE id = ?", (made[1],))[0][0])
-        # migrations 22 and 23 (indexes), 24 (the word index) and 25 (faces_detected) are recorded after it
-        skipped = migration_names.operations_after(21)
-        operation, summary = look(path, "SELECT operation, summary FROM changes WHERE operation NOT IN (%s)"
-                                        " ORDER BY id DESC LIMIT 1" % ",".join("?" * len(skipped)), tuple(skipped))[0]
-        self.assertEqual("migration 21: people by their node's id", operation)
-        self.assertIn('"kind": "additive"', summary)
-
-    def test_reads_one_pair_per_name_never_a_row_or_a_vector(self):
-        """The backfill on photo_index's 225,000 faces: one lookup per distinct name (the pairs of name
-        and id, from idx_faces_person), one write per pair that is wrong, and no read of the vectors."""
-        _home, path, _made = self.library_at_20()
-        statements = []
-        real = schema._person_ids
-
-        def traced(conn):
-            conn.set_trace_callback(statements.append)
-            try:
-                real(conn)
-            finally:
-                conn.set_trace_callback(None)
-
-        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(20) + (
-                migration_names.get(21)._replace(apply=traced),)):
-            schema._current.clear()
-            schema.ensure(path)
-        # The trace names a statement again for each row a trigger fires on (the runner's watch): count
-        # the statements, not their mentions.
-        writes = {s for s in statements if s.lstrip().upper().startswith("UPDATE")}
-        names = look(path, "SELECT COUNT(DISTINCT name) FROM faces")[0][0] + look(
-            path, "SELECT COUNT(DISTINCT name) FROM photo_people")[0][0]
-        self.assertLessEqual(len(writes), names + 1)
-        self.assertEqual([], [s for s in statements if "embedding" in s or "crop" in s.lower() or "jpeg" in s])
-        conn = db.connect(db.readonly_uri(path), uri=True)
+class TheReadsOfNamesAndIds(Library):
+    def test_a_pair_of_name_and_id_comes_from_the_covering_index_and_a_write_by_name_uses_it(self):
+        """The sync on photo_index's 225,000 faces: one lookup per distinct name (the pairs of name and id, from
+        idx_faces_person), one write per pair that is wrong, and no read of the vectors."""
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
         try:
             plan = " ".join(row[3] for row in conn.execute(
                 "EXPLAIN QUERY PLAN SELECT name, tag_id, COUNT(*) FROM faces WHERE name IS NOT NULL GROUP BY name, tag_id"))
@@ -369,75 +295,6 @@ class TheMigration(unittest.TestCase):
             conn.close()
         self.assertIn("COVERING INDEX idx_faces_person", plan)
         self.assertIn("idx_faces_person", update)
-
-    def test_interrupted_part_way_leaves_the_library_at_20_and_a_second_run_does_it(self):
-        _home, path, made = self.library_at_20()
-        schema._current.clear()
-        with mock.patch.object(person_ids, "fill", side_effect=RuntimeError("the power went")):
-            with self.assertRaises(RuntimeError):
-                schema.ensure(path)
-        self.assertEqual([(20,)], look(path, "SELECT MAX(version) FROM schema_version"))
-        self.assertNotIn("tag_id", [row[1] for row in look(path, "PRAGMA table_info(faces)")], "all or nothing")
-        self.assertEqual([], look(path, "SELECT name FROM sqlite_master WHERE name = 'idx_faces_person'"))
-        schema._current.clear()
-        self.assertEqual(migration_names.after(20),
-                         schema.ensure(path))
-        self.assertEqual(node_id(path, "Family/Coast/" + ODA),
-                         look(path, "SELECT tag_id FROM faces WHERE id = ?", (made[0],))[0][0])
-
-    def test_a_snapshot_from_before_it_comes_back_and_is_migrated_again(self):
-        """snapshots.restore copies an older library over the file and brings it to the current schema."""
-        from tagpup.store import snapshots
-        home, path, made = self.library_at_20()
-        conn = db.connect(path)
-        try:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        finally:
-            conn.close()
-        snapshot = os.path.join(home.root, "before-21.db")
-        shutil.copyfile(path, snapshot)
-        schema._current.clear()
-        schema.ensure(path)
-        write(path, lambda conn: faces.unname(conn, [made[0]]))
-        snapshots.restore(path, snapshot)
-        self.assertEqual([(schema.LATEST,)], look(path, "SELECT MAX(version) FROM schema_version"))
-        self.assertEqual(node_id(path, "Family/Coast/" + ODA),
-                         look(path, "SELECT tag_id FROM faces WHERE id = ?", (made[0],))[0][0])
-        self.assertEqual([1, 0], in_step(path), "the lower-case spelling is a cache the repair puts right")
-        person_ids.repair(path)
-        self.assertEqual([0, 0], in_step(path))
-
-    def test_a_change_recorded_before_it_is_undone_after_it_and_the_face_gets_its_id(self):
-        """A face deleted by a journaled change at version 20 (dedupe_faces) was recorded without the
-        column. The migration blocks no undo of it (schema.ADDS_DERIVED_COLUMNS); the undo puts the row
-        back as recorded: a name and no id, which nothing links by the name alone."""
-        _home, path, made = self.library_at_20()
-        schema._current.clear()
-        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(20)), mock.patch.object(schema, "LATEST", 20):
-            applied = journal.apply(path, "dedupe faces", [journal.delete("faces", (made[0],), {"name": ODA})])
-        self.assertEqual(20, look(path, "SELECT schema_version FROM changes WHERE id = ?", (applied.change_id,))[0][0])
-        schema._current.clear()
-        schema.ensure(path)
-        conn = db.connect(db.readonly_uri(path), uri=True)
-        try:
-            self.assertEqual([], journal.refusal(conn, applied.change_id))
-        finally:
-            conn.close()
-        self.assertTrue(journal.rehearse_undo(path, applied.change_id).exact)
-        journal.undo(path, applied.change_id)
-        self.assertEqual([(ODA, None)], look(path, "SELECT name, tag_id FROM faces WHERE id = ?", (made[0],)))
-        self.assertEqual([0, 0], in_step(path))
-
-    def test_the_columns_it_says_are_derived_are_the_ones_it_adds(self):
-        _home, path, _made = self.library_at_20()
-        before = {table: [row[1] for row in look(path, "PRAGMA table_info(%s)" % table)] for table in journal.KEYS}
-        schema._current.clear()
-        schema.ensure(path)
-        # A table the library did not have yet adds no column to a table that was there.
-        added = {table: tuple(row[1] for row in look(path, "PRAGMA table_info(%s)" % table) if row[1] not in before[table])
-                 for table in journal.KEYS if before[table]}
-        self.assertEqual(schema.ADDS_DERIVED_COLUMNS[21], {t: c for t, c in added.items() if c})
-        self.assertIsNone(journal.schema_gap_blocker(20, 21))
 
 
 class TheJournal(Library):
@@ -521,7 +378,6 @@ class TheDoctor(Library):
         rebuilt the keyword, folder and metadata rows of every photo though only the people were wrong."""
         import io
         from contextlib import redirect_stdout
-        from unittest import mock
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
         import doctor
         self.name([self.faces[0]], ODA)

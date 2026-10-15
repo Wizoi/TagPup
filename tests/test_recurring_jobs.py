@@ -243,11 +243,12 @@ class ALibraryByAnySpelling(unittest.TestCase):
 
 class ALibraryBehind(unittest.TestCase):
     def test_is_left_alone_not_migrated(self):
-        from test_migrations import at_version
+        import migration_names
         from tagpup.store import schema
         home = own_home.for_test(self, prefix="jobs_")
         library = Library(home.library("harbour.db"))
-        at_version(library.path, schema.LATEST - 1)
+        schema.ensure(library.path)
+        self.enterContext(migration_names.ahead())   # the code knows a step the library has not had
         registry = recurring.Registry()
         service = Counting()
         registry.job("tidy", recurring.DAILY, reason=recurring.SAFETY)(service)

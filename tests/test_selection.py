@@ -174,11 +174,5 @@ class Resolving(Library):
         self.assertEqual(sorted([self.a, self.b, self.c, self.d, self.e]), sorted(resolved.ids))
         self.assertEqual(5, len(set(resolved.ids)))
 
-    def test_a_library_behind_is_not_ready_a_sentence_and_not_a_traceback(self):
-        with mock.patch.object(library_view.store, "ready", return_value=False):
-            with self.assertRaises(library_view.NotReady):
-                self.resolve({"ids": [self.a]})
-
-
 if __name__ == "__main__":
     unittest.main()

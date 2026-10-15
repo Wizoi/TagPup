@@ -3,8 +3,7 @@
 
 A photo's caption is the first of its captions -- the one the page shows -- compared without case on its first CAPTION_KEY
 characters, ties by id; the photos with none come after the captioned ones in both directions, by id in the order's, as the
-undated photos do in an order by Date Taken. Migration 23 is additive and index-only, as 20 and 22 are: no column, no trigger,
-no row changes, touches no table (findings #464: nothing checks that by itself, so this does), blocks no undo.
+undated photos do in an order by Date Taken. The index is in the baseline (findings #464).
 
 Photos are rows as the indexer records a read (tests/view_library.py); a caption changed is what a save records
 (store.photos.record_saved). Fictional names only.
@@ -12,19 +11,16 @@ Photos are rows as the indexer records a read (tests/view_library.py); a caption
 import os
 import sys
 import unittest
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-import migration_names  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
-from test_migrations import at_version  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.services import library_view, selection  # noqa: E402
-from tagpup.store import db, journal, schema  # noqa: E402
+from tagpup.store import db, schema  # noqa: E402
 from tagpup.store import library_view as store  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
@@ -198,11 +194,11 @@ class TheRoute(unittest.TestCase):
             self.assertEqual((expected, order), (reply.get_json()["ids"], reply.get_json()["order"]))
 
 
-class MigrationTwentyThree(unittest.TestCase):
+class TheCaptionIndex(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self)
         self.path = self.home.library("harbour.db")
-        at_version(self.path, 22)
+        schema.ensure(self.path)
         conn = db.connect(self.path)
         try:
             for name, caption in (("b.jpg", "Beach"), ("a.jpg", None), ("c.jpg", "anchor")):
@@ -215,35 +211,7 @@ class MigrationTwentyThree(unittest.TestCase):
             conn.close()
         schema._current.clear()
 
-    def schema_rows(self):
-        return look(self.path, "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")
-
-    def test_a_library_at_22_gets_the_index_and_nothing_else(self):
-        before_schema = self.schema_rows()
-        tables = [name for (name,) in look(self.path, "SELECT name FROM sqlite_master WHERE type = 'table' "
-                                                       "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-        tables = [table for table in tables if table not in ("schema_version", "changes", "change_rows")]
-        before = {table: look(self.path, "SELECT * FROM %s" % table) for table in tables}
-        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(23)), mock.patch.object(schema, "LATEST", 23):
-            self.assertEqual(migration_names.named(23), schema.ensure(self.path))
-        added = [row for row in self.schema_rows() if row not in before_schema]
-        self.assertEqual([("index", store.CAPTION_INDEX, "photos")], [row[:3] for row in added], "one index, no column or trigger")
-        self.assertEqual(before, {table: look(self.path, "SELECT * FROM %s" % table) for table in tables})
-        migration = [m for m in schema.MIGRATIONS if m.version == 23][0]
-        self.assertEqual((schema.ADDITIVE, ()), (migration.kind, migration.touches))
-
-    def test_a_change_made_at_22_is_still_undoable_after_it(self):
-        applied = journal.apply(self.path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
-        schema._current.clear()
-        schema.ensure(self.path)
-        conn = db.connect(db.readonly_uri(self.path), uri=True)
-        try:
-            self.assertEqual([], journal.refusal(conn, applied.change_id))
-        finally:
-            conn.close()
-
     def test_the_index_holds_each_first_caption_and_a_write_of_captions_keeps_it(self):
-        schema.ensure(self.path)
         held = look(self.path, "SELECT %s FROM photos INDEXED BY %s WHERE %s IS NOT NULL ORDER BY %s COLLATE NOCASE, id"
                     % ((store.caption_sql(), store.CAPTION_INDEX) + (store.caption_sql(),) * 2))
         self.assertEqual([("anchor",), ("Beach",)], held)

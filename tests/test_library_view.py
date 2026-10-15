@@ -15,15 +15,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
-from test_migrations import at_version  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.result import Refused  # noqa: E402
 from tagpup.services import library_view  # noqa: E402
-from tagpup.store import db, derived, schema  # noqa: E402
-from tagpup.store import library_view as store  # noqa: E402
+from tagpup.store import db, derived  # noqa: E402
 
 
 class Library(unittest.TestCase):
@@ -337,24 +335,7 @@ class TheCards(Library):
         self.assertEqual(counted[0], counted[1], "as many reads for 62 photos as for 3")
 
 
-class NotReady(unittest.TestCase):
-    def test_a_library_behind_is_a_sentence_and_nothing_is_migrated(self):
-        home = own_home.for_test(self)
-        from tagpup.core.library import Library as LibraryName
-        for version in (18, 19):
-            with self.subTest(version=version):
-                path = home.library("older%d.db" % version)
-                at_version(path, version)
-                library = LibraryName(path)
-                for call in (lambda: library_view.ids(library, "all"), lambda: library_view.navigator(library, "folders"),
-                             lambda: library_view.cards(library, [1])):
-                    with self.assertRaises(library_view.NotReady) as caught:
-                        call()
-                    self.assertIn("has not been brought up to date", str(caught.exception))
-                    self.assertIn("older%d" % version, str(caught.exception))
-                self.assertEqual(version, db.connect(db.readonly_uri(path), uri=True).execute(
-                    "SELECT MAX(version) FROM schema_version").fetchone()[0], "reading it did not migrate it")
-
+class ALibraryThatIsNotThere(unittest.TestCase):
     def test_a_library_that_is_not_there_is_not_found(self):
         from tagpup.core.library import Library as LibraryName
         from tagpup.core.result import NotFound
@@ -515,18 +496,6 @@ class ARootedLibrary(unittest.TestCase):
         found = library_view.ids(self.library, "folder", old, False)
         self.assertEqual(3, found["total"])
         self.assertTrue(library_view.cards(self.library, found["ids"])[0]["path"].startswith(copy), "paths are the first place's now")
-
-
-class TheSchemaOfThePlans(unittest.TestCase):
-    def test_ready_needs_the_tables_and_the_indexes(self):
-        home = own_home.for_test(self)
-        path = home.library("harbour.db")
-        schema.ensure(path)
-        conn = db.connect(path)
-        self.addCleanup(conn.close)
-        self.assertTrue(store.ready(conn))
-        conn.execute("DROP INDEX idx_photos_year")
-        self.assertFalse(store.ready(conn))
 
 
 if __name__ == "__main__":

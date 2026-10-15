@@ -8,14 +8,18 @@ written without a WAL (the backup then wrote the library into the -wal and check
 photo_index: review of phase 8a, 2). The recurring job takes them and records what it took; `snapshots list` and
 `snapshots restore` are its commands.
 
+A snapshot below the baseline (schema 32) is listed as too old and its restore is refused before anything is copied
+(owner, 2026-10-15: the snapshots and backups below 32 can no longer be restored).
+
 Lifted: test_snapshot_commands, test_a_copy_is_not_written_through_a_wal and the roots tests of "adopted while open /
 prepared / pinned" (test_roots_store): nothing in the program adopts a library any more, and the real action that
-changes a library's roots under a running process is a restore of a snapshot from before roots (migration 18; the
-kept monthlies are at schema 14, 14 and 20, counted 2026-10-15 by the Data owner). Break that fails
+changes a library's roots under a running process is a restore of a snapshot from before roots, here a monthly at the
+baseline taken before the library had any, restored into a library that a later step has migrated. Break that fails
 the kept test: tagpup.store.snapshots.restore not moving the generations past where they stood
 (`if before and` -> `if False and`) fails test_the_monthly_from_before_roots_is_restored_under_a_running_index.
 Findings: review of phase 8a (1, 2, 3, 4, 8), none numbered in findings.md.
 """
+import hashlib
 import os
 import sys
 import threading
@@ -27,6 +31,7 @@ from click.testing import CliRunner
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import migration_names  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
@@ -428,17 +433,24 @@ class ACopyIsAFileOfItsOwn(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt", "the roots below are Windows paths")
 class TheMonthlyFromBeforeRoots(unittest.TestCase):
-    """The library took its roots after the monthly was taken (schema 14; roots are migration 18): the owner restores
-    it while the index is running and a run holds the library's roots."""
+    """The library took its roots after the monthly was taken (at the baseline, with a later step still to come): the owner
+    restores it while the index is running and a run holds the library's roots."""
 
     def setUp(self):
-        from test_migrations import at_version
         self.home = own_home.for_test(self, prefix="snapshots_old_")
         self.library = Library(self.home.library("harbour.db"))
-        at_version(self.library.path, 14)
+        schema.ensure(self.library.path)
+        conn = db.connect(self.library.path)
+        try:
+            for name in ("a.jpg", "b.jpg"):
+                photo_rows.add_read(conn, "D:\\Harbour\\" + name, {})
+            conn.commit()
+        finally:
+            conn.close()
         snapshots.take(self.library.path, now=NOON)
         self.monthly = snapshots.listed(self.library.path, "monthly")[0]
-        self.assertEqual(14, snapshots.schema_version(self.monthly.path))
+        self.assertEqual(schema.BASELINE, snapshots.schema_version(self.monthly.path))
+        self.enterContext(migration_names.ahead())   # a later step, run on opening the library
         schema.ensure(self.library.path)
         rl.convert_to_root(self.library.path, "D:\\Harbour")   # the owner's roots, arrived since
 
@@ -481,7 +493,7 @@ class TheMonthlyFromBeforeRoots(unittest.TestCase):
                     store_roots.roots_for(conn)    # the pinned run stops: its roots are not the library's now
             finally:
                 conn.close()
-        # Migrated on open, to the schema of the code, and the library holds the monthly's rows with no roots.
+        # Migrated on open, to the schema of the code (the later step), and the library holds the monthly's rows with no roots.
         conn = db.connect(self.library.path)
         self.addCleanup(conn.close)
         self.assertEqual(schema.LATEST, schema.version(conn))
@@ -523,6 +535,78 @@ class TheMonthlyFromBeforeRoots(unittest.TestCase):
         self.assertEqual(2, len(calls))
         self.assertIn(path, self.held())
         self.assertNotIn("@pictures/Caught between.jpg", self.held())
+
+
+class ASnapshotBelowTheBaseline(Base):
+    """A snapshot made before schema 32 is still a file in the library's folder: it is listed, as too old, and restoring it is
+    refused with a sentence before the library is touched or snapshotted (owner, 2026-10-15: nothing could bring it forward)."""
+
+    def setUp(self):
+        super().setUp()
+        snapshots.take(self.library.path, now=NOON)
+        self.daily = snapshots.listed(self.library.path, "daily")[0]
+        conn = db.connect(self.daily.path)
+        try:
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version VALUES (31, 'an old step', '2026-09-01 00:00:00')")
+            conn.commit()
+            conn.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            conn.close()
+
+    def cli(self, *args):
+        with mock.patch.object(tagpup_cli, "console", tagpup_cli.Console(width=200)):
+            return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path] + list(args))
+
+    def digest(self):
+        schema._current.clear()
+        conn = db.connect(self.library.path)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+        with open(self.library.path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+
+    def test_it_is_listed_as_too_old_and_listing_does_not_fail(self):
+        [described] = [s for s in snapshot_service.listing(self.library)["snapshots"] if s["name"] == self.daily.name]
+        self.assertEqual((31, True), (described["schema"], described["too_old"]))
+        shown = self.cli("snapshots", "list")
+        self.assertEqual(0, shown.exit_code, shown.output)
+        self.assertIn("31 (too old to restore)", shown.output)
+        self.assertIn("32", shown.output, "the weekly and monthly are copies of the same file, so also marked")
+
+    def test_the_cli_refuses_a_snapshot_from_a_newer_tagpup_in_a_sentence_too(self):
+        # The refusal comes before the disk is asked, so the command has no "needs" to print: it was a KeyError (a traceback).
+        conn = db.connect(self.daily.path)
+        try:
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version VALUES (99, 'a later step', '2026-10-09 00:00:00')")
+            conn.commit()
+            conn.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            conn.close()
+        said = self.cli("snapshots", "restore", self.daily.name, "--apply")
+        self.assertEqual(1, said.exit_code, said.output)
+        self.assertIn("made by a newer version of TagPup", " ".join(said.output.split()))
+        self.assertNotIn("Traceback", said.output)
+        self.assertIsNone(said.exception if isinstance(said.exception, KeyError) else None)
+
+    def test_a_restore_of_it_is_refused_with_a_sentence_and_the_library_is_untouched(self):
+        before, kept = self.digest(), self.names()
+        for apply in (False, True):
+            result = snapshot_service.restore(self.library, self.daily.name, apply=apply, now=NOON + 60)
+            self.assertIn("older than TagPup can bring forward", result.refused)
+            self.assertIn("restore a newer snapshot", result.refused)
+            self.assertIn("The snapshot " + self.daily.name, result.refused)
+            self.assertEqual(0, result.changed)
+            self.assertNotIn("before_restore", result.details)
+        self.assertEqual((before, kept), (self.digest(), self.names()), "nothing copied over it, and no snapshot of it taken")
+        said = self.cli("snapshots", "restore", self.daily.name, "--apply")
+        self.assertEqual(1, said.exit_code, said.output)
+        self.assertIn("Refused", said.output)
+        self.assertNotIn("Traceback", said.output)
+        self.assertEqual((before, kept), (self.digest(), self.names()))
 
 
 if __name__ == "__main__":

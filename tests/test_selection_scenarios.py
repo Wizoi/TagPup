@@ -146,8 +146,6 @@ class TheSelectionPanel(unittest.TestCase):
             self.assertEqual(400, reply.status_code, body)
             self.assertNotIn("Traceback", reply.get_json()["error"])
         self.assertEqual(403, self.post({"ids": [self.a]}, environ_overrides={"REMOTE_ADDR": "10.0.0.7"}).status_code)
-        with mock.patch("tagpup.services.library_view.store.ready", return_value=False):
-            self.assertEqual(409, self.post({"ids": [self.a]}).status_code)
 
     def test_two_libraries_tally_their_own_photos_under_the_same_ids(self):
         other = ViewLibrary(self, "meadow", home=self.home)

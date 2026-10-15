@@ -170,11 +170,12 @@ class ALibraryThatIsBehind(SyncTestCase):
     until an app opens it, and the dry run says so."""
 
     def test_a_dry_run_on_a_library_behind_leaves_its_file_as_it_was(self):
-        from test_migrations import at_version
+        import migration_names
         from tagpup.store import schema
 
         older = self.home.library("older.db")
-        at_version(older, schema.LATEST - 1)
+        schema.ensure(older)
+        self.enterContext(migration_names.ahead())   # the code knows a step the library has not had
         path = self.photo(self.meet, "IMG_0001.jpg", **{"XMP:Subject": ["Events/Invitational"]})
         self.db_path = older
         self.indexed(path)
