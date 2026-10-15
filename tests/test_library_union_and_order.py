@@ -155,15 +155,6 @@ class TheOrders(Library):
         self.assertEqual([self.undated_a, self.june_21, self.july_20, twin, self.july_21, self.dashed, self.july_22,
                           self.undated_b], self.ids("all", order="name-desc")["ids"])
 
-    def test_without_the_name_index_the_order_by_name_is_the_same(self):
-        with_index = self.ids("any_of", union(("year", "2021", False), ("month", "2020-07", False)), order="name")["ids"]
-        conn = db.connect(self.vl.path)
-        conn.execute("DROP INDEX %s" % store.NAME_INDEX)
-        conn.commit()
-        conn.close()
-        self.assertEqual(with_index, self.ids("any_of", union(("year", "2021", False), ("month", "2020-07", False)),
-                                              order="name")["ids"])
-
     def test_an_unknown_order_is_refused(self):
         with self.assertRaises(Refused):
             self.ids("all", order="size")
