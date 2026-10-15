@@ -22,6 +22,9 @@ const YEAR = new Date().getFullYear();
 /** Pairs of sources and whether the page keeps one chip for them: tests/fixtures/chip_keys.json, which the server is held to as
  * well (tests/test_chip_keys_follow_the_server.py: what the page calls one chip the server reads as the same photos). */
 const CHIP_KEYS = JSON.parse(readFileSync(new URL("../fixtures/chip_keys.json", import.meta.url), "utf-8"));
+/** The server's caps, kinds, orders, a search's parts and which terms say something: tests/fixtures/view_rules.json, held to
+ * the server by tests/test_view_rules_follow_the_server.py. */
+const VIEW_RULES = JSON.parse(readFileSync(new URL("../fixtures/view_rules.json", import.meta.url), "utf-8"));
 
 /** The navigator's keywords, as GET /api/library/navigator?section=keywords answers: a People branch with two people in it. */
 const KEYWORDS = () => [
@@ -92,6 +95,21 @@ describe("one chip for one source (the page's key against the server's reading)"
     const { memberKey } = pageExports(ctx.window, "web/tagpup/search-model.js");
     for (const each of CHIP_KEYS.pairs) {
       assert.equal(memberKey(each.a) === memberKey(each.b), each.same_chip, each.name);
+    }
+  });
+
+  test("what the page refuses before it asks is what the server refuses: tests/fixtures/view_rules.json", async (t) => {
+    const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}` });
+    const source = pageExports(ctx.window, "web/tagpup/library-source.js");
+    assert.equal(source.MAX_MEMBERS, VIEW_RULES.max_members);
+    assert.equal(source.MAX_WORDS, VIEW_RULES.max_words);
+    assert.deepEqual([...source.LIBRARY_KINDS], VIEW_RULES.kinds);
+    assert.deepEqual([...source.MEMBER_KINDS], VIEW_RULES.member_kinds);
+    assert.deepEqual([...source.LIBRARY_ORDERS], VIEW_RULES.orders);
+    assert.equal(source.DEFAULT_ORDER, VIEW_RULES.default_order);
+    assert.deepEqual([...source.SEARCH_LISTS, "words"], VIEW_RULES.search_parts);
+    for (const each of VIEW_RULES.terms) {
+      assert.equal(source.termSaysSomething(each.term), each.says_something, JSON.stringify(each.term));
     }
   });
 });
