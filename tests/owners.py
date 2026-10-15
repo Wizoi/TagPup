@@ -75,7 +75,7 @@ SCENARIOS = {
 _SCENARIO_FILES = {
     "D1": "test_migration_28_and_the_newer_library test_newer_library_guard_in_a_long_lived_process",
     "D2": "test_journal test_maintenance",
-    "D3": "test_journal",
+    "D3": "test_journal test_a_crash_part_way_is_settled_at_the_next_start",
     "D4": "test_snapshots",
     "D5": "test_derived_follow_writes test_photo_people_follow_their_sources",
     "D7": (
@@ -128,8 +128,8 @@ _SCENARIO_FILES = {
 _FILES = {
     "data": {
         "unit": (
-            "tag-rules test_a_changes_owner_is_known_by_its_start "
-            "test_a_withdrawn_change_is_finished test_backups_are_kept_to_five test_bulk_scripts_back_up "
+            "tag-rules "
+            "test_backups_are_kept_to_five test_bulk_scripts_back_up "
             "test_compact_gives_back_free_space test_derived_batches test_derived_tables test_doctor "
             "test_every_face_has_a_photo_row test_face_save_retries_a_lock "
             "test_faces_detected_follows_the_faces test_faces_detected_record "
