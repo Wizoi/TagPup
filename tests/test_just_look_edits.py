@@ -3,7 +3,7 @@
 The owner opened a new library, chose a folder for it, and was offered Just look; "that
 should still let me change captions on photos, do smart renames, and add/update tags if it
 does not go into an index" (2026-10-02), and then rotate, delete and the date changes:
-none of them needs the database. What stayed refused (test_writes_only_in_folders_held) is
+none of them needs the database. What stayed refused (test_roots_scenarios.AFolderTheLibraryDoesNotHold) is
 what a write made of a row -- and a row makes its folder the library's (2026-09-28).
 
 So for a photo in a folder the library does not hold, a caption or a tag (one photo or

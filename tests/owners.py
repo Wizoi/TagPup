@@ -207,8 +207,8 @@ _FILES = {
             "test_smart_rename_stays_put test_sync_counts_a_size_change test_tag_write_follows_the_keyword_rules "
             "test_tag_write_is_journaled test_tag_writes_keep_the_index_true test_tagpup_server_finds_native_rows "
             "test_thumbnails test_time_shift_records_every_date test_time_shift_tells_the_index "
-            "test_tree_grows_only_from_folders_added test_unreachable_is_not_missing test_what_counts_as_a_photo "
-            "test_when_a_photo_was_taken_is_kept test_writes_only_in_folders_held tuner-picker-and-queue "
+            "test_unreachable_is_not_missing test_what_counts_as_a_photo "
+            "test_when_a_photo_was_taken_is_kept tuner-picker-and-queue "
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),
     },
@@ -251,7 +251,7 @@ _FILES = {
             "test_library_registry_race test_local_server_socket test_log_runs test_logs "
             "test_mcp_config_resolves test_mcp_write_tools "
             "test_patch_tool test_photo_open test_recurring_jobs test_result "
-            "test_roots_ingress_keys_cover_the_routes test_roots_map test_roots_open_check test_roots_routes "
+            "test_roots_ingress_keys_cover_the_routes test_roots_map "
             "test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library "
             "test_unload_models_now "
             "test_web_app undo-from-reply validation"
