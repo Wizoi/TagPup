@@ -12,12 +12,11 @@ baseline is refused (`TooOld`), not converted: the steps 1 to 32 were deleted on
 (owner decision: no plan to bring up older versions), and the snapshots and backups below 32 can no longer
 be restored. Before that, the conversions of libraries older than 2026-09 had retired on 2026-09-24.
 
-Each migration says what it is (ADDITIVE, DATA or DESTRUCTIVE) and names the checks it
-must pass; it runs in one transaction, and a failed check rolls it back (CheckFailed).
-What it takes first follows from its kind: nothing for one that adds, its rows recorded
-in the journal for one that changes data, one full backup for one that destroys. Every
-run is recorded in `changes` as "migration N: name" (docs/ARCHITECTURE.md, phase 7.5).
-A table is rebuilt only through `rebuild_table`, SQLite's twelve steps.
+Each migration says what it is (ADDITIVE or DESTRUCTIVE) and names the checks it must
+pass; it runs in one transaction, and a failed check rolls it back (CheckFailed). What it
+takes first follows from its kind: nothing for one that adds, one full backup for one that
+destroys. Every run is recorded in `changes` as "migration N: name" (docs/ARCHITECTURE.md,
+phase 7.5), and is not undone: a schema is not.
 
 `ensure` is called wherever a library is opened, including each request that names
 one. After the first time in a process it costs a stat.
@@ -27,7 +26,6 @@ import contextlib
 import contextvars
 import logging
 import os
-import re
 import sqlite3
 import threading
 import time
@@ -37,22 +35,16 @@ from tagpup.store import db, derived, search_index
 
 logger = logging.getLogger(__name__)
 
-#: What a migration is, which decides what it takes before it runs and what it leaves
-#: in the journal (docs/ARCHITECTURE.md, phase 7.5):
+#: What a migration is, which decides what it takes before it runs (docs/ARCHITECTURE.md, phase 7.5):
 #:
 #: - ADDITIVE adds tables, columns, indexes or triggers, and may fill a column it adds
 #:   from the row's own values. Nothing that was there changes: the runner watches every
 #:   row while it runs and refuses one that did. No backup.
-#: - DATA rewrites or moves values in rows of the tables the journal keys (journal.KEYS).
-#:   Every row it changes is recorded as a change of the journal, which an undo puts back
-#:   while no newer change has touched those rows and no later migration has run. An undo
-#:   puts the values back and leaves the version where it is, so the values it replaces
-#:   must be ones the code at its version still reads; if not, it is DESTRUCTIVE.
-#: - DESTRUCTIVE drops a column or a table, rebuilds a table -- whose rows cannot be
-#:   recorded one by one -- or loses information. One full backup first, taken under the
-#:   write lock; that copy is the only way back.
-ADDITIVE, DATA, DESTRUCTIVE = "additive", "data-changing", "destructive"
-KINDS = (ADDITIVE, DATA, DESTRUCTIVE)
+#: - DESTRUCTIVE drops a column or a table, rewrites values that were there, or loses
+#:   information. One full backup first, taken under the write lock; that copy is the only
+#:   way back.
+ADDITIVE, DESTRUCTIVE = "additive", "destructive"
+KINDS = (ADDITIVE, DESTRUCTIVE)
 
 #: One step: its number and name, the function that makes it, its kind and why it is
 #: that kind (one line), the tables it writes or reshapes (`touches`, which the checks
@@ -475,78 +467,6 @@ class Integrity(Check):
 STANDARD = (ForeignKeys(), Integrity())
 
 
-def rebuild_table(conn, table, definition, copy=None, drop=(), then=()):
-    """Rebuild `table` as `definition` declares it -- what goes between the parentheses of
-    its CREATE TABLE -- by the twelve steps SQLite's documentation gives for a change
-    ALTER TABLE cannot make (sqlite.org/lang_altertable.html, "otheralter"). The one way a
-    migration rebuilds a table; `tests/test_migrations.py` holds every other to it.
-
-    The runner has done steps 1 and 2 -- foreign keys off, which only takes effect outside
-    a transaction, then the transaction -- and this refuses a connection that has not:
-    dropping the table with foreign keys on would first delete every row naming it.
-    `copy` maps each column of the new table to the expression that fills it from the old
-    (default: every column both have, by name). The indexes and triggers of the table,
-    and the triggers and views elsewhere that name it, are made again as they were but
-    those named in `drop`; `then` are statements run after, such as new indexes. Its
-    AUTOINCREMENT counter is kept, which dropping the table would reset to the highest id
-    left (#80). Step 10, foreign_key_check, runs here: a row naming one that is not there,
-    and did not before, refuses the rebuild (CheckFailed), as does a row not copied. The
-    caller commits (step 11). Returns the rows copied."""
-    # 1, 2. Foreign keys off, outside the transaction; then the transaction.
-    if conn.execute("PRAGMA foreign_keys").fetchone()[0]:
-        raise RuntimeError("Rebuilding %s with foreign keys on would delete every row naming it first;"
-                           " nothing was changed" % table)
-    if not conn.in_transaction:
-        raise RuntimeError("Rebuilding %s outside a transaction could leave it half made; nothing was changed"
-                           % table)
-    # 3. What goes with the table: its indexes and triggers, and every trigger or view
-    # elsewhere naming it, which would stop the rename at step 7 while the table is gone.
-    naming = re.compile("(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(table), re.IGNORECASE)
-    own, elsewhere = [], []
-    for kind, name, owner, sql in conn.execute(
-            "SELECT type, name, tbl_name, sql FROM sqlite_master"
-            " WHERE type IN ('index', 'trigger', 'view') AND sql IS NOT NULL").fetchall():
-        if owner == table and kind != "view":
-            own.append((kind, name, sql))
-        elif kind != "index" and naming.search(sql):
-            elsewhere.append((kind, name, sql))
-    violations = _violations(conn, [table])
-    counters = conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone()
-    counter = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (table,)).fetchone() if counters else None
-    rows = _count(conn, table)
-    # 4. The new table.
-    new = "tagpup_rebuilt_%s" % table
-    conn.execute("CREATE TABLE %s (%s)" % (_quoted(new), definition))
-    # 5. Its rows.
-    old_columns = _columns(conn, table)
-    copy = dict(copy) if copy else {c: _quoted(c) for c in _columns(conn, new) if c in old_columns}
-    conn.execute("INSERT INTO %s (%s) SELECT %s FROM %s" % (
-        _quoted(new), ", ".join(_quoted(c) for c in copy), ", ".join(copy.values()), _quoted(table)))
-    copied = _count(conn, new)
-    if copied != rows:
-        raise CheckFailed("rows kept in %s" % table, ["%d of %d row(s) copied" % (copied, rows)])
-    # 6. The old table, and what names it elsewhere.
-    for kind, name, _sql in elsewhere:
-        conn.execute("DROP %s %s" % (kind.upper(), _quoted(name)))
-    conn.execute("DROP TABLE %s" % _quoted(table))
-    # 7. The new one in its place.
-    conn.execute("ALTER TABLE %s RENAME TO %s" % (_quoted(new), _quoted(table)))
-    # 8, 9. Its indexes and triggers, and the triggers and views elsewhere, again.
-    for _kind, name, sql in own + elsewhere:
-        if name not in drop:
-            conn.execute(sql)
-    for statement in then:
-        conn.execute(statement)
-    if counter:
-        if conn.execute("SELECT 1 FROM sqlite_sequence WHERE name = ?", (table,)).fetchone():
-            conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?", (counter[0], table))
-        else:
-            conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)", (table, counter[0]))
-    # 10. foreign_key_check, before the caller commits.
-    _require("foreign keys", _worse(violations, _violations(conn, [table])))
-    return copied
-
-
 def _same(a, b):
     """Equal as SQLite stores them: 1 is not 1.0, nor b'1' '1' (journal._same)."""
     return type(a) is type(b) and a == b
@@ -667,43 +587,6 @@ def _tally(seen, moved):
     return problems + ["%s: a row moved to another rowid" % table for table in moved]
 
 
-def _journal_rows(conn, seen, moved, made):
-    """(the journal's RowChanges for `seen`, and what of it the journal cannot record).
-    Every row of a table the migration made (`made`) is an insert."""
-    from tagpup.store import journal   # the journal imports this module
-    changes, unrecorded = [], collections.Counter()
-    for table in moved:
-        unrecorded["%s (a row moved to another rowid)" % table] += 1
-    for table, _rid, before, after in seen:
-        keys = journal.KEYS.get(table)
-        if keys is None:
-            unrecorded[table] += 1
-        elif before is None:
-            changes.append(journal.RowChange("insert", table, tuple(after[k] for k in keys), None, dict(after)))
-        elif after is None:
-            changes.append(journal.RowChange("delete", table, tuple(before[k] for k in keys), dict(before), None))
-        elif set(keys) & set(before):
-            unrecorded["%s (a row's key changed)" % table] += 1
-        else:
-            changes.append(journal.RowChange("update", table, tuple(after[k] for k in keys), dict(before),
-                                             {c: after[c] for c in before}))
-    for table in sorted(made):
-        if table in RUNNER_TABLES or table in UNWATCHED:
-            continue
-        columns = _columns(conn, table)
-        rows = conn.execute("SELECT %s FROM %s" % (", ".join(_quoted(c) for c in columns), _quoted(table))).fetchall()
-        keys = journal.KEYS.get(table)
-        if keys is None:
-            if rows:
-                unrecorded[table] += len(rows)
-            continue
-        for row in rows:
-            row = dict(zip(columns, row))
-            changes.append(journal.RowChange("insert", table, tuple(row[k] for k in keys), None, row))
-    return changes, ["%d row(s) of %s, which the journal does not record: declare it destructive" % (n, table)
-                     for table, n in sorted(unrecorded.items())]
-
-
 MIGRATIONS = (
     Migration(BASELINE, "the baseline: a new library, as migration 32 left one", _baseline, ADDITIVE,
               "makes every table, index and trigger of a new library in one transaction; a library below it is refused, not "
@@ -783,7 +666,7 @@ def ensure(db_path):
     Returns the names of the migrations applied: none, usually. Each runs in a
     transaction of its own, under the library's write lock, so two programs opening
     the same library at once apply it once, and a check it names that fails rolls it
-    back (CheckFailed). What each takes first follows from its kind (ADDITIVE, DATA,
+    back (CheckFailed). What each takes first follows from its kind (ADDITIVE,
     DESTRUCTIVE); each is recorded in the journal. A library this process has already
     found current costs a stat and no connection, except that its version is read again
     (read only) every RECHECK_SECONDS, so a newer app's migration refuses a process that
@@ -898,18 +781,15 @@ class _Run:
                 conn.rollback()
                 return False
             from tagpup.store import journal   # the journal imports this module
-            journaled = migration.kind == DATA and not self.made
             summary = {"kind": migration.kind}
-            if migration.kind == DESTRUCTIVE or (migration.kind == DATA and not journaled):
-                # A change of data the journal cannot hold (a library with none) is backed up like one that destroys.
+            if migration.kind == DESTRUCTIVE:
                 summary["backup"] = self._backup(migration)
-            checks, rows = self._apply(migration, journaled)
-            summary["checks"] = checks
+            summary["checks"] = self._apply(migration)
             if self.note:
                 summary["took"] = self.note
             conn.execute("INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)",
                          (migration.version, migration.name, time.strftime("%Y-%m-%d %H:%M:%S")))
-            self._record(journal, migration, summary, rows)
+            self._record(journal, migration, summary)
             conn.commit()
         except CheckFailed as e:
             conn.rollback()
@@ -932,14 +812,13 @@ class _Run:
         self.backed_up = True
         return os.path.basename(self.backup) if self.backup else None
 
-    def _apply(self, migration, journaled):
-        """Run `migration` and its checks, in the transaction. Returns (the names of the
-        checks it passed, the journal's rows of what it changed if it is journaled)."""
+    def _apply(self, migration):
+        """Run `migration` and its checks, in the transaction. Returns the names of the
+        checks it passed."""
         conn = self.conn
         states = [check.before(conn, migration) for check in migration.checks]
         shape = _shape(conn) if migration.kind != DESTRUCTIVE else None
-        watching = journaled or (migration.kind == ADDITIVE and not self.made)
-        watch = _Watch(conn) if watching else None
+        watch = _Watch(conn) if migration.kind == ADDITIVE and not self.made else None
         try:
             done = migration.apply(conn)
             self.note = done if isinstance(done, dict) else None   # a migration may say what it took (a dict of counts)
@@ -949,31 +828,25 @@ class _Run:
                 raise CheckFailed("nothing dropped", ["it altered a column the runner watches: %s" % e]) from None
             raise
         seen, moved = watch.finish() if watch else ([], [])
-        passed, rows = [], []
+        passed = []
         if shape is not None:
             _require("nothing dropped", _dropped(conn, shape))
             passed.append("nothing dropped")
-        if migration.kind == ADDITIVE and watch:
+        if watch:
             _require("nothing that was there changed", _tally(seen, moved))
             passed.append("nothing that was there changed")
-        if journaled:
-            made = set(_tables_now(conn)) - set(shape)
-            rows, unrecorded = _journal_rows(conn, seen, moved, made)
-            _require("every change recorded", unrecorded)
-            passed.append("every change recorded")
         for check, state in zip(migration.checks, states):
             _require(check.name, check.after(conn, migration, state))
             passed.append(check.name)
-        return passed, rows
+        return passed
 
-    def _record(self, journal, migration, summary, rows):
-        """Record the migration as a change of the journal. A change with rows belongs to the version it made, and an
-        undo puts them back while the library is at it; one without is recorded at the version before, so the journal
+    def _record(self, journal, migration, summary):
+        """Record the migration as a change of the journal, with no rows, at the version before it, so the journal
         refuses to undo it: a schema is not undone."""
         if self.made:
             return
-        journal.record(self.conn, "migration %d: %s" % (migration.version, migration.name), rows, summary,
-                       schema_version=migration.version if rows else migration.version - 1)
+        journal.record(self.conn, "migration %d: %s" % (migration.version, migration.name), [], summary,
+                       schema_version=migration.version - 1)
 
 
 def _has_rows(conn):
