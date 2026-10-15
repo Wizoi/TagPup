@@ -51,7 +51,7 @@ class TaggingAPhoto(ReadFilesCase):
         a, b = self.make_read("a.jpg", ("Places/Harbour",)), self.make_read("b.jpg", ("Beach", "Relay"))
         captions = {path: field_of(path, "XMP:Description") for path in (a, b)}
 
-        result = tagging.change_tags(self.library, [a, b], ["Activity/Rowing", "Rowan Thackeray"], [], EXIFTOOL)
+        result = tagging.change_tags(self.library, [a, b], ["Activity/Rowing", "People/Rowan Thackeray"], [], EXIFTOOL)
 
         self.assertEqual([], result.errors)
         with ExifToolSession(executable=EXIFTOOL) as et:
