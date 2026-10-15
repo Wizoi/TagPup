@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_a_number_compares_as_read import ReadFilesCase  # noqa: E402
+from test_a_file_holds_what_exiftool_kept import ReadFilesCase  # noqa: E402
 from test_file_journal import EXIFTOOL, keywords_of  # noqa: E402
 
 from tagpup.files import exiftool_session  # noqa: E402

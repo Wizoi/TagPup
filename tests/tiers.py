@@ -36,6 +36,7 @@ SCENARIO = frozenset({
     "test_bulk_writes_start_from_the_file",
     # The file journal and the writes it covers.
     "test_file_journal",
+    "test_a_file_holds_what_exiftool_kept",
     "test_stale_record_precondition",
     "test_derived_follow_writes",
     "test_just_look_edits",
@@ -47,6 +48,7 @@ SCENARIO = frozenset({
     "test_writes_refuse_cut_short_photos",
     "test_rotate_keeps_the_photo",
     "test_rotate_is_journaled",
+    "test_rotate_crash_settles_with_the_boxes",
     "test_taxonomy_lifecycle",
     "test_tag_tree_edits_are_batches",
     "test_a_person_count_reads_only_their_photos",

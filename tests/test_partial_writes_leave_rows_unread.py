@@ -11,7 +11,14 @@ keyword fields.
 Each writer here runs on a real photo carrying a Date Taken, through the service the
 page calls, with real ExifTool. After it, the row is either still unread (mtime empty),
 or holds what its file holds, Date Taken and all. A row read from its file is still
-stamped, so the scan need not read it again.
+stamped, so the scan need not read it again. A row read from its file that the file has moved on from since (a date set in
+another program) is stamped by none of the partial writers, and by the two that read the file back whole it is stamped with
+all the file holds (#249).
+
+Lifted: test_partial_writes_stamp_only_a_current_row (#247 #249). Mutation: store/photos.py `follow_fields`, the
+`if stat is not None and _describes_before(row_mtime, row_size, before):` that adds mtime and size -> `if stat is not None:`;
+every writer of the moved-on arm fails (apply all, add to selected, rename a tag, rotate, shift date), and the unread arm with it.
+The old file's tolerance test of store.photos.describes is test_a_row_describes_its_file_one_way's.
 """
 import json
 import os
@@ -35,6 +42,7 @@ EXIFTOOL = own_home.installed_exiftool()
 requires_exiftool = unittest.skipUnless(EXIFTOOL, "ExifTool not installed")
 
 TAKEN = "2019:06:15 10:30:00"
+ELSEWHERE = "2011:05:06 07:08:09"
 
 
 def make_photo(folder, name, keywords=()):
@@ -65,6 +73,19 @@ class Photos(unittest.TestCase):
         conn = db.connect(self.db_path)
         try:
             store_photos.ensure_row(conn, path, admit=True)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def indexed(self, path):
+        stat = os.stat(path)
+        raw = {"SourceFile": path, "EXIF:DateTimeOriginal": TAKEN, "DateTimeOriginal": TAKEN,
+               "EXIF:Make": "Quayside Optics", "Make": "Quayside Optics"}
+        conn = db.connect(self.db_path)
+        try:
+            conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                         " VALUES (?, ?, ?, '[]', '[]', ?)", (path, stat.st_mtime, stat.st_size, json.dumps(raw)))
+            store_photos.date_photos(conn)
             conn.commit()
         finally:
             conn.close()
@@ -156,19 +177,6 @@ class PartialWritesOnARowReadFromItsFile(Photos):
     """A row read from its file is stamped by the write, as before, or every photo
     tagged in bulk is read again on every scan."""
 
-    def indexed(self, path):
-        stat = os.stat(path)
-        raw = {"SourceFile": path, "EXIF:DateTimeOriginal": TAKEN, "DateTimeOriginal": TAKEN,
-               "EXIF:Make": "Quayside Optics", "Make": "Quayside Optics"}
-        conn = db.connect(self.db_path)
-        try:
-            conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-                         " VALUES (?, ?, ?, '[]', '[]', ?)", (path, stat.st_mtime, stat.st_size, json.dumps(raw)))
-            store_photos.date_photos(conn)
-            conn.commit()
-        finally:
-            conn.close()
-
     def test_apply_all_stamps_a_row_that_was_read(self):
         path = make_photo(self.folder, "j.jpg")
         self.indexed(path)
@@ -178,6 +186,52 @@ class PartialWritesOnARowReadFromItsFile(Photos):
         self.assertEqual((mtime, size), (stat.st_mtime, stat.st_size))
         self.assertEqual((raw["EXIF:DateTimeOriginal"], raw["XMP:Subject"]), (TAKEN, ["Activity/Sailing"]))
         self.assertIsNotNone(taken)
+
+    def test_rotating_stamps_a_row_that_was_read(self):
+        path = make_photo(self.folder, "k.jpg")
+        self.indexed(path)
+        self.assertTrue(photo_actions.rotate(self.library, path, "left", EXIFTOOL).ok)
+        stat = os.stat(path)
+        self.assertEqual(self.row(path)[:2], (stat.st_mtime, stat.st_size))
+
+
+@requires_exiftool
+class PartialWritesOnARowTheFileHasMovedOnFrom(Photos):
+    """A row read from its file, and the file then changed by another program, is not told it matches: the scan reads it."""
+
+    def moved_on(self, name):
+        path = make_photo(self.folder, name, keywords=["Activity/Sailing"])
+        self.indexed(path)
+        read_at = self.row(path)[:2]
+        with exiftool_session.ExifToolSession(executable=EXIFTOOL) as et:
+            et.set_tags([path], tags={"EXIF:DateTimeOriginal": ELSEWHERE}, params=["-overwrite_original"])
+        # The other program's save is a moment after the row was made (the scan's tolerance is 0.1 s).
+        stat = os.stat(path)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5 * 10 ** 9))
+        return path, read_at
+
+    def test_a_partial_write_leaves_it_for_the_scan(self):
+        writers = {
+            "apply all": lambda path: tagging.add_tags(self.library, {path: ["Activity/Rowing"]}, EXIFTOOL),
+            "add to selected": lambda path: tagging.change_tags(self.library, [path], ["Activity/Rowing"], [], EXIFTOOL),
+            "rename a tag": lambda path: tagging.replace_tag(
+                self.library, [path], "Activity/Sailing", "Activity/Kayaking", EXIFTOOL),
+            "rotate": lambda path: photo_actions.rotate(self.library, path, "left", EXIFTOOL),
+            "shift date": lambda path: photo_actions.shift_date_taken(self.library, [path], 60, EXIFTOOL),
+        }
+        for label, write in writers.items():
+            with self.subTest(label):
+                path, read_at = self.moved_on(label.replace(" ", "_") + ".jpg")
+                self.assertEqual(write(path).changed, 1)
+                self.assertEqual(self.row(path)[:2], read_at, "a partial write stamped a row that did not describe its file")
+
+    def test_saving_one_photo_reads_the_file_back_whole_and_records_all_of_it(self):
+        path, _read_at = self.moved_on("save.jpg")
+        self.assertTrue(tagging.save_photo(self.library, path, "", ["Activity/Rowing"], None, EXIFTOOL, "").ok)
+        mtime, size, raw, _taken = self.row(path)
+        stat = os.stat(path)
+        self.assertEqual((mtime, size), (stat.st_mtime, stat.st_size))
+        self.assertEqual(raw["EXIF:DateTimeOriginal"], ELSEWHERE)
 
 
 if __name__ == "__main__":
