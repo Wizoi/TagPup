@@ -211,7 +211,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
   card's turn. Services and jobs are given models; they never build one.
 - **Background jobs** run through one runner per library (`tagpup.jobs`): the index queue (an indexing child
   process, via the CLI's `index`), Suggest runs, Name faces from tags, Identify caches. **Recurring jobs**
-  (`tagpup.jobs.recurring`: snapshots, sync, pruning the journal) are run by the web server only; the
+  (`tagpup.jobs.recurring`: snapshots, sync) are run by the web server only; the
   folder **watcher** syncs a folder when it changes. Event-driven first: a schedule is only for safety.
 - **The graphics card**: one process at a time on the machine has a model on it (`tagpup.ml.gpu.Card`, a byte
   lock in the user's own folder, waiters queued and named on the Activity page).
@@ -262,8 +262,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 
 **The journal** (7.5). Every bulk edit, maintenance operation and data-changing migration is one `changes`
 row: what it found and what it left, applied only where the rows are still what the plan read, rehearsed by
-a dry run that applies and undoes inside a rolled-back transaction, undoable on the same terms, and kept
-90 days. A bulk edit that writes photo files marks each file `writing`, then `done` in the same transaction
+a dry run that applies and undoes inside a rolled-back transaction, undoable on the same terms. A bulk edit that writes photo files marks each file `writing`, then `done` in the same transaction
 that records its row; a crash is settled at the next start by what the file holds. Keys the journal can
 restore are AUTOINCREMENT (never reused). `History`/`undo` are in the CLI, the MCP server and the pages' gear.
 

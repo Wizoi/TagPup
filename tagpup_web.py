@@ -214,7 +214,7 @@ def main(argv=None):
     # turn on the graphics card, when another process waits for it (tagpup.ml.gpu, #774).
     runtime = Runtime(idle_after=idle, keep_models=True)
     # What runs beside the requests (tagpup.runtime.BACKGROUND): the recurring jobs --
-    # snapshots, pruning the journal -- of every library in the data folder, in the
+    # snapshots -- of every library in the data folder, in the
     # process that runs them (none a test started), and letting idle models go
     # (docs/ARCHITECTURE.md, phase 8).
     background = runtimes.background(runtime)
