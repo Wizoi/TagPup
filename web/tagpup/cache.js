@@ -1,5 +1,6 @@
 // TagPup's page: a folder's scan, kept in this browser for half an hour, so opening it
-// again does not scan it again.
+// again does not scan it again. Each library's own: two libraries can hold one folder.
+import { libraryIn } from './common/api.js';
 import { pathKey, samePath } from './common/paths.js';
 import { state } from './state.js';
 
@@ -23,10 +24,6 @@ export function saveToLocalStorageCache() {
     };
     try {
         localStorage.setItem(folderCacheKey(state.scannedFolder), JSON.stringify(cacheEntry));
-        // An entry under the folder as it was typed predates keying by pathKey;
-        // this one supersedes it, so drop it rather than leave it using quota.
-        const legacyKey = `tagpup_cache_${state.scannedFolder}`;
-        if (legacyKey !== folderCacheKey(state.scannedFolder)) localStorage.removeItem(legacyKey);
     } catch (e) {
         console.warn("Storage quota exceeded, could not cache folder data.");
     }
@@ -85,7 +82,12 @@ export function forgetFolderCaches({ before = Infinity } = {}) {
 // (forward slashes). tests/frontend/path-helpers.test.mjs fails on a separator
 // conversion anywhere else.
 
-/** Where a folder's scan is cached: one entry per folder, however it was typed. */
+/**
+ * Where a folder's scan is cached: one entry per library and folder, however the folder was typed. The library is the
+ * page's (its URL): choosing another keeps the folder (?path, web/common/library.js goToLibrary), and a key of the folder
+ * alone showed the first library's records and suggestions there as "(cached)" (docs/findings.md, #1359). A library's name
+ * holds no "/" (it is a segment of the URL).
+ */
 export function folderCacheKey(folder) {
-    return `tagpup_cache_${pathKey(folder)}`;
+    return `tagpup_cache_${libraryIn(window.location.pathname)}/${pathKey(folder)}`;
 }

@@ -8,7 +8,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadApp, FakeServer, closeAllApps, openFolder, click } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, pageExports } from "./harness.mjs";
 
 const BASE = { tags: [], people: [], captions: [], title: "", camera: "", lens: "" };
 const BOTH = { ...BASE, path: "D:\\Pictures\\Run\\a.jpg", filename: "a.jpg", camera: "Tidewater TX R6m2", lens: "TX24-70mm f/2.8L II USM" };
@@ -93,7 +93,7 @@ test("a folder kept in this browser by the page before the cameras were named is
   const { window, document } = await loadApp("tagpup", { server: fake, t });
   // The entry the page before this one saved: records as it made them (no `camera`), and no version.
   const trunkShaped = scanned.map(({ camera, ...rest }) => ({ ...rest, raw_metadata: { "EXIF:Model": "Pixel 8 Pro" } }));
-  const KEY = ["tagpup_cache_d:", "pictures", "old"].join(String.fromCharCode(92));   // pathKey: lower case, backslashes
+  const KEY = pageExports(window, "web/tagpup/cache.js").folderCacheKey("D:" + String.fromCharCode(92) + "Pictures" + String.fromCharCode(92) + "Old");
   window.localStorage.setItem(KEY, JSON.stringify({ timestamp: Date.now(), photos: trunkShaped, suggestions: {}, inMemory: false }));
   await openFolder({ document, window }, "D:\\Pictures\\Old");
   await settle(window, 60);
