@@ -15,8 +15,8 @@ server ended mid-migration rolls the migration back and starts it again. Now the
 Retry-After, X-TagPup-Updating: what a drain answers, and the pages wait out) and holds no thread; /api/server and other
 libraries answer as before.
 
-Lifted: test_library_being_migrated. Mutation: web/libraries.py's `raise Updating(...)` replaced by `pass` parks the
-requests on the lock and fails test_requests_for_it_are_turned_away_at_once_and_hold_no_thread.
+Lifted: test_library_being_migrated. Mutation: web/libraries.py's `raise Updating(...)` replaced by `return library`
+(serve it) fails test_requests_for_it_are_turned_away_at_once_and_hold_no_thread and two more; `pass` parks the requests.
 """
 import json
 import logging
