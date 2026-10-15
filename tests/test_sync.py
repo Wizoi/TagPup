@@ -22,13 +22,16 @@ import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
+import numpy as np  # noqa: E402
+from face_rows import add_vector  # noqa: E402
+
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync  # noqa: E402
-from tagpup.store import db  # noqa: E402
+from tagpup.store import db, faces_detected  # noqa: E402
 
 #: When every file was last written, before the test changes any.
 THEN = 1_700_000_000
@@ -429,6 +432,33 @@ class MovedWithoutAnIdentity(SyncTestCase):
         self.assertEqual([self.meet], asked, "a folder holding a possible copy of a missing photo was queued")
         self.assertFalse(result.details["in_step"])
 
+    def test_a_file_renamed_by_tagpup_is_followed_inside_its_own_folder_only(self):
+        """Lifted from test_relink_stays_in_its_folder: camera names repeat across a library, and a dead IMG_0421 in
+        one folder was re-pointed -- with its named faces -- at another folder's IMG_0421 renamed. Break:
+        relink_photos keys the lookup by stem alone (_by_original and pair)."""
+        dead_here = self.photo(self.meet, "IMG_0421.jpg", body=b"a")
+        dead_there = self.photo(self.trip, "IMG_0002.jpg", body=b"b")
+        self.indexed(dead_here, dead_there)
+        conn = db.connect(self.db_path)
+        add_face(conn, dead_here, name="Rowan Thackeray", name_source="manual")
+        conn.commit()
+        conn.close()
+        os.remove(dead_here)
+        os.remove(dead_there)
+        preserved = "XMP:PreservedFileName"
+        self.photo(self.meet, "Invitational - 01.jpg", body=b"cc", **{preserved: "IMG_0001.CR3"})
+        self.photo(self.trip, "Classic - 01.jpg", body=b"ddd", **{preserved: "IMG_0421.CR3"})
+        beside = self.photo(self.trip, "Classic - 02.jpg", body=b"eeee", **{preserved: "IMG_0002.CR3"})
+        result = self.run_sync(apply=True, queue=lambda folders: Result(attempted=len(folders), changed=len(folders)))
+        self.assertTrue(result.ok, result.message())
+        rows = self.rows()
+        self.assertIn(dead_here, rows, "a row was re-pointed at another folder's file of the same camera name")
+        self.assertNotIn(dead_there, rows)
+        self.assertIn(beside, rows, "a row is still followed to the file renamed beside it")
+        self.assertEqual((1, 1), (result.details["counts"]["moved"], result.details["counts"]["missing"]))
+        self.assertEqual([("Rowan Thackeray",)], self.query(
+            "SELECT f.name FROM faces f JOIN photos p ON p.id = f.photo_id WHERE p.path = ?", (dead_here,)))
+
     def test_identities_are_read_only_for_what_the_stamps_did_not_settle(self):
         plain = self.photo(self.meet, "IMG_0001.jpg")
         renamed = self.photo(self.meet, "IMG_0002.jpg", **{"XMP:DocumentID": "uuid:7a2e-renamed"})
@@ -440,6 +470,69 @@ class MovedWithoutAnIdentity(SyncTestCase):
         result = self.run_sync()
         self.assertEqual([new_name], self.reads.read, "only the file the stamps did not settle is read")
         self.assertEqual(2, result.details["counts"]["moved"])
+
+
+class ASizeChange(SyncTestCase):
+    """Lifted from test_sync_counts_a_size_change (#336, #903, #904). A keyword write changes a file's size too, so sync
+    only COUNTS the photos whose size changed and the owner fixes a real picture edit by hand: the row is read again like
+    any changed row and keeps its CLIP vector, face boxes and decided names. Breaks: `resized.add` gone; `resized -=
+    unreadable` gone; the size test made `True`."""
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.photo(self.meet, "IMG_0001.jpg", body=b"the picture as it was",
+                               **{"XMP:Subject": ["Events/Invitational"]})
+        self.other = self.photo(self.trip, "IMG_0002.jpg", body=b"another picture", **{"XMP:Subject": ["Weather/Rain"]})
+        self.indexed(self.path, self.other)
+        conn = db.connect(self.db_path)
+        try:
+            for path in (self.path, self.other):
+                add_vector(conn, path, np.array([1.0, 0.0], dtype=np.float32).tobytes())
+                add_face(conn, path, [0, 0, 10, 10])
+                faces_detected.record(conn, path, faces_detected.detector({"min_face_size": 20}), None, 1)
+            conn.execute("UPDATE faces SET name = 'Rowan Thackeray', name_source = 'manual' WHERE photo_id ="
+                         " (SELECT id FROM photos WHERE path = ?)", (self.path,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def edit(self, path, body):
+        """The file written elsewhere: more (or as many) bytes, a later time."""
+        with open(path, "wb") as handle:
+            handle.write(body)
+        os.utime(path, (THEN + 100, THEN + 100))
+
+    def held(self, path):
+        """(faces, vectors, detection records, face names) the library holds of the photo."""
+        return self.query(
+            "SELECT (SELECT COUNT(*) FROM faces WHERE photo_id = p.id), (SELECT COUNT(*) FROM embeddings WHERE photo_id = p.id),"
+            " (SELECT COUNT(*) FROM faces_detected WHERE photo_id = p.id),"
+            " (SELECT GROUP_CONCAT(name) FROM faces WHERE photo_id = p.id) FROM photos p WHERE p.path = ?", (path,))[0]
+
+    def test_a_file_that_grew_is_counted_read_again_and_its_picture_and_decided_faces_are_left(self):
+        self.truth["IMG_0001.jpg"] = {"XMP:Subject": ["Events/Classic"]}
+        self.edit(self.path, b"the picture, edited elsewhere and longer")
+        queued = []
+        before = self.held(self.path)
+        rehearsal = self.run_sync()
+        self.assertEqual((1, before), (rehearsal.details["counts"]["size_changed"], self.held(self.path)))
+        result = self.run_sync(apply=True, queue=lambda folders: queued.append(folders))
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual((1, 1), (result.details["counts"]["size_changed"], result.details["changed"]["from_files"]))
+        tags = json.loads(self.query("SELECT tags FROM photos WHERE path = ?", (self.path,))[0][0])
+        self.assertEqual((True, False), ("Events/Classic" in tags, "Events/Invitational" in tags))
+        self.assertEqual("Rowan Thackeray", self.held(self.path)[3])
+        self.assertEqual((1, 1, 1), self.held(self.path)[:3], "its faces, vector and the record of them stay")
+        self.assertEqual((1, 1, 1), self.held(self.other)[:3])
+        self.assertEqual([], queued)
+
+    def test_a_write_that_kept_the_size_or_could_not_be_read_is_not_a_size_change(self):
+        self.edit(self.path, b"the picture as it was")       # the same length, a later time
+        self.edit(self.other, b"another picture, longer")
+        self.truth["IMG_0002.jpg"] = {}                      # ExifTool answers nothing for it
+        counts = self.run_sync(apply=True, queue=lambda folders: Result(attempted=0, changed=0)).details["counts"]
+        self.assertEqual((2, 0, 1), (counts["changed"], counts["size_changed"], counts["unreadable"]))
+        self.assertEqual([(1, 1, 1)] * 2, [self.held(self.path)[:3], self.held(self.other)[:3]])
 
 
 class MissingFiles(SyncTestCase):
