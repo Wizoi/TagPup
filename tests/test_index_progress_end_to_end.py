@@ -7,6 +7,12 @@ version, a console line) would leave a bar stuck at 0% with all of them green. H
 run for three small generated photos in a home of its own, its models stood in for by a
 sitecustomize the child imports (the weights refuse under test; the protocol -- arguments,
 environment, exit code, stdout -- is the real one).
+
+Then the same folder is added again: nothing changed on disk, so the CLI reads no file and says the index is current.
+
+Lifted: test_functional_cli (which built exiftool.ExifToolHelper and called sqlite3.connect itself, against the rules, and
+tested the same two runs): every photo is indexed, tagged or not (three untagged photos), and an index again reads nothing.
+Mutation proof: tagpup_cli.py's skip rule made `images_to_process = all_images` fails the second half.
 """
 import os
 import sys
@@ -39,7 +45,7 @@ mock.patch.object(faces.FaceModel, "detect_and_embed_faces", return_value=[]).st
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
 class TheBarReachesTheEnd(unittest.TestCase):
-    def test_the_scraped_percent_reaches_100_and_the_final_message_is_the_cli_runs(self):
+    def test_the_scraped_percent_reaches_100_the_final_message_is_the_cli_runs_and_an_index_again_reads_nothing(self):
         from tagpup.ml.clip import output_dim
         from tagpup.services import settings
         model = settings.DEFAULTS["model.name"]
@@ -56,17 +62,20 @@ class TheBarReachesTheEnd(unittest.TestCase):
             Image.new("RGB", (64, 64), "navy").save(os.path.join(folder, name), "JPEG")
         library = Library(home.library("harbour.db"))
 
-        heard = []
-        saved = os.environ.get("PYTHONPATH")
-        os.environ["PYTHONPATH"] = shim
-        try:
-            result = indexing.index_folder(library, folder, ROOT,
-                                           report=lambda message=None, percent=None: heard.append((message, percent)))
-        finally:
-            if saved is None:
-                os.environ.pop("PYTHONPATH", None)
-            else:
-                os.environ["PYTHONPATH"] = saved
+        def index():
+            heard = []
+            saved = os.environ.get("PYTHONPATH")
+            os.environ["PYTHONPATH"] = shim
+            try:
+                result = indexing.index_folder(library, folder, ROOT,
+                                               report=lambda message=None, percent=None: heard.append((message, percent)))
+            finally:
+                if saved is None:
+                    os.environ.pop("PYTHONPATH", None)
+                else:
+                    os.environ["PYTHONPATH"] = saved
+            return result, heard
+        result, heard = index()
 
         self.assertTrue(result.ok, (result.errors, heard))
         percents = [percent for _message, percent in heard if percent is not None]
@@ -77,9 +86,18 @@ class TheBarReachesTheEnd(unittest.TestCase):
         self.assertIn("Folder indexed.", result.details["message"])
         conn = db.connect(library.path)
         try:
+            # Every scanned photo is indexed, tagged or not, and as genuinely untagged (no borrowed metadata).
             self.assertEqual(3, conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0])
+            self.assertEqual(3, conn.execute("SELECT COUNT(*) FROM photos WHERE COALESCE(tags, '[]') = '[]'").fetchone()[0])
         finally:
             conn.close()
+        # The per-photo write locks are beside the library, not under the working directory: a server's indexer and one
+        # started by hand from anywhere else must lock in one place (the child runs from the code's folder, not the home).
+        self.assertTrue(os.path.isdir(os.path.join(os.path.dirname(library.path), "locks")))
+        again, heard_again = index()
+        self.assertTrue(again.ok, (again.errors, heard_again))
+        self.assertIn("All images are up to date! Index is current.", [message for message, _p in heard_again], heard_again)
+        self.assertFalse(any("Generating embeddings" in (message or "") for message, _p in heard_again), heard_again)
 
 
 if __name__ == "__main__":

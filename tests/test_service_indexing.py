@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.jobs.indexing import IndexQueue  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
 
 
@@ -87,6 +88,18 @@ class AddingAFolder(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("resolving face identities failed (exit code 1)", result.message())
         self.assertEqual(result.details["percent"], 100)
+
+    def test_a_failed_clustering_is_in_the_folders_status_in_the_queue(self):
+        """Lifted from test_index_reports_failed_clustering: both apps had their own copy of the steps and neither read
+        cluster-faces' exit code ("identities resolved" after a crash). Break: index_folder ignoring that exit code."""
+        queue = IndexQueue()
+        with patch("subprocess.Popen", side_effect=[process(), process(1)]), patch.object(IndexQueue, "_ensure_runner"):
+            queue.start([self.folder], lambda folder, cluster, report: indexing.index_folder(
+                self.library, folder, self.code, cluster=cluster, report=report), cluster=True)
+            queue.run_pending()
+        status = queue.status(self.folder)
+        self.assertEqual("failed", status["status"], status)
+        self.assertIn("face identities failed", status["message"])
 
     def test_progress_is_reported_as_a_person_would_read_it(self):
         self.index(process(lines=(

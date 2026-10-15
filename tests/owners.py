@@ -91,7 +91,7 @@ _SCENARIO_FILES = {
     "F1": (
         "test_a_file_holds_what_exiftool_kept test_a_rename_stopped_part_way test_file_changes_one_at_a_time "
         "test_file_journal test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo "
-        "test_tag_a_photo_read_it_back_and_undo"
+        "test_tag_a_photo_read_it_back_and_undo test_time_shift"
     ),
     "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_writes_refuse_cut_short_photos",
     "F3": (
@@ -101,8 +101,10 @@ _SCENARIO_FILES = {
     "F4": "test_folder_watcher test_sync",
     "F5": "test_scenario_two_libraries_share_a_folder",
     "F6": "test_index_progress_end_to_end test_partial_writes_leave_rows_unread test_refresh_rows",
-    "F8": "test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules test_just_look_edits",
+    "F7": "test_a_share_asleep",
+    "F8": "test_delete_a_photo test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules test_just_look_edits",
     "F9": "test_roots_old_place test_roots_pinned_runs",
+    "F10": "test_one_photo_whatever_its_spelling",
     "F11": "test_index_progress_end_to_end",
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
@@ -195,24 +197,23 @@ _FILES = {
             "test_a_row_describes_its_file_one_way "
             "test_batches_go_through_the_model "
             "test_bulk_delete test_bulk_writes_update_the_index "
-            "test_cli_path_spelling test_dates test_delete_through_this_pc test_derived_file_changes "
-            "test_exiftool_encoding test_exiftool_says_why test_exiftool_session test_functional_cli "
-            "test_index_adds_the_folder_it_is_given test_index_queue_active_is_one_read test_index_queue_is_locked "
-            "test_index_reports_failed_clustering test_index_startup_reads test_jobs_indexing "
-            "test_keyword_fields test_lock_owners test_membership_is_bounded "
+            "test_dates test_derived_file_changes "
+            "test_exiftool_encoding test_exiftool_says_why test_exiftool_session "
+            "test_index_adds_the_folder_it_is_given "
+            "test_index_startup_reads test_jobs_indexing "
+            "test_keyword_fields test_lock_owners "
             "test_metadata_extraction test_minor_errors_in_a_journaled_write test_one_answer_to_the_librarys_folders "
-            "test_path_spelling_in_faces_and_records test_paths "
+            "test_paths "
             "test_paths_roots test_photo_identity test_photo_meta test_refresh_rows_guards "
-            "test_relink_checks_the_destination test_relink_stays_in_its_folder test_remove_folder_lists_the_library "
+            "test_relink_checks_the_destination test_remove_folder_lists_the_library "
             "test_renaming "
             "test_save_reply_says_rename_failed test_service_change_tags "
-            "test_service_delete test_service_indexing test_service_page_images test_service_replace_tag "
-            "test_service_save_photo test_service_shift_date_taken test_service_smart_rename "
+            "test_service_indexing test_service_page_images test_service_replace_tag "
+            "test_service_save_photo test_service_smart_rename "
             "test_settling_carries_vectors "
-            "test_sync_counts_a_size_change "
-            "test_tag_writes_keep_the_index_true test_tagpup_server_finds_native_rows "
-            "test_thumbnails test_time_shift_records_every_date test_time_shift_tells_the_index "
-            "test_unreachable_is_not_missing test_what_counts_as_a_photo "
+            "test_tag_writes_keep_the_index_true "
+            "test_thumbnails "
+            "test_what_counts_as_a_photo "
             "test_when_a_photo_was_taken_is_kept tuner-picker-and-queue "
             "tuner-remove-folder unsaved-edits write-queue-status"
         ),

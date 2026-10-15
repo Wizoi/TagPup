@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import VECTORS_WITH_PATHS  # noqa: E402
-from test_tagpup_server_finds_native_rows import (  # noqa: E402
+from test_one_photo_whatever_its_spelling import (  # noqa: E402
     HandlerCase, fake_exiftool, fake_extractor, forward)
 
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
