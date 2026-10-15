@@ -15,7 +15,6 @@ import people_by_id  # noqa: E402
 import photo_rows  # noqa: E402
 
 from tagpup.services import tags as tag_service  # noqa: E402
-from tagpup.services import tree_fill  # noqa: E402
 from tagpup.store import faces, person_ids  # noqa: E402
 
 
@@ -94,11 +93,6 @@ class NoRowWithoutAnId(unittest.TestCase, people_by_id.TwoSams):
         for change, in people_by_id.look(self.path, "SELECT id FROM changes ORDER BY id"):
             journal_service.undo(self.library, change, apply=True, exiftool_path="exiftool")   # refused: the person is gone
             self.none_without_an_id("undo of change %d" % change)
-
-    def test_the_tree_fill_command(self):
-        self.read(subject=["Wren Halloway", "Trips/Harbour"], named=["Sam", "Zed Quill"])
-        tree_fill.run(self.library, apply=True)
-        self.none_without_an_id("tree-fill")
 
     def test_a_photo_read_again_after_a_person_is_renamed(self):
         self.read(subject=[people_by_id.WREN], named=["Wren Halloway"])

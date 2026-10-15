@@ -75,7 +75,7 @@ def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
     -- none, two, or a group's leaf, which are other paths -- the node of that path directly under the tree's root, marked as a
     person (a childless word tag of that name there is marked as one); the name of a node with nodes under it is a group's, and
     is given none. `tree` is the derived.Tree the caller holds (kept up to date here); `known` the person_ids.People, read here
-    when it is needed and not given. `edited`: the caller is inside a tree_edit of its own (tagpup.services.tree_fill makes many
+    when it is needed and not given. `edited`: the caller is inside a tree_edit of its own (derived's batch makes many
     nodes in one). Idempotent: the second call finds the node the first made."""
     path = vocabulary.normalize(text)
     if not path or not tree_exists(conn):

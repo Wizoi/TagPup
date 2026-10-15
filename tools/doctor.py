@@ -135,7 +135,7 @@ def report(db_path, show=0, out=print):
     if distinct:
         out("photo tags with no tree node: %d keyword(s), %d use(s) on %d photo(s) (reported, not broken: the index "
             "makes a node for a keyword it reads, but a read from before that, a batch of more than %d new nodes, or a change of "
-            "a file by sync leaves some without; `tagpup_cli.py tree-fill` makes them, and is safe to repeat)"
+            "a file by sync leaves some without; the owner merges or removes them in the tag view)"
             % (distinct, uses, photos, derived.MAX_NEW_NODES_PER_BATCH))
         for tag, count in ranked[:show]:
             out("    %6d  %s" % (count, tag))

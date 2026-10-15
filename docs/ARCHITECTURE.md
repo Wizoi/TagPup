@@ -171,14 +171,14 @@ tagpup/                config (where the libraries are), logs, runtime (composit
                        family: photos, faces, people, person_ids, taxonomy, embeddings, suggestions, journal,
                        file_journal, face_batches, settings, roots + roots_check + root_rows, derived, search_index, folders,
                        library_view, snapshots, generations, locks, job_runs,
-                       added_folders, faces_detected, tree_scan, checks
+                       added_folders, faces_detected, checks
   files/               the photo files: exiftool_session, metadata, field_values, keywords, identity, images,
                        thumbs, names, shares, lock_owners, recycle_bin
   ml/                  models: clip, faces, vector_index, grouping, and gpu (the card's turn)
   services/            one function per user action; the only code that writes: tagging, tags, people, faces,
                        identities, identify, indexing, sync, refresh_rows, relink_photos,
                        roots*, settings, journal, file_changes, batches, bulk_edit, selection,
-                       library_view, search, suggester, suggestions, snapshots, thumbnails, tree_fill,
+                       library_view, search, suggester, suggestions, snapshots, thumbnails,
                        faces_from_tags, tags_from_faces, face_people, face_assignment + face_batch, inspect, activity,
                        maintenance
   jobs/                background work: indexing queue, suggestions,
@@ -240,8 +240,7 @@ person, a keyword its own path -- so no row holds a name and no id except a name
 counts them). A person is a face node with no node under it, wherever it sits (a top-level one is filed by its own tag until
 the owner merges it into a branch); a branch is a group, never a person. A batch of reads makes its nodes in one tree edit
 and none when it would make more than 500 (`derived.MAX_NEW_NODES_PER_BATCH`): a folder from another program with thousands
-of keywords would make thousands of tags to merge or delete by hand, each embedded by Suggest; `tree-fill` makes them on
-request. The navigator files a top-level person under "Top level".
+of keywords would make thousands of tags to merge or delete by hand, each embedded by Suggest; the doctor counts them. The navigator files a top-level person under "Top level".
 A folder is the derived `folders` row (rebuilt, its integer ids change). The `folder_ids` and `library_identity`
 tables the folder markers wrote were dropped by migration 30 (owner, 2026-10-10: the marker code is deleted; the
 `.tagpup` files stay on disk and nothing reads them).

@@ -200,8 +200,7 @@ named, or a photo's person field read, with a name no tag has is given a tag whe
 root and marked as a person; a file keyword with no tag is given its own path. They show in the tag view of the library, where the
 owner merges them into the right branch with the existing tag merge (which moves faces and photo lists by id). A name two people
 have, or a group's leaf, is another path and is given a tag of its own under the root; the name of a group at the top is given none and
-is not listed as a person. A bare file keyword is a tag of its own and names nobody. `tagpup_cli.py tree-fill` makes the tags for the keywords a
-library held before (SPEC_TAGPUP_CLI.md).
+is not listed as a person. A bare file keyword is a tag of its own and names nobody.
 
 ### 0.2 Identify Faces: what the panel shows
 

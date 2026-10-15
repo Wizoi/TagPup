@@ -268,7 +268,7 @@ def refresh_photos(conn, photo_ids, batch=None):
 
 #: The most nodes one batch of reads may make from the keywords it meets. A batch that would make more makes NONE and counts them
 #: (`Batch.flagged`): a folder from another program with thousands of distinct keywords is the owner's to look at, since each
-#: node is a tag to merge or delete by hand and Suggest embeds every one of them. `tree-fill` makes them when the owner asks.
+#: node is a tag to merge or delete by hand and Suggest embeds every one of them. the doctor counts them.
 MAX_NEW_NODES_PER_BATCH = 500
 
 
