@@ -6,8 +6,8 @@ SQLite drove the join from the faces: every unnamed face of the library, 190,000
 photo_people. 113 people took 15.1 of the plan's 27.5 seconds there. The join now starts from the person's rows
 and goes to each photo's faces by idx_faces_photo_id, as the folder reads of tagpup.store.faces do (#644).
 
-A fixture cannot time it, so the work is counted: the SQLite virtual machine's instructions for the count with
-many faces in the library that have nothing to do with the person, which grew with them.
+A fixture cannot time it, and counting the work of 400 extra photos took 47 seconds to build: the query that runs is
+captured and its plan read. Mutation: the join left to SQLite (no CROSS JOIN, no INDEXED BY) plans a scan of faces.
 """
 import os
 import sys
@@ -19,41 +19,26 @@ from test_faces_from_tags import WREN, Case  # noqa: E402
 from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.store import db, face_tags  # noqa: E402
 
-#: The instructions between two calls of the progress handler.
-EVERY = 50
-
-
-def instructions(path, work):
-    """About how many virtual machine instructions `work(conn)` took, and what it answered."""
-    conn = db.connect(db.readonly_uri(path), uri=True)
-    calls = []
-    try:
-        conn.set_progress_handler(lambda: calls.append(1) and 0, EVERY)
-        answer = work(conn)
-        conn.set_progress_handler(None, 0)
-    finally:
-        conn.close()
-    return len(calls) * EVERY, answer
-
 
 class CountingAPersonsPhotos(Case):
-    def seed(self, others):
-        """Wren on two photos with a face each, and `others` photos with a face each and no keyword."""
+    def test_the_count_starts_from_the_persons_photos_and_never_scans_the_faces(self):
         for number in range(2):
             self.face(self.photo("regatta_%03d.jpg" % number, ["People/" + WREN]))
-        for number in range(others):
+        for number in range(30):
             self.face(self.photo("quay_%04d.jpg" % number))
-
-    def test_the_count_does_not_grow_with_the_faces_of_everyone_else(self):
-        self.seed(30)
         wren = Ref(self.node("People/" + WREN), WREN)
-        few, answer = instructions(self.path, lambda conn: face_tags._photos_to_be_named(conn, wren))
-        self.assertEqual(2, answer)
-        for number in range(30, 400):
-            self.face(self.photo("quay_%04d.jpg" % number))
-        many, answer = instructions(self.path, lambda conn: face_tags._photos_to_be_named(conn, wren))
-        self.assertEqual(2, answer)
-        self.assertLess(many, few * 2, "%d instructions with 400 other faces, %d with 30" % (many, few))
+        conn = db.connect(db.readonly_uri(self.path), uri=True)
+        self.addCleanup(conn.close)
+        ran = []
+        conn.set_trace_callback(ran.append)
+        self.assertEqual(2, face_tags._photos_to_be_named(conn, wren))
+        conn.set_trace_callback(None)
+        query, = [sql for sql in ran if sql.lstrip().startswith("SELECT pp.photo_id")]
+        plan = [row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + query)]
+        self.assertFalse([step for step in plan if step.startswith("SCAN") and "photo_people" not in step],
+                         "a table other than the person's rows is scanned: %s" % plan)
+        self.assertTrue([step for step in plan if "idx_faces_photo_id" in step], "faces not found by their photo: %s" % plan)
+        self.assertTrue([step for step in plan if "idx_photo_people_tag" in step], "the person's rows not found by node: %s" % plan)
 
 
 if __name__ == "__main__":

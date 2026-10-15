@@ -1,4 +1,5 @@
-"""docs/findings.md, #994: `faces-from-tags --folder` and the plan behind the dialog's "Only this folder".
+"""docs/findings.md, #994: `faces-from-tags --folder` and the plan behind the dialog's "Only this folder", and the job that asks
+it and applies it (tagpup.jobs.naming_faces).
 
 The folder is a filter on which photos a plan reads, never another rule: the folder's plan is the whole-library plan restricted
 to the folder's photos (the property below), the write names only those faces, and a folder the library holds no photo under is
@@ -16,9 +17,18 @@ from test_faces_from_tags import Case, ODA, TAMSIN, WREN, at, from_tags, look, w
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.core.result import Conflict, Refused  # noqa: E402
+from tagpup.jobs import naming_faces  # noqa: E402
 from tagpup.services import faces_from_tags, folder_scope  # noqa: E402
+from tagpup.services import job_runs as runs_service  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import faces, journal, people, schema, taxonomy  # noqa: E402
+
+
+def wait(job):
+    job.thread.join(60)
+    assert not job.thread.is_alive(), "the job did not end"
+    return job.status()
 
 
 class InFolders(Case):
@@ -145,7 +155,10 @@ class TheFoldersWrite(InFolders):
         self.assertIsNone(self.name(late_face), "not in the plan, so not written")
 
     def test_a_face_named_meanwhile_refuses_the_whole_change(self):
-        """Interrupted by a name given while the question was open: nothing is written, the guards as ever."""
+        """Interrupted by a name given while the question was open: nothing is written, the guards as ever.
+
+        Lifted: test_faces_from_tags.Backfill's marked-nobody-meanwhile test (the same guard, one face). Mutation:
+        faces_from_tags._edits expecting no name_source of a face (a face marked nobody since is written over)."""
         planned = faces_from_tags.plan(self.library, folder=self.run)
         write(self.path, lambda conn: faces.unname(conn, [self.named["Run/a1.jpg"]]))     # "nobody", by hand
         result = faces_from_tags.faces_from_tags(self.library, apply=True, planned=planned)
@@ -241,6 +254,162 @@ class TwoLibrariesHoldingOneFolder(Case):
         self.assertIsNone(look(second.path, "SELECT name FROM faces WHERE id = ?", (second_face,))[0][0],
                           "the other library holds the same folder and was not touched")
         self.assertEqual(1, from_tags(second, folder=run).details["counts"]["faces"])
+
+
+class JobInFolders(InFolders):
+    """The question and the apply behind the button "Name faces from tags" (tagpup.jobs.naming_faces) with "Only this folder": the
+    job's thread joined, no port, no sleep. Moved here from test_naming_faces_in_a_folder: the job is the plan above, asked and answered."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(naming_faces.forget, self.library)
+
+    def start(self, folder=None, only_folder=True, **more):
+        job = naming_faces.start(self.library, self.run if folder is None else folder, only_folder=only_folder, **more)
+        wait(job)
+        return job
+
+    def runs(self):
+        return runs_service.runs(self.library, naming_faces.JOB, 20)
+
+
+class ThePlanAndTheApply(JobInFolders):
+    def test_the_question_is_about_the_folder_and_its_subfolders_only(self):
+        job = self.start()
+        found = job.status()
+        self.assertEqual(naming_faces.ASKING, found["state"])
+        self.assertTrue(found["only_folder"])
+        self.assertEqual(3, found["plan"]["faces"], "a1, the subfolder's a2 and the crowd's one face; Run2 and Run_x only start like it")
+        self.assertEqual(6, faces_from_tags.plan(self.library).counts["faces"],
+                         "the whole library would name every photo of the fixture")
+
+    def test_it_is_the_clis_plan_for_the_folder(self):
+        counts = faces_from_tags.plan(self.library, folder=self.run).counts
+        plan = self.start().status()["plan"]
+        self.assertEqual((counts["faces"], counts["named_by_the_tag_alone"]), (plan["faces"], plan["by_tag"]))
+
+    def test_yes_writes_exactly_the_plan_and_only_in_the_folder(self):
+        job = self.start()
+        naming_faces.confirm(self.library, job.handle)
+        found = wait(job)
+        self.assertEqual(naming_faces.DONE, found["state"], found["message"])
+        self.assertEqual(3, found["applied"]["changed"])
+        self.assertIn("in the open folder", found["message"])
+        self.assertEqual({"Run/a1.jpg": WREN, "Run/Heat1/a2.jpg": WREN}, self.names("Run/a1.jpg", "Run/Heat1/a2.jpg"))
+        self.assertEqual({None}, set(self.names("Run2/b1.jpg", "Elsewhere/c1.jpg").values()))
+
+    def test_the_plan_is_not_read_again_for_the_write_so_a_face_that_came_later_is_not_named(self):
+        job = self.start()
+        late = self.face(self.photo(os.path.join("Run", "late.jpg"), ["People/" + WREN]), at(2))
+        naming_faces.confirm(self.library, job.handle)
+        self.assertEqual(3, wait(job)["applied"]["changed"])
+        self.assertIsNone(look(self.path, "SELECT name FROM faces WHERE id = ?", (late,))[0][0])
+
+    def test_a_name_given_meanwhile_refuses_the_whole_change(self):
+        job = self.start()
+        write(self.path, lambda conn: faces.unname(conn, [self.named["Run/a1.jpg"]]))     # called nobody, by hand
+        naming_faces.confirm(self.library, job.handle)
+        found = wait(job)
+        self.assertEqual(naming_faces.FAILED, found["state"])
+        self.assertEqual(naming_faces.REFUSED_SAYS, found["message"])
+        self.assertEqual({None}, set(self.names("Run/Heat1/a2.jpg").values()), "all or nothing")
+
+    def test_a_folder_job_is_recorded_as_one_and_names_no_one(self):
+        job = self.start()
+        self.assertTrue(self.runs()[0].changed["in_a_folder"])
+        self.assertNotIn(WREN, str(self.runs()[0].changed) + str(job.status()))
+
+    def test_it_survives_a_restart_as_a_folder_job(self):
+        job = self.start()
+        naming_faces.confirm(self.library, job.handle)
+        wait(job)
+        naming_faces.forget(self.library)
+        self.assertTrue(naming_faces.status(self.library, job.handle)["only_folder"])
+
+
+class WhatIsRefused(JobInFolders):
+    def test_a_folder_with_no_photo_is_refused_before_anything_is_claimed(self):
+        with self.assertRaises(Refused) as raised:
+            naming_faces.start(self.library, os.path.join(self.folder, "Nowhere"), only_folder=True)
+        self.assertIn("holds no photo", str(raised.exception))
+        self.assertEqual([], self.runs(), "no claim was taken")
+        self.assertIsNone(naming_faces.current(self.library))
+
+    def test_only_this_folder_without_a_folder_is_refused(self):
+        with self.assertRaises(Refused):
+            naming_faces.start(self.library, None, only_folder=True)
+        self.assertEqual([], self.runs())
+
+    def test_a_folder_of_photos_with_no_faces_has_nothing_to_ask(self):
+        self.photo(os.path.join("Bare", "x.jpg"), ["People/" + WREN])
+        job = self.start(os.path.join(self.folder, "Bare"))
+        self.assertEqual(naming_faces.DONE, job.status()["state"])
+        self.assertEqual(naming_faces.NO_FACES_HERE, job.status()["message"])
+
+    def test_another_process_holding_the_job_refuses_a_folder_job_too(self):
+        self.assertTrue(runs_service.claim(self.library, naming_faces.JOB, self.library.name, 1.0))
+        with mock.patch.object(naming_faces.batches, "is_this_process", return_value=False):
+            with self.assertRaises(Conflict):
+                naming_faces.start(self.library, self.run, only_folder=True)
+        self.assertEqual({None}, set(self.names("Run/a1.jpg").values()))
+
+
+class OneQuestionAtATime(JobInFolders):
+    def test_a_click_again_for_the_same_folder_shows_the_question(self):
+        job = self.start()
+        self.assertIs(job, naming_faces.start(self.library, self.run, only_folder=True))
+
+    def test_the_same_folder_spelled_in_another_case_is_the_same_scope(self):
+        if not os.path.normcase("A") == "a":
+            self.skipTest("a case-sensitive file system")
+        job = self.start()
+        self.assertIs(job, naming_faces.start(self.library, self.run.upper(), only_folder=True))
+
+    def test_a_question_for_another_scope_is_not_handed_back_as_this_one(self):
+        whole = naming_faces.start(self.library)
+        wait(whole)
+        with self.assertRaises(naming_faces.AlreadyWorking) as raised:
+            naming_faces.start(self.library, self.run, only_folder=True)
+        self.assertEqual(whole.handle, raised.exception.job["job"])
+        self.assertFalse(raised.exception.job["only_folder"])
+        self.assertIn("whole library", str(raised.exception))
+
+    def test_nor_the_other_way_round(self):
+        job = self.start()
+        with self.assertRaises(naming_faces.AlreadyWorking) as raised:
+            naming_faces.start(self.library)
+        self.assertEqual(job.handle, raised.exception.job["job"])
+        self.assertTrue(raised.exception.job["only_folder"])
+
+    def test_another_folder_is_another_scope(self):
+        self.start()
+        with self.assertRaises(naming_faces.AlreadyWorking) as raised:
+            naming_faces.start(self.library, self.elsewhere, only_folder=True)
+        self.assertIn("ANOTHER folder", str(raised.exception))
+        self.assertNotIn(self.run, str(raised.exception) + str(raised.exception.job), "the status is counts only")
+
+
+class TheChoicesCounts(JobInFolders):
+    def test_the_counts_of_the_folder_and_of_the_library(self):
+        found = naming_faces.scope(self.library, self.run)
+        self.assertEqual({"named": 0, "unnamed": 4, "photos": 3}, found["folder"])
+        self.assertEqual({"named": 1, "unnamed": 7}, found["library"])
+        self.assertIsNone(found["job"])
+
+    def test_a_folder_with_no_photo_says_why_and_still_gives_the_library(self):
+        found = naming_faces.scope(self.library, os.path.join(self.folder, "Nowhere"))
+        self.assertIsNone(found["folder"])
+        self.assertIn("holds no photo", found["why"])
+        self.assertEqual(8, found["library"]["named"] + found["library"]["unnamed"])
+
+    def test_no_folder_open_gives_the_library_alone(self):
+        found = naming_faces.scope(self.library, None)
+        self.assertIsNone(found["folder"])
+        self.assertEqual(8, found["library"]["named"] + found["library"]["unnamed"])
+
+    def test_the_job_to_pick_up_is_given(self):
+        job = self.start()
+        self.assertEqual(job.handle, naming_faces.scope(self.library, self.run)["job"]["job"])
 
 
 if __name__ == "__main__":

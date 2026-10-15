@@ -1,8 +1,6 @@
 """Tests for the face identity resolution rules (tagpup.services.identities).
 
-`test_stability.py` already covers strict tag enforcement, the similarity threshold
-and era-aware centroids. This file covers the rest of the resolution pipeline: how
-anchors are found, how clusters vote, how conflicts inside a single photo are broken,
+This file covers the resolution pipeline: how anchors are found, how clusters vote, how conflicts inside a single photo are broken,
 which faces are dismissed as background noise, and how remaining faces are matched to
 leftover name tags.
 
@@ -217,6 +215,25 @@ class TestStrictTagEnforcement(FaceClusteringTestBase):
 
         self.resolve()
         self.assertNotEqual(self.name_of(mismatched_face), "Jane Doe")
+
+
+class TestAFaceUnlikeThePersonIsNotNamedForThem(FaceClusteringTestBase):
+    """Lifted: test_stability.test_strict_tag_enforcement_in_clustering (the untagged photo, above) and
+    test_similarity_threshold_in_clustering. Mutations: a face in an untagged photo given its best match's name; the
+    threshold for naming a face (clustering.names_unasked, is_offered) dropped to nothing."""
+
+    def test_a_photo_tagged_with_the_person_leaves_its_unlike_faces_unnamed(self):
+        jane = identity_vector(1)
+        anchor = self.add_face(self.add_photo("anchor.jpg", people=["Jane Doe"]), jane)
+        crowd = self.add_photo("crowd.jpg", people=["Jane Doe"])
+        # Both about 0.5 like Jane: more than a stranger's, less than the 0.70 that would offer her name.
+        strangers = [self.add_face(crowd, near(jane, 2, distance=1.7), box=(0, 0, 100, 100)),
+                     self.add_face(crowd, near(jane, 3, distance=1.7), box=(200, 0, 300, 100))]
+
+        self.resolve()
+        self.assertEqual("Jane Doe", self.name_of(anchor))
+        self.assertEqual([None, None], [self.name_of(face) for face in strangers],
+                         "faces no like Jane were named for her because their photo is tagged with her")
 
 
 class TestSameNameConflictInOnePhoto(FaceClusteringTestBase):

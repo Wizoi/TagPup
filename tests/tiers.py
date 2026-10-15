@@ -53,7 +53,6 @@ SCENARIO = frozenset({
     "test_rotate_crash_settles_with_the_boxes",
     "test_taxonomy_lifecycle",
     "test_tag_tree_edits_are_batches",
-    "test_a_person_count_reads_only_their_photos",
     # Faces and tags kept in step across files, jobs and the CLI's journaled apply.
     "test_bulk_faces_and_tags",
     "test_naming_faces_job",

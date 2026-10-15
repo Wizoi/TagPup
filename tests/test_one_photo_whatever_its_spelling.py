@@ -347,6 +347,21 @@ class TheRoutes(HandlerCase):
         self.assertEqual(1, self.count("SELECT COUNT(*) FROM photos WHERE path = ?",
                                        os.path.join(os.path.abspath(self.folder), "Parade - 1.jpg")))
 
+    def test_smart_rename_says_which_names_the_index_already_held_and_merges_nothing_onto_them(self):
+        """Lifted: test_stability.test_api_folder_rename_photos_does_not_merge_onto_rows_already_there. The route's
+        `index_skipped` is the new names whose rows were left as they were. Mutation: the route answering []."""
+        photo = self.make_file("a.jpg")
+        self.seed(photo, faces=["Rowan Thackeray"])
+        ghost = os.path.join(os.path.abspath(self.folder), "Parade - 1.jpg")   # a row alone: its file is gone
+        self.seed(ghost, faces=["Tamsin Okafor"])
+        with patch("tagpup.files.exiftool_session.ExifToolSession", fake_exiftool([{"XMP:PreservedFileName": "original.jpg"}])), \
+                patch("tagpup.files.metadata.MetadataExtractor", fake_extractor()):
+            result = self.call("POST", "/api/folder/rename-photos", {
+                "folder_path": forward(self.folder), "photo_paths": [forward(photo)], "grouping": "Parade"})
+        self.assertEqual(([ghost], 0), (result["index_skipped"], result["index_rows_moved"]))
+        self.assertEqual(1, self.count("SELECT COUNT(*) FROM faces f JOIN photos p ON p.id = f.photo_id"
+                                       " WHERE p.path = ? AND f.name = 'Tamsin Okafor'", ghost), "faces were merged onto the row")
+
     def test_saved_suggestions_are_found_by_a_folder_in_another_spelling(self):
         photo = os.path.abspath(os.path.join(self.folder, "IMG_0001.jpg"))
         conn = tagpup_db.connect(self.db_path)

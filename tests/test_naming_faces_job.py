@@ -211,6 +211,8 @@ class WhenTheFacesChangeBeforeTheAnswer(Case789):
 
     def test_a_tag_removed_from_a_planned_photo_meanwhile_refuses_the_whole_change(self):
         # #869 (a): the only reason the photo names the person is the face the write would name.
+        # Lifted: the CLI's apply of a plan read earlier, guarded the same way (one entry, faces_from_tags.faces_from_tags).
+        # Mutation: faces_from_tags._edits leaving the photos' tags out of what it expects.
         self.seed()
         job = self.start()
         self.tag(self.single)                       # the person's tag taken off, while the question waits
@@ -238,14 +240,6 @@ class WhenTheFacesChangeBeforeTheAnswer(Case789):
         self.tag(self.left, "People/" + WREN)       # not a planned photo's tags
         naming_faces.confirm(self.library, job.handle)
         self.assertEqual(naming_faces.DONE, wait(job)["state"])
-
-    def test_the_clis_apply_of_a_plan_read_earlier_is_guarded_the_same_way(self):
-        self.seed()
-        planned = faces_from_tags._plan(self.library)
-        self.tag(self.single)
-        result = faces_from_tags.faces_from_tags(self.library, apply=True, planned=planned)
-        self.assertTrue(result.refused)
-        self.assertEqual(0, result.changed)
 
     def test_a_plan_not_answered_in_time_is_let_go(self):
         self.seed()

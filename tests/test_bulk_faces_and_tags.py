@@ -107,6 +107,21 @@ class AssigningMany(Bulk):
         self.assertEqual(0, self.files.writes)
         self.assertEqual([], self.operations(ASSIGN), "no change for a refusal")
 
+    def test_a_person_already_on_another_face_of_a_photo_refuses_the_whole_before_any_file_is_written(self):
+        """Lifted: test_stability.test_api_faces_match_bulk_duplicate_conflict (its single-face twin is
+        test_organize_faces.test_a_person_already_on_another_face_of_the_photo_is_refused). Mutation:
+        store faces.named_elsewhere_in_photo always False."""
+        holder = self.held("holder.jpg", [PEOPLE + WREN])
+        self.face(holder, name=WREN, name_source="manual")
+        other = self.face(holder, box=(70, 10, 110, 60))
+        (_photo, plain), = self.many(1)
+        reply = self.tuner_post("faces/match-bulk", {"face_ids": [other, plain], "person_name": WREN})
+        self.assertEqual(400, reply.status_code)
+        self.assertIn("already tagged on another face", reply.get_json()["error"])
+        self.assertEqual([None, None], [self.row(other)[0], self.row(plain)[0]])
+        self.assertEqual(0, self.files.writes)
+        self.assertEqual([], self.operations(ASSIGN), "no change for a refusal")
+
     def test_a_branch_of_the_tree_is_never_a_person(self):
         def branch(conn):
             with people.tree_edit(conn):
