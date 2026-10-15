@@ -105,7 +105,7 @@ class RefusedWhileClustering(unittest.TestCase):
                 for reply in (renamed, deleted):
                     self.assertEqual(409, reply.status_code, reply.data)
                     self.assertEqual({"success": False,
-                                      "error": "Server is currently clustering faces. Please try again later."},
+                                      "error": "The server is clustering faces; this waits until it finishes."},
                                      reply.get_json())
                 self.assertIn("Places/Harbour", self.tags(client), "the refused edit was made anyway")
 

@@ -127,7 +127,7 @@ _read_face_ids = face_routes._read_face_ids
 
 
 #: What a write of faces, tags or rows is answered with while "Name faces from tags" gives names or groups faces (#871, #872).
-NAMING_REFUSAL = "Names are being given from tags; face changes wait until it finishes."
+NAMING_REFUSAL = "Names are being given from tags; this waits until it finishes."
 
 
 def clustering_refusal(library, only_naming=False):
@@ -141,7 +141,7 @@ def clustering_refusal(library, only_naming=False):
         return jsonify({"success": False, "error": NAMING_REFUSAL}), 409
     if not only_naming and library is not None and clustering.of(library).is_set():
         return jsonify({"success": False,
-                        "error": "Server is currently clustering faces. Please try again later."}), 409
+                        "error": "The server is clustering faces; this waits until it finishes."}), 409
     return None
 
 

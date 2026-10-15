@@ -292,7 +292,7 @@ def membership_checked(library, folder, roots=(), ignored=(), deadline=None):
     second walk of one folder, however often the view is opened. A folder on a network share (a UNC path or a mapped
     drive) must first say it is there within a second (tagpup.files.shares.bounded), else the answer is
     could_not_check("the network share is away") and no thread is left walking it. A walk that outlives the deadline
-    answers could_not_check("it took too long") and goes on, for the next request to be answered by when it is done. A
+    answers could_not_check("it took too long") and goes on; a request while it still runs is answered by it, one after it ends makes a new walk. A
     walk that raised raises here."""
     folder = paths.stored(folder)
     waited = MEMBERSHIP_DEADLINE if deadline is None else deadline
