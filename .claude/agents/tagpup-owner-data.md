@@ -86,4 +86,4 @@ Read `.claude/agents/tagpup-reviewer.md` and review as it says: read-only; name 
 Findings ranked. Each: a severity word (`data` can lose or corrupt data, `wrong` a wrong result the owner sees, `low`; only the first two block a merge), `file:line`, a concrete failure scenario with concrete inputs, the evidence, and confidence (confirmed, likely, possible); as a row for docs/findings.md with `| ? |`. Say plainly when nothing blocks, and what you checked. At most two rounds; the second asks which single place should own this.
 
 ## Scenarios (tests/owners.py)
-Scenario ids: D1 D2 D3 D4 D5 D6 D7. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_guard_tests_have_one_owner.py` names one that is not).
+Scenario ids: D1 D2 D3 D4 D5 D6 D7 D8. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_guard_tests_have_one_owner.py` names one that is not).
