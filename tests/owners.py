@@ -140,6 +140,7 @@ _FILES = {
     },
     "files": {
         "unit": (
+            "rename-failed test_save_reply_says_rename_failed "
             "bulk-edit bulk-writes-queue just-look-edits photo-write-queue retried-save rotate-refreshes-thumbnails tagging-flow "
             "test_a_boolean_compares_as_read test_a_case_only_rename_settles test_a_crash_reads_back_what_it_wrote "
             "test_a_failed_write_names_the_holder test_a_file_undo_waits_for_newer_changes test_a_number_compares_as_read "
