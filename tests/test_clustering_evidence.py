@@ -27,9 +27,12 @@ class ClusteringDoesNotTrustItsOwnGuesses(FaceClusteringTestBase):
     def setUp(self):
         super().setUp()
         # People holds faces because the library's tree says so, as a real library's
-        # does: no root holds faces for its name (docs/findings.md, #66).
+        # does: no root holds faces for its name (docs/findings.md, #66). The person is the
+        # node the keyword People/<name> is, as the index makes it when it reads the file:
+        # clustering matches the keyword's node, not its leaf (#1357).
         db.write_with_connection(
-            self.db_path, lambda conn: taxonomy.add_path(conn, "People", root_has_face=1))
+            self.db_path, lambda conn: (taxonomy.add_path(conn, "People", root_has_face=1),
+                                        taxonomy.add_path(conn, "People/" + GUESS)))
 
     def add_guessed_face(self, photo_path, embedding, name):
         """A face clustering named, as it leaves it: a name, no manual source."""
