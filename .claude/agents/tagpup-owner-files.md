@@ -40,7 +40,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | ExifTool only through `ExifToolSession` | `tests/test_rules_have_one_owner.py`, `tests/test_exiftool_session.py` |
 | A photo file written through the journaled path; a click three times writes once | `tests/test_file_journal.py`, `tests/test_file_changes_one_at_a_time.py` |
 | A rotation is a journaled change; its face boxes and vectors follow in the transaction that marks the file done | `tests/test_rotate_is_journaled.py` |
-| A write reports what changed | `tests/test_changed_counts_what_changed.py` |
+| A write reports what changed | `tests/test_a_file_holds_what_exiftool_kept.py` |
 | Check the destination before moving data into it | `tests/test_relink_checks_the_destination.py` |
 | Nothing written into a photo cut short | `tests/test_no_writes_to_damaged_photos.py`, `tests/test_writes_refuse_cut_short_photos.py` |
 | A share that does not answer is not missing | `tests/test_unreachable_is_not_missing.py` |

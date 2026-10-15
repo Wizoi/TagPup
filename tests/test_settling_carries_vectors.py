@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_a_number_compares_as_read import ReadFilesCase  # noqa: E402
+from test_a_file_holds_what_exiftool_kept import ReadFilesCase  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 
 from tagpup.services import file_changes  # noqa: E402
