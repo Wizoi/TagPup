@@ -124,6 +124,25 @@ def _root_answers(photo_path):
     return os.path.exists(root + os.sep)
 
 
+def _folder_state(folder):
+    """"there", "gone" or "unanswered" of a folder, asked of the disk now."""
+    if os.path.isdir(folder):
+        return "there"
+    return "gone" if _root_answers(folder) else "unanswered"
+
+
+def folder_state(folder, seconds=None):
+    """"there" when `folder` is a folder; "gone" when it is not and the drive or share it is on answers;
+    "unanswered" when that drive or share does not, or, on a network share, did not answer within `seconds`
+    (SHARE_WAIT by default), or is taken as away. What a sync asks of a root and of a missing row's folder: a
+    folder it cannot look at is not a folder gone (#1356)."""
+    folder = paths.stored(folder)
+    if not on_a_network_drive(folder):
+        return _folder_state(folder)
+    state, found = bounded(folder, lambda: _folder_state(folder), SHARE_WAIT if seconds is None else seconds)
+    return found if state == "ok" else "unanswered"
+
+
 def _stat_state(photo_path):
     """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError, and for a file
     "not found" on a drive or share that does not answer (it is not known to be gone)."""
