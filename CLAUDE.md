@@ -203,7 +203,7 @@ reported 60 done, and wrote nothing; the paths did not match and nothing said so
   libraries holding one folder, an update while working. Both bugs that reached the owner
   on 2026-09-28 lived between features each tested alone.
 - The right agent for the size: `tagpup-worker-small` (cheaper model) for a bounded fix,
-  `tagpup-worker` for design and anything touching sync, the journal, the supervisor or
+  `tagpup-worker` for design and anything touching sync, the journal or
   writes; `tagpup-reviewer` for a branch's first review, `tagpup-quick-reviewer` for the
   follow-up on fixes it asked for. A branch in one domain also gets that domain's owner
   (`tagpup-owner-data`, `-people`, `-files`, `-views-ai`; `-integration` for a change across
@@ -218,7 +218,7 @@ reported 60 done, and wrote nothing; the paths did not match and nothing said so
   committing. It found the defects that lived between two agents' briefs.
 - A review loop on one symptom ends at the second round, with the ownership question: the
   9d-1 resume ran six rounds, each finding a deeper way to shift a photo twice, and the
-  fix that ended it (the journal's prune never takes a resumable job's changes) was the
+  fix that ended it (the journal keeps every change a job may still need) was the
   owner-of-the-rule fix nobody asked for until round six. Put "which single place should
   own this?" in the second round's brief. Rounds after that are for findings that can
   change a file or lose data; wording and polish are batched, not re-reviewed.

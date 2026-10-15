@@ -63,9 +63,12 @@ class Patch:
                 break
             spans.append((i, i + len(target)))
             start = i + len(target)
-        if spans or not old.endswith(LF):
+        if spans:
             return spans
-        want = [line.rstrip() for line in old.replace(CR + LF, LF).split(LF)[:-1]]
+        # Whole lines, whether or not `old` ends with a newline (then the span ends at the
+        # last line's text, leaving its newline).
+        whole = old.endswith(LF)
+        want = [line.rstrip() for line in old.replace(CR + LF, LF).split(LF)[:(-1 if whole else None)]]
         lines = self.text.split(self.eol)
         offsets, pos = [], 0
         for line in lines:
@@ -73,7 +76,11 @@ class Patch:
             pos += len(line) + len(self.eol)
         for i in range(len(lines) - len(want) + 1):
             if [line.rstrip() for line in lines[i:i + len(want)]] == want:
-                end = offsets[i + len(want)] if i + len(want) < len(offsets) else len(self.text)
+                last = i + len(want)
+                if whole:
+                    end = offsets[last] if last < len(offsets) else len(self.text)
+                else:
+                    end = offsets[last - 1] + len(lines[last - 1])
                 spans.append((offsets[i], end))
         return spans
 

@@ -1,6 +1,6 @@
 ---
 name: tagpup-worker-small
-description: The tagpup-worker for small, well-bounded TagPup tasks -- one or two files, a fix whose cause is already known, a test to add, a doc to correct -- on a cheaper model. Use instead of tagpup-worker when the brief can say exactly what to change; use tagpup-worker for design, multi-module work or anything touching sync, the journal, the supervisor or writes.
+description: The tagpup-worker for small, well-bounded TagPup tasks -- one or two files, a fix whose cause is already known, a test to add, a doc to correct -- on a cheaper model. Use instead of tagpup-worker when the brief can say exactly what to change; use tagpup-worker for design, multi-module work or anything touching sync, the journal or writes.
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: sonnet
 ---

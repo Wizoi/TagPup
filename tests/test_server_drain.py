@@ -18,6 +18,7 @@ from flask import jsonify
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
+from tagpup import launcher  # noqa: E402
 from tagpup.web import lifecycle as lifecycles  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
@@ -26,8 +27,8 @@ from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web.lifecycle import Lifecycle  # noqa: E402
 
-TOKEN = "a-token-of-the-supervisors"
-HEADERS = {lifecycles.TOKEN_HEADER: TOKEN}
+TOKEN = "a-token-of-the-launchers"
+HEADERS = {launcher.HEADER: TOKEN}
 
 
 class FakeBackground:
@@ -65,7 +66,7 @@ class Base(unittest.TestCase):
         self.long = []
         self.background = FakeBackground()
         self.clock = Clock()
-        self.lifecycle = Lifecycle(version="20260926-101500-abc1234", token=TOKEN, background=self.background,
+        self.lifecycle = Lifecycle(version="20260926-101500-abc1234", launcher_token=TOKEN, background=self.background,
                                    work=lambda: list(self.long))
         self.app = web.create_app("tagpup", startup=self.library, lifecycle=self.lifecycle)
         self.app.testing = True
@@ -254,9 +255,9 @@ class AQuietMoment(Base):
         self.assertTrue(self.drain_quietly(120).get_json()["drained"])
 
 
-class OnlyTheSupervisor(Base):
+class OnlyTheLauncher(Base):
     def test_may_drain_or_resume_the_server(self):
-        for headers in ({}, {lifecycles.TOKEN_HEADER: "a guess"}):
+        for headers in ({}, {launcher.HEADER: "a guess"}):
             self.assertEqual(403, self.client().post("/api/server/drain", json={}, headers=headers).status_code)
             self.assertEqual(403, self.client().post("/api/server/resume", headers=headers).status_code)
         self.assertTrue(self.lifecycle.status()["taking_work"])
@@ -265,7 +266,7 @@ class OnlyTheSupervisor(Base):
         app = web.create_app("tagpup", startup=self.library)
         self.assertEqual(403, app.test_client().post("/api/server/drain", json={}, headers=HEADERS).status_code)
         self.assertEqual(403, app.test_client().post("/api/server/drain", json={},
-                                                     headers={lifecycles.TOKEN_HEADER: ""}).status_code)
+                                                     headers={launcher.HEADER: ""}).status_code)
 
     def test_a_deadline_must_be_a_number_of_seconds(self):
         for seconds in (0, -1, "60", True, lifecycles.MAX_DRAIN_SECONDS + 1):
@@ -281,13 +282,12 @@ class WhichVersionAnswers(Base):
             for url in ("/api/server", "/harbour/api/server"):
                 status = app.test_client().get(url).get_json()
                 self.assertEqual("20260926-101500-abc1234", status["version"])
-                self.assertEqual((True, True), (status["supervised"], status["taking_work"]))
+                self.assertTrue(status["taking_work"])
 
     def test_an_app_made_without_a_lifecycle_says_its_code_folders(self):
         from tagpup import config as tagpup_config
         app = web.create_app("tagpup", startup=self.library)
         self.assertEqual(tagpup_config.code_version(), app.test_client().get("/api/server").get_json()["version"])
-        self.assertFalse(app.test_client().get("/api/server").get_json()["supervised"])
 
 
 class WhatALongRunIs(unittest.TestCase):

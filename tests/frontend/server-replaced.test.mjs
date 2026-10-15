@@ -18,7 +18,7 @@ const NEW = "20261004-110000-bbbbbbb";
 function server(version) {
   const said = { headers: { "X-TagPup-Version": version } };
   return new FakeServer()
-    .on("/api/server", { version, supervised: false, taking_work: true }, said)
+    .on("/api/server", { version, taking_work: true }, said)
     .on("/api/databases", { databases: ["kr-track"] }, said)
     .on("/api/folder/suggest-status", { status: "idle" }, said)
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" }, said);
@@ -38,7 +38,7 @@ describe("a page whose server was replaced", () => {
     assert.ok(banner.classList.contains("hidden"), "a banner before anything changed");
 
     // The gear asks /api/server: the new version answers it.
-    fake.first("/api/server", { version: NEW, supervised: false, taking_work: true },
+    fake.first("/api/server", { version: NEW, taking_work: true },
       { headers: { "X-TagPup-Version": NEW } });
     click(window, document.getElementById("btn-gear"));
     await flush(window, 6);

@@ -44,7 +44,7 @@ READ_TOOLS = {"libraries", "summary", "folders", "photos", "photo_against_file",
 #: The maintenance operations (tests/test_mcp_write_tools.py applies them).
 MAINTENANCE_TOOLS = {"refresh_rows", "sync", "merge_duplicate_person_tags", "dedupe_faces"}
 
-#: What writes: the maintenance operations, and undoing and pruning the journal
+#: What writes: the maintenance operations, and undoing
 #: (tests/test_journal_through_the_tools.py).
 WRITE_TOOLS = MAINTENANCE_TOOLS | {"undo"}
 

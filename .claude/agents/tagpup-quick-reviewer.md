@@ -1,6 +1,6 @@
 ---
 name: tagpup-quick-reviewer
-description: A focused follow-up review of a few TagPup commits made after a full tagpup-reviewer review -- checking that named findings were fixed and nothing near them broke -- on a cheaper model. Use tagpup-reviewer for the first review of any branch and for anything touching the journal, sync, the supervisor or live data. Read-only.
+description: A focused follow-up review of a few TagPup commits made after a full tagpup-reviewer review -- checking that named findings were fixed and nothing near them broke -- on a cheaper model. Use tagpup-reviewer for the first review of any branch and for anything touching the journal, sync or live data. Read-only.
 tools: Read, Grep, Glob, Bash
 model: opus
 ---

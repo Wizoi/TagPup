@@ -21,8 +21,7 @@ moves it onto the new version only once the drain says it is done:
   When the deadline passes first, it takes work again, and says what it waited for.
 
 The token comes only from this machine (tagpup.launcher); drained, the launcher ends the
-server and serves in its place. (`token`, a second authority a parent process could hold,
-is given by nothing now.)
+server and serves in its place.
 
 A server drained and never stopped -- its launcher gone -- takes work again after
 LEFT_DRAINED. GET /api/server says which version answers, which the gear shows, and every
@@ -45,9 +44,6 @@ from tagpup.services import libraries as library_actions
 from tagpup.web import responses, security
 
 logger = logging.getLogger(__name__)
-
-#: The header a drain carries the token its Lifecycle was given in.
-TOKEN_HEADER = "X-TagPup-Supervisor"
 
 #: The header on a refusal while draining, which tells a page to wait and send again.
 UPDATING_HEADER = "X-TagPup-Updating"
@@ -120,19 +116,18 @@ def long_work():
 
 class Lifecycle:
     """One server process's: `version` (the installed version's name, or None from a
-    checkout), `token` (the supervisor's, or None), `launcher_token` (the one in this
+    checkout), `launcher_token` (the one in this
     server's record, tagpup.launcher, or None), `background` (tagpup.runtime.Background,
     stopped by a drain and started again by a resume), `work()` (long_work, or a test's)
     and `clock`."""
 
-    def __init__(self, version=None, token=None, background=None, work=long_work, clock=time.monotonic,
+    def __init__(self, version=None, background=None, work=long_work, clock=time.monotonic,
                  launcher_token=None):
         self.version = version
         #: What X-TagPup-Version says: the version, or that it runs from a checkout.
         self.version_label = version or launcher.FROM_A_CHECKOUT
         #: When this server started (seconds since the epoch): the Activity page's "running since".
         self.started = time.time()
-        self._token = token or None
         self._launcher_token = launcher_token or None
         self._background = background
         self._work = work
@@ -164,12 +159,8 @@ class Lifecycle:
     def status(self):
         with self._changed:
             closed, in_flight = self._closed, self._in_flight
-        return {"version": self.version, "supervised": self._token is not None, "taking_work": not closed,
+        return {"version": self.version, "taking_work": not closed,
                 "requests": in_flight, "busy": self.busy()}
-
-    def allows(self, token):
-        """Is `token` the supervisor's?"""
-        return self._token is not None and isinstance(token, str) and hmac.compare_digest(token, self._token)
 
     def allows_launcher(self, token, remote):
         """Is `token` the one in this server's record, sent from this machine (`remote`, the
@@ -178,9 +169,9 @@ class Lifecycle:
                 and hmac.compare_digest(token, self._launcher_token))
 
     def authorizes(self, headers, remote):
-        """May a request with `headers` from `remote` drain or resume this server: the
-        supervisor's token, or a launcher's from this machine?"""
-        return self.allows(headers.get(TOKEN_HEADER)) or self.allows_launcher(headers.get(launcher.HEADER), remote)
+        """May a request with `headers` from `remote` drain or resume this server: a
+        launcher's token, from this machine?"""
+        return self.allows_launcher(headers.get(launcher.HEADER), remote)
 
     # ---- The gate every request passes ------------------------------------------------
 

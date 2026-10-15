@@ -3,8 +3,7 @@
 The messages told the owner to "run Recluster". No page has had a Recluster button since
 TagTuner lost the route no page called (docs/findings.md, #8 and #22). Faces are named from
 the photos' tags by the button "Name faces from tags" of TagTuner's header (and its gear) and of
-TagPup's folder view (#789), or by `tagpup_cli.py faces-from-tags` and `cluster-faces`; the
-runner's Run Identity Resolution Clustering is still there.
+TagPup's folder view (#789), or by `tagpup_cli.py faces-from-tags` and `cluster-faces`.
 """
 import os
 import re

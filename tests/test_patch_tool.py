@@ -40,6 +40,12 @@ class PatchingAFile(unittest.TestCase):
             p.replace("def f():\n    return 1\n", "def f():\n    return 2\n")
         self.assertEqual("def f():\n    return 2\n", self.read(path))
 
+    def test_trailing_blanks_do_not_stop_a_match_that_has_no_final_newline(self):
+        path = self.file("def f():   \n    return 1   \nx = 0\n")
+        with Patch(path) as p:
+            p.replace("def f():\n    return 1", "def f():\n    return 2")
+        self.assertEqual("def f():\n    return 2\nx = 0\n", self.read(path))
+
     def test_a_text_found_twice_is_refused_and_nothing_is_written(self):
         path = self.file("x = 1\nx = 1\ny = 0\n")
         with self.assertRaises(PatchError):

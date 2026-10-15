@@ -411,7 +411,7 @@ def server():
     lifecycle = _lifecycle()
     status = lifecycle.status()
     background = lifecycle.background
-    return jsonify({"models": _models(), "version": status["version"], "supervised": status["supervised"],
+    return jsonify({"models": _models(), "version": status["version"],
                     "taking_work": status["taking_work"], "busy": status["busy"],
                     "running_since": _stamp(lifecycle.started), "pid": os.getpid(),
                     "background": background.names() if background is not None else []})
