@@ -174,7 +174,7 @@ class NamingAddsThePersonToThePhoto(InStep):
     def test_undoing_the_tag_in_history_takes_the_name_off_the_face_too(self):
         # Decided 2026-10-08 (#908, reversing #834): History's Undo of an add is the owner taking the person off the photo, and the
         # face goes with the tag; nothing is left for the doctor to count or for `tags-from-faces` to put back.
-        # tests/test_taking_a_person_off_unnames_the_face.py has the rest.
+        # tests/test_face_people_follow_file_changes.py has the rest.
         photo = self.held("strip_012.jpg")
         face = self.face(photo)
         self.tuner_post("face/match", {"face_id": face, "person_name": WREN})

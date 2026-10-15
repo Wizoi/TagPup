@@ -166,7 +166,7 @@ _FILES = {
             "test_reindex_keeps_face_decisions test_server_lists_are_alphabetical test_service_faces test_service_tags "
             "test_shared_taxonomy_routes test_stability test_store_people test_store_taxonomy_add_path test_tag_order "
             "test_tag_sort_key_edges test_tag_view_api test_tags_are_checked_where_they_are_set test_tags_from_faces "
-            "test_taking_a_person_off_unnames_the_face test_taxonomy_edits_report_what_they_wrote test_top_level_person "
+            "test_taxonomy_edits_report_what_they_wrote test_top_level_person "
             "test_trace_file_per_library test_tree_fill test_tuner_photo_copy_upright test_tuner_reads "
             "test_tuner_server_api test_two_people_one_leaf_on_a_photo test_vocabulary tuner-assign-label-tells-the-truth "
             "tuner-face-zoom tuner-hidden-people-exist tuner-lists-alphabetical tuner-new-person-group "

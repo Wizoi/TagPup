@@ -49,7 +49,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | Face roots and bucket names have one owner | `tests/test_face_roots_are_the_trees.py`, `tests/test_rules_have_one_owner.py` |
 | A person goes over the wire as an id; answers carry their person | `tests/test_answers_carry_their_person.py`, `tests/test_people_representative_faces.py`, `tests/test_two_people_one_leaf_on_a_photo.py` |
 | Tag against leaf conversion has one owner on each side | `tests/test_vocabulary.py`, `tests/frontend/tag-vocabulary.test.mjs`, `tests/test_person_filing_table.py`, `tests/frontend/person-filing-table.test.mjs` |
-| A person tag removed unnames the face; a keyword write keeps face names | `tests/test_taking_a_person_off_unnames_the_face.py`, `tests/test_face_names_survive_keyword_writes.py` |
+| A person tag removed unnames the face; a keyword write keeps face names | `tests/test_face_people_follow_file_changes.py`, `tests/test_face_names_survive_keyword_writes.py` |
 | A face has a photo row | `tests/test_every_face_has_a_photo_row.py` |
 | A write path resolves by id, never by a name matched by chance | none: found by review twice; ask it |
 | A bulk path that names or unnames a face settles the photo keyword: a bulk assignment is one change of photo files whose faces are written in the transaction that marks each file done | `tests/test_bulk_faces_and_tags.py`, `tests/test_face_writes_go_through_the_assignment.py` (no other service or job writes who a face is) |
