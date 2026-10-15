@@ -1,6 +1,5 @@
 """Which domain owner each test file belongs to, and which scenario a scenario file runs. Read by
-tools/run_tests.py (--owner, --scenarios, the per-owner line), tests/test_guard_tests_have_one_owner.py and
-tests/test_owner_charters_name_real_paths.py; written like tests/tiers.py, by hand, in the commit that adds a test file.
+tools/run_tests.py (--owner, --scenarios, the per-owner line), tests/test_the_test_map.py; written like tests/tiers.py, by hand, in the commit that adds a test file.
 
     OWNERS     the five domain owners (docs/OWNERS.md): their charters are .claude/agents/tagpup-owner-<data, people,
                files, views-ai, integration>.md; `apps` is Integration and apps.
@@ -11,7 +10,7 @@ tests/test_owner_charters_name_real_paths.py; written like tests/tiers.py, by ha
                tests/frontend/*.test.mjs (the file name).
     kind       scenario (runs a flow, names its ids), unit (one module's behaviour), migration (a schema step), guard (a
                rule about the source text), unmapped (legacy: no import or name placed it; apps owns it until it is
-               placed; the count may only go down, tests/test_guard_tests_have_one_owner.py).
+               placed; the count may only go down, tests/test_the_test_map.py).
 
 A file got its owner from the module of tagpup/ (or the page module of web/) it imports most, through the Scope in the
 owner charter that lists it; a file naming no scope module was placed by its name or by hand. A new test file is added
@@ -100,7 +99,7 @@ _SCENARIO_FILES = {
     "I1": "scenario-switching-library-mid-folder",
     "I2": "scenario-write-through-a-server-update test_server_drain",
     "I3": "test_install_app test_install_hands_over test_launcher_hands_over",
-    "I4": "test_library_being_migrated test_server_migrates_at_start",
+    "I4": "test_server_migrates_at_start",
     "I5": "test_pages_against_the_real_server test_tagpup_server_api",
     "I6": "test_roots_scenarios",
     "I7": "test_mcp_server",
@@ -241,27 +240,27 @@ _FILES = {
             "delete-while-folder-changes dialog-frames dialogs-keep-the-keys dom-output folder-keeps-history-position "
             "folder-opening folder-picker gear history-dialog image-zoom images-after-an-update library-memory "
             "library-picker open-photo page-state progress-polling roots-dialog server-replaced server-update "
-            "settings-dialog stale-record test_a_mistyped_library_is_not_created test_a_request_is_decoded_once "
+            "settings-dialog stale-record test_a_request_is_decoded_once "
             "test_activity_routes test_add_findings test_an_empty_folder_is_scanned_again test_background_tasks "
             "test_background_work_is_waited_for test_batch_strip_replies test_browser_opens_once test_config "
             "test_dark_selects test_database_context_isolation test_folder_scan_follows_the_library test_gzip_json "
             "test_heavy_imports_stay_lazy test_history_routes test_indexing_names_a_real_control "
             "test_inspect_reads_only_the_photos_asked_about test_inspect_uses_the_stores_mtime_rule "
-            "test_launcher_refuses_a_library_it_cannot_make test_library "
+            "test_library "
             "test_library_registry_race test_local_server_socket test_log_runs test_logs "
-            "test_logs_are_bounded test_mcp_config_resolves test_mcp_write_tools test_multiple_databases "
-            "test_only_the_server_runs_jobs test_patch_tool test_photo_open test_recurring_jobs test_result "
+            "test_mcp_config_resolves test_mcp_write_tools "
+            "test_patch_tool test_photo_open test_recurring_jobs test_result "
             "test_roots_ingress_keys_cover_the_routes test_roots_map test_roots_open_check test_roots_routes "
             "test_run_tests_keeps_failures test_server_startup test_serving_photos test_suggest_thread_keeps_its_library "
-            "test_test_processes_are_ended test_test_servers_run_no_jobs test_the_reaper_is_quiet test_unload_models_now "
+            "test_unload_models_now "
             "test_web_app undo-from-reply validation"
         ),
         "guard": (
             "dom-contract no-heredoc-escapes page-modules page-shape test_config_single_owner test_database_axis_guard "
-            "test_guard_tests_have_one_owner test_layers test_lint test_owner_charters_name_real_paths "
+            "test_layers test_lint "
             "test_page_module_names test_processes_single_owner test_rules_have_one_owner test_sandbox_has_all_the_code "
-            "test_sandboxes_are_homes_of_their_own test_spec_accuracy test_sync_entry_points "
-            "test_tests_have_homes_of_their_own test_tiers_name_real_files test_verify_workflow_is_sandboxed"
+            "test_spec_accuracy test_sync_entry_points "
+            "test_tests_have_homes_of_their_own test_the_test_map test_verify_workflow_is_sandboxed"
         ),
     },
 }

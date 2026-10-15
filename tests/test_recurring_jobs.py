@@ -2,9 +2,19 @@
 the library; a missed period run once; one run of a job for a library at a time, across
 threads and processes, and a run a dead process left taken over; the web server's
 thread stopped cleanly; and what the apps are told, counts only.
+
+Only the web server -- the always-on process -- runs them (owner, 2026-09-26): the CLI ran what was due before every
+command, so the first `stats` of a day waited 20 s for a snapshot and a look wrote to the library, and the MCP server
+ran them on a thread as it started. A server a test starts is told TAGPUP_NO_JOBS, whatever else it inherits (review
+of phase 8a, 7).
+
+Lifted: test_only_the_server_runs_jobs and test_test_servers_run_no_jobs (WhetherAProcessRunsThem). Mutation:
+tagpup/runtime.py runs_recurring_jobs returning True instead of `not under_test()` fails
+test_not_in_a_test_run_unless_asked_and_never_when_told_not_to.
 """
 import os
 import queue
+import re
 import socket
 import sys
 import threading
@@ -12,11 +22,15 @@ import time
 import unittest
 from unittest import mock
 
+from click.testing import CliRunner
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
 
+import tagpup_cli  # noqa: E402
 from tagpup import runtime as runtimes  # noqa: E402
+from tagpup.mcp import server  # noqa: E402
 from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.core.result import Result  # noqa: E402
@@ -401,7 +415,41 @@ class TheWebServersThread(Base):
             self.assertEqual(["start", "serve", "stop"], order)
 
 
+#: A test starting one of the programs that may run the recurring jobs.
+STARTS_A_SERVER = re.compile(r"""tagpup_web\.py|TagTuner\.cmd|TagPup\.cmd|["']tagpup\.mcp["']""")
+SPAWNS = re.compile(r"processes\.start\(|subprocess\.Popen\(")
+
+
 class WhetherAProcessRunsThem(unittest.TestCase):
+    def test_the_cli_runs_none_before_a_command_and_the_mcp_server_starts_none(self):
+        home = own_home.for_test(self, prefix="jobs_")
+        path = home.library("harbour.db")
+        library_actions.create(path)
+        with mock.patch.dict(os.environ, {runtimes.RUN_JOBS: "1"}), \
+                mock.patch.object(tagpup_cli.runtimes, "recurring_jobs") as cli_runner:
+            answer = CliRunner().invoke(tagpup_cli.cli, ["--db", path, "history"])
+        self.assertEqual(0, answer.exit_code, answer.output)
+        cli_runner.assert_not_called()
+        with mock.patch.dict(os.environ, {runtimes.RUN_JOBS: "1"}), \
+                mock.patch.object(server.runtimes, "recurring_jobs") as mcp_runner, \
+                mock.patch.object(server.logs, "to_file", return_value="(no log file)"), \
+                mock.patch.object(server, "build") as build:
+            server.main()
+        build.return_value.run.assert_called_once_with("stdio")
+        mcp_runner.assert_not_called()
+
+    def test_every_test_that_starts_a_server_tells_it_to_run_no_jobs(self):
+        missing = []
+        tests = os.path.dirname(os.path.abspath(__file__))
+        for name in sorted(os.listdir(tests)):
+            if not (name.startswith("test_") and name.endswith(".py")) or name == os.path.basename(__file__):
+                continue
+            with open(os.path.join(tests, name), encoding="utf-8") as handle:
+                source = handle.read()
+            if SPAWNS.search(source) and STARTS_A_SERVER.search(source) and "TAGPUP_NO_JOBS" not in source:
+                missing.append(name)
+        self.assertEqual([], missing, "these start a server without TAGPUP_NO_JOBS=1")
+
     def test_not_in_a_test_run_unless_asked_and_never_when_told_not_to(self):
         with mock.patch.dict(os.environ):
             os.environ.pop(runtimes.RUN_JOBS, None)

@@ -14,7 +14,7 @@ it be put back.** It does not decide what a tag, person or face means (People), 
 or written (Files), or what a page shows (Views, Integration).
 
 ## Scope
-Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved module is changed here in the same commit.
+Paths are checked by `tests/test_the_test_map.py`; a moved module is changed here in the same commit.
 - Connections, schema, journal: `tagpup/store/db.py`, `tagpup/store/schema.py`, `tagpup/store/journal.py`, `tagpup/store/file_journal.py`, `tagpup/store/locks.py`
 - Derived tables and the word index: `tagpup/store/derived.py`, `tagpup/store/search_index.py`, `tagpup/store/generations.py`
 - Backups and checks: `tagpup/store/snapshots.py`, `tagpup/services/snapshots.py`, `tagpup/store/checks.py`, `tools/doctor.py`
@@ -44,7 +44,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | Journal keys never reused; every cascade recorded, rebuilt or forbidden | `tests/test_journal_keys_and_cascades.py`, `tests/test_journal.py` |
 | A photo file written only through the journaled path; a changed file is a conflict | `tests/test_file_journal.py` |
 | An older app refuses a newer library, also when it cached the library as current | `tests/test_newer_library_guard_in_a_long_lived_process.py`, `tests/test_migration_28_and_the_newer_library.py` |
-| A request for a library being migrated gets 503, not a parked thread | `tests/test_library_being_migrated.py` |
+| A request for a library being migrated gets 503, not a parked thread | `tests/test_server_migrates_at_start.py` |
 | Snapshot is one read transaction, placed after a quick check | `tests/test_snapshots.py`, `tests/test_snapshot_commands.py` |
 | Nothing reads `config.ini`; settings only through a journaled change | `tests/test_config_single_owner.py`, `tests/test_settings.py` |
 | A face has a photo row | `tests/test_every_face_has_a_photo_row.py` |
@@ -86,4 +86,4 @@ Read `.claude/agents/tagpup-reviewer.md` and review as it says: read-only; name 
 Findings ranked. Each: a severity word (`data` can lose or corrupt data, `wrong` a wrong result the owner sees, `low`; only the first two block a merge), `file:line`, a concrete failure scenario with concrete inputs, the evidence, and confidence (confirmed, likely, possible); as a row for docs/findings.md with `| ? |`. Say plainly when nothing blocks, and what you checked. At most two rounds; the second asks which single place should own this.
 
 ## Scenarios (tests/owners.py)
-Scenario ids: D1 D2 D3 D4 D5 D6 D7 D8. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_guard_tests_have_one_owner.py` names one that is not).
+Scenario ids: D1 D2 D3 D4 D5 D6 D7 D8. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_the_test_map.py` names one that is not).

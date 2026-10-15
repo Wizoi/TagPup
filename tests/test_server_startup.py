@@ -2,7 +2,13 @@
 
 In a home of its own: started plainly, it opened -- and made, when missing -- the
 checkout's data/photo_index.db, and logged into its data/logs.
+
+`--db` with a name no library may have serves nothing and says why: the launcher once logged "making
+one", made nothing, and served a library that was not there, every request failing with nothing naming
+the cause (Lifted: test_launcher_refuses_a_library_it_cannot_make; mutation: ignoring the refused Result
+in tagpup_web.main fails the first test of TheLauncherAndAName).
 """
+import logging
 import os
 import socket
 import subprocess
@@ -10,13 +16,16 @@ import sys
 import time
 import unittest
 import urllib.request
+from unittest import mock
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
 from tagpup.core import processes  # noqa: E402
 import own_home  # noqa: E402
 from free_port import free_port  # noqa: E402
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import tagpup_web  # noqa: E402
 
 
 class TestServerStartup(unittest.TestCase):
@@ -84,6 +93,33 @@ class TestServerStartup(unittest.TestCase):
         self.assertIsNone(photo_index.get_tag_embedding("test_tag", "diff_prompt", "model", "pretrained"))
         self.assertIsNone(photo_index.get_tag_embedding("test_tag", "prompt", "diff_model", "pretrained"))
         self.assertIsNone(photo_index.get_tag_embedding("test_tag", "prompt", "model", "diff_pretrained"))
+
+
+class TheLauncherAndAName(unittest.TestCase):
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        for patcher in (mock.patch.dict(os.environ, {"TAGPUP_WEB_NO_WARMUP": "1"}),
+                        mock.patch.object(tagpup_web.logs, "to_file", return_value="(no log file)")):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        serve = mock.patch.object(tagpup_web.web, "serve")
+        self.serve = serve.start()
+        self.addCleanup(serve.stop)
+
+    def test_a_name_the_rule_refuses_is_not_served(self):
+        with self.assertLogs("tagpup_web", level="ERROR") as logged:
+            code = tagpup_web.main(["--db", "Harbour Photos", "--tagpup-port", "1", "--tuner-port", "2"])
+        self.assertNotEqual(0, code)
+        self.serve.assert_not_called()
+        self.assertEqual([], os.listdir(self.home.data), "a library was made")
+        self.assertTrue(any("letters, numbers, underscores and hyphens" in line for line in logged.output),
+                        logged.output)
+
+    def test_a_name_it_may_make_is_made_and_served(self):
+        logging.getLogger("tagpup_web").setLevel(logging.INFO)
+        self.assertEqual(0, tagpup_web.main(["--db", "harbour", "--tagpup-port", "1", "--tuner-port", "2"]))
+        self.serve.assert_called_once()
+        self.assertTrue(os.path.exists(self.home.library("harbour.db")))
 
 
 if __name__ == "__main__":

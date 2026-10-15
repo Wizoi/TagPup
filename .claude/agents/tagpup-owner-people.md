@@ -15,7 +15,7 @@ in the file). It does not own the keyword writer (Files; you call it), the journ
 machinery (Data; you call it), the indexer, or how a page lays out a grid.
 
 ## Scope
-Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved module is changed here in the same commit.
+Paths are checked by `tests/test_the_test_map.py`; a moved module is changed here in the same commit.
 - Store: `tagpup/store/person_ids.py`, `tagpup/store/people.py`, `tagpup/store/faces.py`, `tagpup/store/face_tags.py`, `tagpup/store/face_batches.py`, `tagpup/store/embeddings.py`, `tagpup/store/taxonomy.py` (its people half: filing roots, person paths, `ensure_node`, `refuse_child_of_person`)
 - Core and models: `tagpup/core/vocabulary.py`, `tagpup/core/clustering.py`, `tagpup/ml/grouping.py`
 - Services: `tagpup/services/people.py`, `tagpup/services/faces.py`, `tagpup/services/face_people.py`, `tagpup/services/face_assignment.py`, `tagpup/services/face_batch.py`, `tagpup/services/faces_from_tags.py`, `tagpup/services/tags_from_faces.py`, `tagpup/services/person_tags.py`, `tagpup/services/identify.py`, `tagpup/services/identities.py`, `tagpup/services/tree_fill.py`, `tagpup/services/duplicate_faces.py`, `tagpup/services/tags.py` (rename and merge of a person)
@@ -89,4 +89,4 @@ Read `.claude/agents/tagpup-reviewer.md` and review as it says: read-only; name 
 Findings ranked. Each: a severity word (`data` can lose or corrupt data, `wrong` a wrong result the owner sees, `low`; only the first two block a merge), `file:line`, a concrete failure scenario with concrete inputs, the evidence, and confidence (confirmed, likely, possible); as a row for docs/findings.md with `| ? |`. Say plainly when nothing blocks, and what you checked. At most two rounds; the second asks which single place should own this.
 
 ## Scenarios (tests/owners.py)
-Scenario ids: P1 P2 P3 P4 P5 P6 P7. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_guard_tests_have_one_owner.py` names one that is not).
+Scenario ids: P1 P2 P3 P4 P5 P6 P7. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_the_test_map.py` names one that is not).

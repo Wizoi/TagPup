@@ -10,7 +10,7 @@ handing over.
 
 These drive the app through a NON-DEFAULT library prefix, which is the only
 configuration where the old thread-local and the class-level fallback disagreed.
-test_multiple_databases.py exercises the startup library only, where the two happened
+test_web_app.py exercises the startup library only, where the two happened
 to agree and these defects were invisible. No server, no port, no sleep: the queue's
 worker is run on this thread, and the suggestion run too.
 """
@@ -118,6 +118,7 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
         with patch.object(indexing_jobs.IndexQueue, "_ensure_runner"):
             res = self.post(f"/{self.OTHER_URL_NAME}/api/folder/index-start", {"folder_path": self.tmpdir})
         self.assertTrue(res["success"])
+        self.assertEqual("queued", self.get(f"/{self.OTHER_URL_NAME}/api/folder/index-status", {"path": self.tmpdir})["status"])
         queue.run_pending()
         return queue
 
