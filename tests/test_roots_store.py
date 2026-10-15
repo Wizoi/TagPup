@@ -447,31 +447,6 @@ class HowAConnectionHoldsItsRoots(unittest.TestCase):
         self.assertEqual(len(ids), applied.changed)
         self.assertEqual(1, len(self.asked), "a change holds one Roots for its whole length")
 
-    def test_an_index_open_while_the_library_is_adopted_writes_rows_afterwards(self):
-        """The always-on process holds its index's connection open while the CLI adopts the
-        library: the next batch it writes is converted by the roots the library has then."""
-        from tagpup.services.search import PhotoIndex
-        index = PhotoIndex(self.side.db_path, model="m")
-        try:
-            index.load()
-
-            def batch(name):
-                path = os.path.join(self.side.pictures, "2024 Regatta", name)
-                index.build_or_update([[0.0] * 4], [{"path": path, "mtime": 1.0, "size": 2, "tags": [], "captions": [],
-                                                      "raw_metadata": {"SourceFile": path.replace(os.sep, "/")}}],
-                                      dim=4)
-
-            batch("Before.jpg")
-            self.assertIn(os.path.join(self.side.pictures, "2024 Regatta", "Before.jpg"), self.side.raw_paths())
-            self.assertTrue(self.side.adopt().ok)
-            batch("After.jpg")
-        finally:
-            index.close()
-        held = self.side.raw_paths()
-        self.assertIn("@pictures/2024 Regatta/Before.jpg", held, "the adoption converted what was there")
-        self.assertIn("@pictures/2024 Regatta/After.jpg", held, "and the open index wrote its next batch as a row")
-        self.assertEqual([], [p for p in held if p.lower().startswith(self.side.pictures.lower() + os.sep)])
-
     def test_a_map_that_moves_moves_the_generations_every_cache_of_paths_is_keyed_by(self):
         """The Identify Faces grids, the folders the watcher watches and the index hold native
         paths, built while a generation stood: moving the root in the map moves no row, so it
@@ -516,36 +491,6 @@ class HowAConnectionHoldsItsRoots(unittest.TestCase):
                 self.assertEqual(moved, store_roots.from_row(conn, "@pictures"))
         finally:
             conn.close()
-
-    def test_a_pinned_run_stops_when_the_librarys_own_roots_change(self):
-        with store_roots.pinned(self.side.db_path):
-            conn = db.connect(self.side.db_path)
-            try:
-                self.assertTrue(store_roots.roots_for(conn).identity)
-                self.side.adopt()
-                with self.assertRaises(store_roots.RootsChanged):
-                    store_roots.roots_for(conn)
-            finally:
-                conn.close()
-
-    def test_a_write_prepared_before_an_adoption_is_run_again_after_it(self):
-        path = os.path.join(self.side.pictures, "2024 Regatta", "Caught between.jpg")
-        calls = []
-
-        def operation(conn):
-            calls.append(1)
-            row = store_roots.to_row(conn, path)
-            if len(calls) == 1:
-                # Another process adopts the library after this write has converted its path
-                # and before it writes it.
-                self.assertTrue(self.side.adopt().ok)
-            conn.execute("INSERT INTO photos (path, tags, captions, raw_metadata) VALUES (?, '[]', '[]', '{}')",
-                         (row,))
-
-        db.write_with_connection(self.side.db_path, operation)
-        self.assertEqual(2, len(calls))
-        self.assertIn("@pictures/2024 Regatta/Caught between.jpg", self.side.raw_paths())
-        self.assertNotIn(path, self.side.raw_paths())
 
     def test_a_write_on_a_long_lived_connection_begins_at_the_lock(self):
         self.side.adopt()

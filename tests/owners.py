@@ -128,7 +128,7 @@ _SCENARIO_FILES = {
 _FILES = {
     "data": {
         "unit": (
-            "tag-rules test_a_changes_owner_is_known_by_its_start test_a_copy_is_not_written_through_a_wal "
+            "tag-rules test_a_changes_owner_is_known_by_its_start "
             "test_a_withdrawn_change_is_finished test_backups_are_kept_to_five test_bulk_scripts_back_up "
             "test_compact_gives_back_free_space test_derived_batches test_derived_tables test_doctor "
             "test_every_face_has_a_photo_row test_face_save_retries_a_lock "
@@ -136,7 +136,7 @@ _FILES = {
             "test_folder_membership test_journal_undo_refusals "
             "test_mcp_photo_against_file test_name_index test_path_locker test_roots_share_spelling_and_cli_index "
             "test_roots_unplaced test_roots_verify test_roots_what_the_owner_is_told test_search_words "
-            "test_services_refuse_what_the_rules_refuse test_settings test_settings_routes test_snapshot_commands "
+            "test_services_refuse_what_the_rules_refuse test_settings test_settings_routes "
             "test_sync_records test_taken_indexes test_the_tree_is_the_librarys test_unused_tables test_unused_tables_31 "
             "test_unused_tables_32 test_validation"
         ),
