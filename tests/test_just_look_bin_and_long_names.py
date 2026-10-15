@@ -2,15 +2,11 @@
 
 #528  The file-only check is at parity with the held path: it refuses an empty file or a zero-filled tail by
       images.zero_tail_of's own rule, and nothing else -- not what follows the end of the picture.
-#529  goes_to_bin is right for a SUBST drive, a volume mounted in a folder, a \\\\?\\ spelling, a link to a share
-      and every drive type but a fixed disk.
-#530  The long name of a file is judged, and the reason for a permanent delete is the true one.
+#529, #530  (goes_to_bin, the long name, the true reason of a permanent delete: tests/test_delete_a_photo.py.)
 #531  Any exception after the held part of a Smart Rename committed answers what did change.
 """
-import ctypes
 import os
 import random
-import string
 import sys
 import unittest
 from unittest import mock
@@ -21,10 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import damaged_photos  # noqa: E402
 import test_just_look_edits as jl  # noqa: E402
 
-from tagpup.core import paths, processes  # noqa: E402
-from tagpup.files import images, recycle_bin  # noqa: E402
+from tagpup.files import images  # noqa: E402
 from tagpup.services import file_only  # noqa: E402
-from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
 
@@ -104,113 +98,6 @@ class TheCheckIsAtParityWithTheHeldPath(jl.Base):
                 handle.write(tail)
             refused_by_held_rule = images.zero_tail_of(path) >= images.ZERO_TAIL
             self.assertEqual(refused_by_held_rule, bool(file_only.unwritable([path])), (n, len(tail)))
-
-
-class WhichPlacesGoToTheBin(unittest.TestCase):
-    def judge(self, path, real=None, mount="C:\\", kind=3, device="\\Device\\HarddiskVolume3"):
-        with mock.patch.object(recycle_bin, "_real", return_value=real or path), \
-                mock.patch.object(recycle_bin, "_mount_point", return_value=mount), \
-                mock.patch.object(recycle_bin, "_drive_type", return_value=kind), \
-                mock.patch.object(recycle_bin, "_dos_device", return_value=device):
-            return recycle_bin.no_bin_reason(path)
-
-    def test_a_fixed_local_disk_with_a_real_volume_goes_to_the_bin(self):
-        self.assertIsNone(self.judge("C:\\Photos\\a.jpg"))
-
-    def test_every_drive_type_but_a_fixed_disk_does_not(self):
-        reasons = {4: recycle_bin.NETWORK, 2: recycle_bin.REMOVABLE, 5: recycle_bin.NO_BIN, 6: recycle_bin.NO_BIN,
-                   0: recycle_bin.NO_BIN, 1: recycle_bin.NO_BIN}
-        for kind, reason in reasons.items():
-            self.assertEqual(reason, self.judge("Z:\\a.jpg", mount="Z:\\", kind=kind), kind)
-
-    def test_a_subst_drive_is_not_a_bin_drive(self):
-        self.assertEqual(recycle_bin.SUBST, self.judge("Z:\\a.jpg", mount="Z:\\", device="\\??\\C:\\Temp\\x"))
-
-    def test_a_volume_mounted_in_a_folder_is_judged_by_its_mount_point(self):
-        self.assertEqual(recycle_bin.REMOVABLE, self.judge("C:\\mnt\\usb\\a.jpg", mount="C:\\mnt\\usb\\", kind=2))
-        self.assertIsNone(self.judge("C:\\mnt\\disk\\a.jpg", mount="C:\\mnt\\disk\\", kind=3))
-
-    def test_a_link_to_a_share_is_judged_by_where_it_leads(self):
-        self.assertEqual(recycle_bin.NETWORK, self.judge("C:\\links\\a.jpg", real="\\\\server\\share\\a.jpg"))
-
-    def test_the_extended_prefix_is_looked_through(self):
-        self.assertEqual(recycle_bin.NETWORK, recycle_bin.no_bin_reason("\\\\?\\UNC\\server\\share\\a.jpg"))
-        self.assertIsNone(self.judge("\\\\?\\C:\\Photos\\a.jpg", real="\\\\?\\C:\\Photos\\a.jpg"))
-
-    def test_when_unsure_it_says_permanent(self):
-        with mock.patch.object(recycle_bin, "_mount_point", side_effect=OSError("no")):
-            self.assertEqual(recycle_bin.NO_BIN, recycle_bin.no_bin_reason("C:\\Photos\\a.jpg"))
-        self.assertEqual(recycle_bin.NO_BIN, self.judge("C:\\a.jpg", device="\\Device\\Strange"))
-        self.assertEqual(recycle_bin.NO_BIN, self.judge("C:\\a.jpg", device=None))
-
-
-class ARealSubstDrive(jl.Base):
-    def test_a_file_on_it_is_permanent_though_its_drive_is_a_fixed_disk(self):
-        letter = next((c for c in reversed(string.ascii_uppercase) if not os.path.exists(c + ":\\")), None)
-        started = processes.run(["subst", letter + ":", self.lighthouse], capture_output=True, text=True)
-        if started.returncode != 0:
-            self.skipTest("subst is not available: %s" % (started.stderr or started.stdout).strip())
-        try:
-            on_subst = letter + ":\\" + os.path.basename(self.loose[0])
-            self.assertTrue(os.path.isfile(on_subst))
-            self.assertEqual(recycle_bin.SUBST, recycle_bin.no_bin_reason(on_subst))
-            self.assertFalse(recycle_bin.goes_to_bin(on_subst))
-            self.assertTrue(recycle_bin.goes_to_bin(self.loose[0]), "the same file by its own path")
-            with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
-                body = self.post("/photo/delete", {"path": on_subst}).get_json()
-            self.assertTrue(body["through_this_pc"], body)
-            self.assertIn("substituted", body["message"])
-        finally:
-            processes.run(["subst", letter + ":", "/D"], capture_output=True, text=True)
-
-
-class TheNameIsJudgedLong(jl.Base):
-    def test_the_8_3_name_of_a_longer_extension_is_refused(self):
-        real = os.path.join(self.lighthouse, "holiday.jpgold")
-        with open(real, "wb") as handle:
-            handle.write(b"x")
-        buffer = ctypes.create_unicode_buffer(300)
-        ctypes.windll.kernel32.GetShortPathNameW(real, buffer, 300)
-        if not buffer.value or buffer.value.lower() == real.lower():
-            self.skipTest("this volume makes no 8.3 names")
-        self.assertTrue(buffer.value.lower().endswith(".jpg"), buffer.value)
-        self.assertIsNotNone(recycle_bin.problem(buffer.value))
-        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=AssertionError("sent")):
-            reply = self.post("/photo/delete", {"path": buffer.value})
-        self.assertIn(reply.status_code, (400, 409), reply.data)
-        self.assertTrue(os.path.exists(real))
-
-
-class TheReasonIsTheTrueOne(jl.Base):
-    PHRASES = {recycle_bin.NETWORK: "network share", recycle_bin.REMOVABLE: "removable drive",
-               recycle_bin.SUBST: "substituted", recycle_bin.NO_BIN: "without a Recycle Bin"}
-
-    def test_the_reply_names_each_reason(self):
-        downloads = recycle_bin.downloads_folder()
-        for n, (reason, phrase) in enumerate(self.PHRASES.items()):
-            photo = self.loose[n % len(self.loose)]
-            if not os.path.exists(photo):
-                damaged_photos.whole_jpeg(photo, seed=n)
-            # The original's place has no Bin; the Downloads folder, where the copy goes, has one.
-            judged = lambda path, reason=reason: None if paths.key(path).startswith(paths.key(downloads)) else reason  # noqa: E731
-            with mock.patch.object(recycle_bin, "no_bin_reason", side_effect=judged), \
-                    mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
-                body = self.post("/photo/delete", {"path": photo}).get_json()
-            self.assertTrue(body["through_this_pc"], body)
-            self.assertIn(phrase, body["message"], reason)
-            if reason != recycle_bin.NETWORK:
-                self.assertNotIn("network share", body["message"], reason)
-            self.assertEqual(reason, body["no_bin_reason"])
-
-    def test_the_membership_answer_names_it_before_the_delete(self):
-        for reason in self.PHRASES:
-            with mock.patch.object(recycle_bin, "no_bin_reason", return_value=reason):
-                found = library_actions.membership(self.library, self.lighthouse)
-            self.assertTrue(found["permanent_delete"])
-            self.assertEqual(reason, found["permanent_reason"])
-        with mock.patch.object(recycle_bin, "no_bin_reason", return_value=None):
-            found = library_actions.membership(self.library, self.lighthouse)
-        self.assertEqual((False, None), (found["permanent_delete"], found["permanent_reason"]))
 
 
 class AnyFailureAfterTheHeldPartAnswersWhatChanged(jl.Base):

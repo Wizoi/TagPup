@@ -1,4 +1,15 @@
-"""A photo deleted from a place with no Recycle Bin goes through this PC (#694, the owner's decision): copied under
+"""Delete a photo (F8): the Recycle Bin, a place with none, a long name, Just look. The real Recycle Bin is never used:
+SHFileOperation is stood in for, and the test home's Downloads holds the copies.
+
+Lifted: test_service_delete (the service: what leaves the library and in what order), the delete tests of
+test_just_look_delete_and_rename_rules (#520-#525) and of test_just_look_bin_and_long_names (#528-#531), which keep the
+rest (held-or-ignored, the file-only check, Smart Rename failing part-way). Mutation proofs: the index rows left; the rows
+forgotten though the Bin failed; the long name not judged; a link to a share not followed; SUBST, a removable drive and
+"unsure" not read as no Bin; the membership answer never permanent; the reply not saying through this PC, or why. The
+trailing-separator refusal of recycle_bin.problem is caught by no test, as before (the route refuses it first; a test of
+the function would send a file to the real Bin when it broke).
+
+A photo deleted from a place with no Recycle Bin goes through this PC (#694, the owner's decision): copied under
 <Downloads>\\TagPup deleted from shares\\<server>\\<share>\\<path>, the copy checked (size and hash), the COPY sent to this PC's
 Recycle Bin, and only then the original deleted. Any step that fails leaves the original. (tagpup.files.recycle_bin.delete_file,
 the one owner, used by Organize's delete and the bulk Delete.) And it is refused, nothing copied, where the copy could not be
@@ -9,8 +20,10 @@ The share is a folder of this test's home that the test says has no Recycle Bin 
 is the test home's (own_home sets TAGPUP_DOWNLOADS), and so is the Recycle Bin's size and settings (TAGPUP_RECYCLE_BIN, which
 own_home sets to a large empty Bin); the Recycle Bin is the test's: nothing reaches, or reads, the owner's.
 """
+import ctypes
 import os
 import shutil
+import string
 import sys
 import unittest
 from unittest import mock
@@ -19,10 +32,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import web_client  # noqa: E402
+from service_fixture import TempLibrary  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
-from tagpup.core import paths  # noqa: E402
+import damaged_photos  # noqa: E402
+import test_just_look_edits as jl  # noqa: E402
+
+from tagpup.core import paths, processes  # noqa: E402
 from tagpup.files import recycle_bin  # noqa: E402
+from tagpup.services import libraries as library_actions  # noqa: E402
+from tagpup.services import photos as photo_actions  # noqa: E402
 
 
 class Share(unittest.TestCase):
@@ -352,6 +371,218 @@ class AskedFirst(ThroughTheOwners):
         self.assertIn("Recycle Bin", done["errors"][0]["why"])
         self.assertEqual(self.on_share, self.held(self.on_share))
         self.assertEqual([], self.binned)
+
+
+class DeletingAPhoto(unittest.TestCase):
+    """The service (tagpup.services.photos.delete): what it removes from the library, in what order, what its Result says. The
+    Recycle Bin is stood in for. Lifted from test_service_delete; the four tests are two, every assertion kept."""
+
+    def setUp(self):
+        self.lib = TempLibrary(self)
+        self.photo, self.other = self.lib.photo("finish.jpg"), self.lib.photo("finish_2.jpg")
+        for path in (self.photo, self.other):
+            self.lib.add_row(path)
+            self.lib.add_face(path, [0, 0, 10, 8], name="Rowan Thackeray")
+            self.lib.execute("INSERT INTO embeddings (photo_id, model, mtime, size, vector)"
+                             " SELECT id, 'm|p|cropped|1.0|1', 1.0, 1, x'00' FROM photos WHERE path = ?", (path,))
+
+    def delete(self, moved=True):
+        def recycle(path):
+            if moved is True:
+                os.remove(path)
+                return True
+            if isinstance(moved, Exception):
+                raise moved
+            return moved
+        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=recycle):
+            return photo_actions.delete(self.lib.library, self.photo)
+
+    def counts(self, path):
+        # Faces by their photo's path, and the faces that point at no photo row at all: a face whose photo row went while
+        # it stayed would otherwise count as gone.
+        return tuple(self.lib.rows(sql, (path,))[0][0] for sql in (
+            "SELECT COUNT(*) FROM photos WHERE path = ?",
+            "SELECT COUNT(*) FROM faces f LEFT JOIN photos p ON p.id = f.photo_id WHERE p.path = ? OR p.id IS NULL",
+            "SELECT COUNT(*) FROM embeddings e LEFT JOIN photos p ON p.id = e.photo_id WHERE p.path = ? OR p.id IS NULL"))
+
+    def test_a_photo_the_bin_refused_or_could_not_move_stays_in_the_library_and_one_it_took_takes_its_index_rows_only(self):
+        refused = self.delete(moved=False)
+        self.assertEqual((False, 0), (refused.ok, refused.changed))
+        self.assertIn("Recycle Bin", refused.message())
+        failed = self.delete(moved=OSError("the file is open elsewhere"))
+        self.assertEqual((0, "the file is open elsewhere"), (failed.changed, failed.message()))
+        self.assertEqual((1, 1, 1), self.counts(self.photo), "kept whole")
+        result = self.delete()
+        self.assertEqual((1, 1, []), (result.attempted, result.changed, result.errors))
+        self.assertEqual({"faces": 1, "photos": 1}, result.details["removed"])
+        self.assertEqual((0, 0, 0), self.counts(self.photo))
+        self.assertFalse(os.path.exists(self.photo))
+        self.assertEqual((1, 1, 1), self.counts(self.other), "nothing else goes")
+
+
+def refuses_to_send(*_args):
+    raise AssertionError("something was sent to the Recycle Bin")
+
+
+def unc_of(path):
+    r"""\\localhost\C$\... for a local file, or None when the administrative share is not there."""
+    unc = "\\\\localhost\\" + path[0] + "$" + path[2:]
+    return unc if os.path.exists(unc) else None
+
+
+class JustLookDelete(jl.Base):
+    """Delete in a folder the library does not hold (Just look, #520-#525, #528-#531): only an existing regular photo FILE goes
+    to the Bin, the place is judged truly, the reply says where it restores to. Lifted from test_just_look_delete_and_rename_rules
+    and test_just_look_bin_and_long_names; the Bin is stood in for, and the test home's Downloads holds the copy."""
+
+    PHRASES = {recycle_bin.NETWORK: "network share", recycle_bin.REMOVABLE: "removable drive",
+               recycle_bin.SUBST: "substituted", recycle_bin.NO_BIN: "without a Recycle Bin"}
+
+    def short(self, path):
+        buffer = ctypes.create_unicode_buffer(300)
+        ctypes.windll.kernel32.GetShortPathNameW(path, buffer, 300)
+        return buffer.value or path
+
+    def test_only_an_existing_regular_photo_file_is_sent_to_the_bin_in_a_folder_held_or_not(self):
+        texts = [os.path.join(folder, "notes.txt") for folder in (self.lighthouse, self.regatta)]
+        for text in texts:
+            with open(text, "w") as handle:
+                handle.write("not a photo")
+        for path in (self.lighthouse, texts[0], self.short(texts[0]), self.loose[0] + os.sep,
+                     os.path.join(self.lighthouse, "gone.jpg"),
+                     self.regatta, texts[1], self.short(texts[1]), self.held[0] + os.sep):
+            with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=refuses_to_send):
+                reply = self.post("/photo/delete", {"path": path})
+            self.assertIn(reply.status_code, (400, 409), (path, reply.data))
+            self.assertFalse(reply.get_json()["success"])
+        self.assertTrue(all(os.path.exists(path) for path in (self.lighthouse, self.regatta, *texts)))
+        self.assertEqual(3, len([n for n in os.listdir(self.lighthouse) if n.endswith(".jpg")]))
+        self.assertEqual(2, self.rows("SELECT COUNT(*) FROM photos")[0][0])
+        self.assert_library_unchanged()
+        for path in (self.lighthouse, texts[0], os.path.join(self.lighthouse, "missing.jpg")):   # the function itself
+            with self.assertRaises(ValueError, msg=path):
+                recycle_bin.send_to_recycle_bin(path)
+        self.assertTrue(os.path.exists(texts[0]))
+
+    def test_a_photo_file_goes_to_the_bin_and_the_reply_says_so(self):
+        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
+            body = self.post("/photo/delete", {"path": self.loose[0]}).get_json()
+            self.assertEqual(200, self.post("/photo/delete", {"path": self.held[0]}).status_code)
+        self.assertFalse(body["through_this_pc"])
+        self.assertIn("Recycle Bin", body["message"])
+
+    def test_the_folder_says_before_the_delete_whether_it_would_be_permanent_and_why(self):
+        self.assertFalse(library_actions.membership(self.library, self.lighthouse)["permanent_delete"])
+        unc = unc_of(self.lighthouse)
+        if unc is not None:
+            self.assertTrue(library_actions.membership(self.library, unc)["permanent_delete"])
+        for reason in self.PHRASES:
+            with mock.patch.object(recycle_bin, "no_bin_reason", return_value=reason):
+                found = library_actions.membership(self.library, self.lighthouse)
+            self.assertEqual((True, reason), (found["permanent_delete"], found["permanent_reason"]))
+        with mock.patch.object(recycle_bin, "no_bin_reason", return_value=None):
+            found = library_actions.membership(self.library, self.lighthouse)
+        self.assertEqual((False, None), (found["permanent_delete"], found["permanent_reason"]))
+
+    def test_a_unc_path_to_local_storage_goes_through_this_pc_and_the_reply_says_where_it_restores_to(self):
+        unc = unc_of(self.loose[0])
+        if unc is None:
+            self.skipTest("the administrative share \\\\localhost\\%s$ is not available" % self.loose[0][0])
+        binned = []
+        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: binned.append(p) or os.remove(p) or True):
+            reply = self.post("/photo/delete", {"path": unc})
+        self.assertEqual(200, reply.status_code, reply.data)
+        body = reply.get_json()
+        self.assertTrue(body["through_this_pc"], body)
+        self.assertNotIn("permanently", body["message"])
+        self.assertIn("TagPup deleted from shares", body["message"])
+        self.assertEqual([recycle_bin.mirror_of(unc)], binned, "the copy, under the test home's Downloads, went to the Bin")
+        self.assertFalse(os.path.exists(self.loose[0]))
+        self.assert_library_unchanged()
+
+    def test_the_reply_names_the_true_reason_for_each(self):
+        downloads = recycle_bin.downloads_folder()
+        for n, (reason, phrase) in enumerate(self.PHRASES.items()):
+            photo = self.loose[n % len(self.loose)]
+            if not os.path.exists(photo):
+                damaged_photos.whole_jpeg(photo, seed=n)
+            # The original's place has no Bin; the Downloads folder, where the copy goes, has one.
+            judged = lambda path, reason=reason: None if paths.key(path).startswith(paths.key(downloads)) else reason  # noqa: E731
+            with mock.patch.object(recycle_bin, "no_bin_reason", side_effect=judged), \
+                    mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
+                body = self.post("/photo/delete", {"path": photo}).get_json()
+            self.assertTrue(body["through_this_pc"], body)
+            self.assertIn(phrase, body["message"], reason)
+            if reason != recycle_bin.NETWORK:
+                self.assertNotIn("network share", body["message"], reason)
+            self.assertEqual(reason, body["no_bin_reason"])
+
+    def test_the_8_3_name_of_a_longer_extension_is_refused(self):
+        real = os.path.join(self.lighthouse, "holiday.jpgold")
+        with open(real, "wb") as handle:
+            handle.write(b"x")
+        short = self.short(real)
+        if short.lower() == real.lower():
+            self.skipTest("this volume makes no 8.3 names")
+        self.assertTrue(short.lower().endswith(".jpg"), short)
+        self.assertIsNotNone(recycle_bin.problem(short))
+        with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=AssertionError("sent")):
+            reply = self.post("/photo/delete", {"path": short})
+        self.assertIn(reply.status_code, (400, 409), reply.data)
+        self.assertTrue(os.path.exists(real))
+
+    def test_a_file_on_a_subst_drive_is_permanent_though_its_drive_is_a_fixed_disk(self):
+        letter = next((c for c in reversed(string.ascii_uppercase) if not os.path.exists(c + ":\\")), None)
+        started = processes.run(["subst", letter + ":", self.lighthouse], capture_output=True, text=True)
+        if started.returncode != 0:
+            self.skipTest("subst is not available: %s" % (started.stderr or started.stdout).strip())
+        try:
+            on_subst = letter + ":\\" + os.path.basename(self.loose[0])
+            self.assertTrue(os.path.isfile(on_subst))
+            self.assertEqual(recycle_bin.SUBST, recycle_bin.no_bin_reason(on_subst))
+            self.assertFalse(recycle_bin.goes_to_bin(on_subst))
+            self.assertTrue(recycle_bin.goes_to_bin(self.loose[0]), "the same file by its own path")
+            with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
+                body = self.post("/photo/delete", {"path": on_subst}).get_json()
+            self.assertTrue(body["through_this_pc"], body)
+            self.assertIn("substituted", body["message"])
+        finally:
+            processes.run(["subst", letter + ":", "/D"], capture_output=True, text=True)
+
+
+class WhichPlacesGoToTheBin(unittest.TestCase):
+    """goes_to_bin is right for a SUBST drive, a volume mounted in a folder, an extended-prefix spelling, a link to a share and every drive
+    type but a fixed disk (#529); when unsure it says permanent. Lifted from test_just_look_bin_and_long_names, eight tests as a table."""
+
+    def judge(self, path, real=None, mount="C:\\", kind=3, device="\\Device\\HarddiskVolume3"):
+        with mock.patch.object(recycle_bin, "_real", return_value=real or path), \
+                mock.patch.object(recycle_bin, "_mount_point", return_value=mount), \
+                mock.patch.object(recycle_bin, "_drive_type", return_value=kind), \
+                mock.patch.object(recycle_bin, "_dos_device", return_value=device):
+            return recycle_bin.no_bin_reason(path)
+
+    def test_only_a_fixed_local_disk_with_a_real_volume_goes_to_the_bin(self):
+        no_bin = {4: recycle_bin.NETWORK, 2: recycle_bin.REMOVABLE, 5: recycle_bin.NO_BIN, 6: recycle_bin.NO_BIN,
+                  0: recycle_bin.NO_BIN, 1: recycle_bin.NO_BIN}
+        cases = [(("C:\\Photos\\a.jpg",), None)]
+        cases += [(("Z:\\a.jpg",), reason, {"mount": "Z:\\", "kind": kind}) for kind, reason in no_bin.items()]
+        cases += [(("Z:\\a.jpg",), recycle_bin.SUBST, {"mount": "Z:\\", "device": "\\??\\C:\\Temp\\x"}),
+                  (("C:\\mnt\\usb\\a.jpg",), recycle_bin.REMOVABLE, {"mount": "C:\\mnt\\usb\\", "kind": 2}),
+                  (("C:\\mnt\\disk\\a.jpg",), None, {"mount": "C:\\mnt\\disk\\", "kind": 3}),
+                  (("C:\\links\\a.jpg",), recycle_bin.NETWORK, {"real": "\\\\server\\share\\a.jpg"}),
+                  (("\\\\?\\C:\\Photos\\a.jpg",), None, {"real": "\\\\?\\C:\\Photos\\a.jpg"}),
+                  (("C:\\a.jpg",), recycle_bin.NO_BIN, {"device": "\\Device\\Strange"}),
+                  (("C:\\a.jpg",), recycle_bin.NO_BIN, {"device": None})]
+        for case in cases:
+            (path,), want, *more = case
+            self.assertEqual(want, self.judge(path, **(more[0] if more else {})), case)
+        self.assertEqual(recycle_bin.NETWORK, recycle_bin.no_bin_reason("\\\\?\\UNC\\server\\share\\a.jpg"))
+        with mock.patch.object(recycle_bin, "_mount_point", side_effect=OSError("no")):
+            self.assertEqual(recycle_bin.NO_BIN, recycle_bin.no_bin_reason("C:\\Photos\\a.jpg"))
+        self.assertFalse(recycle_bin.goes_to_bin("\\\\server\\share\\a.jpg"))
+        self.assertFalse(recycle_bin.goes_to_bin("\\\\?\\UNC\\server\\share\\a.jpg"))
+        with mock.patch("ctypes.windll.kernel32.GetDriveTypeW", return_value=4, create=True):
+            self.assertFalse(recycle_bin.goes_to_bin("Z:\\Photos\\a.jpg"), "a mapped network drive")
 
 
 if __name__ == "__main__":
