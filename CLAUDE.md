@@ -139,7 +139,7 @@ without their bare copies -- and the tests agreed with the bug.
 
 **A bulk write must tell the index what it wrote.** Saving one photo always did;
 the bulk paths did not, and rows described what photos used to hold.
-`record_tags_in_index()`.
+`photos.record_tags()`.
 
 **A page's `main.js` only wires it, and starts it at the very end.** Each feature is a
 module in `web/tagpup/` or `web/tuner/`. The page's mutable state is `state` in its
