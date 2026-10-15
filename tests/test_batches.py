@@ -269,7 +269,7 @@ class HandOver(T.Bulk):
         writing, outcome = in_thread(lambda: bulk_edit.run(self.library, edit, self.ids, "exiftool"))
         self.assertTrue(gate.reached.wait(30))
         moving = lifecycle.Lifecycle()
-        draining, drained = in_thread(lambda: moving.drain(seconds=30))
+        draining, drained = in_thread(lambda: moving.drain(seconds=30, lease=60))
         wait_until(lambda: [each["state"] for each in batches.listing(self.library)] == ["stopping"], "the batch is asked to stop")
         asked = time.monotonic()
         gate.release.set()
@@ -296,7 +296,7 @@ class HandOver(T.Bulk):
         holder.start()
         self.assertTrue(started.wait(30))
         with mock.patch("tagpup.jobs.suggestions.running", return_value=1):
-            answer = lifecycle.Lifecycle().drain(seconds=1)
+            answer = lifecycle.Lifecycle().drain(seconds=1, lease=60)
         self.assertEqual({"drained": False, "waiting_for": ["1 Suggest run(s)"]}, answer)
         release.set()
         holder.join(30)
@@ -307,7 +307,7 @@ class AfterTheServerClosed(T.Bulk):
     def test_a_batch_that_claims_after_the_drain_asked_is_stopped_before_it_begins_and_a_resume_lets_them_in(self):
         self.addCleanup(batches.reopen)
         moving = lifecycle.Lifecycle()
-        self.assertEqual({"drained": True}, moving.drain(seconds=5))
+        self.assertEqual({"drained": True}, moving.drain(seconds=5, lease=60))
         with self.assertRaises(Refused):
             with batches.claim(self.library, "bulk tags", self.PHOTOS):
                 self.fail("it began")

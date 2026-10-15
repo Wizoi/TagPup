@@ -111,7 +111,7 @@ class TheServerMigratesAtStart(unittest.TestCase):
             try:
                 self.assertTrue(entered.wait(30))
                 self.assertIn("bringing 2 library(ies) up to date", lifecycle.status()["busy"])
-                answer = lifecycle.drain(seconds=0.2)
+                answer = lifecycle.drain(seconds=0.2, lease=60)
                 self.assertFalse(answer["drained"])
                 self.assertIn("bringing 2 library(ies) up to date", answer["waiting_for"])
             finally:

@@ -600,11 +600,11 @@ class TheActivityPageIsNotSomebodyUsingTheApp(unittest.TestCase):
         ask("GET", "/activity/main.js")
         clock[0] += 5
         # Nothing but the page's reads: the quiet moment is there.
-        self.assertTrue(lifecycle.drain(seconds=1, quiet=120)["drained"])
+        self.assertTrue(lifecycle.drain(seconds=1, quiet=120, lease=60)["drained"])
         lifecycle.resume()
         ask("POST", "/api/activity/jobs/run")
         clock[0] += 5
-        self.assertFalse(lifecycle.drain(seconds=1, quiet=120)["drained"])
+        self.assertFalse(lifecycle.drain(seconds=1, quiet=120, lease=60)["drained"])
 
 
 if __name__ == "__main__":

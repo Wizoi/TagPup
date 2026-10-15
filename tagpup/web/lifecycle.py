@@ -64,11 +64,10 @@ LEFT_DRAINED = 180
 #: under their library's address (/<library>/api/server: the gear's version, and
 #: api.js's probe after an /api/ image failed), and that one is NOT exempt, on purpose:
 #: while the server drains it is turned away 503 with X-TagPup-Updating, which is how the
-#: probe learns the server is away. The drain and the resume are exempt under any
-#: library's address too: counted, a drain would wait for itself.
-STATUS, DRAIN, RESUME = "/api/server", "/api/server/drain", "/api/server/resume"
-EXEMPT = frozenset({STATUS, DRAIN, RESUME})
-CONTROL = (DRAIN, RESUME)
+#: probe learns the server is away. The drain is exempt under any library's address
+#: too: counted, a drain would wait for itself.
+STATUS, DRAIN = "/api/server", "/api/server/drain"
+EXEMPT = frozenset({STATUS, DRAIN})
 
 
 #: What only watches the server: the Activity page and its reads (tagpup.web.activity_routes),
@@ -89,7 +88,7 @@ def exempt(path):
         return True
     # A URL's path, not a tag: what follows its first part, "/<library>".
     second = path.find("/", 1)
-    return second > 0 and path[second:] in CONTROL
+    return second > 0 and path[second:] == DRAIN
 
 UPDATING_MESSAGE = "TagPup is moving to a new version; this is sent again in a moment."
 
@@ -141,8 +140,7 @@ class Lifecycle:
         self._last_request = None
         #: A drain is under way: a second joins it.
         self._draining = False
-        #: How long a drained server not stopped waits before it takes work again: the
-        #: drain's `lease`, or LEFT_DRAINED.
+        #: How long a drained server not stopped waits before it takes work again: the drain's `lease`.
         self._lease = LEFT_DRAINED
 
     # ---- What it says ---------------------------------------------------------------
@@ -169,8 +167,8 @@ class Lifecycle:
                 and hmac.compare_digest(token, self._launcher_token))
 
     def authorizes(self, headers, remote):
-        """May a request with `headers` from `remote` drain or resume this server: a
-        launcher's token, from this machine?"""
+        """May a request with `headers` from `remote` drain this server: a launcher's token,
+        from this machine?"""
         return self.allows_launcher(headers.get(launcher.HEADER), remote)
 
     # ---- The gate every request passes ------------------------------------------------
@@ -203,13 +201,13 @@ class Lifecycle:
 
     # ---- Draining ---------------------------------------------------------------------
 
-    def drain(self, seconds=DRAIN_SECONDS, quiet=0, lease=None):
+    def drain(self, seconds=DRAIN_SECONDS, quiet=0, *, lease):
         """Stop taking new work and wait up to `seconds` for what is under way to finish.
         {"drained": True}, or {"drained": False, "waiting_for": [...]}: refused at once,
         nothing turned away, while work runs beside the requests or a request came in
         the last `quiet` seconds (someone is using the app); or the deadline passed, and
         the server takes work again. Drained and not stopped within `lease` seconds
-        (LEFT_DRAINED by default), it takes work again: a launcher's window closed
+        (the launcher always says), it takes work again: a launcher's window closed
         between its drain and the end it would have made (tagpup.launcher)."""
         deadline = self._clock() + seconds
         with self._changed:
@@ -231,7 +229,7 @@ class Lifecycle:
                     return {"drained": False, "waiting_for": busy}
                 self._closed = True
                 self._drained_at = None
-                self._lease = LEFT_DRAINED if lease is None else lease
+                self._lease = lease
                 # Under the lock a resume takes: a resume cannot reopen before the batches are told to stop.
                 if batches.stop_all():
                     logger.info("Asked the batches of photo files to stop at their chunk.")
@@ -269,7 +267,8 @@ class Lifecycle:
         return {"drained": False, "waiting_for": waiting}
 
     def resume(self):
-        """Take work again, and start the background tasks a drain stopped."""
+        """Take work again, and start the background tasks a drain stopped. Only the server's own: a drain's lease ended,
+        or its time ran out (no route does it)."""
         with self._changed:
             was_closed = self._closed
             self._reopen()
@@ -380,21 +379,11 @@ def drain():
     seconds = body.get("seconds", DRAIN_SECONDS)
     quiet = body.get("quiet", 0)
     lease = body.get("lease")
-    if lease is not None and (isinstance(lease, bool) or not isinstance(lease, (int, float))
-                              or not 0 < lease <= LEFT_DRAINED):
+    if isinstance(lease, bool) or not isinstance(lease, (int, float)) or not 0 < lease <= LEFT_DRAINED:
         return responses.error(400, "lease must be a number of seconds, more than 0 and at most %d" % LEFT_DRAINED)
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds <= MAX_DRAIN_SECONDS:
         return responses.error(400, "seconds must be a number of seconds, more than 0 and at most %d"
                                % MAX_DRAIN_SECONDS)
     if isinstance(quiet, bool) or not isinstance(quiet, (int, float)) or quiet < 0:
         return responses.error(400, "quiet must be a number of seconds, 0 or more")
-    return jsonify(dict(lifecycle.drain(seconds, quiet, lease), success=True))
-
-
-@routes.post(RESUME)
-def resume():
-    """Take work again after a drain (the supervisor's, when it could not move the server)."""
-    lifecycle = _lifecycle()
-    if not lifecycle.authorizes(request.headers, request.remote_addr):
-        return responses.error(403, "Only the process that started this server may resume it")
-    return jsonify({"success": True, "resumed": lifecycle.resume()})
+    return jsonify(dict(lifecycle.drain(seconds, quiet, lease=lease), success=True))

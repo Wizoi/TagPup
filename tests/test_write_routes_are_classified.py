@@ -41,7 +41,6 @@ ALLOWED = {
     "/api/photo/open": "opens the file in the viewer; no data",
     "/api/photo/open-explorer": "shows the file in Explorer; no data",
     "/api/server/drain": "the update's own; the job is work a drain waits for (lifecycle.long_work)",
-    "/api/server/resume": "the update's own",
     # Writes that touch nothing the plan reads.
     "/api/databases/create": "makes another library",
     "/api/settings": "the library's settings; they apply to the next index or Suggest, not to names already read",

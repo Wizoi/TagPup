@@ -144,7 +144,7 @@ class Rename(T.Bulk):
         writing, answered = B.in_thread(lambda: self.rename(self.app.test_client()))
         self.assertTrue(gate.reached.wait(30))
         moving = lifecycle.Lifecycle()
-        draining, drained = B.in_thread(lambda: moving.drain(seconds=30))
+        draining, drained = B.in_thread(lambda: moving.drain(seconds=30, lease=60))
         B.wait_until(lambda: [each["state"] for each in batches.listing(self.library)] == ["stopping"], "asked to stop")
         gate.release.set()
         writing.join(30)
