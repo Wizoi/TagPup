@@ -226,16 +226,6 @@ describe("an address, or a library, that gives no view", () => {
     assert.match(ctx.stripText(), /0 photos/);
   });
 
-  test("a library behind (the route's 409 sentence) is shown, not a trace", async (t) => {
-    const ctx = await load(t);
-    ctx.server.first("/api/library/ids", { error: "kr-track has not been brought up to date for browsing." }, { status: 409 });
-    ctx.window.history.replaceState({}, "", "/photo_index/?view=year&value=2021");
-    ctx.window.dispatchEvent(new ctx.window.PopStateEvent("popstate", { state: {} }));
-    await ctx.settle();
-    assert.match(ctx.document.getElementById("thumbnails-grid").textContent, /has not been brought up to date/);
-    assert.match(ctx.stripText(), /has not been brought up to date/);
-  });
-
   test("a root this computer does not place: the banner, and the view says why it is empty", async (t) => {
     const ctx = await load(t, { rootsProblem: true });
     const banner = ctx.document.getElementById("roots-banner");
@@ -566,7 +556,7 @@ describe("a view that changes under the page", () => {
 
   test("a refresh that cannot read the order leaves the view as it was and says so", async (t) => {
     const ctx = await load(t);
-    ctx.server.first("/api/library/ids", { error: "the library is busy" }, { status: 503 });
+    ctx.server.first("/api/library/ids", { error: "the library is busy" }, { status: 500 });
     click(ctx.window, ctx.document.getElementById("btn-library-refresh"));
     await ctx.settle();
     assert.equal(ctx.state.library.ids.length, N);

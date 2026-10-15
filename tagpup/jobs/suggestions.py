@@ -48,7 +48,6 @@ from tagpup.core import paths
 from tagpup.core.gpu_turns import Cancelled
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import libraries, suggester
-from tagpup.services import suggestions as saved
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +289,7 @@ class SuggestionRuns:
         for meta in (photos or {}).values():
             spelled[paths.key(meta["path"])] = paths.stored(meta["path"])
         return {spelled.get(paths.key(photo), photo): found
-                for photo, found in saved.saved_in(self.db_path, folder).items()}
+                for photo, found in suggester.saved_in(self.db_path, folder).items()}
 
     # ---- What a page asks -----------------------------------------------------------
 
@@ -784,7 +783,7 @@ class SuggestionRuns:
             # inside the suggester -- may have left it short of its faces. Not kept.
             return None
         try:
-            saved.keep(self.db_path, photo, plain(found), getattr(model, "model_key", None))
+            suggester.keep(self.db_path, photo, plain(found), getattr(model, "model_key", None))
         except Exception as e:
             # Not kept, so the next run suggests for it again; the rest of this run and
             # its consensus go on (#95).
@@ -808,7 +807,7 @@ class SuggestionRuns:
                    and isinstance(found.get("raw_suggestions"), dict) and found["raw_suggestions"].get("path")]
             if len(raw) < 2:
                 return
-            saved.offer(self.db_path, [(paths.stored(s["path"]), plain(model.offered(s))) for s in model.consensus(raw)],
+            suggester.offer(self.db_path, [(paths.stored(s["path"]), plain(model.offered(s))) for s in model.consensus(raw)],
                         label="folder consensus for %s" % os.path.basename(folder))
         except Exception as e:
             logger.error("Error taking folder consensus: %s", e)

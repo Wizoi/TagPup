@@ -134,8 +134,8 @@ class TestRefusals(TagPupAPITestBase):
         for route, body in (("/api/photo/save-metadata", {"title": "x", "tags": []}),
                             ("/api/photo/save-metadata", {"path": ghost, "title": "x", "tags": []}),
                             ("/api/photos/bulk-tags", {"paths": [], "add_tags": ["X"]}),
-                            ("/api/folder/auto-apply", {"folder_path": self.tmpdir, "threshold": 0.75}),
-                            ("/api/folder/auto-apply", {"folder_path": os.path.join(self.tmpdir, "nope"), "threshold": 0.75})):
+                            ("/api/folder/auto-apply", {"folder_path": self.tmpdir}),
+                            ("/api/folder/auto-apply", {"folder_path": os.path.join(self.tmpdir, "nope")})):
             self.assertEqual(400, self.post(route, body)[0], (route, body))
 
 

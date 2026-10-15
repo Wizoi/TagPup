@@ -18,7 +18,7 @@ who a person is (Files, People); the derived tables it reads are written by Data
 Paths are checked by `tests/test_the_test_map.py`; a moved module is changed here in the same commit.
 - View queries: `tagpup/store/library_view.py`, `tagpup/store/selection_folders.py`, `tagpup/store/search_index.py` (the query side; its writers are Data's), `tagpup/store/suggestions.py`
 - View services and routes: `tagpup/services/library_view.py`, `tagpup/services/selection.py`, `tagpup/services/thumbnails.py`, the `/api/library/*` routes of `tagpup/web/tagpup_routes.py` (shared with Integration)
-- Photo vectors and Suggest: `tagpup/services/search.py` (CLIP nearest neighbours, `PhotoIndex`; not the word search), `tagpup/ml/vector_index.py`, `tagpup/services/suggester.py`, `tagpup/services/suggestions.py`, `tagpup/jobs/suggestions.py`, `tagpup/core/suggesting.py`
+- Photo vectors and Suggest: `tagpup/services/search.py` (CLIP nearest neighbours, `PhotoIndex`; not the word search), `tagpup/ml/vector_index.py`, `tagpup/services/suggester.py`, `tagpup/jobs/suggestions.py`, `tagpup/core/suggesting.py`
 - Models and the card: `tagpup/ml/gpu.py`, `tagpup/ml/clip.py`, `tagpup/ml/faces.py`, `tagpup/core/gpu_turns.py`, `tagpup/runtime.py` (the composition root, shared with Integration)
 - Pages: `web/tagpup/navigator.js`, `web/tagpup/navigator-model.js`, `web/tagpup/navigator-tree.js`, `web/tagpup/view-left.js`, `web/tagpup/sort-menu.js`, `web/tagpup/search.js`, `web/tagpup/search-model.js`, `web/tagpup/library-source.js`, `web/tagpup/library-view.js`, `web/tagpup/vgrid.js`, `web/tagpup/details-panel.js`, `web/tagpup/suggestions.js`
 - Tables read: `photo_tags`, `folders`, `photo_folder`, `photo_people`, `search_words`, `search_names`, `embeddings`, `tag_embeddings`, `suggestions`.
@@ -46,7 +46,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 | A looking run keeps no vector | `tests/test_analyse_only_suggest.py` (weak: #544 passed with `remember` forced on) |
 | FAISS uses one thread; a search keeps no thread buffers | `tests/test_a_search_keeps_no_thread_buffers.py` |
 | Vectors and suggestions follow their photo | `tests/test_suggest_then_apply_all.py` (V3, V9), `tests/test_embeddings_follow_their_photo.py`, `tests/test_settling_carries_vectors.py` |
-| The page's rules against the server's (picker, order, counts) | `tests/frontend/navigator.test.mjs`, `tests/frontend/library-view.test.mjs`, `tests/frontend/search-page.test.mjs` (partial; the picker's chip key against the server's reading of a source: `tests/fixtures/chip_keys.json`, `tests/test_chip_keys_follow_the_server.py`) |
+| The page's rules against the server's (picker, order, counts) | `tests/frontend/navigator.test.mjs`, `tests/frontend/library-view.test.mjs`, `tests/frontend/search-page.test.mjs` (partial; the picker's chip key against the server's reading of a source: `tests/fixtures/chip_keys.json`, `tests/test_chip_keys_follow_the_server.py`; the caps, kinds, orders and term rule library-source.js copies: `tests/fixtures/view_rules.json`, `tests/test_view_rules_follow_the_server.py`) |
 | A view kind added in every layer | none: review only |
 
 ## Review checklist (ask in this order)
@@ -66,7 +66,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 14. Does a Just look run write anything (vectors, rows, settings, derived tables)?
 15. Interrupted or two at once: a view read while a bulk write runs; a Suggest beside a CLI index wanting the card; the server's idle release racing a request.
 
-Recurring classes: orders and ties; a plan that scans on the real library; a derived table that missed a writer; the page keeping its own rule; a navigator stale or capped; models on the card (two big models on one card, a model kept after a settings change, a warm-up that loads with nobody asking); memory held by a library of this size; a stale vector; a looking run that leaks. Open: #761 (two libraries naming different CLIP models in one process).
+Recurring classes: orders and ties; a plan that scans on the real library; a derived table that missed a writer; the page keeping its own rule; a navigator stale or capped; models on the card (two big models on one card, a model kept after a settings change, a warm-up that loads with nobody asking); memory held by a library of this size; a stale vector; a looking run that leaks. #761 is refused at the source: `Runtime.begin` turns away a run whose models differ from a run under way.
 
 ## Who decides
 - **Tests answer scenarios, not code** (CLAUDE.md): you review every change in your domain for the scenario it must keep

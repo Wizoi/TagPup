@@ -81,7 +81,7 @@ class ApplyAllFilesAPersonAsTheChipDoes(unittest.TestCase):
                 before = library_dump.dump(library.path)
                 self.tree_before = self.tree(library)
                 entry = {"tags": [], "people": [{"name": TABLE["name"], "score": 0.9}]}
-                result = tagging.apply_suggestions(library, {photo: entry}, EXIFTOOL, 0.0)
+                result = tagging.apply_suggestions(library, {photo: entry}, EXIFTOOL)
                 self.assertFalse(result.refused, result.refused)
                 wanted = {"already": case["file"], "ask": case["file"] + [TABLE["name"]]}.get(
                     case["expect"], case["file"] + [case["expect"]])

@@ -138,7 +138,7 @@ class TestAWriteStoppedPartWay(unittest.TestCase):
             return real(*args, **kwargs)
 
         with mock.patch.object(file_changes, "_carry", stop_after_the_first):
-            return self.lib.post("/api/folder/auto-apply", {"folder_path": self.lib.photos, "threshold": 0.0})
+            return self.lib.post("/api/folder/auto-apply", {"folder_path": self.lib.photos})
 
     def test_an_apply_all_stopped_because_the_roots_changed_names_the_photos_written_and_records_them(self):
         scanned, _reply = self.lib.get("/api/folder/scan", {"path": self.lib.photos})

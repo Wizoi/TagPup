@@ -154,7 +154,7 @@ class AnOwnerReviewingIsNotStranded(WithIndexing):
         with mock.patch.object(suggestion_jobs, "on_looks_use", touched.append):
             for what, call in (("a status poll", lambda: self.status(self.cup)),
                                ("an Apply", lambda: self.post("/folder/auto-apply",
-                                                              {"folder_path": self.cup, "threshold": 0.0})),
+                                                              {"folder_path": self.cup})),
                                ("a view of the folder",
                                 lambda: self.client.get("/library/api/folder/scan", query_string={"path": self.cup}))):
                 del touched[:]
@@ -219,7 +219,7 @@ class ASmartRenameRenamesWhatIsKept(Base):
         # Not analysed again, and Apply reaches the files under their new names.
         self.start(self.cup)
         self.assertEqual(seen, len(self.clip.images))
-        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
+        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup}).status_code)
         self.assertIn("Trips/Regatta", base.tags_in(os.path.join(self.cup, "Lighthouse - 1.jpg")))
         self.assert_library_unchanged()
 
@@ -301,7 +301,7 @@ class APersonIsFiledAsTheChipFilesThem(Base):
         tree = base.tree_of(self.library.path)
         self.start(self.cup)
         self.assertEqual(["Wren Okafor"], [p["name"] for p in self.suggested(self.cup)["cup_03.jpg"]["people"]])
-        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
+        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup}).status_code)
         self.assertEqual(["Trips/Regatta", "Wren Okafor"], base.tags_in(self.loose[2]))
         self.assertEqual(tree, base.tree_of(self.library.path), "a node was made")
         self.assert_library_unchanged()
@@ -309,7 +309,7 @@ class APersonIsFiledAsTheChipFilesThem(Base):
     def test_held(self):
         self.know_wren()
         self.assertFalse(self.start(self.regatta)["in_memory"])
-        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.regatta, "threshold": 0.0,
+        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.regatta,
                                                                "photo_paths": [self.held[2]]}).status_code)
         self.assertIn("Wren Okafor", base.tags_in(self.held[2]))
         self.assertNotIn("People/Wren Okafor", base.tags_in(self.held[2]))
@@ -325,13 +325,13 @@ class APersonIsFiledAsTheChipFilesThem(Base):
             conn.close()
         self.before = library_dump.dump(self.library.path)
         self.start(self.cup)
-        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
+        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup}).status_code)
         self.assertIn("Wren Okafor", base.tags_in(self.loose[2]))
         self.assertNotIn("People/Wren Okafor", base.tags_in(self.loose[2]))
 
     def test_a_person_the_tree_holds_is_filed_where_the_tree_has_them(self):
         self.start(self.cup)
-        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
+        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup}).status_code)
         self.assertEqual(["Trips/Regatta", "People/Rowan Thackeray"], base.tags_in(self.loose[0]))
 
 

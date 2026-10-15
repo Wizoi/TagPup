@@ -20,8 +20,7 @@
 //
 // WHAT FAILS: a list of more than 1,000, or a search whose address would be longer than the page can be reloaded by
 // (MAX_ADDRESS), is a sentence by the box and nothing is sent; words with no letter or digit are left out and said so; a
-// search the server refuses (400) says the server's sentence by the box; a library still making its word index (503) says
-// so in the strip and is asked again for about a minute (library-source.js). A later search wins: the view it replaces asks
+// search the server refuses (400) says the server's sentence by the box. A later search wins: the view it replaces asks
 // nothing more and its answer is dropped. Everything the box holds is `state.search`.
 import { buildElement, replaceContent } from './common/dom.js';
 import { state } from './state.js';
