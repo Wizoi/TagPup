@@ -428,6 +428,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
 def skip_cut_short(result, path, why):
     """`path`, a photo whose file does not open whole (field_values.CutShort), is left out of the write: skipped, with
     the reason, and counted in details[SKIPPED_DAMAGED]. The file is not touched, and the photo is in no change."""
+    logger.warning("%s: the file does not open whole, so nothing is written to it: %s", path, why)
     result.skip(path, "damaged, nothing is written to it: %s" % why)
     result.details[SKIPPED_DAMAGED] = result.details.get(SKIPPED_DAMAGED, 0) + 1
 

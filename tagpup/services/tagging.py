@@ -124,6 +124,8 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         try:
             now = field_values.read_one(et, photo_path, read, validate=True)
         except field_values.CutShort as cut:
+            logger.warning("%s: the file does not open whole, so the save is refused and nothing is written to it: %s",
+                           photo_path, cut)
             result.refuse("%s: damaged, nothing is written to it: %s. Restore it from a backup, then try again." % (
                 os.path.basename(photo_path), cut))
             result.details[DAMAGED_PHOTOS] = [photo_path]
