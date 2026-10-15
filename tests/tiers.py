@@ -47,6 +47,7 @@ SCENARIO = frozenset({
     "test_writes_refuse_cut_short_photos",
     "test_rotate_keeps_the_photo",
     "test_rotate_is_journaled",
+    "test_rotate_crash_settles_with_the_boxes",
     "test_taxonomy_lifecycle",
     "test_tag_tree_edits_are_batches",
     "test_a_person_count_reads_only_their_photos",

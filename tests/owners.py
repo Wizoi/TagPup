@@ -82,7 +82,10 @@ _SCENARIO_FILES = {
         "test_library_roots test_roots_at_scale test_roots_ingress test_roots_location test_roots_scenarios "
         "test_roots_store"
     ),
-    "F1": "test_file_changes_one_at_a_time test_file_journal test_rotate_is_journaled test_rotate_keeps_the_photo",
+    "F1": (
+        "test_file_changes_one_at_a_time test_file_journal test_rotate_crash_settles_with_the_boxes "
+        "test_rotate_is_journaled test_rotate_keeps_the_photo"
+    ),
     "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_writes_refuse_cut_short_photos",
     "F3": (
         "test_batches test_bulk_edits test_bulk_edits_real_exiftool test_bulk_edits_stalled_exiftool "
@@ -195,7 +198,7 @@ _FILES = {
             "test_rename_keeps_the_index test_rename_settle_knows_a_copy test_renaming "
             "test_save_photo_rename_is_journaled test_save_reply_says_rename_failed test_service_change_tags "
             "test_service_delete test_service_indexing test_service_page_images test_service_replace_tag "
-            "test_service_rotate test_service_save_photo test_service_shift_date_taken test_service_smart_rename "
+            "test_service_save_photo test_service_shift_date_taken test_service_smart_rename "
             "test_settling_carries_vectors test_settling_compares_as_read test_single_save_and_smart_rename_are_journaled "
             "test_smart_rename_stays_put test_sync_counts_a_size_change test_tag_write_follows_the_keyword_rules "
             "test_tag_write_is_journaled test_tag_writes_keep_the_index_true test_tagpup_server_finds_native_rows "
