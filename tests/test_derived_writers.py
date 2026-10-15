@@ -35,8 +35,6 @@ DERIVED_FROM = ("tags", "path", "raw_metadata", "captions")
 
 #: (module, function) that write the rows and say so, with the function that makes up for it.
 PHOTO_WRITERS_COVERED_ELSEWHERE = {
-    # Migration 4 ran before the tables existed; migration 19 makes them by rebuild_all.
-    ("tagpup/store/schema.py", "_photo_ids"): ("tagpup/store/schema.py", "_derived_tables"),
     # A photo made for a path nothing was read from (Suggest's, a face's): ensure_row refreshes it.
     ("tagpup/store/photos.py", "_unread_row"): ("tagpup/store/photos.py", "ensure_row"),
 }

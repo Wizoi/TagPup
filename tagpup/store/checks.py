@@ -249,7 +249,7 @@ def people_without_a_photo(conn):
 
 
 def suggestions_without_a_photo(conn):
-    """Suggestions kept for a photo that is gone (migration 7; #64)."""
+    """Suggestions kept for a photo that is gone (#64)."""
     return _without_a_photo(conn, "suggestions", "suggestions for a photo that is gone")
 
 

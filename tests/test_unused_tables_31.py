@@ -18,7 +18,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from migration_names import after  # noqa: E402
+from migration_names import after, upto  # noqa: E402
 from test_unused_tables import backups, names, query, shape  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
@@ -269,7 +269,7 @@ class HowItFails(AtThirty):
     def test_an_older_app_will_not_open_the_migrated_library(self):
         make_legacy(self.path)
         self.migrate()
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:30]), mock.patch.object(schema, "LATEST", 30):
+        with mock.patch.object(schema, "MIGRATIONS", upto(30)), mock.patch.object(schema, "LATEST", 30):
             schema._current.clear()
             with self.assertRaises(schema.NewerLibrary) as refused:
                 schema.ensure(self.path)

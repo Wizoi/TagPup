@@ -350,8 +350,8 @@ class TheMigration(unittest.TestCase):
             finally:
                 conn.set_trace_callback(None)
 
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:20] + (
-                schema.MIGRATIONS[20]._replace(apply=traced),)):
+        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(20) + (
+                migration_names.get(21)._replace(apply=traced),)):
             schema._current.clear()
             schema.ensure(path)
         # The trace names a statement again for each row a trigger fires on (the runner's watch): count
@@ -415,7 +415,7 @@ class TheMigration(unittest.TestCase):
         back as recorded: a name and no id, which nothing links by the name alone."""
         _home, path, made = self.library_at_20()
         schema._current.clear()
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:20]), mock.patch.object(schema, "LATEST", 20):
+        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(20)), mock.patch.object(schema, "LATEST", 20):
             applied = journal.apply(path, "dedupe faces", [journal.delete("faces", (made[0],), {"name": ODA})])
         self.assertEqual(20, look(path, "SELECT schema_version FROM changes WHERE id = ?", (applied.change_id,))[0][0])
         schema._current.clear()

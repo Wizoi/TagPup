@@ -302,7 +302,7 @@ class MigrationTwentyFour(unittest.TestCase):
         schema._current.clear()
 
     def migrate(self):
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:24]), mock.patch.object(schema, "LATEST", 24):
+        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(24)), mock.patch.object(schema, "LATEST", 24):
             return schema.ensure(self.path)
 
     def schema_rows(self):
@@ -337,7 +337,7 @@ class MigrationTwentyFour(unittest.TestCase):
 
     def test_a_change_made_at_23_is_still_undoable_after_it(self):
         # Made at 23, by the version of the app that knew 23: the journal opens the library through schema.ensure.
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:23]), mock.patch.object(schema, "LATEST", 23):
+        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(23)), mock.patch.object(schema, "LATEST", 23):
             applied = journal.apply(self.path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
         schema._current.clear()
         self.migrate()

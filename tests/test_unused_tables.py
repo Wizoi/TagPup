@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
-from migration_names import after  # noqa: E402
+from migration_names import after, upto  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
@@ -317,7 +317,7 @@ class HowItFails(AtTwentyNine):
     def test_an_older_app_will_not_open_the_migrated_library(self):
         make_legacy(self.path)
         self.migrate()
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:29]), mock.patch.object(schema, "LATEST", 29):
+        with mock.patch.object(schema, "MIGRATIONS", upto(29)), mock.patch.object(schema, "LATEST", 29):
             schema._current.clear()
             with self.assertRaises(schema.NewerLibrary) as refused:
                 schema.ensure(self.path)

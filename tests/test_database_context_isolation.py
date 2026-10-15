@@ -34,7 +34,6 @@ from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db as tagpup_store_db  # noqa: E402
-from tagpup.store import schema  # noqa: E402
 
 
 def mock_indexer():
@@ -181,40 +180,6 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
             queue._statuses.clear()
             queue.run_pending()
         self.assertEqual(queue.status(self.tmpdir).get("status"), "completed")
-
-
-class TestSuggestionsCachePerDatabase(unittest.TestCase):
-    """The suggestions cache file was scoped per database, and migration 7 must read
-    each library's own (tagpup.store.schema; the suggestions are rows of the library now).
-
-    The worker serialized whichever registry was active, so a shared filename let a
-    secondary database overwrite the primary library's cache wholesale; a migration
-    reading another library's file would take in that library's suggestions.
-    """
-
-    def file_of(self, name):
-        import shutil
-
-        folder = tempfile.mkdtemp(prefix="sugg_file_")
-        self.addCleanup(shutil.rmtree, folder, True)
-        conn = tagpup_store_db.connect(os.path.join(folder, name))
-        try:
-            return os.path.basename(schema._suggestions_file(conn))
-        finally:
-            conn.close()
-
-    def test_default_database_keeps_unsuffixed_filename(self):
-        self.assertEqual(self.file_of("photo_index.db"), "gui_suggestions_cache.json")
-
-    def test_secondary_database_gets_its_own_file(self):
-        self.assertEqual(self.file_of("kr-track.db"), "gui_suggestions_cache_kr-track.json")
-
-    def test_distinct_databases_never_share_a_cache_file(self):
-        self.assertNotEqual(self.file_of("photo_index.db"), self.file_of("kr-track.db"))
-
-    # TagTuner's copy of this naming, which a test here kept in step, is gone: it had
-    # no callers, and the migration is now the only place the file is named
-    # (tests/test_suggestions_pipeline.py, OneFileOneOwner).
 
 
 if __name__ == "__main__":

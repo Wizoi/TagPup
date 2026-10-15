@@ -227,7 +227,7 @@ programs only. A moved module takes every importer with it and leaves nothing at
 
 ## Data model on one page
 
-One SQLite file per library (`data/<name>.db`, WAL, migrations 1 to 29 in `tagpup.store.schema`; each runs in
+One SQLite file per library (`data/<name>.db`, WAL, the baseline (migration 14) and the steps after it, to 32, in `tagpup.store.schema`; each runs in
 one transaction with its checks, and only a destructive one takes a backup). Columns are in
 [DATABASE.md](DATABASE.md). Every table has one kind and one writer.
 

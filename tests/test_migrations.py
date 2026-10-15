@@ -31,20 +31,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: What each migration is, from its code. A new one is added here, or this fails.
 KINDS = {
-    1: schema.ADDITIVE,      # CREATE ... IF NOT EXISTS; an older library is refused
-    2: schema.DESTRUCTIVE,   # drops the two counter tables, their counts carried over
-    3: schema.DESTRUCTIVE,   # drops faces.crop_image once the crops are copied
-    4: schema.DESTRUCTIVE,   # rebuilds photos and faces
-    5: schema.DESTRUCTIVE,   # drops embedding_cache and photos.embedding, and some vectors
-    6: schema.DESTRUCTIVE,   # drops photos.people; a name only the list held is lost
-    7: schema.DATA,          # takes saved suggestions in as rows, and photo rows for them
-    8: schema.ADDITIVE,      # adds taken and year, filled from each row's own values
-    9: schema.ADDITIVE,      # the journal's tables
-    10: schema.ADDITIVE,     # the settings table
-    11: schema.ADDITIVE,     # change_files, and changes.owner
-    12: schema.ADDITIVE,     # change_files.stamp
-    13: schema.ADDITIVE,     # job_runs
-    14: schema.ADDITIVE,     # makes nothing now (it made sync_runs, which 32 folds into job_runs and drops)
+    14: schema.ADDITIVE,     # the baseline: a new library's tables; makes nothing in an existing one
     15: schema.ADDITIVE,     # the added_folders table
     16: schema.ADDITIVE,     # makes nothing now (it made damaged_files, which 31 drops)
     17: schema.ADDITIVE,     # the faces_pending table
@@ -66,7 +53,7 @@ KINDS = {
 }
 
 
-#: The migrations that only make indexes (and, for 29, a trigger), or make nothing now (26 and 27): they change no row of any table.
+#: The migrations that only make indexes (and, for 29, a trigger), or make nothing in a library that exists (14, 16, 26 and 27): they change no row of any table.
 INDEX_ONLY = (14, 16, 20, 22, 23, 26, 27, 28, 29)
 
 
@@ -394,9 +381,7 @@ class TheTwelveSteps(Migrated):
         self.assertIn("excluded_reason", [r[1] for r in self.query("PRAGMA table_info(faces)")])
 
     def test_are_the_only_way_a_table_is_rebuilt(self):
-        # Migration 4 rebuilt photos and faces by hand before the helper; it has run on
-        # every library, and is left as it ran.
-        allowed = {("tagpup/store/schema.py", "rebuild_table"), ("tagpup/store/schema.py", "_photo_ids")}
+        allowed = {("tagpup/store/schema.py", "rebuild_table")}
 
         def renames(node):
             """A string in `node` that is SQL renaming a table: ALTER TABLE ... RENAME TO."""
@@ -446,74 +431,54 @@ class TheClassification(unittest.TestCase):
             schema.Migration(schema.LATEST + 1, "a step", lambda conn: None)
 
     def test_the_versions_run_one_to_the_latest(self):
-        self.assertEqual(list(range(1, schema.LATEST + 1)), [m.version for m in schema.MIGRATIONS])
+        self.assertEqual(list(range(schema.BASELINE, schema.LATEST + 1)), [m.version for m in schema.MIGRATIONS])
 
 
 # ---- A library at every older version ------------------------------------------------------
 
-def seed_2026_09(db_path):
-    """A library as the tables of 2026-09 held it, before migration 1: its two counters,
-    a photo's vector twice, a face with its crop on its row, a list of people, and a file
-    of saved suggestions beside it."""
-    conn = db.connect(db_path)
-    try:
-        conn.execute("CREATE TABLE photos (path TEXT PRIMARY KEY, mtime REAL, size INTEGER, tags TEXT,"
-                     " people TEXT, captions TEXT, raw_metadata TEXT, embedding BLOB, document_id TEXT)")
-        conn.execute("CREATE TABLE faces (id INTEGER PRIMARY KEY AUTOINCREMENT, photo_path TEXT, box TEXT,"
-                     " embedding BLOB, name TEXT, crop_image BLOB, prob REAL, name_source TEXT,"
-                     " excluded INTEGER DEFAULT 0, excluded_reason TEXT,"
-                     " FOREIGN KEY(photo_path) REFERENCES photos(path) ON DELETE CASCADE)")
-        conn.execute("CREATE TABLE tag_taxonomy (id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT UNIQUE,"
-                     " parent_id INTEGER, name TEXT, has_face INTEGER DEFAULT 0,"
-                     " hidden_from_autocomplete INTEGER DEFAULT 0,"
-                     " FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE)")
-        conn.execute("CREATE TABLE embedding_cache (path TEXT PRIMARY KEY, mtime REAL, size INTEGER,"
-                     " model_name TEXT, pretrained TEXT, preserve_full_frame INTEGER,"
-                     " max_aspect_ratio REAL, force_image_size INTEGER, embedding BLOB)")
-        vector = bytes(range(64))
-        for name, taken in (("a.jpg", "2019:05:04 10:00:00"), ("b.jpg", "2020:08:01 16:30:00")):
-            path = "D:/Harbour/" + name
-            conn.execute("INSERT INTO photos (path, mtime, size, tags, people, captions, raw_metadata, embedding)"
-                         " VALUES (?, 1.5, 1200, ?, ?, '[]', ?, ?)",
-                         (path, json.dumps(["People/Wren Halloway"]), json.dumps(["Wren Halloway"]),
-                          json.dumps({"EXIF:DateTimeOriginal": taken}), vector))
-            conn.execute("INSERT INTO embedding_cache VALUES (?, 1.5, 1200, 'ViT-T', 'tiny', 1, 1.4, 512, ?)",
-                         (path, vector))
-            conn.execute("INSERT INTO faces (photo_path, box, embedding, name, crop_image, prob, name_source)"
-                         " VALUES (?, '[0,0,10,10]', ?, 'Wren Halloway', x'FFD8FFD9', 0.99, 'manual')", (path, vector))
-        conn.execute("INSERT INTO faces (photo_path, box, prob) VALUES ('D:/Harbour/b.jpg', '[20,20,30,30]', 0.9)")
-        people = conn.execute("INSERT INTO tag_taxonomy (tag, name, has_face) VALUES ('People', 'People', 1)").lastrowid
-        conn.execute("INSERT INTO tag_taxonomy (tag, parent_id, name, has_face)"
-                     " VALUES ('People/Wren Halloway', ?, 'Wren Halloway', 1)", (people,))
-        for name, value in (("faces", 7), ("taxonomy", 3)):
-            conn.execute("CREATE TABLE %s_generation (id INTEGER PRIMARY KEY CHECK (id = 1),"
-                         " generation INTEGER NOT NULL)" % name)
-            conn.execute("INSERT INTO %s_generation VALUES (1, ?)" % name, (value,))
-        conn.commit()
-    finally:
-        conn.close()
-    saved = {"D:/Harbour": {"suggestions": {"D:/Harbour/a.jpg": {
-        "tags": [{"tag": "Activity/Rowing", "score": 0.8}], "people": [], "title": "Rowing",
-        "raw_suggestions": {"suggested_tags": []}}}}}
-    # Beside the library, named as tagpup.jobs.suggestions named it (schema._suggestions_file).
-    beside = os.path.join(os.path.dirname(db_path), "gui_suggestions_cache_%s.json"
-                          % os.path.splitext(os.path.basename(db_path))[0])
-    with open(beside, "w", encoding="utf-8") as handle:
-        json.dump(saved, handle)
+def seed_at_baseline(conn):
+    """The rows a library made by the baseline holds, written as the indexer and Suggest store them at that schema: two
+    photos taken in 2019 and 2020, a person named by two faces and an unnamed one, two crops, two vectors, one saved
+    suggestion. (The people lines are the baseline's own: `photo_people` before it had `tag_id`.)"""
+    from tagpup.store import photos
+    vector = bytes(range(64))
+    for name, taken in (("a.jpg", "2019:05:04 10:00:00"), ("b.jpg", "2020:08:01 16:30:00")):
+        photo_id = conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
+                                " VALUES (?, 1.5, 1200, ?, '[]', ?)",
+                                ("D:/Harbour/" + name, json.dumps(["People/Wren Halloway"]),
+                                 json.dumps({"EXIF:DateTimeOriginal": taken}))).lastrowid
+        conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, 0, 'Wren Halloway', 'keyword')",
+                     (photo_id,))
+        face_id = conn.execute("INSERT INTO faces (photo_id, box, embedding, name, prob, name_source)"
+                               " VALUES (?, '[0,0,10,10]', ?, 'Wren Halloway', 0.99, 'manual')", (photo_id, vector)).lastrowid
+        conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, x'FFD8FFD9')", (face_id,))
+        conn.execute("INSERT INTO embeddings (photo_id, model, mtime, size, vector) VALUES (?, 'ViT-T|tiny', 1.5, 1200, ?)",
+                     (photo_id, vector))
+        if name == "a.jpg":
+            conn.execute("INSERT INTO suggestions (photo_id, tags, people, title, raw, before_consensus, created)"
+                         " VALUES (?, ?, '[]', 'Rowing', '{}', 0, '2026-09-25 09:00:00')",
+                         (photo_id, json.dumps([{"tag": "Activity/Rowing", "score": 0.8}])))
+    conn.execute("INSERT INTO faces (photo_id, box, prob) VALUES (?, '[20,20,30,30]', 0.9)", (photo_id,))
+    people = conn.execute("INSERT INTO tag_taxonomy (tag, name, has_face) VALUES ('People', 'People', 1)").lastrowid
+    conn.execute("INSERT INTO tag_taxonomy (tag, parent_id, name, has_face)"
+                 " VALUES ('People/Wren Halloway', ?, 'Wren Halloway', 1)", (people,))
+    photos.date_photos(conn)
 
 
 def at_version(db_path, version):
-    """The library of seed_2026_09 brought to `version` by the migration list itself, as
-    a version of TagPup at that migration left it."""
-    seed_2026_09(db_path)
+    """A library as a version of TagPup at `version` (14 or later) left it: made by the baseline, as a new library is,
+    given the rows of seed_at_baseline, and brought forward by the migration list itself."""
+    assert version >= schema.BASELINE, "a library below the baseline is refused, not built"
     conn = db.connect(db_path)
     try:
         conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, name TEXT NOT NULL,"
                      " applied_at TEXT NOT NULL)")
         conn.commit()
-        for m in schema.MIGRATIONS[:version]:
+        for m in migration_names.upto(version):
             conn.execute("BEGIN IMMEDIATE")
             m.apply(conn)
+            if m.version == schema.BASELINE:
+                seed_at_baseline(conn)
             conn.execute("INSERT INTO schema_version VALUES (?, ?, '2026-09-01 00:00:00')", (m.version, m.name))
             conn.commit()
     finally:
@@ -522,12 +487,12 @@ def at_version(db_path, version):
 
 class ALibraryAtEveryOlderVersion(unittest.TestCase):
     def test_is_brought_to_the_latest(self):
-        for version in range(schema.LATEST):
+        for version in range(schema.BASELINE, schema.LATEST):
             with self.subTest(version=version):
                 home = own_home.for_test(self)
                 path = home.library("harbour.db")
                 at_version(path, version)
-                pending = schema.MIGRATIONS[version:]
+                pending = [m for m in schema.MIGRATIONS if m.version > version]
                 self.assertEqual([m.name for m in pending], schema.ensure(path))
 
                 conn = db.connect(db.readonly_uri(path), uri=True)
@@ -541,31 +506,94 @@ class ALibraryAtEveryOlderVersion(unittest.TestCase):
                 self.assertEqual(2, conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0])
                 self.assertEqual([("Rowing",)], conn.execute("SELECT title FROM suggestions").fetchall())
 
-                # Each run is recorded, those before the journal existed once it did.
+                # Each run is recorded in the journal the library already has, and none has rows to undo: each is at the
+                # version before, and refused.
                 recorded = conn.execute("SELECT operation, schema_version, summary FROM changes ORDER BY id").fetchall()
                 self.assertEqual(["migration %d: %s" % (m.version, m.name) for m in pending],
                                  [operation for operation, _v, _s in recorded])
                 kinds = [json.loads(summary)["kind"] for _o, _v, summary in recorded]
                 self.assertEqual([m.kind for m in pending], kinds)
-                # None has rows to undo: those before migration 9 had no journal to hold
-                # them, so each is at the version before and refused.
                 self.assertEqual([m.version - 1 for m in pending], [v for _o, v, _s in recorded])
 
-                # One backup, when anything pending destroys -- or changes data before
-                # there is a journal to record it (migration 7).
+                # One backup, when anything pending destroys.
                 wanted = 1 if any(m.kind != schema.ADDITIVE for m in pending) else 0
                 self.assertEqual(wanted, len(backups(path)), "backups at version %d" % version)
 
 
-class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
-    def test_migration_11_counts_no_table_it_does_not_touch(self):
-        # Migration 11 took 26 s on the owner's library: its rows-kept check counted
-        # every table twice, face_crops (1.4 GB) among them, under the write lock. The
-        # runner's watch already refuses an additive migration that changed a row
-        # anywhere; the count is of the tables it touches (docs/findings.md, #272).
+class ALibraryBelowTheBaseline(unittest.TestCase):
+    """A library older than TagPup can bring forward is refused, not converted, whatever opens it (owner, 2026-10-15)."""
+
+    def old_library(self, version):
         home = own_home.for_test(self)
         path = home.library("harbour.db")
-        at_version(path, 10)
+        at_version(path, schema.BASELINE)
+        conn = db.connect(path)
+        try:
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version VALUES (?, 'an old step', '2026-09-01 00:00:00')", (version,))
+            conn.commit()
+        finally:
+            conn.close()
+        schema._current.clear()
+        return path
+
+    def digest(self, path):
+        import hashlib
+        with open(path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+
+    def test_is_refused_with_a_sentence_and_nothing_is_written_or_backed_up(self):
+        path = self.old_library(13)
+        before = self.digest(path)
+        with self.assertRaises(schema.TooOld) as refused:
+            schema.ensure(path)
+        self.assertIsInstance(refused.exception, schema.NewerLibrary, "every place that answers a newer library answers it")
+        self.assertIn("older than TagPup can bring forward", str(refused.exception))
+        self.assertIn("restore a newer snapshot", str(refused.exception))
+        self.assertEqual((13, schema.BASELINE), (refused.exception.found, refused.exception.known))
+        self.assertEqual(before, self.digest(path), "not even the table of migrations is written")
+        self.assertEqual([], backups(path))
+        self.assertFalse(schema.migrating(path))
+        self.assertEqual(refused.exception.args[0], schema.newer_problem(path))   # the CLI, the MCP and the doctor say the same
+        with self.assertRaises(schema.TooOld):
+            schema.ensure(path)   # and again: nothing was remembered as current
+
+    def test_the_recovery_tools_still_read_it_as_it_is(self):
+        path = self.old_library(9)
+        before = self.digest(path)
+        with schema.reading_newer():
+            self.assertEqual([], schema.ensure(path))
+        self.assertIn("older than TagPup can bring forward", schema.newer_note(path))
+        self.assertEqual(before, self.digest(path))
+
+    def test_a_library_at_exactly_the_baseline_is_brought_forward_as_it_always_was(self):
+        home = own_home.for_test(self)
+        path = home.library("harbour.db")
+        at_version(path, schema.BASELINE)
+        self.assertIsNone(schema.newer_problem(path))
+        self.assertEqual(migration_names.after(schema.BASELINE), schema.ensure(path))
+        self.assertEqual(schema.LATEST, schema.version_of(path))
+
+    def test_an_empty_file_is_a_new_library_not_an_old_one(self):
+        home = own_home.for_test(self)
+        path = home.library("harbour.db")
+        conn = db.connect(path)
+        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
+        conn.commit()
+        conn.close()   # a crash between the table of migrations and the baseline leaves exactly this
+        self.assertIsNone(schema.newer_problem(path))
+        self.assertEqual(migration_names.after(0), schema.ensure(path))
+        self.assertEqual([], backups(path))
+
+
+class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
+    def test_a_step_counts_no_table_it_does_not_touch(self):
+        # A rows-kept check once counted every table twice, face_crops (1.4 GB) among them, under the write lock: 26 s on the
+        # owner's library. The runner's watch already refuses an additive migration that changed a row anywhere; the count is
+        # of the tables it touches (docs/findings.md, #272).
+        home = own_home.for_test(self)
+        path = home.library("harbour.db")
+        at_version(path, schema.BASELINE)
         counted = []
         real = schema._count
 
@@ -575,15 +603,11 @@ class AnAdditiveMigrationCountsOnlyWhatItTouches(unittest.TestCase):
 
         # The additive ones: 30 destroys, and names the tables it keeps the rows of (test_unused_tables.py).
         with mock.patch.object(schema, "_count", side_effect=count), \
-                mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:29]), mock.patch.object(schema, "LATEST", 29):
-            self.assertEqual(migration_names.after(10), schema.ensure(path))
-        # What it touches: change_files, which it makes, and changes, the runner's own;
-        # migration 12 touches change_files alone, 13 job_runs, 15
-        # added_folders, which they make; 21 faces and photo_people, whose
-        # columns it adds (a count of faces reads its smallest index, not its rows).
-        self.assertLessEqual(set(counted), {"change_files", "changes", "job_runs", "added_folders",
-                                            "faces_pending", "faces", "photo_people",
-                                            "faces_detected"})
+                mock.patch.object(schema, "MIGRATIONS", migration_names.upto(29)), mock.patch.object(schema, "LATEST", 29):
+            self.assertEqual([m.name for m in migration_names.upto(29) if m.version > schema.BASELINE], schema.ensure(path))
+        # What they touch: 15 added_folders, 17 faces_pending, 25 faces_detected, which they make; 21 faces and photo_people,
+        # whose columns it adds (a count of faces reads its smallest index, not its rows).
+        self.assertLessEqual(set(counted), {"added_folders", "faces_pending", "faces", "photo_people", "faces_detected"})
 
 
 class ANewLibrary(unittest.TestCase):

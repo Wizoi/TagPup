@@ -208,11 +208,11 @@ class Refusals(JournalLibrary):
 
     def test_undo_once_the_schema_has_moved_on(self):
         applied = self.delete_copy()
-        self.execute("UPDATE changes SET schema_version = 7 WHERE id = ?", (applied.change_id,))
+        self.execute("UPDATE changes SET schema_version = 9 WHERE id = ?", (applied.change_id,))
         message = self.refused(lambda: journal.undo(self.db_path, applied.change_id))
-        self.assertIn("change %d was made at schema 7 and the library is at %d" % (applied.change_id, schema.LATEST),
+        self.assertIn("change %d was made at schema 9 and the library is at %d" % (applied.change_id, schema.LATEST),
                       message)
-        self.assertIn("migration 8", message)
+        self.assertIn("before the baseline", message)
 
     def test_undo_once_only_an_exempt_migration_has_run_since(self):
         applied = self.delete_copy()
@@ -410,9 +410,9 @@ class TheSchemaMovedOn(unittest.TestCase):
     derives. Real migration records decide; one that cannot be classified refuses."""
 
     def test_a_gap_of_only_additive_migrations_that_touch_no_journaled_table_is_exempt(self):
-        for version in (18, 17, 12, 10 + 1):
+        for version in (18, 17, 15, 14):
             self.assertIsNone(journal.schema_gap_blocker(version, 19), version)
-        self.assertIsNone(journal.schema_gap_blocker(12, 17), "13 to 17: job runs, sync runs, folders, damaged, pending")
+        self.assertIsNone(journal.schema_gap_blocker(14, 17), "15 to 17: folders, damaged, pending")
         self.assertIsNone(journal.schema_gap_blocker(19, 19))
 
     def test_a_migration_that_makes_the_derived_tables_blocks_no_undo(self):
@@ -424,17 +424,19 @@ class TheSchemaMovedOn(unittest.TestCase):
         self.assertLessEqual(set(migration.touches), set(journal.DERIVED))
         self.assertIsNone(journal.schema_gap_blocker(18, 19))
 
-    def test_a_gap_with_a_migration_that_touches_a_journaled_table_refuses_naming_it(self):
-        found = journal.schema_gap_blocker(7, 18)
-        self.assertIn("migration 8", found)
-        self.assertIn("touches photos", found)
-        self.assertIn("migration 10", journal.schema_gap_blocker(9, 18))   # the settings table is journaled
+    def test_a_change_made_below_the_baseline_is_refused_in_a_sentence_that_says_why(self):
+        # The oldest changes of the three live libraries are at 9, 10 and 20: the steps between them and the baseline are gone.
+        for version in (9, 10, 13):
+            found = journal.schema_gap_blocker(version, schema.LATEST)
+            self.assertIn("before the baseline, schema %d" % schema.BASELINE, found)
+        self.assertIsNone(journal.schema_gap_blocker(20, schema.LATEST), "20 is above the baseline: still undoable")
 
     def test_a_gap_with_a_migration_that_is_not_additive_refuses_naming_it(self):
-        found = journal.schema_gap_blocker(3, 18)
-        self.assertIn("migration 4", found)
+        fake = schema.Migration(schema.LATEST + 1, "rewrites", lambda conn: None, schema.DESTRUCTIVE, "rewrites", (), ())
+        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS + (fake,)):
+            found = journal.schema_gap_blocker(schema.LATEST, schema.LATEST + 1)
+        self.assertIn("migration %d" % (schema.LATEST + 1), found)
         self.assertIn("destructive", found)
-        self.assertIn("migration 7", journal.schema_gap_blocker(6, 18), "7 changes data")
 
     def test_a_migration_that_is_not_in_the_list_refuses(self):
         fewer = tuple(m for m in schema.MIGRATIONS if m.version != 15)
@@ -457,7 +459,7 @@ class TheSchemaMovedOn(unittest.TestCase):
         path = home.library("harbour.db")
         at_version(path, 17)
         # A library as it stood at schema 17: the journal writes at that version.
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:17]), \
+        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(17)), \
                 mock.patch.object(schema, "LATEST", 17):
             schema._current.clear()
             applied = journal.apply(path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
@@ -492,13 +494,13 @@ class TheSchemaMovedOn(unittest.TestCase):
         self.assertEqual({applied.change_id: []}, journal.refusals(path, [applied.change_id]))
         conn = db.connect(path)
         try:
-            conn.execute("UPDATE changes SET schema_version = 7 WHERE id = ?", (applied.change_id,))
+            conn.execute("UPDATE changes SET schema_version = 9 WHERE id = ?", (applied.change_id,))
             conn.commit()
         finally:
             conn.close()
         said = journal.refusals(path, [applied.change_id])[applied.change_id]
-        self.assertIn("made at schema 7 and the library is at %d" % schema.LATEST, said[0])
-        self.assertIn("migration 8", said[0])
+        self.assertIn("made at schema 9 and the library is at %d" % schema.LATEST, said[0])
+        self.assertIn("before the baseline", said[0])
 
     def test_a_migration_is_never_undone_whatever_the_gap(self):
         from test_migrations import at_version
@@ -506,9 +508,9 @@ class TheSchemaMovedOn(unittest.TestCase):
         from tagpup.core.library import Library
         home = own_home.for_test(self)
         path = home.library("harbour.db")
-        at_version(path, 10)
+        at_version(path, schema.BASELINE)
         schema._current.clear()
-        self.assertEqual(schema.LATEST - 10, len(schema.ensure(path)))
+        self.assertEqual(schema.LATEST - schema.BASELINE, len(schema.ensure(path)))
         library = Library(path)
         listed = journal.history(path, limit=100)
         migrations = [e for e in listed if e["operation"].startswith("migration ")]

@@ -196,8 +196,10 @@ class WriteTools(unittest.TestCase):
         """No tag tree: refused, nothing written, and the refusal names the library, not
         where it is."""
         bare = self.home.library("bare.db")
+        schema.ensure(bare)   # a library whose tree table is gone: a file with no migrations is refused as too old
         conn = db.connect(bare)
-        conn.execute("CREATE TABLE photos (id INTEGER PRIMARY KEY, path TEXT, tags TEXT)")
+        conn.execute("DROP TABLE photo_tags")
+        conn.execute("DROP TABLE tag_taxonomy")
         conn.commit()
         conn.close()
         for apply in (False, True):

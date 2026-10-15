@@ -105,28 +105,6 @@ class TestNoLibraryIsResolvedImplicitly(unittest.TestCase):
         self.assertEqual([], _implicit_library(ast.parse(source)))
 
 
-class TestSuggestionsCacheIsScopedPerDatabase(unittest.TestCase):
-    """Migration 7 is the only reader of the old cache file (tests/test_suggestions_pipeline.py
-    checks it is the only owner); it must still read one file per database."""
-
-    def test_the_migration_scopes_the_cache_per_database(self):
-        import shutil
-        import tempfile
-
-        from tagpup.store import db, schema
-
-        folder = tempfile.mkdtemp(prefix="sugg_file_")
-        self.addCleanup(shutil.rmtree, folder, True)
-        files = set()
-        for name in ("photo_index.db", "kr-track.db", "a.db"):
-            conn = db.connect(os.path.join(folder, name))
-            try:
-                files.add(schema._suggestions_file(conn))
-            finally:
-                conn.close()
-        self.assertEqual(len(files), 3, "one database's suggestions file is another's")
-
-
 class CrossDatabaseReadIsolationMixin:
     """Reads through a URL prefix must never surface another database's rows."""
 

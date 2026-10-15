@@ -475,7 +475,7 @@ class TheJournalsWrites(WithALibrary):
         from unittest import mock
         old = self.home.library("old.db")
         at_version(old, 18)
-        with mock.patch.object(schema, "MIGRATIONS", schema.MIGRATIONS[:18]), mock.patch.object(schema, "LATEST", 18):
+        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(18)), mock.patch.object(schema, "LATEST", 18):
             schema._current.clear()
             applied = journal.apply(old, "retag", [journal.update(
                 "photos", (1,), {"tags": '["People/Wren Halloway"]'}, {"tags": '["Trips/Coast"]'})])
