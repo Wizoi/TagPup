@@ -654,25 +654,21 @@ def _fingerprint(path):
     which renaming does not change, and its file id (st_ino: NTFS's file index), which
     renaming on one volume keeps too and a copy never shares. A copy keeps the size and
     modified time -- Explorer's, robocopy's, shutil.copy2's -- and was taken for the
-    file (docs/findings.md, #269). None when there is no file; no file id where the
-    volume gives none."""
+    file (docs/findings.md, #269). None when there is no file; the file id is 0 where
+    the volume gives none, and rename() refuses such a volume (owner, 2026-10-15)."""
     try:
         stat = os.stat(path)
     except OSError:
         return None
-    found = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
-    if stat.st_ino:
-        found["ino"] = stat.st_ino
-    return found
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "ino": stat.st_ino}
 
 
 def _holds(path, row):
-    """Is the file at `path` the one `row` renames: all the plan knew it by? A plan
-    written before file ids were recorded knows it by size and modified time alone."""
+    """Is the file at `path` the one `row` renames: its size, modified time and file id
+    are what the plan recorded."""
     if path is None or not row.before:
         return False
-    now = _fingerprint(path)
-    return now is not None and all(now.get(key) == value for key, value in row.before.items())
+    return _fingerprint(path) == row.before
 
 
 @roots_service.canonical_args(both=("renames", "aside"))
@@ -691,10 +687,15 @@ def rename(library, operation, renames, aside, exiftool_path=None, summary=None)
     moves.update({old: new for old, new in renames.items() if old != new})
     if not moves:
         return Renamed(dict(renames), {}, 0, [])
+    fingerprints = {old: _fingerprint(old) for old in moves}
+    if any(found and not found["ino"] for found in fingerprints.values()):
+        # A renamed file is known by its file id; without one a copy cannot be told from it.
+        raise names.RenameFailed("this volume gives its files no file id, so a renamed file could not be told "
+                                 "from a copy of it", [])
     found = _rows_of(library, list(moves))
     change_id, rows = file_journal.plan(library.path, operation, [
         {"photo_id": (found.get(paths.key(old)) or (None,))[0], "path": old, "new_path": new,
-         "before": _fingerprint(old), "after": _fingerprint(old)} for old, new in moves.items()], summary)
+         "before": fingerprints[old], "after": fingerprints[old]} for old, new in moves.items()], summary)
     try:
         _reached("plan committed")
         file_journal.mark(library.path, [row.id for row in rows], "writing")

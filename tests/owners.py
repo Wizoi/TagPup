@@ -83,8 +83,9 @@ _SCENARIO_FILES = {
         "test_roots_store"
     ),
     "F1": (
-        "test_a_file_holds_what_exiftool_kept test_file_changes_one_at_a_time test_file_journal "
-        "test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo"
+        "test_a_file_holds_what_exiftool_kept test_a_rename_stopped_part_way test_file_changes_one_at_a_time "
+        "test_file_journal test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo "
+        "test_tag_a_photo_read_it_back_and_undo"
     ),
     "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_writes_refuse_cut_short_photos",
     "F3": (
@@ -183,13 +184,10 @@ _FILES = {
         "unit": (
             "bulk-edit bulk-writes-queue just-look-edits path-helpers photo-write-queue rename-failed retried-save "
             "rotate-refreshes-thumbnails smart-rename-count "
-            "test_a_case_only_rename_settles "
             "test_a_cut_keyword_is_not_planned_again "
-            "test_a_file_undo_waits_for_newer_changes "
-            "test_a_partial_bulk_write_says_what_it_wrote test_a_row_describes_its_file_one_way "
-            "test_a_save_is_one_session test_a_saved_row_is_the_indexers_shape "
-            "test_apply_all_stopped_half_way_says_what_it_wrote test_batches_go_through_the_model test_bulk_cap "
-            "test_bulk_delete test_bulk_tags_missing test_bulk_writes_update_the_index "
+            "test_a_row_describes_its_file_one_way "
+            "test_batches_go_through_the_model "
+            "test_bulk_delete test_bulk_writes_update_the_index "
             "test_cli_path_spelling test_dates test_delete_through_this_pc test_derived_file_changes "
             "test_exiftool_encoding test_exiftool_says_why test_exiftool_session test_functional_cli "
             "test_index_adds_the_folder_it_is_given test_index_queue_active_is_one_read test_index_queue_is_locked "
@@ -199,13 +197,13 @@ _FILES = {
             "test_path_spelling_in_faces_and_records test_paths "
             "test_paths_roots test_photo_identity test_photo_meta test_refresh_rows_guards "
             "test_relink_checks_the_destination test_relink_stays_in_its_folder test_remove_folder_lists_the_library "
-            "test_rename_keeps_the_index test_rename_settle_knows_a_copy test_renaming "
-            "test_save_photo_rename_is_journaled test_save_reply_says_rename_failed test_service_change_tags "
+            "test_renaming "
+            "test_save_reply_says_rename_failed test_service_change_tags "
             "test_service_delete test_service_indexing test_service_page_images test_service_replace_tag "
             "test_service_save_photo test_service_shift_date_taken test_service_smart_rename "
-            "test_settling_carries_vectors test_single_save_and_smart_rename_are_journaled "
-            "test_smart_rename_stays_put test_sync_counts_a_size_change test_tag_write_follows_the_keyword_rules "
-            "test_tag_write_is_journaled test_tag_writes_keep_the_index_true test_tagpup_server_finds_native_rows "
+            "test_settling_carries_vectors "
+            "test_sync_counts_a_size_change "
+            "test_tag_writes_keep_the_index_true test_tagpup_server_finds_native_rows "
             "test_thumbnails test_time_shift_records_every_date test_time_shift_tells_the_index "
             "test_tree_grows_only_from_folders_added test_unreachable_is_not_missing test_what_counts_as_a_photo "
             "test_when_a_photo_was_taken_is_kept test_writes_only_in_folders_held tuner-picker-and-queue "

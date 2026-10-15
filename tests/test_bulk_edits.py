@@ -182,7 +182,11 @@ class Tags(Bulk):
 
 
 class TheLimit(Bulk):
-    """5,000 photos at a time: the 5,000th is written, the 5,001st refuses the whole request before a file is read."""
+    """5,000 photos at a time: the 5,000th is written, the 5,001st refuses the whole request before a file is read
+    (findings #535: a select-all of 68,000 posted five megabytes of paths and held the file-changes lock for hours).
+
+    Lifted: test_bulk_cap (3 tests, the same refusal through the folder routes bulk-tags and rename-photos). MAX_BATCH =
+    5001 in a scratch copy fails test_the_limit_is_five_thousand and test_batches.Cap."""
 
     def test_the_limit_is_five_thousand(self):
         self.assertEqual(5000, batches.MAX_BATCH)
