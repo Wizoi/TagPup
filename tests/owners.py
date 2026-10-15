@@ -19,7 +19,9 @@ to _FILES below under its owner; the guard names a file that is not.
 OWNERS = ("data", "people", "files", "views", "apps")
 KINDS = ("scenario", "unit", "migration", "guard", "unmapped")
 #: Finding numbers a test file once cited and may stop citing: only a number listed here may leave tests/findings_cited.txt's set.
-RETIRED = frozenset()
+RETIRED = frozenset({
+    745,   # the supervisor's hung-path finding: the supervisor is deleted (DECISIONS 2026-10-11); its test went with it
+})
 
 SCENARIOS = {
     "D1": ("data", "A library one migration behind, or newer than the code, is served or refused at start without losing a row."),
@@ -112,6 +114,7 @@ _FILES = {
     },
     "people": {
         "unit": (
+            "test_clustering_meets_naming "
             "test_a_face_is_named_by_a_person_not_a_path test_a_listed_person_of_a_gone_node "
             "face-strip identify-faces-cluster-buttons identify-faces-counts identify-faces-in-place-removal identify-faces "
             "library-sort-and-organize-header name-faces organize-faces person-directory person-faces person-filing-table "
