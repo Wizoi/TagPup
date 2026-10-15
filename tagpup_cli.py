@@ -999,7 +999,7 @@ def cluster_faces(ctx):
             return
 
         table = Table(title="Resolved Face Identities Summary")
-        table.add_column("Person Name", style="green")
+        table.add_column("Person (tag)", style="green")
         table.add_column("Faces Named", justify="right", style="cyan")
 
         for name, count in sorted(resolved_stats.items(), key=lambda x: -x[1]):

@@ -252,7 +252,7 @@ class TestExcludedFacesSurviveClustering(ExclusionTestBase):
         self.post("/api/faces/exclude", {"face_ids": [bad], "reason": "stranger"})
 
         stats = self.cluster()
-        self.assertGreaterEqual(stats.get("Jane Doe", 0), 1)
+        self.assertGreaterEqual(stats.get("People/Jane Doe", 0), 1)
         self.assertIsNone(self.row(bad)["name"])
 
     def test_clustering_still_works_when_everything_is_excluded(self):

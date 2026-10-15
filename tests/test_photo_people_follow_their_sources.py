@@ -74,7 +74,8 @@ class PhotoPeople(unittest.TestCase):
 
     def test_clustering_naming_faces_adds_them(self):
         face_id = self.face()
-        self.write(lambda conn: faces.set_names(conn, {face_id: ODA}, {face_id: None}))
+        oda = self.write(lambda conn: taxonomy.add_path(conn, "People/" + ODA))
+        self.write(lambda conn: faces.set_names(conn, {face_id: oda}, {face_id: None}))
         self.assertEqual([WREN, ODA], self.listed())
 
     def test_detecting_the_faces_again_takes_off_whom_only_a_face_named(self):
