@@ -98,7 +98,7 @@ class Twins(unittest.TestCase):
         finally:
             conn.close()
         changes = [(e["operation"], e["status"], e["files"]) for e in journal.history(side.db_path, limit=50)
-                   if not e["operation"].startswith(("migration", "roots adopt"))]
+                   if not e["operation"].startswith("migration")]
         return {"photos": listing, "folders": held, "added": added, "ignored": ignored,
                 "journal": changes}
 

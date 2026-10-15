@@ -184,7 +184,7 @@ class EveryReadAnswersNative(TwoLibraries):
         self.same(lambda conn, side: sorted(store_photos.tags_by_photo(conn)))
         self.same(lambda conn, side: store_photos.with_tag(conn, "Activity/Sailing"))
         self.same(lambda conn, side: sorted(inspection.ids_and_paths(conn), key=lambda r: r[0]))
-        self.same(lambda conn, side: sorted(inspection.whose_file_is_gone(conn)))
+        self.same(lambda conn, side: sorted(inspection.photo_files(conn)))
 
     def test_the_order_of_a_listing_is_the_order_the_owner_has_always_seen(self):
         for side in (self.plain, self.rooted):

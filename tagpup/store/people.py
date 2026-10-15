@@ -141,6 +141,16 @@ def rebuild(conn, photo_ids=None, known=None, ids=None, make=False):
     return len(written)
 
 
+def listed_ids(conn):
+    """{photo id: [the id of each person it lists, in order]} of every photo that lists someone (photo_people, by its key):
+    who each photo names, by node, for clustering, which reads every photo once."""
+    found = {}
+    for photo_id, tag_id in conn.execute(
+            "SELECT photo_id, tag_id FROM photo_people WHERE tag_id IS NOT NULL ORDER BY photo_id, position"):
+        found.setdefault(photo_id, []).append(tag_id)
+    return found
+
+
 def stale(conn):
     """The ids of the photos whose people are not what the rule makes them: a writer that
     changed keywords, faces or the tree without rebuilding. Reads only."""

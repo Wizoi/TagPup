@@ -20,7 +20,7 @@ from typing import Callable
 
 from tagpup.core import paths
 from tagpup.core.result import NotFound, Refused
-from tagpup.store import db, roots_check, schema
+from tagpup.store import db, roots_check
 from tagpup.store import roots as store_roots
 
 
@@ -271,8 +271,3 @@ def place_in_sandbox(library, sandbox, machine, folder_for=None):
         raise SandboxError("the sandbox's map (%s) does not place %s: its copy of the library would refuse every "
                            "photo, or reach the real ones" % (machine.path(), ", ".join(missing)))
     return placed
-
-
-def pending(library):
-    """The migrations the library has not had (it needs migration 18 to adopt a root)."""
-    return [m.name for m in schema.pending(library.path)]

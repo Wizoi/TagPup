@@ -209,7 +209,7 @@ class TheCaptionIndex(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
-        schema._current.clear()
+        schema.forget()
 
     def test_the_index_holds_each_first_caption_and_a_write_of_captions_keeps_it(self):
         held = look(self.path, "SELECT %s FROM photos INDEXED BY %s WHERE %s IS NOT NULL ORDER BY %s COLLATE NOCASE, id"

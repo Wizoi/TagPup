@@ -22,7 +22,7 @@ from contextlib import closing
 
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import NotFound, Refused
-from tagpup.files import images
+from tagpup.files import images, shares
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import roots as roots_service
 from tagpup.store import checks as rules
@@ -348,9 +348,19 @@ def missing_files(library, reveal=False, limit=LIMIT):
     and excluded, and how many different names sit on them -- which answers #42's
     question, which names sit on rows of a folder whose files are gone. Folder paths
     and the names only with `reveal`. Missing rows are reported, never removed: a
-    folder on an unplugged drive looks the same as a deleted one."""
+    folder renamed looks the same as a deleted one. A photo on a drive or share that does
+    not answer is not looked at (`not_looked_at`), neither gone nor there, and a folder is
+    gone only when its drive or share answers (shares.stamp_of, folder_state; #1356)."""
     with _reading(library) as conn:
-        gone = inspection.whose_file_is_gone(conn)
+        held = inspection.photo_files(conn)
+    gone, not_looked_at = [], 0
+    for photo_id, path in held:
+        stamp = shares.stamp_of(path)
+        if stamp is None:
+            gone.append((photo_id, path))
+        elif stamp is shares.UNANSWERED or stamp is shares.CANNOT_READ:
+            not_looked_at += 1
+    with _reading(library) as conn:
         faces = inspection.faces_on(conn, [photo_id for photo_id, _path in gone])
     by_folder = {}
     for photo_id, path in gone:
@@ -361,7 +371,7 @@ def missing_files(library, reveal=False, limit=LIMIT):
         folder, ids = by_folder[key]
         on_them = [face for photo_id in ids for face in faces.get(photo_id, [])]
         names = sorted({name for _id, name, _source, _excluded in on_them if name})
-        entry = {"folder": len(listed) + 1, "folder_gone": not os.path.isdir(folder), "rows": len(ids),
+        entry = {"folder": len(listed) + 1, "folder_gone": shares.folder_state(folder) == "gone", "rows": len(ids),
                  "ids": ids[:max(0, limit)], "faces": len(on_them),
                  "named": sum(1 for f in on_them if f[1]),
                  "named_by_hand": sum(1 for f in on_them if f[1] and f[2] == "manual"),
@@ -372,7 +382,7 @@ def missing_files(library, reveal=False, limit=LIMIT):
             entry["path"] = folder
             entry["name_list"] = names
         listed.append(entry)
-    return {"rows": len(gone), "folders": len(listed),
+    return {"rows": len(gone), "folders": len(listed), "not_looked_at": not_looked_at,
             "folders_gone": sum(1 for f in listed if f["folder_gone"]),
             "named": sum(f["named"] for f in listed), "names": len({
                 name for faces_of in faces.values() for _id, name, _s, _e in faces_of if name}),

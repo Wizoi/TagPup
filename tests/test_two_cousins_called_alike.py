@@ -30,6 +30,9 @@ from test_faces_and_tags_in_step import InStep  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
 from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, TwoSams, look, write  # noqa: E402
+from test_face_clustering_rules import identity_vector as clustering_vector, near as near_vector  # noqa: E402
+import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 from test_organize_faces import WREN  # noqa: E402
 
 import numpy as np  # noqa: E402
@@ -41,7 +44,7 @@ from tagpup.services import faces as faces_service  # noqa: E402
 from tagpup.services import inspect, tagging  # noqa: E402
 from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.core.vocabulary import Ref  # noqa: E402
-from tagpup.store import db, faces, people, person_ids, photos, removals, taxonomy  # noqa: E402
+from tagpup.store import db, faces, people, person_ids, photos, removals, schema, taxonomy  # noqa: E402
 from tagpup.store.taxonomy import TagTaxonomy  # noqa: E402
 
 
@@ -350,6 +353,91 @@ class AFilingTwiceIsSuggestedByTheNode(unittest.TestCase):
         by_id = {7: "People/Imogen Vale", 8: "People/School/Imogen Vale"}
         self.assertIn("People/Imogen Vale", self.suggested(by_id, 7))
         self.assertIn("People/School/Imogen Vale", self.suggested(by_id, 8))
+
+
+class TwoSamsAreGuessedApart(unittest.TestCase):
+    """The indexer's clustering (identities.resolve) when two people share a leaf under two groups, as photo_index does (two
+    leaves, four reference faces, counted 2026-10-15): Family/Sam Ashby and Friends/Sam Ashby each have two faces named by hand
+    and photos whose keywords name them, with faces nobody named. Each such face is guessed as the person it looks like and
+    its photo names -- never as the other Sam -- and the run says it wrote exactly the faces that changed.
+
+    Fails on the code before it (docs/findings.md #1357): clustering keyed people by NAME, pooled the two into one "Sam
+    Ashby", whose save then resolved to nobody (a name two people have), so neither was ever guessed; and each nameless face
+    was written nobody over nobody and counted in "Wrote N face(s)"."""
+
+    FAMILY, FRIENDS = "Family/Sam Ashby", "Friends/Sam Ashby"
+
+    def setUp(self):
+        self.home = own_home.for_test(self)
+        self.path = self.home.library("harbour.db")
+        schema.ensure(self.path)
+        folder = os.path.join(os.path.dirname(self.path), "Pictures")
+        looks = {self.FAMILY: clustering_vector(1), self.FRIENDS: clustering_vector(2)}
+
+        def seed(conn):
+            with people.tree_edit(conn):
+                for root_tag in ("Family", "Friends"):
+                    taxonomy.add_path(conn, root_tag, root_has_face=1)
+                for tag in looks:
+                    taxonomy.add_path(conn, tag)
+            made = {}
+
+            def photo(name, keywords, *faces_of):
+                path = os.path.join(folder, name)
+                photo_rows.add_read(conn, path, {"XMP:Subject": list(keywords)})
+                return [faces.insert(conn, path, [120 * n, 0, 120 * n + 100, 100], near_vector(looks[who], jitter).tobytes())
+                        for n, (who, jitter) in enumerate(faces_of)]
+
+            for tag, offset in ((self.FAMILY, 10), (self.FRIENDS, 20)):
+                references = photo("ref_%d_a.jpg" % offset, [tag], (tag, offset + 1)) + photo(
+                    "ref_%d_b.jpg" % offset, [tag], (tag, offset + 2))
+                faces.name(conn, references, conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag,)).fetchone()[0])
+                made[tag] = photo("new_%d.jpg" % offset, [tag], (tag, offset + 3))
+            made["both"] = photo("both.jpg", [self.FAMILY, self.FRIENDS], (self.FAMILY, 31), (self.FRIENDS, 32))
+            return made
+
+        self.made = db.write_with_connection(self.path, seed)
+        self.family, self.friends = (look(self.path, "SELECT id FROM tag_taxonomy WHERE tag = ?", (tag,))[0][0]
+                                     for tag in (self.FAMILY, self.FRIENDS))
+
+    def faces_now(self):
+        return dict(((face_id, (tag_id, name)) for face_id, tag_id, name in look(self.path, "SELECT id, tag_id, name FROM faces")))
+
+    def test_each_sam_is_guessed_on_their_own_photos_and_never_as_the_other(self):
+        from tagpup.services import identities
+        from tagpup.services.search import PhotoIndex
+        before = self.faces_now()
+        index = PhotoIndex(db_path=self.path)
+        index.load()
+        try:
+            with self.assertLogs("tagpup_cli.faces", "INFO") as heard:
+                stats = identities.resolve(index)
+        finally:
+            index.close()
+        after = self.faces_now()
+        family_face, friends_face = self.made[self.FAMILY][0], self.made[self.FRIENDS][0]
+        left, right = self.made["both"]
+
+        self.assertEqual({family_face: self.family, left: self.family, friends_face: self.friends, right: self.friends},
+                         {face_id: after[face_id][0] for face_id in (family_face, left, friends_face, right)},
+                         "each Sam is guessed on the faces that look like them and their photos name")
+        mixed = look(self.path, "SELECT COUNT(*) FROM faces WHERE tag_id = ? AND id IN (?, ?)", (self.friends, family_face, left))
+        self.assertEqual(0, mixed[0][0], "a guess for one Sam never lands on the other")
+        self.assertEqual({self.FAMILY: 2, self.FRIENDS: 2}, stats, "the summary names each person by their path")
+        changed = sum(1 for face_id in after if after[face_id] != before[face_id])
+        wrote = [line for line in heard.output if "Wrote " in line]
+        self.assertEqual(["INFO:tagpup_cli.faces:Wrote %d face(s); 0 left as they were." % changed], wrote,
+                         "the run counts the faces it changed, not the faces it meant")
+
+    def test_clustering_s_write_takes_a_person_s_id_and_refuses_a_name_before_it_writes(self):
+        """The write path resolves by id (the People charter's invariant): a name, or a tag path, is never matched to one of
+        the two Sams by chance; it is refused and nothing is written."""
+        face_id = self.made[self.FAMILY][0]
+        before = self.faces_now()
+        for named in ("Sam Ashby", self.FAMILY):
+            with self.assertRaises(TypeError):
+                write(self.path, lambda conn: faces.set_names(conn, {face_id: named}, {face_id: None}))
+        self.assertEqual(before, self.faces_now(), "a refused write wrote nothing")
 
 
 if __name__ == "__main__":

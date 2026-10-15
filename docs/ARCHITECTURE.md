@@ -22,7 +22,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 |---|---|---|
 | Opening the database, journal mode, the per-file write lock | `tagpup/store/db.py` | `tests/test_db_access.py` |
 | Every SQL statement | `tagpup/store/` | `tests/test_layers.py` |
-| Schema and migrations (each declares additive, data-changing or destructive) | `tagpup/store/schema.py` | `tests/test_migrations.py`, `tests/test_schema.py` |
+| Schema and migrations (each declares additive or destructive) | `tagpup/store/schema.py` | `tests/test_migrations.py`, `tests/test_schema.py` |
 | Bulk edits and migrations recorded, rehearsed, undoable | `tagpup/store/journal.py`, `tagpup/store/file_journal.py`, `tagpup/services/journal.py`, `tagpup/services/file_changes.py` | `tests/test_journal*.py`, `tests/test_file_journal.py` |
 | A photo path's spelling, comparison and SQL form; the root-relative form | `tagpup/core/paths.py`, `tagpup/store/roots.py` | `tests/test_rules_have_one_owner.py` |
 | Tags, people, captions taken apart; the person tag | `tagpup/core/vocabulary.py`, `tagpup/store/taxonomy.py` | `tests/test_vocabulary.py` |
@@ -259,7 +259,7 @@ boundary by `store/roots.py`), so a library follows a share that is mapped diffe
 | Infrastructure | `schema_version`, `generations` (triggers bump a counter when a cache's data changes, from any process), `job_runs` (the recurring jobs' runs, and the syncs: `sync-whole`, `sync-folder`) | `store/schema.py`, `store/generations.py`, `store/job_runs.py` |
 | The journal | `changes`, `change_rows` (one row per changed column), `change_files` (each photo file a bulk edit writes, with its state) | `store/journal.py`, `store/file_journal.py` |
 
-**The journal** (7.5). Every bulk edit, maintenance operation and data-changing migration is one `changes`
+**The journal** (7.5). Every bulk edit and maintenance operation is one `changes`
 row: what it found and what it left, applied only where the rows are still what the plan read, rehearsed by
 a dry run that applies and undoes inside a rolled-back transaction, undoable on the same terms. A bulk edit that writes photo files marks each file `writing`, then `done` in the same transaction
 that records its row; a crash is settled at the next start by what the file holds. Keys the journal can

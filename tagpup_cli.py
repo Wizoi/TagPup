@@ -656,6 +656,14 @@ def undo(ctx, change_id, apply_):
 
 
 
+def _not_looked_at(counts):
+    """What `sync` says of the folders it could not look at, or None when it looked at every one."""
+    if not counts.get("folders_not_looked_at"):
+        return None
+    return ("%d folder(s) not looked at (share not answering): %d row(s) under them are neither missing nor moved;"
+            " not in step until a sync looks at them." % (counts["folders_not_looked_at"], counts["not_looked_at"]))
+
+
 #: What `sync` says of each thing it counts.
 SYNC_FOUND = (("new", "new file(s), in %d folder(s)", "new_folders"), ("changed", "changed file(s)", None),
               ("moved", "moved file(s)", None), ("missing", "missing file(s), in %d folder(s)", "missing_folders"))
@@ -681,13 +689,15 @@ def sync(ctx, folder, apply_):
         counts["rows"], counts["files"], counts["folders_walked"]))
     for what, text, second in SYNC_FOUND:
         console.print("  %d %s" % (counts[what], text % counts[second] if second else text))
+    if _not_looked_at(counts):
+        console.print("  " + _not_looked_at(counts), markup=False, soft_wrap=True)
     if counts["review_folders"]:
         console.print("  %d folder(s) under the library's roots hold %d photo(s) and no indexed one: to review in"
                       " TagTuner (gear, Folders to review), never indexed on their own."
                       % (counts["review_folders"], counts["review_photos"]))
     if counts["missing"]:
-        console.print("  %d folder(s) wholly gone, %d of them a whole root (an unplugged drive looks the same);"
-                      " their rows are kept." % (counts["folders_gone"], counts["roots_gone"]))
+        console.print("  %d folder(s) wholly gone, %d of them a whole root; their rows are kept."
+                      % (counts["folders_gone"], counts["roots_gone"]))
         if counts["folders_gone"]:
             console.print("  A folder renamed in Explorer looks the same: its rows are kept; rename it back "
                           "by hand.")
@@ -698,7 +708,9 @@ def sync(ctx, folder, apply_):
                       "(a keyword write changes the size too); they are left as they are." % counts["size_changed"])
     if not apply_:
         console.print(maintenance.rehearsed(result), markup=False, soft_wrap=True)
-        console.print("In step." if result.details["in_step"] else "Nothing changed. --apply brings it in step.")
+        console.print("In step." if result.details["in_step"] else
+                      "Nothing changed. --apply brings what it looked at in step." if _not_looked_at(counts) else
+                      "Nothing changed. --apply brings it in step.")
         return
     changed = result.details["changed"]
     console.print("Wrote %d row(s): %d read again, %d moved. %s" % (
@@ -712,7 +724,9 @@ def sync(ctx, folder, apply_):
         queue.wait()
         for folder_path in result.details["reveal"]["new_folders"]:
             console.print("  %s" % queue.status(folder_path)["message"], markup=False)
-    console.print("In step." if result.details["in_step"] else "Not yet in step: sync again once indexing is done.")
+    console.print("In step." if result.details["in_step"] else
+                  "Not in step: some folders were not looked at (share not answering)." if _not_looked_at(counts) else
+                  "Not yet in step: sync again once indexing is done.")
     if result.errors:
         raise SystemExit(1)
 
@@ -999,7 +1013,7 @@ def cluster_faces(ctx):
             return
 
         table = Table(title="Resolved Face Identities Summary")
-        table.add_column("Person Name", style="green")
+        table.add_column("Person (tag)", style="green")
         table.add_column("Faces Named", justify="right", style="cyan")
 
         for name, count in sorted(resolved_stats.items(), key=lambda x: -x[1]):

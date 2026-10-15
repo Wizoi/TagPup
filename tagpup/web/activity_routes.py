@@ -339,8 +339,8 @@ def sync_state():
         for root in (watching or {}).get("roots", []):
             if library.name in root["libraries"]:
                 watched[paths.key(root["path"])] = root
-        entry["roots"] = [{"path": root, "there": os.path.isdir(root),
-                           "watched": bool(watched.get(paths.key(root), {}).get("watched"))} for root in roots]
+        entry["roots"] = [dict(each, watched=bool(watched.get(paths.key(each["path"]), {}).get("watched")))
+                          for each in activity.roots_there(roots)]
         entry["watches"] = sorted({root["path"] for root in watched.values() if root["watched"]}, key=paths.key)
         entry["watcher"] = (watching or {}).get("libraries", {}).get(library.name)
         listed.append(entry)

@@ -142,12 +142,6 @@ CASCADES = {
 #: What the name of the journal's record of a migration begins with ("migration 8: ...").
 MIGRATION = "migration "
 
-#: What the names of the changes the removed commands `roots adopt` and `roots repair-address` recorded
-#: begin with. They hold no rows and are still listed in History; their undo went with the commands
-#: (DECISIONS, 2026-10-11), so `refusal` says so.
-ADOPTION = "roots adopt"
-ADDRESS_REPAIR = "roots repair-address"
-
 #: The steps of an apply and an undo, in order; `_reached` is told of each.
 STEPS = ("forward written", "forward committed", "undo written", "undo committed")
 
@@ -1007,11 +1001,9 @@ def refusal(conn, change_id):
     if row is None:
         return ["there is no change %d" % change_id]
     _operation, status, version = row
-    if _operation.startswith(MIGRATION) and conn.execute(
-            "SELECT 1 FROM change_rows WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is None:
+    if _operation.startswith(MIGRATION):
         # The journal's record that a migration ran, with no rows to put back (schema._Run._record):
-        # a schema is not undone. A data migration's record holds its rows and is undone, by the
-        # rule below, while it is the newest.
+        # a schema is not undone.
         return ["change %d (%s): a migration is not undone" % (change_id, _operation)]
     files = _writes_files(conn, change_id)
     if status in ("derived_pending", "planned"):
@@ -1027,10 +1019,6 @@ def refusal(conn, change_id):
         if blocking is not None:
             return ["change %d was made at schema %d and the library is at %d: its rows may not mean"
                     " what they did (%s)" % (change_id, version, current, blocking)]
-    if _operation.startswith((ADOPTION, ADDRESS_REPAIR)):
-        return ["change %d (%s) converted the library's paths or a root's address by a command that has been "
-                "removed, and its undo with it: the copy of the library taken before it is the way back"
-                % (change_id, _operation)]
     return ["change %d (%s), applied after it, changed the same rows: undo it first" % (other, name)
             for other, name in _newer_overlapping(conn, change_id)]
 

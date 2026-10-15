@@ -246,7 +246,8 @@ def build():
     @tool("The rows whose file is not on disk, by folder: whether each folder is gone entirely, its "
           "rows as ids (up to `limit` a folder), and the faces on them -- named, named by hand, "
           "excluded, and how many different names. Answers which names sit on rows of a folder "
-          "whose files are gone (findings #42). Reported, never removed." + REVEAL)
+          "whose files are gone (findings #42). Reported, never removed. A photo on a drive or share "
+          "that does not answer is counted `not_looked_at`, never gone." + REVEAL)
     def missing_files(library: str, reveal: bool = False, limit: int = inspect.LIMIT) -> dict[str, Any]:
         return _answer(lambda: inspect.missing_files(find_library(library), reveal, limit), reveal)
 
@@ -286,8 +287,8 @@ def build():
                 "a row whose file moved follows it, by its DocumentID, with its faces; new files are "
                 "counted (`new`, `new_folders`), not indexed -- index their folders in TagTuner or with "
                 "the CLI's `sync --apply`; missing files are counted by folder (`folders_gone`, "
-                "`roots_gone`: a folder on an unplugged drive looks the same as a deleted one) and never "
-                "removed. When nothing changed it reads no file. `changed_by_kind` splits rows read "
+                "`roots_gone`: a folder renamed looks the same as a deleted one) and never removed; rows "
+                "under a folder on a share not answering are `not_looked_at`, neither missing nor moved. When nothing changed it reads no file. `changed_by_kind` splits rows read "
                 "again (`from_files`) and moved (`relinked`). An applied run is recorded as the "
                 "library's last sync (`sync_state`)." + APPLY + REVEAL,
                 name="sync")

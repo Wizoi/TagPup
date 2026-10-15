@@ -594,8 +594,8 @@ def keyword_counts(conn):
     """[{"id", "tag", "name", "parent_id", "count"}] of every node of the tag tree: `count` the photos carrying the
     node's tag or a tag under it, each photo once for a node however many tags of it lie under it. The nodes
     are one read; the photos' tags one pass of photo_tags by photo (151,000 rows on photo_index) rolled up the
-    tree's parent ids in Python -- not a range query for each node. Equal, node for node, to
-    `derived.count_under_tag`."""
+    tree's parent ids in Python -- not a range query for each node. Equal, node for node, to the photos a keyword source
+    (`derived.under`) gives."""
     nodes = conn.execute("SELECT id, tag, parent_id, name FROM tag_taxonomy").fetchall()
     parent = {node_id: parent_id for node_id, _tag, parent_id, _name in nodes}
     upward = {}   # each node and every node above it: a damaged tree that loops ends the walk, never the call

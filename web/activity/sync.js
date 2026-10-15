@@ -18,6 +18,14 @@ export function loadSync() {
     });
 }
 
+/** The folders a sync could not look at (a share asleep): their rows were neither missing nor moved. */
+function notLookedAt(found) {
+    const folders = found ? found.folders_not_looked_at : 0;
+    if (!folders) return null;
+    return buildElement('span', { className: 'detail',
+        text: `${folders} folder${folders === 1 ? '' : 's'} not looked at (share not answering)` });
+}
+
 function syncLine(label, record) {
     if (!record) return buildElement('div', { className: 'fact' }, [
         buildElement('span', { className: 'label', text: label }), buildElement('span', { text: 'never' })]);
@@ -26,6 +34,7 @@ function syncLine(label, record) {
         buildElement('span', { text: ago(record.finished), title: record.finished }),
         badge(record.in_step ? 'in step' : 'not in step', record.in_step ? 'ok' : 'busy'),
         buildElement('span', { className: 'detail', text: counts(record.changed) || 'nothing changed' }),
+        notLookedAt(record.found),
         ...runLinks(record.run, record.logs),
     ]);
 }
@@ -33,7 +42,8 @@ function syncLine(label, record) {
 function librarySync(library) {
     const roots = (library.roots || []).map(root => buildElement('li', {}, [
         buildElement('span', { className: 'path', text: root.path }),
-        badge(root.there ? 'on disk' : 'missing', root.there ? 'ok' : 'bad'),
+        root.there ? badge('on disk', 'ok')
+            : root.answering === false ? badge('not answering', 'busy') : badge('missing', 'bad'),
         badge(root.watched ? 'watched' : 'not watched', root.watched ? 'ok' : 'quiet'),
     ]));
     const watcher = library.watcher;

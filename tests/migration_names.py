@@ -60,12 +60,12 @@ def ahead(*steps):
     steps = steps or (step(),)
     with mock.patch.object(schema, "MIGRATIONS", REAL + tuple(steps)), \
             mock.patch.object(schema, "LATEST", steps[-1].version):
-        schema._current.clear()
+        schema.forget()
         try:
             yield steps
         finally:
-            schema._current.clear()
-    schema._current.clear()
+            schema.forget()
+    schema.forget()
 
 
 def operations(*steps):
