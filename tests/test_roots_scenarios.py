@@ -672,10 +672,10 @@ class AFolderTheLibraryDoesNotHold(unittest.TestCase):
 
     Lifted: test_writes_only_in_folders_held (11) and test_tree_grows_only_from_folders_added (4), the 2026-09-28 mistake
     (Suggest in another library's folder made rows, so sync queued its photos and the indexer grew the tree from their tags).
-    Breaks that fail the kept tests, each applied to a copy of the code: photos.ensure_row making the row (`if not admit`
-    read as `if False`) fails test_suggest_sync_and_the_watcher_leave_the_folder_alone; libraries.split putting every photo
-    among the held with refuse_writes returning False fails test_a_write_there_touches_the_file_and_makes_no_row;
-    libraries._read answering `default` for a library it cannot read fails test_a_library_that_cannot_be_read_fails_a_write."""
+    Breaks that fail the kept tests, each applied to a copy of the code: photos.ensure_row no longer raising NotHeld (Suggest
+    makes the row) fails test_suggest_sync_and_the_watcher_leave_the_folder_alone_until_it_is_added; libraries.split putting every photo
+    among the held (so refuse_writes answers 409) fails test_a_write_there_touches_the_file_and_makes_no_row;
+    libraries._read answering `default` for a library it cannot read fails test_a_library_that_cannot_be_read_fails_a_write_it_does_not_refuse_it."""
 
     def setUp(self):
         self.app, self.home = web_client.app_for(self, "tagpup")
