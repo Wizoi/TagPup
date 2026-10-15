@@ -196,10 +196,7 @@ class TagSuggester:
         needed_tags = []
         for tag in self.candidate_tags:
             prompt = suggesting.clip_prompt(tag)
-            cached_emb = None
-            if self.index and hasattr(self.index, "get_tag_embedding"):
-                cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
-
+            cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
             if cached_emb is None and self.text_cache is not None:
                 cached_emb = self.text_cache.get((prompt, model_name, pretrained))
 
@@ -216,7 +213,7 @@ class TagSuggester:
                     self.candidate_embeddings[tag] = emb
                     if self.text_cache is not None:
                         self.text_cache.put((prompt, model_name, pretrained), emb)
-                    if self.remember and self.index and hasattr(self.index, "save_tag_embedding"):
+                    if self.remember:
                         self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
                 except Exception as e:
                     logger.warning(f"Failed to embed candidate tag '{tag}': {e}")
@@ -250,10 +247,7 @@ class TagSuggester:
 
             prompt = suggesting.clip_prompt(tag, year, person=is_person)
 
-            cached_emb = None
-            if self.index and hasattr(self.index, "get_tag_embedding"):
-                cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
-
+            cached_emb = self.index.get_tag_embedding(tag, prompt, model_name, pretrained)
             if cached_emb is None and self.text_cache is not None:
                 cached_emb = self.text_cache.get((prompt, model_name, pretrained))
 
@@ -270,7 +264,7 @@ class TagSuggester:
                     year_embeddings[tag] = emb
                     if self.text_cache is not None:
                         self.text_cache.put((prompt, model_name, pretrained), emb)
-                    if self.remember and self.index and hasattr(self.index, "save_tag_embedding"):
+                    if self.remember:
                         self.index.save_tag_embedding(tag, prompt, model_name, pretrained, emb)
                 except Exception as e:
                     logger.warning(f"Failed to embed era-aware candidate tag '{tag}' for year {year}: {e}")
@@ -619,11 +613,7 @@ class TagSuggester:
             if not tag:
                 continue
             if "/" not in tag:
-                resolved = None
-                try:
-                    resolved = self.taxonomy.find_by_leaf(tag)
-                except Exception:
-                    resolved = None
+                resolved = self.taxonomy.find_by_leaf(tag)
                 if resolved:
                     item = dict(item, tag=resolved)
             # Resolving can collide two suggestions onto one path; keep the stronger.

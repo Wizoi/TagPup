@@ -15,7 +15,6 @@ handing it on.
 from tagpup.ml import free_device_memory, gpu, refuse_in_tests
 import contextlib
 import logging
-import os
 import threading
 
 import open_clip
@@ -119,13 +118,6 @@ class ClipModel:
                     **kwargs
                 )
                 model.eval()
-
-                if self.device == "cuda" and os.name != "nt" and hasattr(torch, "compile"):
-                    try:
-                        logger.info("Compiling CLIP model for CUDA acceleration...")
-                        model = torch.compile(model)
-                    except Exception as compile_err:
-                        logger.warning(f"Failed to compile CLIP model: {compile_err}. Using standard model.")
 
                 self.preprocess = preprocess
                 self.tokenizer = open_clip.get_tokenizer(self.model_name)

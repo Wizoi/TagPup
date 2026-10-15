@@ -623,10 +623,7 @@ class Runtime:
         key = _frozen(settings)
         if key not in built:
             model = built[key] = build(settings)
-            try:
-                model.gpu = self.card
-            except AttributeError:
-                pass
+            model.gpu = self.card
         return built[key]
 
     def _unload_every_model(self):
