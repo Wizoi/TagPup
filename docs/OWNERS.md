@@ -49,3 +49,7 @@ print the `node --test` line for that owner's page tests.
 A finding goes to the domain whose file is wrong; the absence of a guard between two domains is the integration
 owner's. The output of every owner is the same: findings ranked, each with a severity word (`data`, `wrong`,
 `low`), a concrete failure scenario, and "nothing blocks" said plainly when so.
+
+## A healthy domain
+
+Each owner's charter ends with seven conditions of health and a review it applies to every change (the owner's goal of 2026-10-15). A domain meeting all seven has no queue of top changes; one that does not has exactly the unmet conditions as its queue, and no feature is taken into it meanwhile. The state of each domain, with its evidence, is its document in docs/domains/.

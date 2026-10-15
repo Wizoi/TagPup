@@ -259,6 +259,12 @@ The project grew 43k to 103k lines of code and 44k to 110k of tests in two weeks
   restates what a function does is too granular and misses the scenario between functions. New work adds or lifts a
   scenario test, and deletes the granular tests it makes redundant. QUEUED before any more feature work: every owner
   regroups its domain's tests by scenario, lifts the granular ones into scenarios and removes what they cover.
+- **A domain is healthy, or it is the queue** (owner, 2026-10-15). Each domain owner's charter lists seven conditions of health
+  (no reach-ins, no rule written twice, no hidden coupling, no concept that could collapse, no branch without an instance,
+  scenario tests, no open `data`/`wrong` finding). Its document in docs/domains/ states each as healthy with evidence and has no
+  'top changes' section: what was worth doing is done. The freeze lifts when all five say healthy. After that, every feature or
+  change is reviewed by its owner for whether it keeps the domain healthy and adds no debt; a change that adds debt removes it
+  in the same branch or is refused.
 
 ## Performance work
 
