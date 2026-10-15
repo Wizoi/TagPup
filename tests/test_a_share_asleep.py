@@ -31,7 +31,7 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
-from tagpup.services import library_view, sync, tagging  # noqa: E402
+from tagpup.services import inspect, library_view, settings, sync, tagging  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
@@ -84,6 +84,11 @@ class ASleepingShare(unittest.TestCase):
         self.assertEqual([None] * 3, [card.get("stale") for card in cards])
         self.assertEqual((self.photo_paths, []), tagging.leave_out_missing(self.photo_paths))
         self.assertEqual(3, self.vl.rows("SELECT COUNT(*) FROM photos")[0][0])
+
+    def test_the_rows_whose_file_is_gone_leave_out_the_photos_on_it_and_name_no_folder_gone(self):
+        """The MCP tool's answer (inspect.missing_files): a photo on the share asleep is not looked at, not gone."""
+        found = inspect.missing_files(self.vl.library)
+        self.assertEqual((0, 0, 0, 3), (found["rows"], found["folders"], found["folders_gone"], found["not_looked_at"]))
 
 
 class ASyncThatCannotLookAtAFolder(unittest.TestCase):
@@ -234,6 +239,37 @@ class ASyncThatCannotLookAtAFolder(unittest.TestCase):
             result = sync.sync(library, apply=True, roots=[pictures])
         self.assert_not_looked_at(result, 2, 1)
         self.assertEqual(sorted(taken), self.paths_of(library))
+
+
+class TheSyncCardOfARootOnAShareAsleep(unittest.TestCase):
+    def test_the_root_is_not_answering_never_missing_and_the_request_waits_only_the_shares_moment(self):
+        app, home = web_client.app_for(self, "tagpup")
+        share = os.path.join(home.root, "NAS", "Pictures")
+        os.makedirs(share)
+        settings.change(Library(home.library("library.db")), {"library.roots": share})
+        asleep, under = threading.Event(), os.path.normcase(share)
+        self.addCleanup(asleep.set)
+        shares.forget()
+        self.addCleanup(shares.forget)
+
+        def hang(real):
+            def look(path, *args, **kwargs):
+                if os.path.normcase(str(path)).startswith(under):
+                    asleep.wait(1.5)
+                    return False
+                return real(path, *args, **kwargs)
+            return look
+        waits, counting = share_waits.counted()
+        with mock.patch.object(os.path, "isdir", hang(os.path.isdir)), \
+                mock.patch.object(os.path, "exists", hang(os.path.exists)), \
+                mock.patch.object(shares, "on_a_network_drive", lambda path: os.path.normcase(str(path)).startswith(under)), \
+                mock.patch.object(shares, "SHARE_WAIT", 0.05), counting:
+            reply = app.test_client().get("/api/activity/sync")
+        self.assertEqual(200, reply.status_code)
+        (library,) = reply.get_json()["libraries"]
+        self.assertEqual([{"path": share, "there": False, "answering": False}],
+                         [{k: root[k] for k in ("path", "there", "answering") if k in root} for root in library["roots"]])
+        self.assertEqual([0.05], waits, "the root was asked through shares.bounded, once")
 
 
 class ADriveThatSaysNotFound(unittest.TestCase):

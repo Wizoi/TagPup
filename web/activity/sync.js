@@ -42,7 +42,8 @@ function syncLine(label, record) {
 function librarySync(library) {
     const roots = (library.roots || []).map(root => buildElement('li', {}, [
         buildElement('span', { className: 'path', text: root.path }),
-        badge(root.there ? 'on disk' : 'missing', root.there ? 'ok' : 'bad'),
+        root.there ? badge('on disk', 'ok')
+            : root.answering === false ? badge('not answering', 'busy') : badge('missing', 'bad'),
         badge(root.watched ? 'watched' : 'not watched', root.watched ? 'ok' : 'quiet'),
     ]));
     const watcher = library.watcher;
