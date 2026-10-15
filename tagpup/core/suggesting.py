@@ -56,9 +56,9 @@ def clip_prompt(word, year=None, person=False):
     return "a photo of %s in %s" % (thing, year) if year is not None else "a photo of %s" % thing
 
 
-def offered_tags(entry, threshold=0.0, file_person=None):
+def offered_tags(entry, file_person=None):
     """What Apply All writes for one photo from its saved suggestions `entry`: the
-    `tags` and `people` the panel showed, scoring at least `threshold`.
+    `tags` and `people` the panel showed.
 
     Exactly what the panel offered. Apply All read `raw_suggestions` -- everything the
     suggester produced down to its own floor -- while the panel showed only what scored
@@ -70,11 +70,9 @@ def offered_tags(entry, threshold=0.0, file_person=None):
     written as (tagpup.services.tagging.person_filer): the one rule a click on the chip
     follows too.
     """
-    offered = list(entry["tags"])
-    offered_people = list(entry["people"])
-    chosen = [t["tag"] for t in offered if t.get("score", 0.0) >= threshold]
+    chosen = [t["tag"] for t in entry["tags"]]
     chosen += [file_person(p["name"]) if file_person else p["name"]
-               for p in offered_people if p.get("score", 0.0) >= threshold and (p.get("name") or "").strip()]
+               for p in entry["people"] if (p.get("name") or "").strip()]
     return chosen
 
 

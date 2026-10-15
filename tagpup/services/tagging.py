@@ -395,18 +395,17 @@ def person_filer(library):
     return file_person
 
 
-def apply_suggestions(library, suggestions, exiftool_path, threshold=0.0):
+def apply_suggestions(library, suggestions, exiftool_path):
     """Apply All: write each photo of `suggestions` ({path: its entry}, what Suggest offered) the tags and
-    people the panel showed, scoring at least `threshold` (tagpup.core.suggesting.offered_tags), and nothing
-    else. A person is filed as a click on their chip files them (person_filer) and is left out when the file
+    people the panel showed (tagpup.core.suggesting.offered_tags), and nothing else. A person is filed as a click on their chip files them (person_filer) and is left out when the file
     already names them by their leaf, whatever the spelling or the path -- the page's photoAlreadyHas -- read
     from the file as it is under the write's lock. Held or not held (add_tags)."""
     file_person = person_filer(library)
     additions, persons = {}, {}
     for path, entry in suggestions.items():
-        additions[path] = suggesting.offered_tags(entry, threshold, file_person)
+        additions[path] = suggesting.offered_tags(entry, file_person)
         offered = {file_person(person["name"]) for person in entry.get("people") or []
-                   if person.get("score", 0.0) >= threshold and (person.get("name") or "").strip()}
+                   if (person.get("name") or "").strip()}
         persons[paths.key(path)] = offered
     return add_tags(library, additions, exiftool_path, persons=persons)
 

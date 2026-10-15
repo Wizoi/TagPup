@@ -24,8 +24,7 @@ Mutation, each made in a scratch copy of the code and failing the test named:
 - A failed photo stored without its error; "completed" set before the consensus; the consensus taken over this run's
   photos only; the model asked for before the folder is known to hold a photo: the second-run, the restart and the
   empty-folder tests.
-Not kept: offered_tags' `threshold` ("a threshold still narrows it"): the page always sends 0.0 (suggestions.js), so
-no one narrows (a finding of this merge); and the pipeline test that a score is not boosted twice, which cannot happen
+Not kept: Apply All's `threshold`, deleted (the page always sent 0.0: no one narrowed); and the pipeline test that a score is not boosted twice, which cannot happen
 now that a run reads its raw list from the library's rows each time.
 """
 import os
@@ -103,7 +102,7 @@ class ASuggestRunInAHeldFolder(Base):
         shown = [t["tag"] for t in entry["tags"]] + [p["name"] for p in entry["people"]]
         self.assertTrue(shown)
 
-        reply = self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0})
+        reply = self.post("/folder/auto-apply", {"folder_path": self.cup})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual(shown, base.tags_in(self.loose[0]))
         self.assertNotIn(EXTRA["tag"], base.tags_in(self.loose[0]))
