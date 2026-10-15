@@ -154,7 +154,7 @@ _FILES = {
             "test_answers_carry_their_person test_automatch_references test_automatch_writes_once test_cluster_candidates "
             "test_clustering_evidence test_dedupe_faces_keeps_decisions test_every_tag_has_an_id "
             "test_excluded_faces_stay_unnamed test_face_click_reads_named_faces_once test_face_clustering_rules "
-            "test_face_exclusion test_face_names_survive_keyword_writes test_face_roots_are_the_trees "
+            "test_face_exclusion test_face_roots_are_the_trees "
             "test_faces_from_tags test_folder_scope_roots test_group_tag_is_not_a_person "
             "test_grouping_keeps_names_the_tags_confirm test_hidden_people_still_exist "
             "test_identify_cache_keeps_others_writes test_identify_cache_sees_every_change test_identify_faces_hot_paths "

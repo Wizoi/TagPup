@@ -198,6 +198,24 @@ class NamingAddsThePersonToThePhoto(InStep):
         self.assertEqual([(WREN, "keyword")], self.indexed_people())
 
 
+class AKeywordWriteKeepsThePeopleOnlyAFaceNames(InStep):
+    """A person named on a face in Identify Faces has no keyword; tagging the photo, or the indexer reading its file again,
+    must not take them off the photo's people (found by a dry run of the row refresh: 33 rows would have lost people).
+
+    Lifted: test_face_names_survive_keyword_writes.py (2 tests, deleted; it also named an excluded face, which Exclude never
+    leaves named). Break that fails this and the old tests: tagpup/store/people.py `_differences` hands people_rows no
+    named faces (`named.get(photo_id, [])` becomes `[]`)."""
+
+    def test_tagging_and_reading_the_file_again_keep_a_person_only_a_face_names(self):
+        photo = self.held("kept_001.jpg", ["Regatta"])
+        self.face(photo, name=WREN, name_source="manual")
+        self.assertEqual([(WREN, "face")], self.indexed_people())
+        photos.record_tags(self.path, photo, ["Regatta", "Event/Classic"])
+        self.assertEqual([(WREN, "face")], self.indexed_people(), "a keyword write rebuilt the people from keywords alone")
+        self.photo("kept_001.jpg", ["Regatta"])               # the indexer reads the changed file again
+        self.assertEqual([(WREN, "face")], self.indexed_people(), "a re-index took the person off")
+
+
 class TakingANameOffTakesThePersonOff(InStep):
     def test_unmatch_takes_the_tag_off_the_photo(self):
         photo = self.held("off_001.jpg", [PEOPLE + WREN, "Regatta"])
