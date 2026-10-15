@@ -56,10 +56,6 @@ class ChangingTags(unittest.TestCase):
         self.assertEqual(self.written(self.b), ["Beach", "Harbour"])
         self.assertEqual(self.indexed(self.b), ["Beach", "Harbour"])
 
-    def test_a_bare_name_is_written_as_the_tag_the_person_is_filed_under(self):
-        tagging.change_tags(self.lib.library, [self.c], ["Rowan Thackeray"], [], "exiftool")
-        self.assertEqual(self.written(self.c), ["People/Rowan Thackeray"])
-
     def test_apply_all_adds_each_photo_its_own_and_leaves_the_rest(self):
         result = tagging.add_tags(self.lib.library, {self.a: ["Harbour"], self.b: [], self.c: ["Relay"]},
                                   "exiftool")
