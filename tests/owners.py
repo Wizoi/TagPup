@@ -112,6 +112,7 @@ _FILES = {
     },
     "people": {
         "unit": (
+            "test_a_face_is_named_by_a_person_not_a_path test_a_listed_person_of_a_gone_node "
             "face-strip identify-faces-cluster-buttons identify-faces-counts identify-faces-in-place-removal identify-faces "
             "library-sort-and-organize-header name-faces organize-faces person-directory person-faces person-filing-table "
             "person-names person-tag-form review-dialog review-from-activity smart-rename-count tag-order tag-vocabulary "

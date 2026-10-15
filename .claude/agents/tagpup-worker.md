@@ -44,6 +44,9 @@ of them, missed:
 - **What the owner sees**: the page, the message, the time it takes, on a network share.
 - **Scenario, not code**: add or lift a test that is a scenario a person lives through, in the domain owner's test group;
   delete the granular tests that scenario makes redundant, and say which in the report (CLAUDE.md).
+- **Every test file has one owner**: a test file you add (or rename, or delete) is added to (or removed from)
+  `tests/owners.py` (owner, kind, scenario ids; `tests/test_guard_tests_have_one_owner.py` fails the merge otherwise), and a
+  finding number cited in a test you delete must be cited by the scenario test that covers it (the ratchet).
 - **Is the case real?** A fallback, a compatibility arm or a defensive branch needs a live count above zero or the user
   action that produces it (CLAUDE.md, 'A special case needs a real instance'). If it has neither, refuse the write that
   could make it and write no branch. Say in the report which cases you did not handle for that reason.
