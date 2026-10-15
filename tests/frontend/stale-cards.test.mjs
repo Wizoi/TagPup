@@ -2,7 +2,7 @@
  * Cards of photos whose files are not as the library's rows say (web/tagpup/stale.js; phase 9c): a badge on the card
  * -- "changed on disk" or "missing" -- heard by a screen reader; a MISSING photo is shown and cannot be edited (its notice,
  * its write controls inert); a CHANGED photo, opened, was read from its file, and its badge clears. The server side is
- * tests/test_library_cards_stale.py. Fictional names only.
+ * tests/test_library_views_scenarios.py. Fictional names only.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";

@@ -308,7 +308,7 @@ describe("the People under their branches", () => {
 });
 
 describe("two people called alike", () => {
-  // The route's rows as the server answers them (tests/test_navigator_people_groups.py): each person keyed by their id,
+  // The route's rows as the server answers them (tests/test_selection_scenarios.py): each person keyed by their id,
   // a name two people have marked `shared` with the tag that tells them apart.
   const groups = [
     { tag: "Family", name: "Family", parent: null, count: 5 },

@@ -283,5 +283,42 @@ class TheTools(Drifted, unittest.TestCase):
         return json.loads(result.content[0].text)["reveal"]["new"]
 
 
+class FakeWatcher:
+    def __init__(self, found):
+        self.found = found
+
+    def start(self):
+        pass
+
+    def stop(self, timeout=30):
+        return True
+
+    def busy(self):
+        return False
+
+    def status(self):
+        return self.found
+
+
+class TheSyncRouteSaysWhetherItIsSyncing(unittest.TestCase):
+    def test_syncing_is_false_with_no_watcher_and_true_only_for_the_library_being_synced(self):
+        from tagpup import runtime as runtimes
+        from tagpup.web import app as web
+        from tagpup.web.lifecycle import Lifecycle
+        home = own_home.for_test(self)
+        harbour = home.library("harbour.db")
+        library_actions.create(harbour)
+        library_actions.create(home.library("regatta.db"))
+        idle = {"running": True, "roots": [], "libraries": {}, "syncing": None}
+        busy = dict(idle, syncing={"library": "harbour", "folder": "x", "started": "y"})
+        for tasks, harbour_syncs, regatta_syncs in (([], False, False), ([("folder watcher", FakeWatcher(idle))], False, False),
+                                                    ([("folder watcher", FakeWatcher(busy))], True, False)):
+            app = web.create_app("tagpup", startup=Library(harbour), lifecycle=Lifecycle(background=runtimes.Background(list(tasks))))
+            app.testing = True
+            client = app.test_client()
+            self.assertEqual(harbour_syncs, client.get("/harbour/api/sync").get_json()["syncing"], tasks)
+            self.assertEqual(regatta_syncs, client.get("/regatta/api/sync").get_json()["syncing"], tasks)
+
+
 if __name__ == "__main__":
     unittest.main()
