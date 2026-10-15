@@ -73,7 +73,7 @@ SCENARIO = frozenset({
     # Real time and real processes, short of a hand-over.
     "test_folder_watcher",
     "test_mcp_server",
-    "test_tagpup_server_api",
+    "test_one_library_three_programs",
     # Real ExifTool against a table of cases.
     "test_person_filing_table",
     # Suggest and the analyse-only run, start to end.

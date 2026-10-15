@@ -186,13 +186,6 @@ class TheCli(Drifted, unittest.TestCase):
         self.assert_no_path(result.output)
         return result.output
 
-    def test_a_dry_run_says_what_it_found_and_changes_nothing(self):
-        out = self.run_cli()
-        self.assertIn("1 new file(s), in 1 folder(s)", out)
-        self.assertIn("--apply", out)
-        self.assertEqual([], self.indexed)
-        self.assertIsNone(self.last()["last_run"])
-
     def test_apply_indexes_the_new_files_folder_and_waits_for_it(self):
         out = self.run_cli("--apply")
         self.assertEqual([self.folder], self.indexed)

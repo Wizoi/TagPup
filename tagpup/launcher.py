@@ -328,6 +328,12 @@ def answering(port):
         return False
 
 
+#: Said where a drain starts (owner, 2026-10-15): a drain sees only this server's own work, never a CLI index, a `sync --apply`
+#: or an MCP write in another process, and the new version migrates the library as it starts.
+BEFORE_UPDATING = ("Finish a CLI index, sync --apply or MCP write before updating: the running server cannot see them, "
+                   "and the new version migrates the library as it starts.")
+
+
 def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=time.monotonic, page=True):
     """Before a launcher of `version` serves on `port`: what answers there, if anything,
     and whether to replace it (module doc). (OPEN or SERVE, whether `open_page()` was
@@ -381,6 +387,7 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
         if said is None:
             say("TagPup %s is running (process %s); handing over to %s."
                 % (_name(running_version), theirs.get("pid"), _name(version)))
+            say(BEFORE_UPDATING)
             said, said_at = "", clock()
         patient = quiet_since is not None and clock() - quiet_since >= QUIET_PATIENCE
         answer = drain(port, theirs.get("token"), quiet=0 if patient else QUIET)

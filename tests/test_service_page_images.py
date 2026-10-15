@@ -13,8 +13,12 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from service_fixture import TempLibrary  # noqa: E402
 
+from face_rows import add_face  # noqa: E402
+
+from tagpup.core import clustering  # noqa: E402
 from tagpup.core.result import NotFound, Refused  # noqa: E402
-from tagpup.services import photos  # noqa: E402
+from tagpup.services import faces as face_service, identify, photos  # noqa: E402
+from tagpup.store import db  # noqa: E402
 
 #: EXIF Orientation 6: the stored pixels are shown turned a quarter clockwise.
 TURNED_RIGHT = 6
@@ -72,6 +76,9 @@ class APhotoForAPage(unittest.TestCase):
 
 
 class AFacesCrop(unittest.TestCase):
+    """Lifted: tests/test_tagpup_server_api.py's (now test_tagpup_routes) TestTagPupFaceCrop (a crop served and kept; its 404 and 400 are test_tagpup_routes').
+    Broken in a scratch copy and test_one_not_kept_is_cut_from_the_photo_and_kept fails: face_crop not keeping the crop."""
+
     def setUp(self):
         self.lib = TempLibrary(self)
         self.photo = self.lib.photo("party.jpg", b"")
@@ -131,6 +138,58 @@ class AFacesCrop(unittest.TestCase):
         with self.assertRaises(NotFound):
             photos.face_crop(missing, 1)
         self.assertFalse(os.path.exists(missing.path))
+
+
+def unit(*xs):
+    import numpy as np
+    vec = np.array(xs + (0,) * (512 - len(xs)), dtype="float32")
+    return (vec / np.linalg.norm(vec)).tobytes()
+
+
+class APhotosFacePanel(unittest.TestCase):
+    """The faces on one photo for the strip and the boxes: faces.panel, as /api/photo-faces answers.
+
+    Lifted: tests/test_tagpup_server_api.py's (now test_tagpup_routes) TestPhotoFaces (nine tests), which carried finding #75. Broken in a scratch copy and this
+    fails: panel's `clustering.is_offered(alike)` dropped (the strangers row, #75), store.faces.for_named_matrix reading
+    excluded faces (an excluded face a source of names), panel's sort by name dropped (named first), `unmatched` counting
+    an excluded face.
+    """
+
+    def setUp(self):
+        self.lib = TempLibrary(self)
+
+    def panel(self, photo):
+        return face_service.panel(self.lib.library, photo, lambda: identify.named_faces(self.lib.library)[1])
+
+    def face(self, photo, vector, **columns):
+        return db.write_with_connection(self.lib.library.path, lambda conn: add_face(
+            conn, photo, box=(0, 0, 50, 50), embedding=vector, prob=0.99, **columns))
+
+    def test_a_face_is_named_first_and_offered_a_name_only_by_a_face_alike_enough_and_not_excluded(self):
+        known, target, other = (self.lib.photo(name) for name in ("known.jpg", "target.jpg", "other.jpg"))
+        for photo in (known, target, other):
+            self.lib.add_row(photo)
+        self.face(known, unit(1), name="Jane Doe")
+        self.face(known, unit(0, 0, 1), name="Mo Park", excluded=1, excluded_reason="stranger")
+        alike = self.face(target, unit(1, 0.01))
+        strangers = self.face(target, unit(0.6, 0.8))         # 0.6 alike Jane's: as alike as strangers are (#75)
+        self.face(target, unit(0, 0, 0, 1), name="Sam Hart")
+        aside = self.face(other, unit(0, 0, 1))                # alike only Mo Park's excluded face
+        left_out = self.face(other, unit(0, 0, 1), excluded=1, excluded_reason="stranger")
+
+        shown = self.panel(target)
+        by_id = {each["id"]: each for each in shown["faces"]}
+        self.assertEqual("Sam Hart", shown["faces"][0]["name"], "an unidentified face sorted first")
+        self.assertEqual(("Jane Doe", None), (by_id[alike]["suggestion"], by_id[strangers]["suggestion"]))
+        self.assertGreater(by_id[alike]["similarity"], 0.9)
+        self.assertLess(0.6, clustering.OFFER_A_NAME)
+        self.assertEqual((3, 2), (shown["total"], shown["unmatched"]))
+        elsewhere = self.panel(other)
+        by_id = {each["id"]: each for each in elsewhere["faces"]}
+        self.assertIsNone(by_id[aside]["suggestion"], "an excluded face is never the source of a name")
+        self.assertEqual((True, "stranger"), (by_id[left_out]["excluded"], by_id[left_out]["excluded_reason"]))
+        self.assertEqual((2, 1), (elsewhere["total"], elsewhere["unmatched"]), "an excluded face is no work to do")
+        self.assertEqual({"faces": [], "total": 0, "unmatched": 0}, self.panel("D:/nope.jpg"))
 
 
 if __name__ == "__main__":

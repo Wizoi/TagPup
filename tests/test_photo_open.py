@@ -44,9 +44,20 @@ class OpenPhoto(unittest.TestCase):
             self.assertEqual(status, 400, path)
             startfile.assert_not_called()
 
-    def test_explorer_gets_the_path_quoted_after_the_switch(self):
+    def test_explorer_gets_the_path_quoted_after_the_switch_and_no_shell(self):
+        """Lifted from test_tagpup_server_api's TestOpenExplorer: the command is one string handed to CreateProcess, as an
+        argument list quotes the whole `/select,<path>` for a path with a space and Explorer then selects nothing; a path
+        that is no file launches nothing. Broken in a scratch copy and this fails: explorer_select_command leaving the path
+        unquoted."""
         self.assertEqual(desktop.explorer_select_command(self.photo),
                          'explorer.exe /select,"%s"' % os.path.abspath(self.photo))
+        with mock.patch("subprocess.Popen") as popen:
+            ok = self.client.post("/library/api/photo/open-explorer", json={"path": self.photo})
+            ghost = self.client.post("/library/api/photo/open-explorer", json={"path": self.photo + ".gone"})
+        self.assertEqual((200, 400), (ok.status_code, ghost.status_code))
+        popen.assert_called_once()
+        args, kwargs = popen.call_args
+        self.assertEqual((desktop.explorer_select_command(self.photo), False), (args[0], kwargs.get("shell", False)))
 
 
 if __name__ == "__main__":
