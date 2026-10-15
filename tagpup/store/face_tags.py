@@ -93,9 +93,9 @@ def _chunks(items):
 def _keyword_people(conn, photo_ids):
     """{photo id: [Ref]} of the keyword people of each photo in `photo_ids` -- every photo
     with one, without -- that are leaf people, in order."""
-    leaf = " AND tag_id IS NOT NULL" if person_ids.present(conn) else ""
+    leaf = " AND tag_id IS NOT NULL"
     found = collections.defaultdict(list)
-    tag_id = "tag_id" if person_ids.present(conn) else "NULL"
+    tag_id = "tag_id"
     if photo_ids is None:
         rows = conn.execute("SELECT photo_id, " + tag_id + ", name FROM photo_people WHERE source = 'keyword'" + leaf
                             + " ORDER BY photo_id, position").fetchall()

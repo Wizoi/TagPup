@@ -73,6 +73,10 @@ def report(db_path, show=0, out=print):
         unplaced, model = str(problem), None
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
+        if checks.schema_current(conn).count:
+            out("library: %s" % db_path)
+            out("migrations not applied: start TagPup, which brings the library up to date, and ask again.")
+            return 1
         held = checks.summary(conn)
         results = checks.run(conn)
         try:

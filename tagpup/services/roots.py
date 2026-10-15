@@ -198,8 +198,6 @@ def check(library):
     _there(library)
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        if not store_roots.has_table(conn):
-            return []
         try:
             return roots_check.verify(conn, store_roots.roots_for(conn))
         except ValueError as problem:   # paths.RootsError, config.MachineMapError
@@ -219,8 +217,6 @@ def problem(library):
         return None
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        if not store_roots.has_table(conn):
-            return None
         try:
             store_roots.roots_for(conn)
         except ValueError as why:   # paths.RootsError, config.MachineMapError

@@ -403,14 +403,6 @@ class HistoryAndPruning(JournalLibrary):
         face = next(v for v in values if v["table"] == "faces")
         self.assertEqual(("<2048 bytes>", None), (face["old"]["embedding"], face["new"]))
 
-    def test_a_library_without_a_journal_has_no_history(self):
-        bare = self.home.library("bare.db")
-        conn = db.connect(bare)
-        conn.execute("CREATE TABLE photos (id INTEGER PRIMARY KEY)")
-        conn.commit()
-        conn.close()
-        self.assertEqual([], journal.history(bare))
-
 
 class TheSchemaMovedOn(unittest.TestCase):
     """A change made at an older schema is undone unless a migration since could have changed what

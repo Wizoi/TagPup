@@ -66,13 +66,9 @@ class RootsChanged(RuntimeError):
 
 # ---- The table -------------------------------------------------------------------------
 
-def has_table(conn):
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE,)).fetchone() is not None
-
-
 def _rows(conn):
     """((name, address), ...) of the library's roots, by name; () for a library with none or
-    one behind migration 18."""
+    one behind migration 18 (a migration of an earlier version reads the roots too, building a library from nothing)."""
     try:
         return tuple((name, address or "") for name, address in
                      conn.execute("SELECT name, address FROM roots ORDER BY name"))
@@ -84,8 +80,6 @@ def _rows(conn):
 
 def every(conn):
     """[(name, address, added)] of the library's roots, by name."""
-    if not has_table(conn):
-        return []
     return [tuple(row) for row in conn.execute("SELECT name, address, added FROM roots ORDER BY name")]
 
 

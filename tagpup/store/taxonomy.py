@@ -434,8 +434,7 @@ def refuse_child_of_person(conn, tag):
             continue
         if conn.execute("SELECT 1 FROM tag_taxonomy WHERE parent_id = ? LIMIT 1", (node[0],)).fetchone():
             return   # a group already: the tag goes under a group
-        faces = (conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id = ?", (node[0],)).fetchone()[0]
-                 if person_ids.present(conn) else 0)
+        faces = conn.execute("SELECT COUNT(*) FROM faces WHERE tag_id = ?", (node[0],)).fetchone()[0]
         photos = conn.execute("SELECT COUNT(*) FROM photo_tags WHERE tag_id = ?", (node[0],)).fetchone()[0]
         if faces or photos:
             raise person_ids.PersonHasNoChildren(above, faces, photos)
@@ -502,7 +501,7 @@ def node_ids(conn):
 def _release(conn, ids, force):
     """Before nodes `ids` go: the faces that name any of them. None, nothing to do; else PersonInUse unless `force`, which
     unnames those faces (faces.unname_person) in this transaction."""
-    if not ids or not person_ids.present(conn):
+    if not ids:
         return
     used = person_ids.faces_using(conn, ids)
     if not used:
@@ -518,7 +517,7 @@ def faces_named_by(conn, path):
     """({node tag: faces naming it} for the node `path` and every node under it that a face names). Reads only."""
     where, params = sql_branch(path)
     ids = {node_id: tag for node_id, tag in conn.execute("SELECT id, tag FROM tag_taxonomy WHERE %s" % where, params)}
-    if not ids or not person_ids.present(conn):
+    if not ids:
         return {}
     return {ids[person_id]: count for person_id, count in person_ids.faces_using(conn, list(ids)).items()}
 

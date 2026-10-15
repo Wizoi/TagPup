@@ -85,18 +85,6 @@ class TheCounts(unittest.TestCase):
         for sql in seen:
             self.assertNotRegex(sql, r"(?i)select\s+tags\s+from\s+photos", sql)
 
-    def test_a_library_without_the_derived_tables_is_counted_from_the_json(self):
-        conn = db.connect(self.vl.path)
-        try:
-            conn.execute("DROP TABLE photo_tags")
-            conn.commit()
-        except Exception:
-            self.skipTest("the derived table cannot be dropped here")
-        finally:
-            conn.close()
-        usage = photos.tag_usage(self.vl.path)
-        self.assertEqual(counted_from_the_json(self.vl.path)["Trips/Coast"], usage["Trips/Coast"])
-
     def test_it_is_fast_enough_not_to_hold_a_page_start(self):
         started = time.perf_counter()
         photos.tag_usage(self.vl.path)
