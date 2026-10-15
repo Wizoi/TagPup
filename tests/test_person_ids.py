@@ -127,13 +127,11 @@ class WritesKeepTheId(Library):
         write(self.path, lambda conn: faces.exclude(conn, [self.faces[0]], "not a face"))
         self.assertIsNone(self.face_id(self.faces[0]))
 
-    def test_clustering_and_a_guess_and_clearing_them(self):
+    def test_clustering_and_a_guess(self):
         write(self.path, lambda conn: faces.set_names(conn, {self.faces[0]: ODA, self.faces[2]: WREN}, {self.faces[0]: None, self.faces[2]: None}))
         write(self.path, lambda conn: faces.name_if_unnamed(conn, self.faces[1], WREN))
         self.assertEqual([node_id(self.path, "Family/Coast/" + ODA), node_id(self.path, "People/" + WREN),
                           node_id(self.path, "People/" + WREN)], [self.face_id(f) for f in self.faces])
-        write(self.path, lambda conn: faces.clear_automatic_names(conn))
-        self.assertEqual([None, None, None], [self.face_id(f) for f in self.faces])
         self.assertEqual([0, 0], in_step(self.path))
 
     def test_a_face_detected_with_a_name_has_its_node(self):

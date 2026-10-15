@@ -15,7 +15,6 @@ Here is a quick reference table of the most common commands you will use in Tagp
 | Workflow / Task | Command | Description |
 | :--- | :--- | :--- |
 | **Index Library** | `run.bat index "path/to/photos"` | Scans photos, extracts CLIP vectors, and detects faces in a single pass. |
-| **Cluster Faces** | `run.bat cluster-faces` | Performs DBSCAN clustering on face embeddings and resolves names. |
 | **Start TagTuner UI** | `python tagpup_web.py --open tuner` | Launches the local server and web browser client for manual face matching. |
 
 
@@ -48,7 +47,7 @@ Ensure ExifTool is installed on your machine.
 
 ## 1.5 Testing & Validation Mode
 
-If you want to run tests, validate commands, or experiment without cluttering your actual production index database, you can prefix any of the database-access commands (`index`, `cluster-faces`) with the global `--test` flag.
+If you want to run tests, validate commands, or experiment without cluttering your actual production index database, you can prefix any of the database-access commands (`index`) with the global `--test` flag.
 
 ```cmd
 # Build a test index using test folders (generates test_photo_index.db)

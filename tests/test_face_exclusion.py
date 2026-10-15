@@ -225,7 +225,7 @@ class TestExcludedFacesSurviveClustering(ExclusionTestBase):
         index = PhotoIndex(self.TEST_DB)
         index.load()
         try:
-            return identities.resolve(index, max_iterations=3)
+            return identities.resolve(index)
         finally:
             index.close()
 

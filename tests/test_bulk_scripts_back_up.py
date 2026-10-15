@@ -60,9 +60,7 @@ class BulkOperationsRecordAChange(unittest.TestCase):
 
     def test_index_reset_backs_up_before_it_deletes(self):
         # `index --reset` deletes the database, every hand-named face with it, one
-        # flag away from an ordinary run. (`cluster-faces --reset` clears only the
-        # names clustering gave, which clustering gives again; it keeps hand-given
-        # ones, and needs no copy of the library each time.)
+        # flag away from an ordinary run.
         import ast
         with open(os.path.join(WORKSPACE_DIR, "tagpup_cli.py"), encoding="utf-8") as handle:
             tree = ast.parse(handle.read())

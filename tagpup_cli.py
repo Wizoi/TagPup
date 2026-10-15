@@ -973,11 +973,9 @@ def snapshots_restore(ctx, name, apply_):
 
 
 @cli.command("cluster-faces")
-@click.option("--reset", is_flag=True, help="Clear the names clustering gave to faces before clustering again. Names given by hand are kept.")
-@click.option("--max-iterations", default=5, type=int, help="Maximum iterations for propagation loop (set to 0 for anchor only).")
 @click.pass_context
-def cluster_faces(ctx, reset: bool, max_iterations: int):
-    """Run self-tuning identity resolution to cluster and name faces using photo tags."""
+def cluster_faces(ctx):
+    """Run self-tuning identity resolution to cluster and name faces using photo tags (the indexer runs it after an index)."""
     runtime = get_runtime()
     test_mode = ctx.obj.get("test", False)
     cli_db = ctx.obj.get("db")
@@ -988,26 +986,19 @@ def cluster_faces(ctx, reset: bool, max_iterations: int):
         console.print("[bold red]Error:[/bold red] No photo index found.")
         return
 
-    if reset:
-        try:
-            cleared = face_records.clear_automatic_names(photo_index.conn)
-            console.print(f"[bold yellow]Cleared {cleared} automatically assigned face name(s); names given by hand are kept.[/bold yellow]")
-        except Exception as e:
-            console.print(f"[bold red]Failed to reset face assignments: {e}[/bold red]")
-
     try:
         def heard(stage, done=0, total=1):
             if stage == "left":
-                console.print(f"[bold yellow]{done} face(s) were named by hand while this ran and keep that name.[/bold yellow]")
-        resolved_stats = identities.resolve(photo_index, max_iterations=max_iterations, on_step=heard)
+                console.print(f"[bold yellow]{done} face(s) were left as they were: the library changed under them while this ran.[/bold yellow]")
+        resolved_stats = identities.resolve(photo_index, on_step=heard)
         
         if not resolved_stats:
-            console.print("[yellow]No faces were resolved to identities. Try tagging photos with people names first.[/yellow]")
+            console.print("[yellow]No face was newly named. Try tagging photos with people names first.[/yellow]")
             return
 
         table = Table(title="Resolved Face Identities Summary")
         table.add_column("Person Name", style="green")
-        table.add_column("Faces Linked", justify="right", style="cyan")
+        table.add_column("Faces Named", justify="right", style="cyan")
 
         for name, count in sorted(resolved_stats.items(), key=lambda x: -x[1]):
             table.add_row(name, str(count))

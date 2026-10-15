@@ -102,12 +102,12 @@ class FaceClusteringTestBase(unittest.TestCase):
         conn.close()
         return face_id
 
-    def resolve(self, max_iterations=5):
+    def resolve(self):
         """Reload the index so it sees the fixtures, then run identity resolution."""
         self.index.close()
         self.index = PhotoIndex(db_path=self.db_path)
         self.index.load()
-        return identities.resolve(self.index, max_iterations=max_iterations)
+        return identities.resolve(self.index)
 
     def name_of(self, face_id):
         conn = sqlite3.connect(self.db_path)
@@ -412,15 +412,6 @@ class TestResolutionOutputs(FaceClusteringTestBase):
         traces = self.traces()
         self.assertIn(face_a, traces)
         self.assertIn(face_b, traces)
-
-    def test_anchor_only_mode_still_assigns_direct_anchors(self):
-        """max_iterations=0 skips propagation but must keep the anchor itself."""
-        jane = identity_vector(1)
-        photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
-        face = self.add_face(photo, jane)
-
-        self.resolve(max_iterations=0)
-        self.assertEqual(self.name_of(face), "Jane Doe")
 
 
 class TestManualOverridesSurviveClustering(FaceClusteringTestBase):

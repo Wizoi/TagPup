@@ -222,7 +222,7 @@ class TestStability(unittest.TestCase):
         tagpup_db.write_with_connection(self.TEST_DB_PATH, lambda conn: store_taxonomy.add_node(conn, "Alice"))
         
         # Run clustering
-        identities.resolve(photo_index, max_iterations=1)
+        identities.resolve(photo_index)
         
         # Query results from faces table
         cursor.execute("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id")
@@ -307,7 +307,7 @@ class TestStability(unittest.TestCase):
         tagpup_db.write_with_connection(self.TEST_DB_PATH, lambda conn: store_taxonomy.add_node(conn, "Alice"))
         
         # Run clustering
-        identities.resolve(photo_index, max_iterations=1)
+        identities.resolve(photo_index)
         
         # Query results
         cursor.execute("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id")
@@ -688,7 +688,7 @@ class TestStability(unittest.TestCase):
         photo_index.load()
         
         # Now run identity resolution
-        identities.resolve(photo_index, max_iterations=2)
+        identities.resolve(photo_index)
         
         # Verify that teen faces from 2026 were NOT unassigned
         cursor.execute("SELECT p.path, f.name FROM faces f JOIN photos p ON p.id = f.photo_id WHERE p.path LIKE '%2026%'")

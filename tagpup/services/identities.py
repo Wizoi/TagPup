@@ -10,10 +10,11 @@ layers, revisited").
 
 How each face was named is recorded in the library's trace file (resolution_trace_path).
 
-**People are NAMES here** (the photos' keywords and the faces are read as the names they spell), and the name is turned into
-a person when it is written (`_save_face_names`: person_ids.resolve). A name two people have is never given by clustering --
-nothing in a name says which -- and a face that already carries a person of that name is left as it is; a face a person decided
-by hand is never written at all (docs/ARCHITECTURE.md, "People by id, stage 2").
+**People are NAMES while it works** (the photos' keywords and the faces are read as the names they spell), turned into the
+people they were when the faces were read (`people_read`, at the start), and written as those people's ids (`_save_face_names`): a
+person renamed meanwhile is the same person, and one merged away meanwhile is nobody (store_faces.set_names). A name two people
+have is never given by clustering -- nothing in a name says which -- and a face that already carries a person of that name is left
+as it is; a face a person decided by hand is never written at all (docs/ARCHITECTURE.md, "People by id, stage 2").
 """
 import json
 import logging
@@ -83,38 +84,38 @@ def _excluded_face_ids(photo_index):
         return set()
 
 
-def _person_id(known, name):
+def _person_id(people, name):
     """The id of the one person `name` is, or None (no person is called it, two are, or it is a group's)."""
     try:
-        found = known.person(name)
+        found = people.person(name)
     except person_ids.PersonProblem:
         return None
     return found.id if found else None
 
 
-def _save_face_names(photo_index, face_updates, as_read):
-    """Write the names resolved, (name, face id) each, as the people they are (person_ids.resolve): a name no person is called
-    stays a name; a name two people are called, or a group's, is nobody here -- clustering cannot say which -- so its face is
-    left unnamed. A face is written only while it is still what was read (`as_read`: {face id: the person's id it carried},
-    store_faces.set_names): one a person named meanwhile keeps its name. Returns (faces written, faces left)."""
+def _save_face_names(photo_index, face_updates, as_read, people_read):
+    """Write the names resolved, (name, face id) each, as the people they were when the faces were read (`people_read`, person_ids.read
+    then: an id, never the spelling, goes to the write): a name two people are called, or a group's, is nobody here --
+    clustering cannot say which -- so its face is left unnamed. (Every name here is a person: 0 of 82,831 listed people in the
+    three libraries lack an id, so a name that is none is an error, not a case.) A face is written only while it is still what
+    was read (`as_read`: {face id: the person's id it carried}, store_faces.set_names): one a person named meanwhile keeps its
+    name. Returns (the ids of the faces written, how many were left)."""
     if photo_index.conn is None or not face_updates:
-        return 0, 0
+        return [], 0
     try:
         conn = photo_index.conn
-        known = person_ids.read(conn)
         resolved = {}
         for name, _face_id in face_updates:
             if name is None or name in resolved:
                 continue
             try:
-                found = known.person(name)
-                resolved[name] = found.id if found else name
+                resolved[name] = people_read.person(name).id
             except person_ids.PersonProblem:
                 resolved[name] = None
-        written, left = store_faces.set_names(
-            conn, {face_id: None if name is None else resolved[name] for name, face_id in face_updates}, as_read)
+        wanted = {face_id: None if name is None else resolved[name] for name, face_id in face_updates}
+        written, left = store_faces.set_names(conn, wanted, as_read)
         conn.commit()
-        return len(written), len(left)
+        return written, len(left)
     except Exception as e:
         logger.error(f"Error updating face names: {e}")
         photo_index.conn.rollback()
@@ -125,9 +126,13 @@ def _save_face_names(photo_index, face_updates, as_read):
 STEP = 2000
 
 
-def resolve(photo_index, max_iterations=5, on_step=None):
+#: How many rounds the names propagate through the photos' people before the last matching.
+MAX_ITERATIONS = 5
+
+
+def resolve(photo_index, on_step=None):
     """Cluster a library's faces with DBSCAN, name each cluster from the people its photos'
-    tags name, and write the names back; returns {name: faces named}.
+    tags name, and write the names back; returns {name: faces it newly named}.
 
     `photo_index` is the library's, loaded (tagpup.services.search.PhotoIndex): its
     connection, its photos' metadata and its path. Names given by hand are never
@@ -135,7 +140,8 @@ def resolve(photo_index, max_iterations=5, on_step=None):
 
     `on_step(stage, done, total)`, if given, hears where it has got -- "reading", "grouping" (one call of
     DBSCAN: no count inside it), "voting", "propagating", "matching" and "saving", then "left" (done: the faces not
-    written because a person named them while this ran) -- and may raise to stop it. Every
+    written because the library changed under the run: a person named the face, or another face of its photo,
+    or merged the person away) -- and may raise to stop it. Every
     stage but the last only reads; the names are written in one commit after "saving" is announced, so a stop is
     nothing written or all of it, never part (the job behind the apps' button, tagpup.jobs.naming_faces).
     """
@@ -143,6 +149,7 @@ def resolve(photo_index, max_iterations=5, on_step=None):
     logger.info("Starting self-tuning face identity resolution...")
     step("reading", 0, 1)
     all_faces = _all_faces(photo_index)
+    people_read = person_ids.read(photo_index.conn) if all_faces else None   # the people as the faces were read
     if not all_faces:
         logger.info("No face embeddings found in the index.")
         return {}
@@ -431,8 +438,8 @@ def resolve(photo_index, max_iterations=5, on_step=None):
     for path, meta in meta_by_path.items():
         photo_years[path] = dates.record_year(meta)
         
-    for iteration in range(max_iterations):
-        step("propagating", iteration, max_iterations)
+    for iteration in range(MAX_ITERATIONS):
+        step("propagating", iteration, MAX_ITERATIONS)
         # 2a. Group embeddings and their photo years by name
         # Prioritize direct anchors to build unpolluted centroids
         resolved_by_name = {}
@@ -459,7 +466,7 @@ def resolve(photo_index, max_iterations=5, on_step=None):
         
         for number, (p_path, photo_faces) in enumerate(faces_by_photo.items()):
             if number and number % STEP == 0:
-                step("propagating", iteration, max_iterations)
+                step("propagating", iteration, MAX_ITERATIONS)
             # Get photo metadata people tags
             meta = meta_by_path.get(p_path)
             photo_tags = set(meta.get("people", [])) if meta else set()
@@ -637,7 +644,6 @@ def resolve(photo_index, max_iterations=5, on_step=None):
 
     face_updates = []
     resolved_stats = {}
-    known = person_ids.read(photo_index.conn)
     as_read = {f["id"]: f["person"].id if f["person"] else None for f in all_faces}
 
     # Names already spoken for in each photo. The iterative loop refuses to put one
@@ -728,18 +734,21 @@ def resolve(photo_index, max_iterations=5, on_step=None):
         # A face a person decided is not written; nor is one that already carries a person of the name found.
         carried = face.get("person")
         if face["id"] not in manual_names and not (
-                final_name and carried and carried.id is not None and carried.id == _person_id(known, final_name)):
+                final_name and carried and carried.id is not None and carried.id == _person_id(people_read, final_name)
+        ) and not (final_name is None and carried is None):   # nobody over nobody is no change
             face_updates.append((final_name, face["id"]))
-        if final_name:
-            resolved_stats[final_name] = resolved_stats.get(final_name, 0) + 1
 
     # Apply name updates to the SQLite database: the last place to stop
     step("saving", 0, 1)
     if face_updates:
-        written, left = _save_face_names(photo_index, face_updates, as_read)
-        logger.info("Named %d face(s); %d left as they were.", written, left)
+        written, left = _save_face_names(photo_index, face_updates, as_read, people_read)
+        names = dict((face_id, name) for name, face_id in face_updates)
+        for face_id in written:
+            if names[face_id]:
+                resolved_stats[names[face_id]] = resolved_stats.get(names[face_id], 0) + 1
+        logger.info("Wrote %d face(s); %d left as they were.", len(written), left)
         if left:
-            step("left", left, len(face_updates))   # a person decided them while this ran
+            step("left", left, len(face_updates))   # the library changed under them while this ran
         
     # Save traces to JSON
     try:

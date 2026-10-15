@@ -719,27 +719,6 @@ def record_batch(conn, batch, overwrite=False, detector=None):
         raise e
 
 
-def clear_automatic_names(conn):
-    """Clear the names clustering gave to faces, and commit; the store rebuilds the
-    people of the photos they were in. Returns the number of faces whose name was cleared.
-
-    Names given by hand (name_source = 'manual') are left alone: they are the person's
-    decisions and the anchors clustering starts from. Clearing their name while leaving
-    name_source = 'manual' turned every one of them into a binding "this is nobody".
-    Without a connection, 0.
-    """
-    if conn is None:
-        return 0
-    try:
-        cleared = faces.clear_automatic_names(conn)
-        conn.commit()
-        return cleared
-    except Exception as e:
-        logger.error(f"Error resetting face assignments in database: {e}")
-        conn.rollback()
-        raise e
-
-
 def named_counts(library, folder=None):
     """{"named", "unnamed"}: the faces in play (not excluded) that have a name and those that have none, in the whole
     library or in the photos under `folder` at any depth. A look; a library that cannot be read raises."""

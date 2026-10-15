@@ -219,12 +219,7 @@ Scans and indexes a photo library recursively: one or more directories, in one r
   - `--no-subfolders`: Only the photos directly in each DIRECTORY (`images.photos_in`): what sync queues for a folder the library holds, whose subfolders may be folders to review or ignored.
 
 #### 2. `cluster-faces`
-Runs self-tuning identity resolution to cluster face embeddings and assign names.
-- **Usage**: `run.bat [global-options] cluster-faces`
-- **Options**:
-  - `--reset`: Clear the names clustering assigned (automatic names) before clustering again. Names a person gave (`name_source = 'manual'`), their "nobody" decisions and exclusions are kept: they are the anchors clustering works from.
-  - `--max-iterations INTEGER`: Maximum iterations for propagation loop (default: `5`, set to `0` for anchor-only).
-- The apps' **Name faces from tags** button runs `tagpup.services.identities.resolve`, the code behind this command, as its optional second step (off unless ticked), on a thread of the server with progress and a Cancel that stops it before its names are written (`--max-iterations` is the default 5; `--reset` is not used). The command is unchanged.
+Internal: the indexer runs it after every index (`tagpup.services.indexing`), with no options; it is not run by hand. It clusters the face embeddings and names the faces from their photos' people (`tagpup.services.identities.resolve`). Names a person gave (`name_source = 'manual'`), their "nobody" decisions and exclusions are kept; a face is written only while it is still as the run read it, and a person is written by id.
 
 ### `compact [--apply]`
 Says how much of the library's file holds nothing: pages left free by deleted rows and dropped columns, which SQLite keeps until the file is rewritten. With `--apply`, backs the library up (`db.backup`, into `backups/`), then rewrites it without them (`VACUUM`, `db.compact`) and says the size before and after. The rewrite needs the file to itself; close the apps first. After phase 4's migrations photo_index holds about 1 GB free of 4 GB.

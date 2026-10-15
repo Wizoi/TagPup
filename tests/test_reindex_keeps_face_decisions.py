@@ -1,14 +1,10 @@
-"""Re-indexing a photo, and resetting clustering, keep the decisions made about its faces.
+"""Re-indexing a photo keeps the decisions made about its faces.
 
 faces.photo_path referenced photos.path ON DELETE CASCADE (faces.photo_id references
 photos.id now), and PhotoIndex turns foreign keys on. Re-indexing a photo whose file had changed deleted its row first
 (remove_paths) and then wrote it with INSERT OR REPLACE -- a delete and an insert --
 so either way every face on the photo went with it: hand-given names, deliberate
 "nobody" decisions and exclusions. The detector then wrote fresh unnamed faces.
-
-`cluster-faces --reset` cleared every face's name but left name_source = 'manual',
-which the resolver reads as "a person decided this face is nobody". Every name given
-by hand became a permanent, binding blank.
 """
 import gc
 import os
@@ -27,9 +23,7 @@ sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup.store import db as tagpup_db
 from tagpup.core import paths
-from tagpup.services import faces as face_records
 from tagpup.services.search import PhotoIndex
-from tagpup.store import faces as store_faces
 from tagpup_cli import cli
 from tagpup.ml.clip import output_dim
 
@@ -190,46 +184,6 @@ class TestBuildOrUpdateWritesInPlace(FaceDecisionCase):
         self.assertEqual(index.records()[0]["tags"], ["Places/Harbour"])
         index.close()
         self.assertEqual({box: row[0] for box, row in self.faces().items()}, ids)
-
-
-class TestResetKeepsHandGivenNames(FaceDecisionCase):
-    @patch("tagpup.services.identities.resolve", lambda photo_index, max_iterations=5, on_step=None: {})
-    def test_cluster_faces_reset_clears_only_automatic_names(self):
-        ids = self.seed()
-        result = self.run_cli(["cluster-faces", "--reset"])
-        self.assertEqual(result.exit_code, 0, result.output)
-
-        faces = self.faces()
-        self.assertEqual(faces["[0, 0, 4, 4]"][1:3], ("Rowan Thackeray", "manual"))
-        self.assertEqual(faces["[4, 0, 8, 4]"][1:3], (None, "manual"))
-        self.assertEqual(faces["[8, 0, 12, 4]"][1:], (None, "manual", 1, "passer-by"))
-        self.assertEqual(faces["[0, 8, 4, 12]"][1:3], (None, None),
-                         "an automatic name survived the reset")
-
-        index = PhotoIndex(self.db_path, configured_model())
-        index.load()
-        try:
-            self.assertEqual({face_id: person.name if person else None
-                              for face_id, person in store_faces.manual_names(index.conn).items()}, {
-                ids["[0, 0, 4, 4]"]: "Rowan Thackeray",
-                ids["[4, 0, 8, 4]"]: None,
-                ids["[8, 0, 12, 4]"]: None,
-            })
-            # The photo still lists the person named by hand; not the one clustering named.
-            self.assertEqual(index.records()[0]["people"], ["Rowan Thackeray"])
-        finally:
-            index.close()
-
-    def test_reset_reports_the_faces_it_cleared(self):
-        self.seed()
-        index = PhotoIndex(self.db_path, configured_model())
-        index.load()
-        try:
-            cleared = face_records.clear_automatic_names(index.conn)
-            self.assertIsNot(cleared, True, "reported that it ran, not what it changed")
-            self.assertEqual(cleared, 1)
-        finally:
-            index.close()
 
 
 if __name__ == "__main__":
