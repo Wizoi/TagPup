@@ -157,7 +157,8 @@ class Through(Share):
         with open(self.mirror(), "wb") as handle:
             handle.write(b"an earlier copy")
         recycle_bin.delete_file(self.photo)
-        self.assertEqual(b"an earlier copy", open(self.mirror(), "rb").read())
+        with open(self.mirror(), "rb") as earlier:
+            self.assertEqual(b"an earlier copy", earlier.read())
         self.assertTrue(self.binned[0][0].endswith("IMG_0001 (2).jpg"), self.binned[0][0])
 
 
