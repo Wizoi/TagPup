@@ -7,7 +7,6 @@ writes. The questions are the ones findings were settled with, which each took a
 of its own to ask (docs/ARCHITECTURE.md, phase 7).
 """
 import json
-import os
 import re
 import sqlite3
 
@@ -178,15 +177,6 @@ def faces_on(conn, photo_ids):
 
 
 # ---- Files ------------------------------------------------------------------------------
-
-def whose_file_is_gone(conn):
-    """(id, path as stored) of each photo whose file is not on disk, by path. What
-    tagpup.store.checks.missing_files counts by folder, row by row."""
-    return store_roots.ordered(conn, [
-        (photo_id, path) for photo_id, path in store_roots.natives(
-            conn, conn.execute("SELECT id, path FROM photos ORDER BY path").fetchall(), 1)
-        if not os.path.exists(path)], 1)
-
 
 def photo_files(conn):
     """(id, native path) of every photo, by path: the files a library says it holds."""

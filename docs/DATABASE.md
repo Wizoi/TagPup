@@ -263,9 +263,9 @@ The columns are `job_runs`'; the run's `changed` is JSON counts and ids, never a
 
 | Key | Description |
 | :--- | :--- |
-| `in_step` | 1 when it left the library in step with its folders -- nothing new, changed or moved left over; missing files, which are reported and never removed, do not count -- else 0. Only a `sync-whole` can say the library is in step. |
+| `in_step` | 1 when it left the library in step with its folders -- nothing new, changed or moved left over, and no folder it could not look at; missing files, which are reported and never removed, do not count -- else 0. Only a `sync-whole` can say the library is in step. |
 | `change` | The change of `changes` its rows were written as; absent when it wrote none. |
-| `found_<what>` | What it found, as counts: `rows`, `files`, `folders_walked`, `new`, `new_folders`, `review_folders`, `review_photos`, `ignored_files`, `outside_roots_files`, `changed`, `never_stamped`, `to_write`, `unreadable`, `moved`, `moved_faces`, `moved_named`, `moved_changed`, `occupied`, `ambiguous_rows`, `ambiguous_files`, `held_back_folders`, `size_changed`, `missing`, `missing_folders`, `folders_gone`, `roots_gone`. |
+| `found_<what>` | What it found, as counts: `rows`, `files`, `folders_walked`, `new`, `new_folders`, `review_folders`, `review_photos`, `ignored_files`, `outside_roots_files`, `changed`, `never_stamped`, `to_write`, `unreadable`, `moved`, `moved_faces`, `moved_named`, `moved_changed`, `occupied`, `ambiguous_rows`, `ambiguous_files`, `held_back_folders`, `size_changed`, `missing`, `missing_folders`, `folders_gone`, `roots_gone`, `not_looked_at` (rows under a folder it could not look at: a share not answering, a listing that failed), `folders_not_looked_at`. |
 | `rows`, `from_files`, `relinked`, `queued_folders` | What it changed: the rows the change wrote, `from_files` and `relinked` among them, and the folders of new files put on the index queue. |
 
 ### 17. `added_folders` Table

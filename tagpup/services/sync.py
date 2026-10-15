@@ -27,9 +27,14 @@ folder scan's rule), and sorts what differs:
   any changed row (tags, captions, raw metadata, stamp); its vector and faces are left as they are, and the owner
   fixes a real picture edit by hand (owner, 2026-10-10: the command that took them away on a setting is gone);
 - missing files -- a row whose file is gone and was not found elsewhere: reported, never
-  removed. A folder on an unplugged drive looks the same as a deleted one, so removing
+  removed. A folder renamed in Explorer looks the same as a deleted one, so removing
   rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
-  folders are wholly gone.
+  folders are wholly gone (on a drive or share that answers: shares.folder_state).
+- not looked at -- a row under a folder the walk could not look at: a root on a share that
+  does not answer (tagpup.files.shares.folder_state), or a folder whose listing failed or
+  dropped part-way (images.stamps_under's `unlisted`). Neither missing nor paired with a
+  file elsewhere, and the library is not in step (owner, 2026-10-15; #1356): a share
+  asleep once read as a root gone, and an applied sync could take a copy for a move.
 
 Which folders: the library's root folders (its settings, tagpup.services.settings) and
 every folder it holds photos in, each walked once from the topmost, or the one folder
@@ -50,7 +55,8 @@ one change of the journal, `sync`, undoable. Then the new files' folders are que
 the run is recorded in the library (tagpup.store.job_runs.record_sync, a run of the job "sync-whole" or
 "sync-folder"): what it found and what it
 changed, and whether it left the library in step -- nothing new, changed or moved left
-over; missing files do not count against it -- which is the pages' "last in step".
+over and no folder left unlooked at; missing files do not count against it -- which is the
+pages' "last in step".
 """
 import logging
 import os
@@ -59,7 +65,7 @@ import time
 
 from tagpup.core import paths, runs, validation
 from tagpup.core.result import Result
-from tagpup.files import images
+from tagpup.files import images, shares
 from tagpup.services import maintenance, refresh_rows, relink_photos
 from tagpup.services import roots as roots_service
 from tagpup.store import db, generations, job_runs, schema
@@ -73,6 +79,10 @@ OPERATION = "sync"
 
 #: The kinds of row the change writes: re-read from its file, or following its file.
 KINDS = ("from_files", "relinked")
+
+#: How long a sync waits to hear whether a root, or a missing row's folder, on a network share is there, in seconds:
+#: a job, not a page, so longer than shares.SHARE_WAIT; one that does not answer in it is not looked at.
+FOLDER_WAIT = 10.0
 
 
 def walk_roots(folders):
@@ -121,12 +131,13 @@ def pair_by_stamp(missing, new):
 
 
 def _missing_by_folder(missing):
-    """[(folder, rows, whether it is gone)] of the missing rows' folders, the most first."""
+    """[(folder, rows, whether it is gone)] of the missing rows' folders, the most first: gone only when its drive
+    or share answers that it is not there (shares.folder_state)."""
     by_folder = {}
     for _photo_id, path in missing:
         folder = os.path.dirname(path)
         by_folder.setdefault(paths.key(folder), [folder, 0])[1] += 1
-    listed = [(folder, count, not os.path.isdir(folder)) for folder, count in by_folder.values()]
+    listed = [(folder, count, shares.folder_state(folder, FOLDER_WAIT) == "gone") for folder, count in by_folder.values()]
     return sorted(listed, key=lambda entry: (-entry[1], paths.key(entry[0])))
 
 
@@ -138,21 +149,53 @@ def _under_any(folder, folders):
 
 def _scan(conn, folder, roots, library_folders):
     """What is on disk against the rows: (by_key {key: (id, path, mtime, size)} of the rows
-    looked at, on_disk {key: (path, mtime, size)}, the folders walked, those not there).
+    looked at, on_disk {key: (path, mtime, size)}, the folders walked, those not there,
+    those that did not answer, those under them that would not list).
     The whole library walks every root and every folder of the library's
     (`library_folders`, tagpup.store.folders: those with rows, and those added), each once
-    from the topmost; a folder, that folder alone."""
+    from the topmost; a folder, that folder alone. Each is asked through shares.folder_state."""
     by_key = {}
     for photo_id, path, mtime, size in store_photos.stamps(conn, folder):
         by_key.setdefault(paths.key(path), (photo_id, path, mtime, size))
     walked = [paths.stored(folder)] if folder else walk_roots(set(roots) | set(library_folders.walked()))
-    on_disk, gone = {}, []
+    on_disk, gone, unanswered, unlisted = {}, [], [], []
     for root in walked:
-        if os.path.isdir(root):
-            on_disk.update(images.stamps_under(root))
-        else:
+        state = shares.folder_state(root, FOLDER_WAIT)
+        if state == "there":
+            on_disk.update(images.stamps_under(root, unlisted))
+        elif state == "gone":
             gone.append(root)
-    return by_key, on_disk, walked, gone
+        else:
+            unanswered.append(root)
+    return by_key, on_disk, walked, gone, unanswered, unlisted
+
+
+def _under_one_of(path, keys):
+    """Is `path` in or under one of the folders `keys` (paths.key)?"""
+    current = os.path.dirname(path)
+    while keys:
+        if paths.key(current) in keys:
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return False
+
+
+def _unseen(by_key, on_disk, not_looked_at):
+    """(missing [(photo_id, path, mtime, size)], not looked at [photo_id]) of the rows whose file the walk did not
+    see: not looked at when under a folder the walk could not look at (`not_looked_at`, folders)."""
+    keys = {paths.key(f) for f in not_looked_at}
+    missing, unseen = [], []
+    for key, (photo_id, path, mtime, size) in by_key.items():
+        if key in on_disk:
+            continue
+        if _under_one_of(path, keys):
+            unseen.append(photo_id)
+        else:
+            missing.append((photo_id, path, mtime, size))
+    return missing, unseen
 
 
 def _missing_elsewhere(conn, by_key, new):
@@ -163,7 +206,8 @@ def _missing_elsewhere(conn, by_key, new):
     wanted = {(os.path.basename(path), size) for path, _m, size in new.values()}
     found = []
     for photo_id, path, mtime, size in store_photos.stamps(conn):
-        if (os.path.basename(path), size) in wanted and paths.key(path) not in by_key and not os.path.exists(path):
+        if ((os.path.basename(path), size) in wanted and paths.key(path) not in by_key
+                and shares.stamp_of(path) is None):
             found.append((photo_id, path, mtime, size))
     return found
 
@@ -279,19 +323,21 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         library_folders = store_folders.of(conn, list(ignored_by_key.values()))
-        by_key, on_disk, walked, roots_gone = _scan(conn, folder, roots, library_folders)
+        by_key, on_disk, walked, roots_gone, unanswered, unlisted = _scan(conn, folder, roots, library_folders)
         if (folder is not None and not by_key and not library_folders.holds(folder)
                 and not _under_any(folder, {paths.key(r): r for r in roots})):
             return maintenance.Plan(refused=(
                 "The library holds no photo under that folder, and it is under none of the library's root "
                 "folders: sync keeps the library's folders in step. To add it, add a root folder or index it."))
 
-        changed, missing, never_stamped, resized = {}, [], 0, set()
+        not_looked_at = unanswered + unlisted
+        missing, unseen = _unseen(by_key, on_disk, not_looked_at)
+        changed, never_stamped, resized = {}, 0, set()
         for key, (photo_id, path, mtime, size) in by_key.items():
             stamp = on_disk.get(key)
             if stamp is None:
-                missing.append((photo_id, path, mtime, size))
-            elif not store_photos.describes(mtime, size, stamp[1:]):
+                continue
+            if not store_photos.describes(mtime, size, stamp[1:]):
                 changed[path] = photo_id
                 never_stamped += mtime is None or size is None
                 if size is not None and size != stamp[2]:
@@ -341,7 +387,8 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     listed = [{"path": top, "photos": review[top]} for top in sorted(review, key=paths.key)]
     return maintenance.Plan(
         size=len(edits) + len(moved_edits),
-        counts={"rows": len(by_key), "files": len(on_disk), "folders_walked": len(walked) - len(roots_gone),
+        counts={"rows": len(by_key), "files": len(on_disk),
+                "folders_walked": len(walked) - len(roots_gone) - len(unanswered),
                 "new": sum(queued.values()), "new_folders": len(new_folders),
                 "review_folders": len(review), "review_photos": sum(review.values()),
                 "ignored_files": ignored_files, "outside_roots_files": outside,
@@ -353,7 +400,8 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "occupied": len(occupied), "ambiguous_rows": len(ambiguous_rows),
                 "ambiguous_files": len(ambiguous_files), "held_back_folders": len(held_back),
                 "missing": len(missing), "missing_folders": len(by_folder),
-                "folders_gone": sum(1 for _f, _n, gone in by_folder if gone), "roots_gone": len(roots_gone)},
+                "folders_gone": sum(1 for _f, _n, gone in by_folder if gone), "roots_gone": len(roots_gone),
+                "not_looked_at": len(unseen), "folders_not_looked_at": len(not_looked_at)},
         ids={"changed": sorted(changed.values()), "to_write": sorted(changed[p] for p in to_write),
              "unreadable": sorted(changed[p] for p in unreadable),
              "moved": sorted(id_of[paths.key(m["from"])] for m in moves),
@@ -364,7 +412,7 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
                 "ambiguous": {"rows": ambiguous_rows, "files": sorted(new[key][0] for key in ambiguous_files),
                               "held_back_folders": sorted(held_back, key=paths.key)},
                 "missing_folders": [{"folder": f, "rows": n, "gone": gone} for f, n, gone in by_folder],
-                "roots_gone": roots_gone},
+                "roots_gone": roots_gone, "not_looked_at": sorted(not_looked_at, key=paths.key)},
         work={"edits": edits + moved_edits, "new_folders": new_folders})
 
 
@@ -377,9 +425,8 @@ def review(library, roots=(), ignored=()):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         library_folders = store_folders.of(conn, [paths.stored(f) for f in ignored])
-        by_key, on_disk, walked, _gone = _scan(conn, None, roots, library_folders)
-        missing = [(photo_id, path, mtime, size) for key, (photo_id, path, mtime, size) in by_key.items()
-                   if key not in on_disk]
+        by_key, on_disk, walked, _gone, unanswered, unlisted = _scan(conn, None, roots, library_folders)
+        missing, _unseen_ids = _unseen(by_key, on_disk, unanswered + unlisted)
         new = {key: stamp for key, stamp in on_disk.items() if key not in by_key}
         ambiguous_files = set()
         if missing and new:
@@ -438,12 +485,12 @@ def include(library, folder, roots, queue, ignored=()):
 def in_step(counts, result=None):
     """Is the library in step with its folders by what a sync found (`counts`) and, once
     applied, did (`result`)? Nothing new, nothing changed or moved left unwritten, nothing
-    unreadable. Missing files do not count: they are reported, and removing their rows is
-    the owner's choice. A sync refused found nothing to say so."""
+    unreadable, no folder it could not look at. Missing files do not count: they are reported,
+    and removing their rows is the owner's choice. A sync refused found nothing to say so."""
     if not counts:
         return False
     if (counts.get("new") or counts.get("unreadable") or counts.get("moved_changed") or counts.get("occupied")
-            or counts.get("ambiguous_rows")):
+            or counts.get("ambiguous_rows") or counts.get("folders_not_looked_at")):
         return False
     if result is None:
         return not (counts.get("to_write") or counts.get("moved"))
