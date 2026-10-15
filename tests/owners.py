@@ -78,6 +78,7 @@ _SCENARIO_FILES = {
     "D3": "test_journal test_a_crash_part_way_is_settled_at_the_next_start",
     "D4": "test_snapshots",
     "D5": "test_derived_follow_writes test_photo_people_follow_their_sources",
+    "D6": "test_a_librarys_settings_are_its_own",
     "D7": (
         "test_library_roots test_roots_at_scale test_roots_ingress test_roots_location test_roots_scenarios "
         "test_roots_store"
@@ -136,7 +137,7 @@ _FILES = {
             "test_folder_membership test_journal_undo_refusals "
             "test_mcp_photo_against_file test_name_index test_path_locker test_roots_share_spelling_and_cli_index "
             "test_roots_unplaced test_roots_verify test_roots_what_the_owner_is_told test_search_words "
-            "test_services_refuse_what_the_rules_refuse test_settings test_settings_routes "
+            "test_services_refuse_what_the_rules_refuse "
             "test_sync_records test_taken_indexes test_the_tree_is_the_librarys test_unused_tables test_unused_tables_31 "
             "test_unused_tables_32 test_validation"
         ),
@@ -226,7 +227,7 @@ _FILES = {
             "test_library_union_and_order test_library_view test_library_view_plans test_models_in_use_survive_an_unload "
             "test_one_value_for_a_suggested_tag test_page_caches_released_when_idle "
             "test_person_tag_edges test_photo_index_keeps_only_vectors test_rename_moves_suggestions_and_embeddings "
-            "test_saved_suggestions_do_not_cancel_a_run test_selection test_selection_tally "
+            "test_saved_suggestions_do_not_cancel_a_run test_selection test_selection_tally test_settings "
             "test_suggest_index_stays_current test_suggest_reads_people_once test_suggest_respects_face_decisions "
             "test_suggest_status_poll_is_a_snapshot test_suggester_scoring test_suggestions_follow_their_photo "
             "test_suggestions_keep_hierarchy test_suggestions_pipeline test_tag_usage_from_photo_tags "

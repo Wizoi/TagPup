@@ -46,7 +46,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | An older app refuses a newer library, also when it cached the library as current | `tests/test_newer_library_guard_in_a_long_lived_process.py`, `tests/test_migration_28_and_the_newer_library.py` |
 | A request for a library being migrated gets 503, not a parked thread | `tests/test_library_being_migrated.py` |
 | Snapshot is one read transaction, placed after a quick check | `tests/test_snapshots.py` |
-| Nothing reads `config.ini`; settings only through a journaled change | `tests/test_config_single_owner.py`, `tests/test_settings.py` |
+| Nothing reads `config.ini`; settings only through a journaled change | `tests/test_config_single_owner.py`, `tests/test_a_librarys_settings_are_its_own.py` |
 | A face has a photo row | `tests/test_every_face_has_a_photo_row.py` |
 | Foreign keys are on only for `PhotoIndex` connections; a deleted photo's faces go by explicit delete or the journal's cascade | none (the doctor counts `faces_without_a_photo`) |
 
