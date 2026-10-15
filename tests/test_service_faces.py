@@ -78,32 +78,12 @@ class FacesCase(unittest.TestCase):
 
 
 class NamingAFace(FacesCase):
-    def test_it_is_named_by_hand_and_listed_on_its_photo(self):
-        photo = self.photo("a.jpg", people=["Ada Pembrook"])
-        face = self.face(photo)
-        result = faces.name_face(self.lib.library, face, " Wren Halloway ")
-        self.assertEqual((result.ok, result.changed), (True, 1))
-        self.assertEqual(self.face_row(face), ("Wren Halloway", "manual", 0))
-        self.assertEqual(self.people(photo), ["Ada Pembrook", "Wren Halloway"])
-
     def test_the_fingerprints_either_side_say_what_the_grids_must_drop(self):
         face = self.face(self.photo("a.jpg"))
         result = faces.name_face(self.lib.library, face, "Wren Halloway")
         before, after = result.details["fingerprints"]
         self.assertNotEqual(before, after)
         self.assertEqual(result.details["face_ids"], [face])
-
-    def test_the_old_name_leaves_the_photo_unless_another_face_there_has_it(self):
-        # In the photo by their faces alone. The rule lists a photo's face names in the
-        # order the faces were found, where the patch appended a new name at the end.
-        photo = self.photo("a.jpg")
-        ada = self.face(photo, name="Ada Pembrook")
-        milo = self.face(photo, name="Milo Garrick")
-        self.face(photo, name="Milo Garrick")
-        self.assertEqual(self.people(photo), ["Ada Pembrook", "Milo Garrick"])
-        faces.name_face(self.lib.library, ada, "Wren Halloway")
-        faces.name_face(self.lib.library, milo, "Jude Ferris")
-        self.assertEqual(self.people(photo), ["Wren Halloway", "Jude Ferris", "Milo Garrick"])
 
     def test_a_name_on_another_face_in_the_photo_is_refused(self):
         photo = self.photo("a.jpg")
@@ -138,14 +118,6 @@ class NamingAFace(FacesCase):
 class NamingFacesInBulk(FacesCase):
     """What a bulk assignment decides before it writes (nameable), and what naming does to a photo's people."""
 
-    def test_each_photo_lists_the_person(self):
-        """docs/findings.md, #42."""
-        first, second = self.photo("a.jpg", people=["Ada Pembrook"]), self.photo("b.jpg")
-        ids = [self.face(first), self.face(second)]
-        db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name(conn, ids, "Wren Halloway"))
-        self.assertEqual(self.people(first), ["Ada Pembrook", "Wren Halloway"])
-        self.assertEqual(self.people(second), ["Wren Halloway"])
-
     def test_an_excluded_face_is_skipped_and_said_to_be(self):
         photo = self.photo("a.jpg")
         named, excluded = self.face(photo), self.face(self.photo("b.jpg"), excluded=1)
@@ -164,62 +136,6 @@ class NamingFacesInBulk(FacesCase):
         face = self.face(self.photo("a.jpg"), name="Wren Halloway")
         result = faces.nameable(self.lib.library, [face], "Wren Halloway")
         self.assertEqual(result.details["matched_ids"], [])
-
-
-class TakingNamesOff(FacesCase):
-    def test_one_face_the_person_goes_from_the_photo(self):
-        photo = self.photo("a.jpg")
-        face = self.face(photo, name="Wren Halloway")
-        self.assertEqual(self.people(photo), ["Wren Halloway"])
-        self.assertEqual(faces.unname_face(self.lib.library, face).changed, 1)
-        self.assertEqual((self.face_row(face), self.people(photo)), ((None, "manual", 0), []))
-
-    def test_every_face_in_a_photo(self):
-        photo = self.photo("a.jpg", people=["Kit Morrow"])
-        self.face(photo, name="Wren Halloway")
-        self.face(photo, name="Ada Pembrook")
-        self.assertEqual(self.people(photo), ["Kit Morrow", "Wren Halloway", "Ada Pembrook"])
-        self.assertEqual(faces.unname_photo(self.lib.library, photo).changed, 2)
-        self.assertEqual(self.people(photo), ["Kit Morrow"])
-
-
-class ExcludingAndRestoring(FacesCase):
-    def test_an_excluded_face_loses_its_name_and_leaves_the_photos_people(self):
-        photo = self.photo("a.jpg")
-        face = self.face(photo, name="Wren Halloway")
-        self.assertEqual(self.people(photo), ["Wren Halloway"])
-        result = faces.exclude(self.lib.library, [face, 999], "stranger")
-        self.assertEqual((result.changed, result.details["face_ids"]), (1, [face, 999]))
-        self.assertEqual((self.face_row(face), self.people(photo)), ((None, "manual", 1), []))
-
-    def reason(self, face_id):
-        return self.lib.rows("SELECT excluded_reason FROM faces WHERE id = ?", (face_id,))[0][0]
-
-    def test_a_reason_the_page_does_not_offer_is_refused(self):
-        # Free text got in before, and needed a script to fold (docs/findings.md, #53).
-        face = self.face(self.photo("a.jpg"))
-        result = faces.exclude(self.lib.library, [face], "fuzzy")
-        self.assertIn("fuzzy", result.refused)
-        self.assertEqual((result.changed, self.face_row(face)[2]), (0, 0))
-
-    def test_a_reason_is_kept_as_the_page_spells_it(self):
-        face = self.face(self.photo("a.jpg"))
-        faces.exclude(self.lib.library, [face], "  Bad Crop ")
-        self.assertEqual(self.reason(face), "bad crop")
-
-    def test_no_reason_is_not_a_person_and_an_ignored_cluster_says_so(self):
-        first, second = self.face(self.photo("a.jpg")), self.face(self.photo("b.jpg"))
-        faces.exclude(self.lib.library, [first], None)
-        faces.exclude(self.lib.library, [second], "ignored cluster")
-        self.assertEqual((self.reason(first), self.reason(second)), ("not a person", "ignored cluster"))
-
-    def test_restoring_brings_back_only_what_was_excluded(self):
-        photo = self.photo("a.jpg")
-        excluded, named = self.face(photo, excluded=1, source="manual"), self.face(photo, name="Ada Pembrook",
-                                                                               source="manual")
-        self.assertEqual(faces.restore(self.lib.library, [excluded, named]).changed, 1)
-        self.assertEqual(self.face_row(excluded), (None, None, 0))
-        self.assertEqual(self.face_row(named), ("Ada Pembrook", "manual", 0))
 
 
 class Automatching(FacesCase):

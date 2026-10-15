@@ -260,6 +260,8 @@ class TakingNamesOffMany(Bulk):
         self.assertEqual([[PEOPLE + WREN]] * 3, [self.tags(p) for p, _f in made], "the tags go back with the files")
 
     def test_a_bad_reason_is_refused_before_anything_is_changed(self):
+        """Free text got in before and needed a script to fold (#53); lifted with test_faces_and_tags_in_step.py's single-face leg
+        from test_service_faces.py. Break that fails this: face_assignment no longer validates the reason (line 120)."""
         made = self.many(1, [PEOPLE + WREN], name=WREN, name_source="manual")
         reply = self.tuner_post("faces/exclude", {"face_ids": [made[0][1]], "reason": "because", "bulk": True})
         self.assertEqual(400, reply.status_code)
