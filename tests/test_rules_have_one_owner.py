@@ -93,7 +93,7 @@ LINE_RULES = (
     # whether the child got a console window, and a test run put a terminal window on the desktop for every server it
     # started and every reaper (#124).
     ("subprocess called directly", PROCESSES, r"subprocess\.(Popen|run|call|check_output|check_call)\(", "subprocess.run(c)",
-     "subprocess.Popen(", "all"),
+     "Popen(", "all"),
     ("a console flag or taskkill spelled", PROCESSES, r"creationflags|CREATE_NO_WINDOW|DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP|\btaskkill\b|\btasklist\b",
      "flags = CREATE_NO_WINDOW", "CREATE_NO_WINDOW", "all"),
 )

@@ -22,6 +22,18 @@ same file so the review is made against it. A branch in one domain gets that own
 two lists, in its description, the rows of the integration owner's contract table it touches, each as unchanged,
 changed or new, with its guard named.
 
+## How a test file gets its owner
+
+`tests/owners.py` gives every `tests/test_*.py` and `tests/frontend/*.test.mjs` one owner (`data`, `people`, `files`,
+`views`, `apps`), a kind (`scenario`, `unit`, `migration`, `guard`, or `unmapped` for a legacy file nothing placed) and,
+for a scenario file, the scenario ids it runs (`SCENARIOS`: a flow a person lives through; each charter ends with its
+ids). The first map was made by the module of `tagpup/` or `web/` a file imports most, through the Scope of the charter
+that lists it; the rest by name. A new test file is added to `_FILES` under its owner in the commit that adds it, or
+`tests/test_guard_tests_have_one_owner.py` names it; the count of `unmapped` files may only go down, and a finding number
+a test cites (`tests/findings_cited.txt`) may leave the tests only by being listed in `owners.RETIRED`.
+`tools/run_tests.py --owner people` runs one owner's Python files, `--scenarios people` only its scenario files, and both
+print the `node --test` line for that owner's page tests.
+
 ## Who decides
 
 - **One domain**: its owner decides and reviews.

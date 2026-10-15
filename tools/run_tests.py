@@ -5,11 +5,14 @@
     .venv/Scripts/python.exe tools/run_tests.py --jobs 4
     .venv/Scripts/python.exe tools/run_tests.py --fast          # the edit loop: tests/tiers.py's fast tier
     .venv/Scripts/python.exe tools/run_tests.py --no-slow       # fast and scenario; --all is every tier
+    .venv/Scripts/python.exe tools/run_tests.py --owner people  # every Python file of a domain owner (tests/owners.py)
+    .venv/Scripts/python.exe tools/run_tests.py --scenarios files   # only that owner's scenario files
 
 The whole suite is the default and is what a commit and a merge run; --all says so. Each
 file is in one of three tiers (tests/tiers.py): fast, scenario and slow. --fast and --no-slow
 leave tiers out for the loop, never for the gate. The report ends with each tier's files,
-tests and seconds.
+tests and seconds, and each owner's (tests/owners.py gives every test file one owner). --owner and --scenarios
+run one owner's files, and print the `node --test` command for that owner's page tests, which this runner does not run.
 
 A file that fails is run once more, alone, after the others have ended: a file that passes
 then is reported "flaky: passed alone" with the first run's output kept in the log, and does
@@ -53,7 +56,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from tagpup.core import processes  # noqa: E402
-from tests import tiers  # noqa: E402
+from tests import owners, tiers  # noqa: E402
 TESTS = os.path.join(ROOT, "tests")
 DURATIONS = os.path.join(TESTS, ".durations.json")
 
@@ -300,6 +303,23 @@ def tier_lines(results, jobs):
     return lines
 
 
+def owner_lines(results):
+    """One line per owner that ran: files, tests and summed seconds (tests/owners.py)."""
+    lines = []
+    for owner in owners.OWNERS:
+        mine = [r for r in results if owners.FILES.get(r[0], ("",))[0] == owner]
+        if mine:
+            lines.append("  %-8s %3d file(s) %5d test(s) %6.0fs of file time" % (
+                owner, len(mine), sum(r[2] for r in mine), sum(r[3] for r in mine)))
+    return lines
+
+
+def node_command(owner, scenarios_only=False):
+    """The command for an owner's page tests (tests/frontend/*.test.mjs): they run under node, not here."""
+    names = [n for n in owners.page_files_of(owner) if not scenarios_only or owners.FILES[n][1] == "scenario"]
+    return "node --test " + " ".join("tests/frontend/" + n for n in names) if names else None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("files", nargs="*", help="test files to run (default: all)")
@@ -309,6 +329,8 @@ def main(argv=None):
                         help="every tier (the default: the whole suite is what a commit runs)")
     parser.add_argument("--fast", action="store_true", help="the fast tier only, for the edit loop")
     parser.add_argument("--no-slow", action="store_true", help="the fast and scenario tiers")
+    parser.add_argument("--owner", choices=owners.OWNERS, help="every Python test file of this domain owner")
+    parser.add_argument("--scenarios", choices=owners.OWNERS, help="only this owner's scenario files")
     parser.add_argument("--no-retry", action="store_true",
                         help="do not run a failed file again alone")
     parser.add_argument("--accept-fewer", action="store_true",
@@ -316,7 +338,13 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if sum([args.all, args.fast, args.no_slow]) > 1:
         parser.error("--all, --fast and --no-slow are one choice")
-    modules = test_files(args.files)
+    if args.owner and args.scenarios and args.owner != args.scenarios:
+        parser.error("--owner and --scenarios name one owner")
+    chosen = args.owner or args.scenarios
+    if chosen and args.files:
+        parser.error("--owner and --scenarios take the place of file names")
+    modules = owners.files_of(chosen, "scenario" if args.scenarios else None) if chosen else test_files(args.files)
+    node = node_command(chosen, bool(args.scenarios)) if chosen else None
     left_out = ()
     if not args.files and (args.fast or args.no_slow):
         left_out = ("scenario", "slow") if args.fast else ("slow",)
@@ -338,6 +366,10 @@ def main(argv=None):
         len(results), sum(r[2] for r in results), len(failed), time.time() - started, args.jobs))
     report.append("Tiers run (tests/tiers.py)%s:" % (", without " + " and ".join(left_out) if left_out else ""))
     report.extend(tier_lines(results, args.jobs))
+    report.append("Owners run (tests/owners.py):")
+    report.extend(owner_lines(results))
+    if node:
+        report.append("Page tests of %s (run beside this): %s" % (chosen, node))
     for module, _first in flaky:
         report.append("flaky: passed alone: %s (failed in the pool; its first output is above and in the log)" % module)
     print("\n".join(report))
