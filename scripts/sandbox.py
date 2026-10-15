@@ -11,7 +11,7 @@ process on the machine does (tagpup.ml.gpu), so it never sits on the 10 GB card 
 Side effects, wanted: a sandbox waiting for the card makes the owner's idle server give up its models (its next
 Suggest loads them again, about 15 s), and a measurement that loads models measures a cold load.
 A script may not import another script, so what they share is here, a helper of scripts/
-(tests/test_scripts_are_entry_points.py, HELPERS) beside code_snapshot, which copies the code.
+(tests/test_layers.py, HELPERS) beside code_snapshot, which copies the code.
 """
 import os
 import shutil

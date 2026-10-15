@@ -30,7 +30,7 @@ revisited").
 
 It replaces scripts/suggest_models.py, which the web launcher used to fill a module-level
 slot in tagpup.jobs.suggestions with (docs/findings.md, #112), and the class attribute
-every ClipEmbedder shared its model through. `tests/test_models_single_owner.py` fails a
+every ClipEmbedder shared its model through. `tests/test_gpu_single_owner.py` fails a
 module that builds a model anywhere else.
 
 `background(runtime)` is what the web server -- the always-on process -- runs beside its

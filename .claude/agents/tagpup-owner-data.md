@@ -37,7 +37,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 ## Invariants and their guards
 | Invariant | Guard |
 |---|---|
-| Only `db.py` connects; SQL only in `tagpup/store` | `tests/test_db_access.py`, `tests/test_sql_single_owner.py` |
+| Only `db.py` connects; SQL only in `tagpup/store` | `tests/test_db_access.py`, `tests/test_layers.py` |
 | Derived tables written only by their rebuild functions, in the writing transaction | `tests/test_derived_writers.py`, `tests/test_derived_follow_writes.py` |
 | A migration declares its kind; additive changes no row; destructive takes one backup; one transaction with checks | `tests/test_migrations.py`, `tests/test_schema.py` |
 | One migration in flight (CLAUDE.md) | none: review only |

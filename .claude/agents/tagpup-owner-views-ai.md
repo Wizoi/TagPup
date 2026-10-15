@@ -38,7 +38,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | Invariant | Guard |
 |---|---|
 | One process on the card at a time | `tests/test_gpu_single_owner.py`, `tests/test_one_gpu_at_a_time.py`, `tests/test_one_gpu_jobs.py` |
-| Models built once by the runtime; no test loads one | `tests/test_models_single_owner.py`, `tests/test_no_test_loads_a_model.py` |
+| Models built once by the runtime; no test loads one | `tests/test_gpu_single_owner.py`, `tests/test_no_test_loads_a_model.py` |
 | Idle models and indexes released | `tests/test_models_released_when_idle.py`, `tests/test_vectors_and_pool_released_when_idle.py`, `tests/test_unload_models_now.py` |
 | A view page searches an index, never scans `photos` | `tests/test_library_view_plans.py` |
 | Ties and orders | `tests/test_library_view.py`, `tests/test_library_view_routes.py` |

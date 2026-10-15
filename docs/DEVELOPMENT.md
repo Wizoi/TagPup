@@ -133,8 +133,8 @@ Some tests exist to stop a whole class of mistake rather than to cover a feature
   copy of a helper `web/common/` exports, which would quietly shadow the import.
 - `tests/frontend/database-routing.test.mjs` fails on a `fetch(` or an `/api/` image
   `src` in a page that does not go through `web/common/api.js`.
-- The single-owner guards (`test_db_access`, `test_exiftool_single_owner`,
-  `test_paths_single_owner`, `test_config_single_owner`) all check one list of files,
+- The single-owner guards (`test_db_access`, `test_rules_have_one_owner`,
+  `test_config_single_owner`) all check one list of files,
   `tests/shipped_sources.py`: the launchers, `scripts/` and `tagpup/`. When each kept
   its own list, the database guard skipped `runner.py`, which opened its own connection.
 - `tests/test_layers.py` fails package code whose imports go up a layer

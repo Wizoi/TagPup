@@ -1,16 +1,48 @@
-"""Rules that were written more than once, each now said in one place (docs/findings.md,
-#74). The copies agreed when they were found; nothing kept them agreeing. Each class
-here holds one rule to its owner: a copy that reappears fails, and where a page must
-keep a copy of its own, the page is pinned to the owner.
+"""Rules that were written more than once, each now said in one place (docs/findings.md, #74). The copies
+agreed when they were found; nothing kept them agreeing. Each rule is held to its owner: a copy that reappears
+fails (the table below), and where a page must keep a copy of its own, the page is pinned to the owner.
+
+Folded in from the guards for paths, ExifTool and subprocess (a line rule each), and from the bucket-names and
+face-values guards: a person called "Excluded" opened the excluded faces
+instead of their own (#68); a face was compared with a mean in clustering, a geometric median in the grid and a
+mean with no years in the suggester, each against a value of its own (#71, #75).
 """
+import inspect
+import io
 import os
 import re
+import shutil
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "tests"))
-from shipped_sources import page_source, python_sources  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shipped_sources import ROOT, page_source, python_sources  # noqa: E402
+
+CLUSTERING = os.path.join("tagpup", "core", "clustering.py")
+IMAGES = os.path.join("tagpup", "files", "images.py")
+SUGGESTING = os.path.join("tagpup", "core", "suggesting.py")
+LIBRARY = os.path.join("tagpup", "core", "library.py")
+#: (what, the one file that may say it, what only it may spell, the files besides it that may). owner None: anywhere
+#: in tagpup is a copy. `allowed` is a path prefix or a path.
+RULES = (
+    ("a background face is decided in clustering", CLUSTERING, r"0\.10?\s*\*\s*max_area|area\s*<\s*2000", ()),
+    ("a face crop is encoded by images", IMAGES, r"format\s*=\s*['\"]JPEG['\"]", ()),
+    # The tutorial's seeding copies a PNG without its metadata: a file, not a photo.
+    ("a photo is opened by tagpup.files", None, r"Image\.open\(|exif_transpose\(|MAX_IMAGE_PIXELS",
+     (os.path.join("tagpup", "files"), os.path.join("scripts", "prepare_test_environment.py"))),
+    ("CLIP's prompts are suggesting's", SUGGESTING, r"[\"']a photo of", ()),
+    ("a test library's prefix is library's", LIBRARY, r"[\"']test_[\"']", ("tools",)),   # tools/ names test modules
+    ("a library is named in the data folder", None, r"[\"']data/[^\"']*\.db[\"']|os\.path\.join\(\s*[\"']data[\"']", ()),
+    ("a new library's roots are vocabulary's", os.path.join("tagpup", "core", "vocabulary.py"),
+     # "Location" alone is an HTTP header; "activity" is also the Activity page's route, named once (ACTIVITY_PAGE).
+     r"[\"'](Activity|School|Trips|Scenic|Albums)/?[\"']|[\"']Location/[\"']|(?<!ACTIVITY_PAGE = )[\"'](activity|school|trips)[\"']", ()),
+    ("an unknown year is dates'", os.path.join("tagpup", "core", "dates.py"), r"[\"']Unknown[\"']", ()),
+    ("the apps' ports are tagpup_web's", "tagpup_web.py", r"def find_available_port|\b80[89]0\b", ()),
+    ("a face decision's numbers are clustering's", CLUSTERING, r"\b(OFFER_A_NAME|NAME_WITHOUT_ASKING)\b", ()),
+    ("the grouping radius is clustering's", CLUSTERING, r"eps\s*=\s*0\.\d|CLUSTER_EPS\s*=\s*0\.\d", ()),
+)
 
 
 def read(relative):
@@ -21,66 +53,148 @@ def read(relative):
 def sources_matching(pattern, owner=None):
     """Shipped Python files other than `owner` whose text matches `pattern`."""
     owner = os.path.normcase(owner) if owner else None
-    return [path for path in python_sources()
-            if os.path.normcase(path) != owner and re.search(pattern, read(path))]
+    return [path for path in python_sources() if os.path.normcase(path) != owner and re.search(pattern, read(path))]
 
 
-class TheTinyBackgroundFace(unittest.TestCase):
-    """A face far smaller than the largest in its photo, and small outright, is noise in
-    the background: clustering gives it no name and the suggester offers none."""
+def lines_spelling(page, pattern, *exempt):
+    """Line numbers of a page that spell `pattern`, outside a declaration or a comment."""
+    return [n for n, line in enumerate(page.splitlines(), 1) if re.search(pattern, line)
+            and not any(e in line for e in exempt) and not line.strip().startswith(("//", "*", "/*"))]
 
-    def test_is_decided_in_clustering(self):
+
+PATHS = os.path.join("tagpup", "core", "paths.py")
+PROCESSES = os.path.join("tagpup", "core", "processes.py")
+EXIFTOOL = os.path.join("tagpup", "files", "exiftool_session.py")
+#: A line that is genuinely not about a photo path -- a tag hierarchy, a database file's URI -- says so, which keeps
+#: each exception visible where it is made.
+NOT_A_PATH = "# not a path:"
+#: The test of what the processes owner does: it spells the flags it checks.
+BEHAVES = os.path.join("tests", "test_processes_single_owner.py")
+#: (what only the owner may say, the one file that may, a pattern for a line, a line that must match it, what the
+#: owner must still contain, so the check is not worthless, the checked files besides the shipped ones).
+#: Comment lines are not read. A rule whose last column is "all" also reads the tests and the root's modules.
+LINE_RULES = (
+    # Nothing but paths.py decides how a photo path is spelled or compared: every component converted paths by hand,
+    # each its own way, and the database was looked up in a spelling it never stored; tag writes, renames and deletes
+    # reported success and changed nothing (CLAUDE.md). LIKE reads "_" as any character and neither it nor LOWER can
+    # use the path index: paths.sql_equals / paths.sql_under.
+    ("a separator converted by hand", PATHS, r"""\.replace\(\s*(['"])\\\\\1\s*,\s*(['"])/\2""", 'x = p.replace("\\\\", "/")', "", ""),
+    ("a separator converted by hand", PATHS, r"""\.replace\(\s*(['"])/\1\s*,\s*(['"])\\\\\2""", "x = p.replace('/', '\\\\')", "", ""),
+    ("os.path.normcase", PATHS, r"\bnormcase\(", "k = os.path.normcase(p)", "", ""),
+    ("a local path-normalising helper", PATHS, r"^\s*def\s+(normalize_path|to_db_path|normalise_path|norm_path)\b",
+     "def to_db_path(path):", "", ""),
+    ("LOWER(path) in SQL", PATHS, r"LOWER\(\s*(\w+\.)?(photo_)?path\s*\)", 'execute("SELECT 1 FROM photos WHERE LOWER(path) = ?")', "", ""),
+    ("LIKE on a path column", PATHS, r"\b(photo_)?path\s+(NOT\s+)?LIKE\b", 'execute("SELECT 1 FROM faces WHERE photo_path LIKE ?")', "", ""),
+    # Every ExifTool process comes from ExifToolSession: pyexiftool reads a command's stdout to the end before any
+    # stderr, a batch drawing a warning per file fills the 4 KB stderr pipe, and two scripts sat at 0% CPU for two days.
+    ("pyexiftool constructed directly", EXIFTOOL, r"\b(?:exiftool\.)?(ExifToolHelper|ExifToolAlpha|ExifTool)\s*\(",
+     "with exiftool.ExifTool(executable=path) as et:", "class ExifToolSession(exiftool.ExifToolHelper", ""),
+    # Other processes are started, run and stopped through tagpup.core.processes: every spawn decided for itself
+    # whether the child got a console window, and a test run put a terminal window on the desktop for every server it
+    # started and every reaper (#124).
+    ("subprocess called directly", PROCESSES, r"subprocess\.(Popen|run|call|check_output|check_call)\(", "subprocess.run(c)",
+     "subprocess.Popen(", "all"),
+    ("a console flag or taskkill spelled", PROCESSES, r"creationflags|CREATE_NO_WINDOW|DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP|\btaskkill\b|\btasklist\b",
+     "flags = CREATE_NO_WINDOW", "CREATE_NO_WINDOW", "all"),
+)
+#: Lines no line rule may match.
+NOT_FORBIDDEN = ('execute("SELECT 1 FROM photos WHERE people LIKE ?")', 'x = tag.split("/")',
+                 "with ExifToolSession(executable=executable) as et:", "from exiftool_session import ExifToolSession")
+
+
+def lines_of(relative):
+    with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
+        return list(enumerate(handle, 1))
+
+
+class OneOwnerPerLine(unittest.TestCase):
+    def test_each_rule_is_said_once(self):
+        here = os.path.relpath(__file__, ROOT)
+        everywhere = [os.path.join("tests", n) for n in sorted(os.listdir(os.path.join(ROOT, "tests"))) if n.endswith(".py")] + \
+                     [n for n in sorted(os.listdir(ROOT)) if n.endswith(".py")]
+        problems = []
+        for what, owner, pattern, _hit, _proof, scope in LINE_RULES:
+            pattern = re.compile(pattern, re.I if "LOWER" in pattern or "LIKE" in pattern else 0)
+            for relative in sorted(set(python_sources()) | (set(everywhere) if scope == "all" else set())):
+                if os.path.normcase(relative) in map(os.path.normcase, (owner, here, BEHAVES)):
+                    continue
+                problems += ["%s:%d  %s\n    %s" % (relative, number, what, line.strip()) for number, line in lines_of(relative)
+                             if pattern.search(line) and NOT_A_PATH not in line and not line.lstrip().startswith("#")]
+        self.assertEqual([], problems, "\n\nSay it through its owner (paths.stored / key / sql_equals, ExifToolSession, "
+                         "tagpup.core.processes):\n\n" + "\n".join(problems))
+
+    def test_the_rules_see_what_they_forbid_and_their_owners_still_say_it(self):
+        # A guard whose patterns quietly match nothing passes forever.
+        for what, owner, pattern, hit, proof, _scope in LINE_RULES:
+            with self.subTest(what, hit=hit):
+                flags = re.I if "LOWER" in pattern or "LIKE" in pattern else 0
+                self.assertTrue(re.search(pattern, hit, flags))
+                self.assertIn(proof, read(owner))
+        for line in NOT_FORBIDDEN:
+            self.assertFalse(any(re.search(rule[2], line, re.I) for rule in LINE_RULES), line)
+
+
+class NobodyElseSpellsIt(unittest.TestCase):
+    def test_each_rule_is_said_once(self):
+        for what, owner, pattern, allowed in RULES:
+            with self.subTest(what):
+                found = [p for p in sources_matching(pattern, owner) if not p.startswith(allowed)]
+                self.assertEqual([], found, what)
+
+    def test_nobody_guesses_a_vector_length_from_the_models_name(self):
+        # The CLI did, three times: 512 for anything not ViT-L or ViT-H, and so cleared every vector on each index
+        # with ViT-bigG-14, whose are 1280. The length is asked of open_clip, in tagpup.ml.clip.
+        guess = r"[\"']ViT-[LH][\"']\s+in\b"
+        tests = [name for name in os.listdir(os.path.join(ROOT, "tests")) if name.endswith(".py")
+                 and name != os.path.basename(__file__) and re.search(guess, read(os.path.join("tests", name)))]
+        self.assertEqual([], sources_matching(guess) + tests)
+
+    def test_the_clip_words_are_merged_in_one_place(self):
+        # The runtime reads config.ini's words once, for the suggester to merge with the tree's at the start of each
+        # run (tagpup.services.suggester.model_for_run); every other reader merges through zero_shot_words.
+        for path in sources_matching(r"config\.candidate_tags\("):
+            if path != os.path.join("tagpup", "runtime.py"):
+                for line in read(path).splitlines():
+                    if "config.candidate_tags(" in line:
+                        self.assertIn("zero_shot_words(", line, path)
+        from tagpup.services import suggester
+        self.assertIn("zero_shot_words(configured_words,", inspect.getsource(suggester.model_for_run))
+
+    def test_a_model_has_no_setting_of_its_own(self):
+        self.assertNotRegex(read(os.path.join("tagpup", "ml", "clip.py")), r"[\"'](ViT-|laion)|max_aspect_ratio:\s*float\s*=")
+        from tagpup.ml.clip import ClipModel
+        from tagpup.services import settings as library_settings
+        with self.assertRaises(TypeError):
+            ClipModel(model="ViT-T", **library_settings.LibrarySettings(dict(library_settings.DEFAULTS)).embedder)
+
+    def test_an_index_names_its_library(self):
+        from tagpup.services.search import PhotoIndex
+        self.assertIs(inspect.Parameter.empty, inspect.signature(PhotoIndex).parameters["db_path"].default)
+
+
+class TheOwnersValues(unittest.TestCase):
+    """Each rule's owner says it as the rule is."""
+
+    def test_the_background_face(self):
         from tagpup.core import clustering
         big, small, middling = [0, 0, 100, 100], [0, 0, 20, 20], [0, 0, 40, 60]
         self.assertEqual({1}, clustering.background_faces([big, small, middling]))
-        # Small beside a larger face, but not small outright: 50 x 50 is 2,500.
-        self.assertEqual(set(), clustering.background_faces([[0, 0, 400, 400], [0, 0, 50, 50]]))
-        # Alone in its photo, a face is never background.
-        self.assertEqual(set(), clustering.background_faces([small]))
+        self.assertEqual(set(), clustering.background_faces([[0, 0, 400, 400], [0, 0, 50, 50]]))   # not small outright
+        self.assertEqual(set(), clustering.background_faces([small]))   # alone in its photo
         self.assertEqual(set(), clustering.background_faces([]))
         self.assertEqual({1}, clustering.background_faces([big, None]))
 
-    def test_nothing_else_writes_it(self):
-        self.assertEqual([], sources_matching(r"0\.10?\s*\*\s*max_area|area\s*<\s*2000",
-                                              os.path.join("tagpup", "core", "clustering.py")))
-
-
-class TheFaceCrop(unittest.TestCase):
-    """A face's crop is kept at one size and one JPEG quality, whoever cuts it: face
-    detection cut its own, beside the one tagpup.files.images cuts for a face whose row
-    has none."""
-
-    def test_is_encoded_by_images(self):
-        import io
-
+    def test_the_face_crop_and_the_opened_photo(self):
         from PIL import Image
 
         from tagpup.files import images
         crop = images.crop_jpeg(Image.new("RGB", (600, 300), (120, 80, 40)))
         with Image.open(io.BytesIO(crop)) as back:
-            self.assertEqual("JPEG", back.format)
-            self.assertEqual((images.CROP_SIZE, images.CROP_SIZE // 2), back.size)
-        small = images.crop_jpeg(Image.new("RGB", (40, 60)))
-        with Image.open(io.BytesIO(small)) as back:
+            self.assertEqual(("JPEG", (images.CROP_SIZE, images.CROP_SIZE // 2)), (back.format, back.size))
+        with Image.open(io.BytesIO(images.crop_jpeg(Image.new("RGB", (40, 60))))) as back:
             self.assertEqual((40, 60), back.size)
-
-    def test_nothing_else_encodes_a_jpeg(self):
-        self.assertEqual([], sources_matching(r"format\s*=\s*['\"]JPEG['\"]",
-                                              os.path.join("tagpup", "files", "images.py")))
-
-
-class OpeningAPhoto(unittest.TestCase):
-    """A photo's pixels are read by tagpup.files.images: the embedder opened photos and
-    turned them upright itself, and four modules each raised Pillow's size limit."""
-
-    def test_images_opens_it_upright_or_as_stored(self):
-        import tempfile
-
-        from PIL import Image
-
-        from tagpup.files import images
         folder = tempfile.mkdtemp(prefix="open_photo_")
-        self.addCleanup(__import__("shutil").rmtree, folder, True)
+        self.addCleanup(shutil.rmtree, folder, True)
         photo = os.path.join(folder, "sideways.png")
         img = Image.new("L", (40, 20))
         exif = img.getexif()
@@ -91,66 +205,20 @@ class OpeningAPhoto(unittest.TestCase):
         self.assertEqual((40, 20), images.opened(photo, upright=False).size)
         self.assertGreaterEqual(Image.MAX_IMAGE_PIXELS, 500_000_000)
 
-    def test_nothing_else_opens_one(self):
-        # The tutorial's seeding copies a PNG without its metadata: a file, not a photo.
-        found = sources_matching(r"Image\.open\(|exif_transpose\(|MAX_IMAGE_PIXELS")
-        self.assertEqual([], [path for path in found
-                              if not path.startswith(os.path.join("tagpup", "files"))
-                              and path != os.path.join("scripts", "prepare_test_environment.py")])
-
-
-class WhatClipIsAsked(unittest.TestCase):
-    """The words CLIP scores a photo against, and the sentence each is put in, are
-    tagpup.core.suggesting's: the server and the CLI each merged the tree's words into
-    config.ini's, one sorting them and one not, and the suggester wrote its prompts."""
-
-    def test_the_words(self):
+    def test_what_clip_is_asked(self):
         from tagpup.core import suggesting
         words = suggesting.zero_shot_words(
-            ["Beach", "sunset "], ["Trips/Coast", "People/Oda Castellane", "Activity/Beach", "Activity/ Rowing"],
-            {"people"})
+            ["Beach", "sunset "], ["Trips/Coast", "People/Oda Castellane", "Activity/Beach", "Activity/ Rowing"], {"people"})
         self.assertEqual(["Beach", "sunset", "Rowing", "Coast"], words)
-
-    def test_the_prompts(self):
-        from tagpup.core import suggesting
         self.assertEqual("a photo of a sunset", suggesting.clip_prompt("Sunset"))
         self.assertEqual("a photo of a sunset in 1998", suggesting.clip_prompt("Sunset", 1998))
-        self.assertEqual("a photo of Oda Castellane in 1998",
-                         suggesting.clip_prompt("Oda Castellane", 1998, person=True))
+        self.assertEqual("a photo of Oda Castellane in 1998", suggesting.clip_prompt("Oda Castellane", 1998, person=True))
 
-    def test_nothing_else_writes_them(self):
-        self.assertEqual([], sources_matching(r"[\"']a photo of",
-                                              os.path.join("tagpup", "core", "suggesting.py")))
-        # The runtime reads config.ini's words once, for the suggester to merge with the
-        # tree's at the start of each run (tagpup.services.suggester.model_for_run).
-        runtime = os.path.join("tagpup", "runtime.py")
-        for path in sources_matching(r"config\.candidate_tags\("):
-            if path == runtime:
-                continue
-            for line in read(path).splitlines():
-                if re.search(r"config\.candidate_tags\(", line):
-                    self.assertIn("zero_shot_words(", line, path)
-        import inspect
-
-        from tagpup.services import suggester
-        self.assertIn("zero_shot_words(configured_words,", inspect.getsource(suggester.model_for_run))
-
-
-class TheLengthOfAPhotosVector(unittest.TestCase):
-    """How long a model's vectors are is asked of open_clip, in the model
-    (tagpup.ml.clip): the CLI guessed it from the model's name three times, 512 for
-    anything not ViT-L or ViT-H, and so cleared every vector on each index with
-    ViT-bigG-14, whose are 1280."""
-
-    def test_is_the_models_own(self):
+    def test_the_length_of_a_photos_vector_is_the_models_own(self):
         from tagpup.ml import clip
-        self.assertEqual(1280, clip.output_dim("ViT-bigG-14"))
-        self.assertEqual(1024, clip.output_dim("ViT-H-14"))
-        self.assertEqual(512, clip.output_dim("ViT-B-32"))
-        self.assertIsNone(clip.output_dim("hf-hub:somebody/unknown-model"))
-
-    def test_the_library_is_compared_with_it(self):
         from tagpup.services import search
+        self.assertEqual((1280, 1024, 512, None), tuple(clip.output_dim(m) for m in
+                                                          ("ViT-bigG-14", "ViT-H-14", "ViT-B-32", "hf-hub:somebody/unknown-model")))
 
         class Index:
             def __init__(self, d):
@@ -164,24 +232,7 @@ class TheLengthOfAPhotosVector(unittest.TestCase):
         self.assertIsNone(search.stored_mismatch(Index(7), "hf-hub:somebody/unknown-model"))
         self.assertEqual((512, 1280), search.stored_mismatch(Index(512), "ViT-bigG-14"))
 
-    def test_nobody_guesses_it_from_the_name(self):
-        guess = r"[\"']ViT-[LH][\"']\s+in\b"
-        found = sources_matching(guess)
-        tests = os.path.join(ROOT, "tests")
-        found += [name for name in os.listdir(tests) if name.endswith(".py")
-                  and name != "test_rules_have_one_owner.py" and re.search(guess, read(os.path.join("tests", name)))]
-        self.assertEqual([], found)
-
-
-class TheEmbeddersSettings(unittest.TestCase):
-    """The model a photo is embedded with is the library's (tagpup.services.settings),
-    made into a model by the runtime: the embedder had defaults of its own, ViT-B-32
-    among them, that nothing checked against the settings."""
-
     def test_the_runtimes_model_is_the_librarys(self):
-        from unittest import mock
-
-        sys.path.insert(0, os.path.join(ROOT, "tests"))
         import own_home
         from tagpup.core.library import Library
         from tagpup.ml import clip
@@ -201,23 +252,8 @@ class TheEmbeddersSettings(unittest.TestCase):
             self.assertEqual(runtime.model_key(library), search.PhotoEmbeddings(runtime.clip(library)).model_key)
         model.assert_called_once_with(**found)
 
-    def test_it_has_no_model_of_its_own(self):
-        module = os.path.join("tagpup", "ml", "clip.py")
-        self.assertNotRegex(read(module), r"[\"'](ViT-|laion)|max_aspect_ratio:\s*float\s*=", module)
-
-    def test_a_setting_it_does_not_know_is_refused(self):
-        from tagpup.ml.clip import ClipModel
-        from tagpup.services import settings as library_settings
-        with self.assertRaises(TypeError):
-            ClipModel(model="ViT-T", **library_settings.LibrarySettings(dict(library_settings.DEFAULTS)).embedder)
-
-
-class ATestLibrarysName(unittest.TestCase):
-    """A test library's file starts with tagpup.core.library.TEST_PREFIX, and the library
-    module adds and takes it off: the runner, the TagPup server and the CLI each did it
-    by hand, eleven times, with a [5:] for its length."""
-
-    def test_the_library_module_says_it(self):
+    def test_a_test_librarys_name_and_where_a_library_is(self):
+        from tagpup import config
         from tagpup.core import library
         self.assertEqual("test_harbour.db", library.for_mode("harbour.db", True))
         self.assertEqual("test_harbour.db", library.for_mode("test_harbour.db", True))
@@ -225,90 +261,43 @@ class ATestLibrarysName(unittest.TestCase):
         self.assertEqual("harbour.db", library.for_mode("harbour.db", False))
         self.assertTrue(library.is_test_library("D:/data/test_harbour.db"))
         self.assertFalse(library.is_test_library("D:/test_data/harbour.db"))
-
-    def test_nobody_else_spells_it(self):
-        # tools/ names test modules, not libraries.
-        found = sources_matching(r"[\"']test_[\"']", os.path.join("tagpup", "core", "library.py"))
-        self.assertEqual([], [path for path in found if not path.startswith("tools")])
-
-
-class WhereALibraryIs(unittest.TestCase):
-    """Where a library lives is tagpup.config's to say (data_dir, library_path: data/ in the
-    home): the index,
-    both servers and the bulk scripts named theirs as data/<name>.db, which is the
-    working directory's data folder -- a library of its own wherever they were started."""
-
-    def test_a_library_is_named_in_the_data_folder(self):
-        from tagpup import config
         self.assertEqual(os.path.join(config.data_dir(), "family.db"), config.library_path("family.db"))
 
-    def test_nobody_spells_it_from_the_working_directory(self):
-        self.assertEqual([], sources_matching(r"[\"']data/[^\"']*\.db[\"']|os\.path\.join\(\s*[\"']data[\"']"))
+    def test_the_roots_a_new_library_is_given(self):
+        from tagpup.core import vocabulary
+        from tagpup.core.suggesting import caption_from_tags
+        self.assertEqual(("Activity", "Pets", "School", "Trips"), vocabulary.NEW_LIBRARY_ROOTS)
+        self.assertIn(vocabulary.ACTIVITY_ROOT, vocabulary.NEW_LIBRARY_ROOTS)
+        self.assertTrue(set(vocabulary.PLACE_ROOTS) <= set(vocabulary.NEW_LIBRARY_ROOTS))
+        self.assertTrue({vocabulary.ACTIVITY_ROOT, *vocabulary.PLACE_ROOTS} <= set(vocabulary.CONTEXT_ROOTS))
+        self.assertEqual("Oda Castellane - Rowing, Harbour School and Lakes",
+                         caption_from_tags(["People/Oda Castellane", "Activity/Rowing", "Trips/Lakes",
+                                            "School/Harbour School"], {"people"}))
 
-    def test_an_index_names_its_library(self):
-        sys.path.insert(0, os.path.join(ROOT, "scripts"))
-        import inspect
+    def test_the_year_of_a_photo_with_none_and_the_ports(self):
+        import tagpup_web
+        from tagpup.core import dates
+        self.assertEqual((2019, "2019", dates.UNKNOWN_YEAR, dates.UNKNOWN_YEAR),
+                         (dates.shown_year(2019), dates.shown_year("2019"), dates.shown_year(None), dates.shown_year(0)))
+        self.assertEqual({"tagpup": 8090, "tuner": 8080}, tagpup_web.PORTS)
 
-        from tagpup.services.search import PhotoIndex
-        self.assertIs(inspect.Parameter.empty, inspect.signature(PhotoIndex).parameters["db_path"].default)
-
-
-class WhyAFaceIsExcluded(unittest.TestCase):
-    """The reasons a face may be excluded, and the one it is given when none is, are
-    tagpup.core.validation's "exclusion reason" kind, which tagpup.services.faces uses. TagTuner's page keeps a copy to offer them from, held here
-    to the service's; the server and the page each spelled the default again."""
-
-    def page(self):
-        return page_source("tuner")
-
-    def test_the_page_offers_the_services_reasons(self):
+    def test_a_bucket_name_is_refused_whatever_the_case(self):
         from tagpup.core import validation
-        page = self.page()
-        # The page keeps no list: it offers the published choices (web/common/validate.js choicesOf), less the
-        # reason an ignored cluster is given, which it names.
-        self.assertIsNone(re.search(r"const EXCLUDE_REASONS\b", page), "the page keeps its own copy of the reasons again")
-        self.assertIn("choicesOf('exclusion reason')", page)
-        ignored = re.search(r"const EXCLUDE_IGNORED_CLUSTER = '([^']*)';", page)
-        self.assertIsNotNone(ignored, "the page's reason for an ignored cluster moved")
-        self.assertEqual(validation.IGNORED_CLUSTER, ignored.group(1))
-        self.assertEqual(validation.EXCLUSION_REASONS[-1], ignored.group(1), "the ignored cluster is no longer the last choice")
-        self.assertNotIn(validation.IGNORED_CLUSTER, validation.EXCLUSION_REASONS[:-1])
+        for name in ("Excluded", "ungrouped", "Unknown Faces", " UNMATCHED "):
+            self.assertIsNotNone(validation.problem("name", name), name)
+        self.assertIsNone(validation.problem("name", "Excluded Ferris"))
 
-    def test_nobody_else_spells_them(self):
-        from tagpup.services import faces
-        # The server's own choices: a caller may still send "stranger" as its reason.
-        chosen = r"[\"'](%s|%s)[\"']" % (re.escape(faces.DEFAULT_REASON), re.escape(faces.IGNORED_CLUSTER))
-        self.assertEqual([], sources_matching(chosen, os.path.join("tagpup", "core", "validation.py")))
-        spelled = r"[\"'](%s)[\"']" % "|".join(re.escape(r) for r in faces.EXCLUSION_REASONS)
-        lines = [n for n, line in enumerate(self.page().splitlines(), 1)
-                 if re.search(spelled, line) and "const EXCLUDE_" not in line
-                 and not line.strip().startswith(("//", "*", "/*"))]   # history in a comment
-        self.assertEqual([], lines)
-
-
-class TheCameraOfATimeShift(unittest.TestCase):
-    """Which camera a photo came from, for Shift Date Taken, is tagpup.core.fields's: the
-    server chose the photos to shift by it, and the TagPup page labelled its choices and
-    highlighted the photos by it, twice. The page keeps a copy, held here to the server's."""
-
-    def page(self):
-        return read(os.path.join("web", "tagpup", "rename.js"))
-
-    def test_the_server_names_it(self):
-        from tagpup.core import fields
+    def test_the_camera_of_a_photo(self):
+        """The shapes photo_index holds: Shift Date Taken chooses the photos of "Google Pixel 8 Pro" and not those of a
+        model that is only "Pixel 8 Pro"; the server, the panel and the search name a camera by one rule."""
+        from tagpup.core import fields, photo_meta
+        from tagpup.services.photos import page_record
         self.assertEqual("Fujifilm X100V", fields.camera_of({"Model": "X100V", "EXIF:Make": "Fujifilm"}))
         self.assertEqual("Fujifilm", fields.camera_of({"EXIF:Make": "Fujifilm", "Model": ""}))
-        self.assertEqual(fields.UNKNOWN_CAMERA, fields.camera_of({}))
         self.assertEqual(fields.UNKNOWN_CAMERA, fields.camera_of(None))
         self.assertTrue(fields.on_camera({}, fields.ALL_CAMERAS))
         self.assertTrue(fields.on_camera({"EXIF:Model": "X100V"}, "X100V"))
         self.assertFalse(fields.on_camera({"EXIF:Model": "X100V"}, "Pixel 8"))
-
-    def test_the_server_the_panel_and_the_search_name_a_camera_by_one_rule(self):
-        """The shapes photo_index holds: a model that lacks its make, one that holds it, a make alone, a model alone, none.
-        Shift Date Taken chooses the photos of "Google Pixel 8 Pro" and not those of a model that is only "Pixel 8 Pro"."""
-        from tagpup.core import fields, photo_meta
-        from tagpup.services.photos import page_record
         shapes = {
             "Google Pixel 8 Pro": {"EXIF:Make": "Google", "EXIF:Model": "Pixel 8 Pro"},
             "Canon EOS R6m2": {"EXIF:Make": "Canon", "EXIF:Model": "Canon EOS R6m2"},
@@ -321,95 +310,68 @@ class TheCameraOfATimeShift(unittest.TestCase):
         for name, raw in shapes.items():
             with self.subTest(name=name):
                 self.assertEqual(name, fields.camera_of(raw))
-                record = page_record("D:/a.jpg", {"raw_metadata": raw})
-                self.assertEqual(name, record["camera"] or fields.UNKNOWN_CAMERA, "the page's name")
-                self.assertEqual(photo_meta.gear(raw).camera or fields.UNKNOWN_CAMERA, name, "the search's and the panel's")
-                chosen = [other for other, theirs in shapes.items() if fields.on_camera(theirs, name)]
-                self.assertEqual([name], chosen, "a shift for this camera selects its photos and no other camera's")
+                self.assertEqual(name, page_record("D:/a.jpg", {"raw_metadata": raw})["camera"] or fields.UNKNOWN_CAMERA)
+                self.assertEqual(photo_meta.gear(raw).camera or fields.UNKNOWN_CAMERA, name)
+                self.assertEqual([name], [other for other, theirs in shapes.items() if fields.on_camera(theirs, name)])
+        spelled = r"[\"'](Unknown Camera|All Cameras|EXIF:Model)[\"']"
+        self.assertEqual([], [p for p in sources_matching(spelled, os.path.join("tagpup", "core", "fields.py"))
+                              if re.search(r"[\"'](Unknown Camera|All Cameras)[\"']|get\([\"']EXIF:Model", read(p))])
 
-    def test_the_page_names_it_as_the_server_does(self):
-        """The page keeps no copy of the rule: it takes the name from the record (`camera`, made by page_record from
-        photo_meta.gear), so the labels of its list and the photos a shift selects (fields.on_camera) are by one rule."""
+    def test_the_decisions_about_a_face(self):
+        from tagpup.core import clustering
+        self.assertEqual((True, False, True, False, True, False),
+                         (clustering.is_offered(0.70), clustering.is_offered(0.69), clustering.names_unasked(0.80),
+                          clustering.names_unasked(0.79), clustering.looks_wrong(0.69), clustering.looks_wrong(0.70)))
+        self.assertEqual(("likely", "possible", "possible", None, None),
+                         tuple(clustering.band(v) for v in (0.80, 0.79, 0.70, 0.69, None)))
+        self.assertEqual(0.885, clustering.GROUPING)
+        self.assertAlmostEqual(0.48, clustering.distance(clustering.GROUPING), places=2)
+        for decide in (clustering.is_offered, clustering.names_unasked, clustering.looks_wrong):
+            self.assertFalse(decide(None))   # nothing is decided about nothing
+
+
+class ThePagesKeepNoCopyOfTheirOwn(unittest.TestCase):
+    """Where a page must keep a copy, it is pinned to the owner's."""
+
+    def test_tagtuners_buckets_reasons_year_and_bands(self):
+        from tagpup.core import dates, validation, vocabulary
+        from tagpup.services import faces
+        page = page_source("tuner")
+        found = re.search(r"const BUCKET = Object\.freeze\(\{(.*?)\}\)", page)
+        self.assertIsNotNone(found, "the page's copy of the bucket names moved")
+        self.assertEqual({key.upper(): name for key, name in vocabulary.BUCKETS.items()},
+                         dict(re.findall(r"(\w+):\s*'([^']*)'", found.group(1))))
+        self.assertEqual([], lines_spelling(page, r"'(Unknown Faces|Ungrouped|Excluded)'", "const BUCKET"))
+        # The page keeps no list of reasons: it offers the published choices, less the one an ignored cluster is given.
+        self.assertIsNone(re.search(r"const EXCLUDE_REASONS\b", page), "the page keeps its own copy of the reasons again")
+        self.assertIn("choicesOf('exclusion reason')", page)
+        ignored = re.search(r"const EXCLUDE_IGNORED_CLUSTER = '([^']*)';", page)
+        self.assertIsNotNone(ignored, "the page's reason for an ignored cluster moved")
+        self.assertEqual(validation.IGNORED_CLUSTER, ignored.group(1))
+        self.assertEqual(validation.EXCLUSION_REASONS[-1], ignored.group(1), "the ignored cluster is no longer the last choice")
+        self.assertNotIn(validation.IGNORED_CLUSTER, validation.EXCLUSION_REASONS[:-1])
+        # The server's own choices: a caller may still send "stranger" as its reason.
+        chosen = r"[\"'](%s|%s)[\"']" % (re.escape(faces.DEFAULT_REASON), re.escape(faces.IGNORED_CLUSTER))
+        self.assertEqual([], sources_matching(chosen, os.path.join("tagpup", "core", "validation.py")))
+        spelled = r"[\"'](%s)[\"']" % "|".join(re.escape(r) for r in faces.EXCLUSION_REASONS)
+        self.assertEqual([], lines_spelling(page, spelled, "const EXCLUDE_"))
+        self.assertIn("const UNKNOWN_YEAR = '%s';" % dates.UNKNOWN_YEAR, page)
+        self.assertEqual([], lines_spelling(page, r"'%s'" % dates.UNKNOWN_YEAR, "const UNKNOWN_YEAR"))
+        # The page asks the server which names look wrong and which band a face is in; it keeps no numbers.
+        self.assertNotRegex(page, r"similarity\s*<\s*0\.\d")
+        self.assertIn("possibly_wrong", page)
+        self.assertEqual([], re.findall(r"(?:similarity|sim|ranked)\s*>=\s*0\.\d+", page))
+
+    def test_the_tagpup_page_names_a_camera_as_the_server_does(self):
         from tagpup.core import fields
-        page = self.page()
+        page = read(os.path.join("web", "tagpup", "rename.js"))
         self.assertNotIn("CAMERA_FIELDS", page)
         self.assertNotIn("raw_metadata", page, "the page does not read the metadata to name a camera")
         self.assertIn("photo.camera", page)
         self.assertIn("const UNKNOWN_CAMERA = '%s';" % fields.UNKNOWN_CAMERA, page)
         self.assertIn("const ALL_CAMERAS = '%s';" % fields.ALL_CAMERAS, page)
-
-    def test_nobody_else_spells_it(self):
-        spelled = r"[\"'](Unknown Camera|All Cameras|EXIF:Model)[\"']"
-        self.assertEqual([], [path for path in sources_matching(spelled, os.path.join("tagpup", "core", "fields.py"))
-                              if re.search(r"[\"'](Unknown Camera|All Cameras)[\"']|get\([\"']EXIF:Model", read(path))])
-        lines = [n for n, line in enumerate(self.page().splitlines(), 1)
-                 if re.search(spelled, line) and not re.search(r"const (CAMERA_FIELDS|UNKNOWN_CAMERA|ALL_CAMERAS) =", line)]
-        self.assertEqual([], lines)
-
-
-class TheRootsANewLibraryIsGiven(unittest.TestCase):
-    """A new library's roots, and what the caption and the suggester read into them, are
-    named in tagpup.core.vocabulary: the seed made Activity, Pets, School and Trips, the
-    caption knew activity, school and trips by name, and the suggester Activity/, School/
-    and Trips/ among its context roots."""
-
-    def test_are_named_once(self):
-        from tagpup.core import vocabulary
-        self.assertEqual(("Activity", "Pets", "School", "Trips"), vocabulary.NEW_LIBRARY_ROOTS)
-        self.assertIn(vocabulary.ACTIVITY_ROOT, vocabulary.NEW_LIBRARY_ROOTS)
-        self.assertTrue(set(vocabulary.PLACE_ROOTS) <= set(vocabulary.NEW_LIBRARY_ROOTS))
-        self.assertTrue({vocabulary.ACTIVITY_ROOT, *vocabulary.PLACE_ROOTS} <= set(vocabulary.CONTEXT_ROOTS))
-
-    def test_the_caption_reads_them(self):
-        from tagpup.core.suggesting import caption_from_tags
-        self.assertEqual("Oda Castellane - Rowing, Harbour School and Lakes",
-                         caption_from_tags(["People/Oda Castellane", "Activity/Rowing",
-                                                   "Trips/Lakes", "School/Harbour School"], {"people"}))
-
-    def test_nobody_else_spells_them(self):
-        # "Location" alone is an HTTP header; "activity" is also the Activity page's route,
-        # named once (tagpup.core.library.ACTIVITY_PAGE).
-        spelled = (r"[\"'](Activity|School|Trips|Scenic|Albums)/?[\"']|[\"']Location/[\"']"
-                   r"|(?<!ACTIVITY_PAGE = )[\"'](activity|school|trips)[\"']")
-        self.assertEqual([], sources_matching(spelled, os.path.join("tagpup", "core", "vocabulary.py")))
-
-
-class TheYearOfAPhotoWithNone(unittest.TestCase):
-    """A photo whose year is not known is shown under tagpup.core.dates.UNKNOWN_YEAR: the
-    TagTuner server, the folder scan's records and TagTuner's page each spelled it, the
-    page nine times. The page keeps one copy, held here to the server's."""
-
-    def test_dates_says_it(self):
-        from tagpup.core import dates
-        self.assertEqual(2019, dates.shown_year(2019))
-        self.assertEqual("2019", dates.shown_year("2019"))
-        self.assertEqual(dates.UNKNOWN_YEAR, dates.shown_year(None))
-        self.assertEqual(dates.UNKNOWN_YEAR, dates.shown_year(0))
-
-    def test_the_page_shows_it_as_the_server_does(self):
-        from tagpup.core import dates
-        page = page_source("tuner")
-        self.assertIn("const UNKNOWN_YEAR = '%s';" % dates.UNKNOWN_YEAR, page)
-        lines = [n for n, line in enumerate(page.splitlines(), 1)
-                 if re.search(r"'%s'" % dates.UNKNOWN_YEAR, line) and "const UNKNOWN_YEAR" not in line]
-        self.assertEqual([], lines)
-
-    def test_nobody_else_spells_it(self):
-        self.assertEqual([], sources_matching(r"[\"']Unknown[\"']", os.path.join("tagpup", "core", "dates.py")))
-
-
-class TheAppsPorts(unittest.TestCase):
-    """The port each app answers on is tagpup_web.PORTS: TagPup's and TagTuner's
-    launchers, the runner (twice) and both old servers' start_server each wrote the
-    port, and the four launchers each had a find_available_port. The one server fails
-    loudly on a port in use (tagpup.web.app.bind) rather than finding another."""
-
-    def test_the_launcher_names_them(self):
-        import tagpup_web
-        self.assertEqual({"tagpup": 8090, "tuner": 8080}, tagpup_web.PORTS)
-
-    def test_nobody_else_has_them(self):
-        self.assertEqual([], sources_matching(r"def find_available_port|\b80[89]0\b", "tagpup_web.py"))
+        self.assertEqual([], lines_spelling(page, r"[\"'](Unknown Camera|All Cameras|EXIF:Model)[\"']",
+                                            "const CAMERA_FIELDS =", "const UNKNOWN_CAMERA =", "const ALL_CAMERAS ="))
 
 
 if __name__ == "__main__":
