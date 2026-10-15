@@ -481,7 +481,7 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         return result
     refused = Result(attempted=len(photo_paths))
     # Photos of folders the library does not hold are shifted in their files only
-    # (tagpup.services.file_only), and are asked for what they decode as. A photo cut short is left out by the writer.
+    # (tagpup.services.file_only), and are asked for what they decode as.
     held, loose = libraries.split(library, photo_paths)
     if held and libraries.refuse_writes(refused, library, held):
         return refused
@@ -611,7 +611,7 @@ def rotate_photos(library, photo_paths, direction, exiftool_path):
     held, loose = libraries.split(library, photo_paths)
     if held and libraries.refuse_writes(result, library, held):
         return result
-    # A loose photo is asked for what it decodes as; a single held one is refused when cut short (a batch skips such a photo).
+    # A loose photo is asked for what it decodes as; a single held one is refused when it is empty or ends in zeros.
     if loose and file_only.refuse_unwritable(result, loose, full=True):
         return result
     if len(held) == 1 and file_only.refuse_unwritable(result, held):

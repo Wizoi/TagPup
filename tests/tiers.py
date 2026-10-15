@@ -44,10 +44,9 @@ SCENARIO = frozenset({
     "test_just_look_edits",
     "test_just_look_delete_and_rename_rules",
     "test_just_look_bin_and_long_names",
-    # Writes that stop part-way or meet a damaged photo, with a real ExifTool.
+    # Writes that stop part-way, or an index that meets a damaged photo, with a real ExifTool.
     "test_partial_writes_leave_rows_unread",
     "test_no_writes_to_damaged_photos",
-    "test_writes_refuse_cut_short_photos",
     "test_rotate_keeps_the_photo",
     "test_rotate_is_journaled",
     "test_rotate_crash_settles_with_the_boxes",

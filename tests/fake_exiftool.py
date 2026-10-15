@@ -8,7 +8,6 @@ tagpup.files.exiftool_session.ExifToolSession, and a test reaches into the middl
   and the write's;
 * `on_write(path, n)`: called before the n-th write of any file (a test pauses a job here: set an event, wait for another);
 * `unreadable`, `fails`: the keys (tagpup.core.paths.key) of paths ExifTool answers as not a photo, and whose write it refuses;
-* `cut_short`: the keys of paths whose whole-file scan (-validate) says "JPEG format error", as ExifTool says of a JPEG that stops short.
 
 A file is also a real one on disk when the test made it so (tests/view_library.py make_jpeg), which the lock-free parts of a write
 (the stat, the tail check, the Recycle Bin) look at.
@@ -39,7 +38,6 @@ class Files:
         self.on_read = None
         self.on_write = None
         self.unreadable = set()
-        self.cut_short = set()
         self.fails = set()
         self.lock = threading.Lock()
         self.starts = 0
@@ -102,8 +100,6 @@ class Files:
                 continue
             held = self.fields.get(key, {})
             row = {"SourceFile": path, "File:MIMEType": "image/jpeg"}
-            if key in self.cut_short and "-validate" in (params or []):
-                row["ExifTool:Warning"] = "JPEG format error"
             for field in tags or []:
                 key = fields.read_key(field)
                 if key in held:

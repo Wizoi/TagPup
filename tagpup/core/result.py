@@ -53,11 +53,12 @@ class Result:
 #: the folders, which a web route answers with 409.
 NOT_IN_LIBRARY = "not_in_library"
 
-#: Where a Result refused for photos that do not open whole names them (a save of a photo cut short, a rotate of one
-#: that does not decode): nothing is written into one.
+#: Where a Result refused for photos that do not open whole names them (tagpup.services.file_only.refuse_unwritable:
+#: a write of a photo of a folder the library does not hold, a rotate of one that does not decode).
 DAMAGED_PHOTOS = "damaged_photos"
 
-#: What a Result's details count of the photos a bulk write left out because their files do not open whole.
+#: What a Result's details count of the photos of folders the library does not hold that a bulk write left out
+#: because their files do not open whole (tagpup.services.file_only.leave_out_unwritable).
 SKIPPED_DAMAGED = "skipped_damaged"
 
 #: What a Result refused because the file is no longer the one the page built its record from (the stamp the

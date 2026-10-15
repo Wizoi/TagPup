@@ -397,8 +397,8 @@ def refuse_writes(result, library, photo_paths):
     the same mistake as Suggest making rows there. `details[NOT_IN_LIBRARY]` holds the
     folders, which a web route answers with 409.
 
-    Whether a photo's file opens is not asked here: a write that puts metadata into a file reads it whole first
-    (tagpup.files.field_values.read, `validate`), and a rename or a rotate asks the file itself
+    Whether a photo's file opens is not asked here: a photo the library holds is written whatever its picture holds
+    (DECISIONS 2026-10-15), and one of a folder it does not hold is asked of its file
     (tagpup.services.file_only.refuse_unwritable)."""
     unheld = not_held(library, photo_paths, leave_out_ignored=False)
     if not unheld:

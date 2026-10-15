@@ -3,7 +3,7 @@ import logging
 import os
 
 from tagpup.core import fields, paths, suggesting, validation, vocabulary
-from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, DAMAGED_PHOTOS, UNREADABLE_BASE_SENTENCE, Result
+from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREADABLE_BASE_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, field_values, metadata, names, shares
@@ -120,15 +120,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     # plan's before, and the name Smart Rename kept.
     read = list(dict.fromkeys(SAVE_READ + tuple(wanted)))
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        try:
-            now = field_values.read_one(et, photo_path, read, validate=True)
-        except field_values.CutShort as cut:
-            logger.warning("%s: the file does not open whole, so the save is refused and nothing is written to it: %s",
-                           photo_path, cut)
-            result.refuse("%s: damaged, nothing is written to it: %s. Restore it from a backup, then try again." % (
-                os.path.basename(photo_path), cut))
-            result.details[DAMAGED_PHOTOS] = [photo_path]
-            return result
+        now = field_values.read_one(et, photo_path, read)
         if base is None:
             result.refuse(UNREADABLE_BASE_SENTENCE)
             result.details[CHANGED_ON_DISK] = True
@@ -271,7 +263,7 @@ SKIPPED_MISSING = "skipped_missing"
 
 def leave_out_missing(photo_paths):
     """(`photo_paths` but those whose file is gone, [(path, why)] of those left out). A bulk write skips them and writes
-    the rest, as it does a damaged photo: the library still holds the row of a missing photo and a view shows it
+    the rest, as it does a photo of a folder it does not hold that ends in zeros: the library still holds the row of a missing photo and a view shows it
     (phase 9c), so a selection can name one. A file that cannot be read, or on a share that does not answer, is NOT
     missing: the write meets it itself, and stops at it as for any read or write error of a present file."""
     present, gone = [], []
@@ -338,7 +330,7 @@ def add_tags(library, additions, exiftool_path, persons=None):
 def change_each(library, changes, exiftool_path, operation, persons=None, et=None, stop_at_first_error=True):
     """Give each photo in `changes` (path -> (tags to add, tags to take off)) its own, as ONE change of
     photo files named `operation` in the journal. A photo with nothing to add or take off is left alone.
-    Held photos are written with their rows and journaled, and the damaged skipped; a photo in a folder
+    Held photos are written with their rows and journaled; a photo in a folder
     the library does not hold (Just look: what Suggest offered it was analysed in memory) is written to
     its file only (tagpup.services.file_only): no row, no journal change, and the tag tree is only read,
     so a person or tag the tree does not hold is written as it is offered. The library's own answer
@@ -356,15 +348,13 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     held, loose = libraries.split(library, [path for path, (add, remove) in changes.items() if add or remove])
     if held and libraries.refuse_writes(refused, library, held):
         return refused
-    kept, left = held, []
 
     def plan_of(chosen):
         return [(path, list(changes[path][0]), changes[path][1]) for path in chosen]
     done = None
     if held or not loose:
-        done = libraries.with_skipped(_change_each(library, plan_of(kept), exiftool_path, operation,
-                                                   persons=persons, et=et,
-                                                   stop_at_first_error=stop_at_first_error), left)
+        done = _change_each(library, plan_of(held), exiftool_path, operation, persons=persons, et=et,
+                            stop_at_first_error=stop_at_first_error)
     if not loose:
         return file_only.combined(done, None)
     if stop_at_first_error and done is not None and not done.ok:

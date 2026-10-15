@@ -1103,7 +1103,7 @@ def _where(result):
 
 def _skipped_damaged(result):
     """What a bulk write's reply says of the photos it skipped as damaged
-    (tagpup.services.file_changes.skip_cut_short): {"skipped_damaged": n, "skipped":
+    (tagpup.services.file_only.leave_out_unwritable): {"skipped_damaged": n, "skipped":
     [{"path", "why"}]}, the photos the page shows."""
     count = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
     # By what they say, not by position: a write of two parts (held photos and the others)

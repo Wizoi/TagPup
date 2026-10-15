@@ -6,6 +6,11 @@ paths, a person filed under People, no loose parts), the row says what the file 
 the write is one change in History, and undo puts back the file and the row. Real ExifTool on JPEGs made here; the
 rows are the indexer's (photo_rows.add_read), never the helper under test.
 
+A JPEG whose file stops short takes a tag as any photo does, its picture data untouched (DECISIONS 2026-10-15: the
+whole-file scan that refused it is gone, and the tests of that refusal with it -- test_writes_refuse_cut_short_photos,
+and the cut-short arms of test_bulk_edits, test_rotate_is_journaled and this file); a photo ExifTool cannot write is
+an error of its own in a selection, and the rest are written, journaled and undone.
+
 Lifted: test_tag_write_is_journaled (#266), test_tag_write_follows_the_keyword_rules (#249; its mtime == compare is
 store.photos.describes now), test_single_save_and_smart_rename_are_journaled (#266), test_save_photo_rename_is_journaled
 (#298; its failing rename is test_save_reply_says_rename_failed's), test_a_save_is_one_session, test_a_saved_row_is_the_
@@ -22,20 +27,33 @@ photo carries before it adds (an add keeps them), save_photo writing no Date Tak
 """
 import json
 import os
+import stat
 import sys
 import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import damaged_photos  # noqa: E402
+import photo_rows  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import ReadFilesCase  # noqa: E402
 from test_file_journal import EXIFTOOL, ExifToolSession, field_of, keywords_of, write_outside  # noqa: E402
 
 from tagpup.files import exiftool_session  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import photos as photo_actions, tagging  # noqa: E402
-from tagpup.store import photos as store_photos  # noqa: E402
+from tagpup.store import db, photos as store_photos  # noqa: E402
 
 PRESERVED = "XMP-xmpMM:PreservedFileName"
+
+#: The JPEG marker the compressed picture data starts after (start of scan).
+START_OF_SCAN = bytes([0xFF, 0xDA])
+
+
+def picture_of(path):
+    """The bytes of a JPEG from its start-of-scan marker to its end: the picture, which a write of tags never touches."""
+    with open(path, "rb") as handle:
+        data = handle.read()
+    return data[data.index(START_OF_SCAN):]
 
 
 def as_list(value):
@@ -97,16 +115,77 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertTrue(tagging.save_photo(self.library, a, "", [], None, EXIFTOOL, "").ok)
         self.assertEqual([], keywords_of(a))
 
-    def test_a_photo_cut_short_is_skipped_and_said(self):
-        a, b = self.make_read("a.jpg"), self.make_read("b.jpg")
-        with open(b, "rb") as handle:
+    def cut_short(self, name):
+        """A photo of noise holding Beach, then cut short as a copy that stopped leaves it, and its row as the
+        indexer leaves it after reading the cut file."""
+        path = os.path.join(self.folder, name)
+        damaged_photos.whole_jpeg(path)
+        write_outside(path, {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"]})
+        with open(path, "rb") as handle:
             whole = handle.read()
-        with open(b, "wb") as handle:
-            handle.write(whole[:-20])
-        result = tagging.change_tags(self.library, [a, b], ["Activity/Rowing"], [], EXIFTOOL)
-        self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(a))
-        self.assertEqual(["Beach"], keywords_of(b))
-        self.assertEqual((1, [b]), (result.details["skipped_damaged"], [path for path, _why in result.skipped]))
+        with open(path, "wb") as handle:
+            handle.write(whole[:-damaged_photos.CUT])
+        conn = db.connect(self.library.path)
+        try:
+            photo_rows.add_read(conn, path, {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"]})
+            conn.commit()
+        finally:
+            conn.close()
+        return path
+
+    def test_a_photo_cut_short_takes_a_tag_and_keeps_its_picture_and_undo_takes_it_off(self):
+        cut, whole = self.cut_short("cut short.jpg"), self.make_read("whole.jpg")
+        picture = picture_of(cut)
+
+        result = tagging.change_tags(self.library, [cut, whole], ["Activity/Rowing"], [], EXIFTOOL)
+
+        self.assertEqual((2, [], []), (result.changed, result.errors, result.skipped), result.message())
+        self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(cut), "read back from the file")
+        self.assertEqual(["Activity/Rowing", "Beach"], self.indexed(cut), "the row says what the file says")
+        self.assertEqual(picture, picture_of(cut), "the picture data after the start of scan changed")
+        self.assert_row_describes_file(cut)
+        saved = tagging.save_photo(self.library, cut, "", ["Activity/Rowing", "Beach", "Places/Quay"], None, EXIFTOOL, "")
+        self.assertEqual((True, 1), (saved.ok, saved.changed), saved.message())
+        self.assertEqual(["Activity/Rowing", "Beach", "Places/Quay"], keywords_of(cut))
+        self.assertEqual(picture, picture_of(cut))
+
+        self.assertEqual(1, self.undo(self.last_change()).changed)
+        undone = self.undo(result.details["change"])
+
+        self.assertEqual((2, []), (undone.changed, undone.errors))
+        self.assertEqual((["Beach"], ["Beach"]), (keywords_of(cut), self.indexed(cut)))
+        self.assertEqual(picture, picture_of(cut))
+
+    def test_a_photo_exiftool_cannot_write_is_its_own_error_and_the_rest_are_written_and_undone(self):
+        """A read-only file (copied off a disc, say): ExifTool reads it and fails the write. A bulk edit goes on past it."""
+        a, b, c = self.make_read("a.jpg"), self.make_read("b.jpg"), self.make_read("c.jpg")
+        os.chmod(b, stat.S_IREAD)
+        self.addCleanup(os.chmod, b, stat.S_IREAD | stat.S_IWRITE)
+        with open(b, "rb") as handle:
+            held = handle.read()
+        row = self.rows("SELECT tags, mtime, size FROM photos WHERE path = ?", (b,))
+
+        result = tagging.change_tags(self.library, [a, b, c], ["Activity/Rowing"], [], EXIFTOOL, stop_at_first_error=False)
+
+        self.assertEqual(2, result.changed, result.message())
+        self.assertEqual([b], [path for path, _why in result.errors], "the photo it failed, by itself")
+        self.assertIn("ExifTool", str(result.errors[0][1]))
+        for path in (a, c):
+            self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(path))
+            self.assertEqual(["Activity/Rowing", "Beach"], self.indexed(path))
+        with open(b, "rb") as handle:
+            self.assertEqual(held, handle.read(), "the file it could not write changed")
+        self.assertEqual(row, self.rows("SELECT tags, mtime, size FROM photos WHERE path = ?", (b,)), "its row changed")
+        change = result.details["change"]
+        self.assertEqual(["done", "done"], self.states(change), "the failed file is not left in the change")
+        self.assertEqual("applied", self.status(change))
+
+        undone = self.undo(change)
+
+        self.assertEqual((2, []), (undone.changed, undone.errors))
+        for path in (a, b, c):
+            self.assertEqual(["Beach"], keywords_of(path))
+            self.assertEqual(["Beach"], self.indexed(path))
 
     def test_one_save_is_one_change_one_session_a_row_as_the_indexer_makes_it_and_undone(self):
         a = self.make_read("a.jpg")

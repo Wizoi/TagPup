@@ -11,13 +11,12 @@ the FILE is what every assertion about an orientation asks (skipped where ExifTo
 indexer stores them; a crash is a BaseException raised at a step of the write (file_changes.STEPS).
 
 Lifted: test_service_rotate (#224 #249): what the click's Result says (attempted, changed, orientation, mtime and size), a
-direction that is not one, a write that fails, a photo cut short. Its stale-row arm (#249) is
+direction that is not one, a write that fails. Its stale-row arm (#249) is
 test_partial_writes_leave_rows_unread's rotate arm (mutation: store/photos.py follow_fields stamps without `_describes_before`
 -> that arm fails). Mutations of this file, each in a scratch copy: services/photos.py `rotate`, `result.details.update(mtime=
 stat.st_mtime, size=stat.st_size)` -> `mtime=0, size=0` fails test_the_row_follows_the_file_and_the_vectors_go; `rotate_photos`,
 `refused = validation.problem("rotate direction", direction)` -> `refused = None` fails test_a_direction_that_is_not_one;
-file_changes `result.fail(path, why)` -> `pass` fails test_a_write_that_fails; files/field_values `_held`,
-`raise CutShort(CUT_SHORT_WHY)` -> `pass` fails test_a_photo_cut_short.
+file_changes `result.fail(path, why)` -> `pass` fails test_a_write_that_fails.
 """
 import os
 import sys
@@ -28,7 +27,6 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import damaged_photos  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from face_rows import add_face  # noqa: E402
@@ -216,16 +214,6 @@ class WhatIsRefused(RotationCase):
         self.assertEqual((result.attempted, result.changed), (1, 0))
         self.assertIn("locked", result.message())
         self.assertEqual((self.orientation(path), self.rows("SELECT mtime, size FROM photos"), self.boxes()), (6, stamp, [BOX]))
-
-    def test_a_photo_cut_short_is_refused_and_nothing_is_written(self):
-        path = damaged_photos.truncated(os.path.join(self.folder, "cut short.jpg"))
-        self.execute_with(lambda conn: photo_rows.add_read(conn, path, {}))
-        before = os.stat(path)
-        result = self.rotate(path)
-        self.assertFalse(result.ok)
-        self.assertIn("nothing is written to it", result.message())
-        self.assertEqual((os.stat(path).st_mtime_ns, os.stat(path).st_size), (before.st_mtime_ns, before.st_size))
-        self.assertEqual(self.rows("SELECT COUNT(*) FROM changes"), [(0,)])
 
 
 if __name__ == "__main__":

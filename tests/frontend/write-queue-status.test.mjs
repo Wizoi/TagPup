@@ -106,7 +106,7 @@ describe("the status", () => {
 
   test("says how many photos a bulk write skipped as damaged, and marks none of them", async (t) => {
     // Nothing is written into a photo found damaged: the server skips it and writes the
-    // rest (tagpup.services.file_changes.skip_cut_short).
+    // rest (tagpup.services.file_only.leave_out_unwritable).
     const ctx = await loadSelected(t);
     click(ctx.window, chip(ctx, "Cross Country"));
     await flush(ctx.window, 8);

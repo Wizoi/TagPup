@@ -158,13 +158,10 @@ def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_err
     written = result.details["written"] = {}
     result.details.update(change=None, conflicts=[], read_back={})
     stored = [paths.stored(p) for p in photo_paths]
-    held = fresh if fresh is not None else field_values.read(et, stored, read, validate=True)
+    held = fresh if fresh is not None else field_values.read(et, stored, read)
     planned = []
     for path in stored:
         now = held.get(paths.key(path))
-        if isinstance(now, field_values.CutShort):
-            file_changes.skip_cut_short(result, path, now)
-            continue
         if now is None or isinstance(now, Exception):
             why = now or "ExifTool answered nothing for it"
             if unreadable == "skip":

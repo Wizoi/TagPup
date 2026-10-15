@@ -304,14 +304,6 @@ class WhilePhotosMove(Bulk):
 
 
 class WhatGoesWrong(Bulk):
-    def test_a_damaged_photo_is_skipped_and_counted_and_the_rest_are_written(self):
-        victim = self.path(self.ids[3])
-        held = self.tags(self.ids[3])
-        self.files.cut_short.add(paths.key(victim))
-        done = self.tags_edit(add=["Trips/Coast"])
-        self.assertEqual((1, self.PHOTOS - 1, 0), (done["skipped_damaged"], done["changed"], done["error_count"]))
-        self.assertEqual(held, self.tags(self.ids[3]), "nothing is written into a damaged photo")
-
     def test_an_unreadable_file_is_an_error_entry_and_the_others_go_on(self):
         self.files.unreadable.add(paths.key(self.path(self.ids[5])))
         done = self.tags_edit(add=["Trips/Coast"])
