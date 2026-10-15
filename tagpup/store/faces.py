@@ -28,7 +28,7 @@ import logging
 import os
 import types
 
-from tagpup.core import paths
+from tagpup.core import paths, vocabulary
 from tagpup.core.vocabulary import Ref
 from tagpup.store import db, faces_detected, generations, people, person_ids
 from tagpup.store import roots as store_roots
@@ -363,9 +363,11 @@ def _target(conn, person, known=None):
     if tag_id is not None or not name or not person_ids.present(conn):
         return tag_id, name
     from tagpup.store import taxonomy   # taxonomy imports this module's neighbours
+    if vocabulary.SEPARATOR in name:
+        raise ValueError("%r is a tag's path, not a person's name: a face is named by a person's id or a bare name" % name)
     node_id = taxonomy.ensure_node(conn, name, person=True)[0]
-    if node_id is None:
-        return tag_id, name
+    if node_id is None:   # person_ids.target refuses a group's name and a name two people have before this
+        raise ValueError("no person can be made of %r: the face is not named" % name)
     return node_id, conn.execute("SELECT name FROM tag_taxonomy WHERE id = ?", (node_id,)).fetchone()[0]
 
 

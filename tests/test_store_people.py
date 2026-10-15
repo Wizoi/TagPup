@@ -44,7 +44,7 @@ class ThePeopleALibraryKnows(unittest.TestCase):
         self.face("Ada Pembrook")
         conn = db.connect(self.lib.library.path)
         try:
-            add_people(conn, self.photo, ["Milo Garrick", ""])
+            add_people(conn, self.photo, ["Milo Garrick"])
             conn.commit()
         finally:
             conn.close()
