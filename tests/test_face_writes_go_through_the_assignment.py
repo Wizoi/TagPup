@@ -19,9 +19,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: The functions of the faces store and the faces service that write who a face is.
 WRITERS = {
     "tagpup.store.faces": {"name", "name_if_unnamed", "name_unnamed", "set_names", "unname", "unname_photo", "unname_person", "exclude",
-                           "restore", "confirm", "revert_automatic", "clear_automatic_names", "put_decisions", "delete"},
+                           "restore", "confirm", "revert_automatic", "put_decisions", "delete"},
     "tagpup.services.faces": {"name_face", "unname_face", "unname_faces", "unname_photo", "exclude", "restore", "automatch_photo",
-                              "automatch_folder", "clear_automatic_names", "remove_folder"},
+                              "automatch_folder", "remove_folder"},
 }
 
 #: The modules allowed to call them, and why they are safe. Only the first three are the path; the rest are named exceptions that
