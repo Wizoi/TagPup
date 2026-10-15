@@ -315,9 +315,9 @@ class RenamingAPerson(TreeCase):
     def test_its_faces_and_each_photos_people_follow_the_id(self):
         # Listed by a face; the keyword people come first, then whom only a face names, in the order the faces were found.
         photo = self.photo("a.jpg", people=["Ada Pembrook"])
-        self.face(photo, [0, 0, 10, 10], name="Rowan Thackeray")
+        self.face(photo, [0, 0, 10, 10], name=None)
         other = self.photo("b.jpg")
-        self.face(other, [0, 0, 10, 10], name="Rowan Thackeray")
+        self.face(other, [0, 0, 10, 10], name=None)
         for face_id, who in zip((row[0] for row in self.lib.rows("SELECT id FROM faces ORDER BY id")),
                                 (self.people_rowan, self.family_rowan)):
             self.name(face_id, who)
