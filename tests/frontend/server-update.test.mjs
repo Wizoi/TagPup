@@ -109,7 +109,7 @@ describe("the gear says which version answers", () => {
 
   test("below the items, and not one of them", async (t) => {
     const server = new FakeServer()
-      .on("/api/server", { version: "20260926-101500-dc32868", supervised: true, taking_work: true })
+      .on("/api/server", { version: "20260926-101500-dc32868", taking_work: true })
       .on("/api/databases", { databases: ["kr-track"] })
       .on("/api/folder/suggest-status", { status: "idle" })
       .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" });

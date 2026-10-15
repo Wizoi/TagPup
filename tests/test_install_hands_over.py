@@ -77,13 +77,13 @@ class Choices(unittest.TestCase):
             handle.write(NEW)
         self.said, self.started, self.clock = [], [], Clock()
         self.records = [{"pid": 4242, "started": 1, "ports": {"tagpup": 5, "tuner": 6}, "version": OLD,
-                         "token": "t", "supervised": False}]
+                         "token": "t"}]
         self.port_held = True
         self.serving = OLD            # what GET /api/server says while the port is held
         self.drains = []              # what each drain answers, in turn
 
         def ask(port, timeout=None):
-            return {"version": self.serving, "supervised": False} if self.port_held else None
+            return {"version": self.serving} if self.port_held else None
 
         def drain(port, token, quiet=None):
             return self.drains.pop(0)
@@ -149,15 +149,15 @@ class Choices(unittest.TestCase):
         self.assertIn("does not start (it exited with 1: SyntaxError", self.said[-1])
         self.assertIn("TagPup %s was left running" % OLD, self.said[-1])
 
-    def test_the_always_on_processs_a_checkouts_and_another_folders_servers_are_left_alone(self):
-        self.records = [dict(self.records[0], supervised=True), dict(self.records[0], pid=1, version=None),
+    def test_a_checkouts_and_another_folders_servers_are_left_alone(self):
+        self.records = [dict(self.records[0], pid=1, version=None),
                         dict(self.records[0], pid=2, version="20250101-000000-ccccccc")]
         with mock.patch.object(launcher, "make_way") as make_way:
             self.assertTrue(self.hand_over())
         make_way.assert_not_called()
         self.assertEqual([], self.started)
         kinds = [launcher.kind_of(found, self.installed, NEW) for found in self.records]
-        self.assertEqual([launcher.ALWAYS_ON, launcher.CHECKOUT, launcher.ELSEWHERE], kinds)
+        self.assertEqual([launcher.CHECKOUT, launcher.ELSEWHERE], kinds)
 
     def test_the_install_says_what_it_does_with_each(self):
         self.records.append(dict(self.records[0], pid=1, version=None, ports={"tagpup": 7}))
@@ -219,8 +219,8 @@ class Choices(unittest.TestCase):
 
         def ask(port, timeout=None):
             if self.clock.now > 70:
-                return {"version": NEW, "supervised": False}
-            return {"version": OLD, "supervised": False} if self.port_held and not answers else None
+                return {"version": NEW}
+            return {"version": OLD} if self.port_held and not answers else None
 
         def end(found, port, answering, sleep=None):
             answers.append(1)
@@ -532,7 +532,6 @@ class ForReal(unittest.TestCase):
         self.assertIsNotNone(old.wait(timeout=30), "the old server still runs")
         found = launcher.record(self.ports["tuner"])
         self.assertEqual(NEW, found["version"])
-        self.assertFalse(found["supervised"])
         said = "\n".join(self.said)
         self.assertIn("TagPup %s is running (process %d); handing over to %s" % (OLD, serving, NEW), said)
         self.assertIn("finished what it was doing; ending it and starting %s" % NEW, said)

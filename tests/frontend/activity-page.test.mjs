@@ -88,7 +88,7 @@ const SNAPSHOTS = {
 };
 
 const SERVER = {
-  version: "20260926-090000-abc1234", supervised: true, taking_work: true, busy: [], running_since: "2026-09-26 09:00:00",
+  version: "20260926-090000-abc1234", taking_work: true, busy: [], running_since: "2026-09-26 09:00:00",
   pid: 4242, background: ["recurring jobs", "folder watcher"],
 };
 

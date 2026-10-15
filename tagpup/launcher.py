@@ -11,8 +11,7 @@ it was, and the owner ended old servers by hand to reach the version installed. 
   The folder is in the user's own profile, so another user's launcher finds no record; and
   the server takes the token only from this machine (tagpup.web.lifecycle).
 - A launcher (`make_way`) asks the server answering on its port which version it is
-  (GET /api/server). The version being launched: its page is opened. The always-on
-  process's: left to it, which moves it at its next quiet moment. Any other -- older,
+  (GET /api/server). The version being launched: its page is opened. Any other -- older,
   newer, or one run from a checkout (no version) -- is asked to drain with the record's
   token: refused while a Suggest run, an index or the startup migrations run,
   which the launcher waits out, saying so, with the running page opened meanwhile; once
@@ -197,13 +196,13 @@ def record_path(port):
 
 # ---- The server's side: saying where it answers ------------------------------------------
 
-def say_where(ports, version, token, supervised=False):
+def say_where(ports, version, token):
     """The server's, once its ports are bound and before it answers: a record per port.
     The records of servers since ended are cleared first: a server ended without stopping
     -- killed, or its machine turned off -- leaves its own."""
     clear_stale()
     found = {"pid": os.getpid(), "started": processes.started(os.getpid()), "ports": dict(ports),
-             "version": version, "token": token, "supervised": bool(supervised)}
+             "version": version, "token": token}
     for port in sorted(set(ports.values())):
         write_json(record_path(port), found)
 
@@ -358,10 +357,6 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
                     return OPEN, opened
                 sleep(1)
                 continue
-            if theirs.get("supervised"):
-                say("TagPup %s (process %s), run by the always-on process, is not answering; the always-on "
-                    "process ends a server that hangs; %s." % (_name(theirs.get("version")), theirs.get("pid"), then))
-                return OPEN, opened
             unanswered += 1
             if unanswered < HUNG_TRIES:
                 say("TagPup %s (process %s) is not answering; asking again (%d of %d)."
@@ -377,10 +372,6 @@ def make_way(port, version, say, open_page, answering, sleep=time.sleep, clock=t
         starting_since = None
         running_version = status.get("version")
         if running_version == version:
-            return OPEN, opened
-        if status.get("supervised"):
-            say("TagPup %s answers, run by the always-on process, which moves it onto %s at its next quiet "
-                "moment; %s." % (_name(running_version), _name(version), then))
             return OPEN, opened
         if theirs is None or theirs.get("version") != running_version:
             say("TagPup %s answers on port %d and cannot be asked to make way for %s: it was started before "
@@ -446,19 +437,16 @@ SAY_WAITING = 30
 STARTED_LOG = "tagpup_web.installed.log"
 
 #: What an install does with each server running (`kind_of`).
-SAME, ALWAYS_ON, CHECKOUT, ELSEWHERE, REPLACE = "same", "always-on", "checkout", "elsewhere", "replace"
+SAME, CHECKOUT, ELSEWHERE, REPLACE = "same", "checkout", "elsewhere", "replace"
 
 
 def kind_of(found, installed, current):
     """What an install of `current` into `installed` does with the server `found` names:
-    SAME (it runs `current`), ALWAYS_ON (the always-on process's, which moves its own),
-    CHECKOUT (run from a checkout: a developer's, left to the next launch), ELSEWHERE (a
+    SAME (it runs `current`), CHECKOUT (run from a checkout: a developer's, left to the next launch), ELSEWHERE (a
     version this installed folder does not hold), or REPLACE."""
     version = found.get("version")
     if version == current:
         return SAME
-    if found.get("supervised"):
-        return ALWAYS_ON
     if not version:
         return CHECKOUT
     if not os.path.isdir(os.path.join(installed, "versions", version)):

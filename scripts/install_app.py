@@ -411,7 +411,7 @@ def install(destination, home, python, name=None, apply=False, say=print, shortc
 def still_running(name, destination=None, hand_over=False):
     """What to say of each server running another version than `name`, just installed into
     `destination`: the hand-over that follows replaces it (`hand_over`), or else the next
-    launch; the always-on process moves its own; one run from a checkout or from another
+    launch; one run from a checkout or from another
     installed folder is left to the next launch."""
     lines = []
     for found in sorted(launches.running(), key=lambda each: sorted((each.get("ports") or {}).values())):
@@ -420,10 +420,7 @@ def still_running(name, destination=None, hand_over=False):
             continue
         where = "TagPup %s (process %s, port %s)" % (found.get("version") or "run from a checkout", found.get("pid"),
                                                     launches.ports_of(found))
-        if kind == launches.ALWAYS_ON:
-            lines.append("running      %s: the always-on process moves it onto %s at its next quiet moment"
-                         % (where, name))
-        elif kind == launches.REPLACE and hand_over:
+        if kind == launches.REPLACE and hand_over:
             lines.append("running      %s: handing it over to %s, once it has finished what it is doing (below)"
                          % (where, name))
         elif kind == launches.REPLACE or not hand_over:

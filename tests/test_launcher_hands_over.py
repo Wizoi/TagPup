@@ -60,7 +60,7 @@ class Way(unittest.TestCase):
         self.answers = []          # what each GET /api/server says, in turn (the last repeats)
         self.drains = []           # what each drain answers, in turn
         self.found = {"pid": 4242, "started": 1, "ports": {"tagpup": 5, "tuner": 6}, "version": OLD,
-                      "token": TOKEN, "supervised": False}
+                      "token": TOKEN}
         self.port_held = True
 
         def ask(port):
@@ -84,8 +84,8 @@ class Way(unittest.TestCase):
         return launcher.make_way(5, version, say=self.said.append, open_page=lambda: self.opened.append(1),
                                  answering=lambda port: self.port_held, sleep=self.clock.sleep, clock=self.clock)
 
-    def status(self, version=OLD, supervised=False, busy=()):
-        return {"version": version, "supervised": supervised, "taking_work": True, "requests": 0, "busy": list(busy)}
+    def status(self, version=OLD, busy=()):
+        return {"version": version, "taking_work": True, "requests": 0, "busy": list(busy)}
 
     def test_nothing_answering_is_served(self):
         self.port_held = False
@@ -128,11 +128,6 @@ class Way(unittest.TestCase):
         self.assertEqual([4242], self.ended, "ended before the drain said it was done")
         self.assertEqual(4, len(self.drained))
 
-    def test_the_always_on_processs_server_is_left_to_it(self):
-        self.answers = [self.status(OLD, supervised=True)]
-        self.assertEqual(launcher.OPEN, self.way()[0])
-        self.assertEqual([], self.drained)
-
     def test_one_with_no_record_is_not_replaced_and_the_owner_is_told(self):
         """A version from before the records, another user's (their records are in their own
         folder), another home's: nothing to drain it with."""
@@ -154,14 +149,6 @@ class Way(unittest.TestCase):
         self.assertEqual(launcher.SERVE, self.way()[0])
         self.assertEqual([4242], self.ended)
         self.assertTrue(any("has not answered" in line for line in self.said), self.said)
-
-    def test_a_hung_server_the_always_on_process_runs_is_left_to_it(self):
-        """#745: the hung path read no `supervised`; a launcher ended the supervisor's child."""
-        self.answers = [None]
-        self.found["supervised"] = True
-        self.assertEqual(launcher.OPEN, self.way()[0])
-        self.assertEqual([], self.ended)
-        self.assertTrue(any("always-on process" in line for line in self.said), self.said)
 
     def test_a_page_in_use_is_not_cut_until_the_patience_runs_out(self):
         """#746: the drain waits for QUIET seconds with no request -- a save under way is not
@@ -195,8 +182,7 @@ class Records(unittest.TestCase):
     def test_a_server_says_where_it_answers_and_forgets_only_its_own(self):
         launcher.say_where({"tagpup": 7, "tuner": 8}, OLD, TOKEN)
         found = launcher.record(8)
-        self.assertEqual((os.getpid(), OLD, TOKEN, False), (found["pid"], found["version"], found["token"],
-                                                            found["supervised"]))
+        self.assertEqual((os.getpid(), OLD, TOKEN), (found["pid"], found["version"], found["token"]))
         self.assertEqual({OLD}, launcher.versions_running())
         launcher.forget({"tagpup": 7, "tuner": 8})
         self.assertIsNone(launcher.record(7))
