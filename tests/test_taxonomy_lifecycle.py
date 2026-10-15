@@ -12,6 +12,10 @@ Each test therefore asserts on BOTH sides of the write:
 Tests that mutate photo files are skipped when ExifTool is unavailable, so the pure
 database behaviours still run in a bare environment. The app is asked through Flask's
 test client: no server, no port, no sleep.
+
+Lifted: test_service_tags' rename of a branch with its photos, a keyword rename leaving faces alone and the usage roll-up to
+the root (mutations, each failing here: the branch not moved, the files not rewritten, a keyword rename reaching a face by its
+name, no count at the root). They cited no finding numbers.
 """
 import json
 import os

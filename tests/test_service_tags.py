@@ -177,15 +177,7 @@ class Deleting(TreeCase):
 
 
 class Renaming(TreeCase):
-    def test_the_branch_and_its_photos(self):
-        self.node("Crew/Divers/Juniors")
-        crew = self.id_of("Crew/Divers")
-        photo = self.photo("a.jpg", ["Crew/Divers/Juniors"])
-        result = tags.rename(self.lib.library, crew, "Swimmers", "exiftool")
-        self.assertTrue(result.ok, result.message())
-        self.assertEqual(sorted(self.tree()), ["Crew", "Crew/Swimmers", "Crew/Swimmers/Juniors"])
-        self.assertEqual(self.tree()["Crew/Swimmers"][0], "Swimmers")
-        self.assertEqual(self.rewrites, [([photo], "Crew/Divers", "Crew/Swimmers")])
+    """The branch and its photos, and a keyword leaving faces alone, are test_taxonomy_lifecycle's (through the route)."""
 
     def test_a_person_is_renamed_on_their_faces_and_in_each_photos_people(self):
         person = self.node("People/Rowan Thackeray", has_face=1)
@@ -196,13 +188,6 @@ class Renaming(TreeCase):
         self.assertEqual(result.details["faces_renamed"], 1)
         self.assertEqual(self.lib.rows("SELECT name FROM faces"), [("Rowan Thackeray-Vale",)])
         self.assertEqual(self.people(photo), ["Rowan Thackeray-Vale", "Ada Pembrook"])
-
-    def test_a_keyword_that_holds_no_faces_leaves_faces_alone(self):
-        rowing = self.node("Activity/Rowan")
-        photo = self.photo("a.jpg", ["Activity/Rowan"], people=["Rowan"])
-        self.face(photo, [0, 0, 10, 10], name="Rowan")
-        tags.rename(self.lib.library, rowing, "Rowing", "exiftool")
-        self.assertEqual(self.lib.rows("SELECT name FROM faces"), [("Rowan",)])
 
     def test_onto_a_node_that_is_there_is_refused(self):
         crew = self.node("Crew/Divers")
@@ -415,12 +400,6 @@ class AnIndexBehindItsFiles(unittest.TestCase):
 
 
 class TheTreeView(TreeCase):
-    def test_counts_a_photo_toward_each_level_above_its_tags(self):
-        self.node("Activity/Hiking")
-        self.photo("a.jpg", ["Activity/Hiking"])
-        counts = {node["tag"]: node["usage_count"] for node in tags.tree(self.lib.library)}
-        self.assertEqual(counts, {"Activity": 1, "Activity/Hiking": 1})
-
     def test_a_photo_counts_once_toward_a_node_however_many_of_its_tags_are_under_it(self):
         """docs/findings.md, #41: a photo counted once for each of its tags under a node."""
         self.node("Family/Immediate/Ada Pembrook")
