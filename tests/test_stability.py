@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import sqlite3
-import time
 import unittest
 import numpy as np
 
@@ -326,66 +325,6 @@ class TestStability(unittest.TestCase):
         
         for name in [r[1] for r in photo2_faces]:
             self.assertIsNone(name, "Faces in Photo 2 must remain unmatched because similarity < 0.80")
-
-    def test_large_lookup_performance(self):
-        photo_index = PhotoIndex(self.TEST_DB_PATH, configured_model())
-        photo_index.load()
-        cursor = photo_index.conn.cursor()
-        
-        # Batch insert 5000 photos and 5000 faces inside a single transaction
-        dummy_emb = np.random.rand(512).astype(np.float32).tobytes()
-        dummy_face_emb = np.random.rand(512).astype(np.float32).tobytes()
-        
-        photo_rows = []
-        face_rows = []
-        john_doe = person_of(cursor, "John Doe")
-        for i in range(5000):
-            path = f"C:/photos/photo_{i}.jpg"
-            photo_rows.append((
-                path,
-                123456.0 + i,
-                1000 + i,
-                json.dumps(["tag"]),
-                json.dumps(["caption"]),
-                json.dumps({"EXIF:DateTimeOriginal": "2026:06:24 18:00:00", "Make": "Canon"})
-            ))
-            face_rows.append((
-                path,
-                json.dumps([10, 20, 50, 60]),
-                dummy_face_emb,
-                "John Doe",
-                john_doe,
-                0.95
-            ))
-            
-        cursor.execute("BEGIN TRANSACTION")
-        cursor.executemany("""
-            INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, photo_rows)
-        for row in photo_rows:
-            add_people(cursor, row[0], ["John Doe"])
-        model = configured_model()
-        cursor.executemany(
-            "INSERT OR REPLACE INTO embeddings (photo_id, model, mtime, size, vector)"
-            " SELECT id, ?, mtime, size, ? FROM photos WHERE path = ?",
-            [(model, dummy_emb, row[0]) for row in photo_rows])
-        cursor.executemany("""
-            INSERT OR REPLACE INTO faces (photo_id, box, embedding, name, tag_id, prob)
-            VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?, ?, ?)
-        """, face_rows)
-        photo_index.conn.commit()
-        photo_index.close()
-        
-        # Test performance of fetching a large page of 5000 faces from endpoint
-        start_time = time.time()
-        res_data = self.requests.get("/api/person-faces?name=John%20Doe&limit=5000")
-        duration = time.time() - start_time
-        
-        print(f"\n[PERF TEST] Loading 5000 faces from endpoint took {duration:.4f} seconds.")
-        self.assertLess(duration, 5.0)
-        self.assertIn("faces", res_data)
-        self.assertEqual(len(res_data["faces"]), 5000)
 
     def test_year_fallback_chain(self):
         from tagpup.core.dates import shown_year

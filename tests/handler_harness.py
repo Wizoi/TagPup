@@ -21,7 +21,6 @@ from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store import schema  # noqa: E402
-from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
@@ -48,7 +47,6 @@ class Library:
         self.app = web.create_app("tagpup", startup=self.library)
         self.app.testing = True
         self.client = self.app.test_client()
-        store_taxonomy.forget_people_paths()
         testcase.addCleanup(self.close)
 
     # ---- Asking the app ------------------------------------------------------------------
@@ -97,7 +95,6 @@ class Library:
 
     def close(self):
         """Forget what the process kept for this library, and let the home go."""
-        store_taxonomy.forget_people_paths()
         tagpup_routes.folders.forget(self.library)
         suggestion_jobs.forget(self.library)
         indexing_jobs.forget(self.library)

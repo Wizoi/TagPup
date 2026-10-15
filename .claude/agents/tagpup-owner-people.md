@@ -47,7 +47,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 | Every name and keyword first seen gets a node, in the transaction that saw it (a name two people have or a group's leaf is another path: a node under the root); a batch makes at most 500 | `tests/test_every_tag_has_an_id.py` |
 | Who a face is is decided in `clustering` | `tests/test_face_values_have_one_owner.py` |
 | Face roots and bucket names have one owner | `tests/test_face_roots_are_the_trees.py`, `tests/test_rules_have_one_owner.py` |
-| A person goes over the wire as an id; answers carry their person | `tests/test_answers_carry_their_person.py`, `tests/test_people_representative_faces.py`, `tests/test_two_people_one_leaf_on_a_photo.py` |
+| A person goes over the wire as an id; answers carry their person | `tests/test_answers_carry_their_person.py`, `tests/test_people_representative_faces.py`, `tests/test_two_cousins_called_alike.py` |
 | Tag against leaf conversion has one owner on each side | `tests/test_vocabulary.py`, `tests/frontend/tag-vocabulary.test.mjs`, `tests/test_person_filing_table.py`, `tests/frontend/person-filing-table.test.mjs` |
 | A person tag removed unnames the face; a keyword write keeps face names | `tests/test_face_people_follow_file_changes.py`, `tests/test_faces_and_tags_in_step.py` |
 | A face has a photo row | `tests/test_every_face_has_a_photo_row.py` |

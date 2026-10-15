@@ -90,8 +90,8 @@ async function undoEntry(entry, queued) {
             restored += 1;
             const photo = state.folderPhotos.find(p => samePath(p.path, path));
             if (!photo) continue;
-            // What the file holds is what the server says it wrote (a bare person name it resolved is
-            // the path it filed); only a reply that names the photo falls back to the difference (findings #390).
+            // What the file holds is what the server says it wrote (it writes the keywords it is given, as they are);
+            // only a reply that names the photo falls back to the difference (findings #390).
             const held = heldTags.get(pathKey(path));
             if (Array.isArray(held)) {
                 photo.tags = held.slice();

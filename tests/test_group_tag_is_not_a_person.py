@@ -135,7 +135,6 @@ class InTheLibrary(unittest.TestCase):
         filed, _roots = taxonomy.people_filing(self.lib.library.path)
         self.assertNotIn("marlowe", filed)
         self.assertEqual([PERSON], filed["tamsin marlowe"])
-        self.assertNotIn("marlowe", taxonomy.people_paths(self.lib.library.path))
 
     def test_a_group_emptied_is_a_person_again(self):
         self.write(lambda conn: taxonomy.add_node(conn, PERSON))
