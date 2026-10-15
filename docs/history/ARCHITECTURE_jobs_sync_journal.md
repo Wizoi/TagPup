@@ -117,7 +117,7 @@ logs (by source, filtered, raw, downloaded). Done:
   paged back by offset and followed by offset (a file smaller than the offset has rotated);
   `tail` gives the raw end (1 MB); the download streams the file. Every log rotates (5 MB,
   five kept) through `tagpup.logs.to_file`; the server's console output is rotated as it
-  starts; `tests/test_logs_are_bounded.py` fails a file handler made elsewhere and a file
+  starts; `tests/test_logs.py` fails a file handler made elsewhere and a file
   appended to for ever.
 - **What it reads**: each library's `job_runs`, `sync_runs` and journal
   (`tagpup.services.activity`), the jobs layer's state in this process (the index queues'

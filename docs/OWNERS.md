@@ -4,7 +4,7 @@ Five owners, each a read-only agent with a charter in `.claude/agents/`: scope, 
 rely on, the invariants and their guard tests, a review checklist, and what the owner decides against what
 is the human owner's. The code map is [ARCHITECTURE.md](ARCHITECTURE.md); the rules are
 [INVARIANTS.md](INVARIANTS.md); the human owner's decisions are [DECISIONS.md](DECISIONS.md). A charter's file
-paths are checked by `tests/test_owner_charters_name_real_paths.py`: a commit that moves a module changes its charter.
+paths are checked by `tests/test_the_test_map.py`: a commit that moves a module changes its charter.
 
 | Domain | Charter | Ask it about |
 |---|---|---|
@@ -29,7 +29,7 @@ changed or new, with its guard named.
 for a scenario file, the scenario ids it runs (`SCENARIOS`: a flow a person lives through; each charter ends with its
 ids). The first map was made by the module of `tagpup/` or `web/` a file imports most, through the Scope of the charter
 that lists it; the rest by name. A new test file is added to `_FILES` under its owner in the commit that adds it, or
-`tests/test_guard_tests_have_one_owner.py` names it; the count of `unmapped` files may only go down, and a finding number
+`tests/test_the_test_map.py` names it; the count of `unmapped` files may only go down, and a finding number
 a test cites (`tests/findings_cited.txt`) may leave the tests only by being listed in `owners.RETIRED`.
 `tools/run_tests.py --owner people` runs one owner's Python files, `--scenarios people` only its scenario files, and both
 print the `node --test` line for that owner's page tests.

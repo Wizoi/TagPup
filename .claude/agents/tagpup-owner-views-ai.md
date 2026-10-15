@@ -15,7 +15,7 @@ at a time on one graphics card the owner's other programs also use. Neither writ
 who a person is (Files, People); the derived tables it reads are written by Data's functions.
 
 ## Scope
-Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved module is changed here in the same commit.
+Paths are checked by `tests/test_the_test_map.py`; a moved module is changed here in the same commit.
 - View queries: `tagpup/store/library_view.py`, `tagpup/store/selection_folders.py`, `tagpup/store/search_index.py` (the query side; its writers are Data's), `tagpup/store/suggestions.py`
 - View services and routes: `tagpup/services/library_view.py`, `tagpup/services/selection.py`, `tagpup/services/thumbnails.py`, the `/api/library/*` routes of `tagpup/web/tagpup_routes.py` (shared with Integration)
 - Photo vectors and Suggest: `tagpup/services/search.py` (CLIP nearest neighbours, `PhotoIndex`; not the word search), `tagpup/ml/vector_index.py`, `tagpup/services/suggester.py`, `tagpup/services/suggestions.py`, `tagpup/jobs/suggestions.py`, `tagpup/core/suggesting.py`
@@ -86,4 +86,4 @@ Read `.claude/agents/tagpup-reviewer.md` and review as it says: read-only; name 
 Findings ranked. Each: a severity word (`data` can lose or corrupt data, `wrong` a wrong result the owner sees, `low`; only the first two block a merge), `file:line`, a concrete failure scenario with concrete inputs, the evidence, and confidence (confirmed, likely, possible); as a row for docs/findings.md with `| ? |`. Say plainly when nothing blocks, and what you checked. At most two rounds; the second asks which single place should own this.
 
 ## Scenarios (tests/owners.py)
-Scenario ids: V1 V2 V3 V4 V5 V6 V7 V8 V9. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_guard_tests_have_one_owner.py` names one that is not).
+Scenario ids: V1 V2 V3 V4 V5 V6 V7 V8 V9. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_the_test_map.py` names one that is not).

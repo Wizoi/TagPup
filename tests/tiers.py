@@ -13,7 +13,7 @@
 `tools/run_tests.py` runs all three unless told otherwise: the whole suite is still what
 a commit and a merge run. `--fast` leaves the other two out for the edit loop, `--no-slow`
 leaves out the slow one. A file is in exactly one tier, and
-tests/test_tiers_name_real_files.py fails a name that is not a test file, so a rename
+tests/test_the_test_map.py fails a name that is not a test file, so a rename
 cannot quietly move a scenario into the fast tier.
 
 Which file goes where is by what it does, not by its time alone (the times, from

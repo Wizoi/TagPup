@@ -15,7 +15,7 @@ the rows are a cache of them that also carry hand-made decisions (faces named by
 decide what a tag or person means (People), the journal's rules (Data; you call it), or how a page shows a row.
 
 ## Scope
-Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved module is changed here in the same commit.
+Paths are checked by `tests/test_the_test_map.py`; a moved module is changed here in the same commit.
 - Files layer: `tagpup/files/exiftool_session.py`, `tagpup/files/metadata.py`, `tagpup/files/field_values.py`, `tagpup/files/identity.py`, `tagpup/files/images.py`, `tagpup/files/names.py`, `tagpup/files/recycle_bin.py`, `tagpup/files/shares.py`, `tagpup/files/lock_owners.py`, `tagpup/files/thumbs.py`
 - Core: `tagpup/core/paths.py`, `tagpup/core/fields.py`, `tagpup/core/photo_meta.py`, `tagpup/core/renaming.py`, `tagpup/core/machine.py`, `tagpup/core/byte_lock.py`, `tagpup/core/dates.py`
 - Services: `tagpup/services/file_changes.py`, `tagpup/services/batches.py`, `tagpup/services/file_only.py`, `tagpup/services/rotation.py`, `tagpup/services/sync.py`, `tagpup/services/photos.py`, `tagpup/services/refresh_rows.py`, `tagpup/services/relink_photos.py`, `tagpup/services/bulk_edit.py`, `tagpup/services/indexing.py`, `tagpup/services/folder_scope.py`
@@ -90,4 +90,4 @@ Read `.claude/agents/tagpup-reviewer.md` and review as it says: read-only; name 
 Findings ranked. Each: a severity word (`data` can lose or corrupt data, `wrong` a wrong result the owner sees, `low`; only the first two block a merge), `file:line`, a concrete failure scenario with concrete inputs, the evidence, and confidence (confirmed, likely, possible); as a row for docs/findings.md with `| ? |`. Say plainly when nothing blocks, and what you checked. At most two rounds; the second asks which single place should own this.
 
 ## Scenarios (tests/owners.py)
-Scenario ids: F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_guard_tests_have_one_owner.py` names one that is not).
+Scenario ids: F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_the_test_map.py` names one that is not).
