@@ -338,10 +338,6 @@ def _resolve(conn, edits):
 
     refusals, top, seen, skipped = [], [], set(), []
     deletes = collections.defaultdict(dict)
-    #: (table, key) -> the columns an update of this change writes: a child whose column naming its parent is
-    #: written here has been given to another parent, and goes with neither (a face moved to another photo
-    #: before the photo is deleted).
-    rewritten = {}
     for edit in edits:
         if edit.table not in KEYS:
             raise ValueError("%s is not a table a change writes%s" % (
@@ -397,7 +393,6 @@ def _resolve(conn, edits):
                        if not _same(_canonical_value(roots, edit.table, key, column, row[column]), value)}
             if changed:
                 top.append(RowChange("update", edit.table, key, {c: row[c] for c in changed}, changed, edit.kind))
-                rewritten[(edit.table, key)] = set(changed)
             continue
         if edit.table == "tag_taxonomy" and person_ids.present(conn) and conn.execute(
                 "SELECT 1 FROM faces WHERE tag_id = ? LIMIT 1", (key[0],)).fetchone():
@@ -428,7 +423,7 @@ def _resolve(conn, edits):
                         chunk).fetchall():
                     row = dict(zip(child_columns, row))
                     child_key = tuple(row[c] for c in KEYS[child])
-                    if (child, child_key) in planned or column in rewritten.get((child, child_key), ()):
+                    if (child, child_key) in planned:
                         continue
                     owner = by_value[row[column]]
                     if how == FORBIDDEN:
