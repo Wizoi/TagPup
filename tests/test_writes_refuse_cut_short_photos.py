@@ -21,7 +21,8 @@ import web_client  # noqa: E402
 from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.services import tagging  # noqa: E402
+from tagpup.core.result import Result  # noqa: E402
+from tagpup.services import file_only, tagging  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 TAKEN = "2024:07:04 10:00:00"
@@ -76,6 +77,22 @@ class CutShortPhotos(unittest.TestCase):
         self.assertEqual(0, result.changed)
         self.assertTrue(os.path.exists(self.cut), "it was renamed after a caption it did not get")
         self.assertEqual(self.before[self.cut], fingerprint(self.cut))
+
+    def test_every_refusal_is_logged_with_the_photo_it_met(self):
+        """The owner finds out why a photo was not written from the log as well as the reply."""
+        with self.assertLogs("tagpup.services.file_changes", "WARNING") as bulk:
+            self.client.post("/library/api/library/bulk-edit", json={
+                "op": "tags", "selection": ALL, "params": {"add": ["Trips/Coast"], "remove": []}})
+        for path in (self.cut, self.half):
+            self.assertEqual(1, sum(1 for line in bulk.output if path in line and "nothing is written" in line), path)
+        self.assertFalse([line for line in bulk.output if any(path in line for path in self.whole)])
+        with self.assertLogs("tagpup.services.tagging", "WARNING") as single:
+            tagging.save_photo(self.vl.library, self.cut, "Quay at dusk", ["Trips/Coast"], None, EXIFTOOL, "{}")
+        self.assertEqual(1, sum(1 for line in single.output if self.cut in line and "nothing is written" in line))
+        with self.assertLogs("tagpup.services.file_only", "WARNING") as loose:
+            file_only.refuse_unwritable(Result(attempted=1), [self.half])
+            file_only.leave_out_unwritable([self.half] + self.whole)
+        self.assertEqual(2, sum(1 for line in loose.output if self.half in line))
 
 
 if __name__ == "__main__":

@@ -80,6 +80,8 @@ def refuse_unwritable(result, photo_paths, full=False):
     found = unwritable(photo_paths, full)
     if not found:
         return False
+    for path, why in found:
+        logger.warning("%s: the file is damaged, so the write is refused and nothing is written to it: %s", path, why)
     more = "" if len(found) == 1 else " (and %d more)" % (len(found) - 1)
     result.refuse("%s%s %s and nothing is written to it. Restore it from a backup, then try again."
                   % (os.path.basename(found[0][0]), more, found[0][1]))
@@ -91,6 +93,8 @@ def leave_out_unwritable(photo_paths):
     """(`photo_paths` but the unwritable ones, [(path, why)] of those left out): a bulk write
     skips them and writes the rest."""
     found = dict(unwritable(photo_paths))
+    for path, why in found.items():
+        logger.warning("%s: the file is damaged, so it is skipped and nothing is written to it: %s", path, why)
     return ([p for p in photo_paths if p not in found],
             [(path, "damaged, nothing is written to it: %s" % why) for path, why in found.items()])
 
