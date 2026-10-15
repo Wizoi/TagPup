@@ -415,7 +415,12 @@ export async function writeDetailEdits(fields, { intent = null, path = state.act
     } catch (err) {
         console.error('Saved, but redrawing the page failed:', err);
     }
-    setStatus('ready', `Saved ${photo.filename || baseName(photo.path)}.${whereWritten(data)}`.replace(/\.$/, ''));
+    if (data.rename_failed) {
+        // The caption is saved, the file keeps its name: said, and kept on the line until the next thing happens.
+        setStatus('error', `Saved the caption, but could not rename the photo: ${data.rename_failed}`, { transient: false });
+    } else {
+        setStatus('ready', `Saved ${photo.filename || baseName(photo.path)}.${whereWritten(data)}`.replace(/\.$/, ''));
+    }
     settleFailedSaves(path, entry);
     return true;
 }

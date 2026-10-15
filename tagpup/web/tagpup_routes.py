@@ -1046,6 +1046,8 @@ def photo_save_metadata():
              "base": result.details.get("base"), **_faces_unnamed(result)}
     if result.details["index_warning"]:
         reply["index_warning"] = result.details["index_warning"]
+    if result.details.get("rename_failed"):
+        reply["rename_failed"] = result.details["rename_failed"]   # the caption was saved; the photo was not renamed after it
     return jsonify(reply)
 
 

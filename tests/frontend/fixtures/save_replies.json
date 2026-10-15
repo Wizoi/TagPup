@@ -1,0 +1,31 @@
+{
+ "no_rename": {
+  "base": {
+   "tags": [
+    "Trips/Coast"
+   ],
+   "title": "A caption"
+  },
+  "file_only": 0,
+  "mtime": 1,
+  "new_path": "IMG_0002.jpg",
+  "size": 1,
+  "success": true,
+  "with_rows": 1
+ },
+ "rename_failed": {
+  "base": {
+   "tags": [
+    "Trips/Coast"
+   ],
+   "title": "Start line"
+  },
+  "file_only": 0,
+  "mtime": 1,
+  "new_path": "Regatta - 1.jpg",
+  "rename_failed": "Could not rename: The file is open in another program (held by Viewer). Every photo was put back under its old name.",
+  "size": 1,
+  "success": true,
+  "with_rows": 1
+ }
+}
