@@ -45,7 +45,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 | Derived tables follow every writer | `tests/test_derived_writers.py`, `tests/test_search_words.py`, `tests/test_camera_words.py` |
 | A looking run keeps no vector | `tests/test_analyse_only_suggest.py` (weak: #544 passed with `remember` forced on) |
 | FAISS uses one thread; a search keeps no thread buffers | `tests/test_a_search_keeps_no_thread_buffers.py` |
-| Vectors follow their photo | `tests/test_embeddings_follow_their_photo.py`, `tests/test_settling_carries_vectors.py` |
+| Vectors and suggestions follow their photo | `tests/test_suggest_then_apply_all.py` (V3, V9), `tests/test_embeddings_follow_their_photo.py`, `tests/test_settling_carries_vectors.py` |
 | The page's rules against the server's (picker, order, counts) | `tests/frontend/navigator.test.mjs`, `tests/frontend/library-view.test.mjs`, `tests/frontend/search-page.test.mjs` (partial; the picker's chip key against the server's reading of a source: `tests/fixtures/chip_keys.json`, `tests/test_chip_keys_follow_the_server.py`) |
 | A view kind added in every layer | none: review only |
 
