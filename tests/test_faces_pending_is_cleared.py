@@ -3,7 +3,7 @@ longer once detection has run on it -- wherever it ran, and whether or not it fo
 (docs/findings.md, #407).
 
 The indexer's record_batch clears it; so does Suggest's record_detected, which detects the
-faces of a photo it looks at, and replace_detected. A photo in which Suggest found no face
+faces of a photo it looks at. A photo in which Suggest found no face
 stayed marked, and the next index of its folder detected it all over again for nothing.
 The rows are made as the indexer makes them (tests/photo_rows).
 """
@@ -48,13 +48,10 @@ class Suggest(Case):
         self.assertEqual(0, self.marked(), "detection ran and found no face, and the photo is still marked")
 
 
-class Replacing(Case):
-    def test_replacing_the_faces_clears_the_mark(self):
-        conn = db.connect(self.lib.library.path)
-        try:
-            face_records.replace_detected(conn, self.photo, [FACE])
-        finally:
-            conn.close()
+class Indexing(Case):
+    def test_detecting_the_faces_again_clears_the_mark(self):
+        db.write_with_connection(self.lib.library.path, lambda conn: face_records.record_batch(
+            conn, {self.photo: [FACE]}, overwrite=True))
         self.assertEqual(0, self.marked())
 
 

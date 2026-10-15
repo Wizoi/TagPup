@@ -60,7 +60,8 @@ class EveryFaceHasAPhotoRow(unittest.TestCase):
 
     def test_a_photo_with_a_row_is_not_given_another(self):
         face_records.record_detected(self.db_path, self.photo, [self.face()])
-        face_records.replace_detected(self.index.conn, self.photo.upper() if os.name == "nt" else self.photo, [self.face()])
+        db.write_with_connection(self.db_path, lambda conn: face_records.record_batch(
+            conn, {self.photo.upper() if os.name == "nt" else self.photo: [self.face()]}))
         self.assertEqual(1, len(self.rows()))
 
 

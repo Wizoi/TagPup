@@ -10,9 +10,7 @@ ExifTool, as every other keyword write does (tagpup.services.tagging.change_each
 `apply` writes CHUNK photos at a time, each chunk one journaled change of photo files (operation `OPERATION`), which
 records every file's fields before and after: `undo` takes a chunk back, and a file that was changed outside since is
 a conflict and is never overwritten. That journal is the way back; no copy of the library is taken (a photo's keywords
-are not in the library alone, and the journal holds what a copy of the library could not). A person the tree files in
-two places, or a tree with several people roots, is left (counted): which tag they are is the owner's to choose. So is a
-photo whose keywords already name the person under a root the tree does not file people under (`Parkrunner/<name>`): counted,
+are not in the library alone, and the journal holds what a copy of the library could not). A photo whose keywords already name the person under a root the tree does not file people under (`Parkrunner/<name>`): counted,
 a tree question. And a person only a GUESS backs -- no face of that name named by hand -- is left unless `--guesses`: the
 keyword would make the guess a decided reference (#640).
 
@@ -42,7 +40,7 @@ def plan(library, guesses=False, folder=None):
     """What `apply` would write, counted: a Result whose details are `counts` (safe to show anyone) and `work`, the
     (photo path, person) of each person to put on a photo -- a Ref, the node's id and the name (never reported). Reads only.
 
-    One rule for each row, in this order: the person the tree files in two places is left; the photo whose keywords
+    One rule for each row, in this order: the photo whose keywords
     already name them (by the id of their node, under ANY root: face_people.already_names, the writer's own rule) is skipped -- a
     people tag under a root the tree does not file people under; a person only a guess of clustering or automatch backs
     (no face of that name named by hand) is skipped unless `guesses`, since the keyword would make the guess a decided
@@ -67,13 +65,11 @@ def plan(library, guesses=False, folder=None):
     filer = face_people.Filer(library)
     known = taxonomy.people_vocabulary(library.path)
     work, photo_set = [], set()
-    left = elsewhere = guessed = 0
+    elsewhere = guessed = 0
     for photo_path, person, decided in found:
         photo_set.add(photo_path)
         tag = filer.tag(person)
-        if tag is None:
-            left += 1
-        elif face_people.already_names(held.get(paths.key(photo_path), []), tag, known):
+        if face_people.already_names(held.get(paths.key(photo_path), []), tag, known):
             elsewhere += 1
         elif not decided and not guesses:
             guessed += 1
@@ -84,7 +80,7 @@ def plan(library, guesses=False, folder=None):
         dry_run=True, work=work,
         counts={"photos_with_a_person_on_a_face_alone": len(photo_set), "people": len(found),
                 "photos_to_write": len({photo_path for photo_path, _person in work}), "people_to_write": len(work),
-                "people_the_tree_files_in_two_places": left, "people_the_file_names_under_another_root": elsewhere,
+                "people_the_file_names_under_another_root": elsewhere,
                 "people_from_a_guess_only": guessed, "guesses_included": bool(guesses)})
     return result
 

@@ -423,7 +423,7 @@ class People(Bulk):
 
     def test_a_person_filed_in_two_places_is_refused_up_front_with_a_sentence(self):
         reply = self.edit("people", params={"add": ["Wren Halloway"]}, expect=400)
-        self.assertIn("more than one place", reply["error"])
+        self.assertIn("More than one person is called", reply["error"])
         # Given the path, it is no question.
         done = self.edit("people", {"ids": self.ids[:1]}, {"add": ["People/Friends/Wren Halloway"]})
         self.assertEqual(1, done["changed"])
@@ -441,7 +441,7 @@ class People(Bulk):
         leaf still gets the second."""
         self.vl.tree("People/Family/Sam", "People/Friends/Sam", face_root="People")
         reply = self.edit("people", params={"add": ["Sam"]}, expect=400)
-        self.assertIn("more than one place", reply["error"])
+        self.assertIn("More than one person is called", reply["error"])
         family, friends = self.node("People/Family/Sam"), self.node("People/Friends/Sam")
         self.files.keep_tags(self.path(self.ids[0]), ["People/Family/Sam"])
         done = self.edit("people", {"ids": self.ids[:2]}, {"add_ids": [friends]})
