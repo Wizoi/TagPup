@@ -47,6 +47,8 @@ of them, missed:
 - **Every test file has one owner**: a test file you add (or rename, or delete) is added to (or removed from)
   `tests/owners.py` (owner, kind, scenario ids; `tests/test_the_test_map.py` fails the merge otherwise), and a
   finding number cited in a test you delete must be cited by the scenario test that covers it (the ratchet).
+- **Scratch files go in your own subfolder** of the scratchpad (`scratchpad/<your-branch-name>/`), never a generic name in the
+  shared folder: two workers' `p2.py` collided and one patched the other's worktree (2026-10-15).
 - **Is the case real?** A fallback, a compatibility arm or a defensive branch needs a live count above zero or the user
   action that produces it (CLAUDE.md, 'A special case needs a real instance'). If it has neither, refuse the write that
   could make it and write no branch. Say in the report which cases you did not handle for that reason.
