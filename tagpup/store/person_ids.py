@@ -250,8 +250,7 @@ class People:
 
     def settle(self, name, held):
         """(the id, the name) a row naming `name` and holding `held` should hold: a set id stays, with the cache
-        the node's leaf (a FACE whose node is gone gets (None, name), an unresolved name; the caller deletes a listed person
-        whose node is gone: _sync_table, follow_listed); a name that is None holds no id. **A row with a name and no id is NOT given one here**, however unique the name has become: this
+        the node's leaf (a FACE whose node is gone gets (None, name), an unresolved name); a name that is None holds no id. **A row with a name and no id is NOT given one here**, however unique the name has become: this
         function has no memory of what changed, and a name that became one person's because a same-named node left
         (a rename, a merge, a force delete) says nothing about who the row meant. An unresolved name is linked only by
         (a) the writer that wrote the row and knew the id, (b) `follow_tree`, when a node was ADDED under that name
@@ -398,20 +397,16 @@ def follow_listed(conn, photo_ids, known=None):
     if not photo_ids:
         return 0
     known = known or read(conn)
-    updates, gone = [], []
+    updates = []
     for chunk in _chunks(photo_ids):
         for photo_id, position, name, held in conn.execute(
                 "SELECT photo_id, position, name, tag_id FROM photo_people WHERE photo_id IN (%s)" % _marks(chunk),
                 chunk):
-            if held is not None and held not in known.node_names:
-                gone.append((photo_id, position))   # not a person without a node (as follow_tree and release)
-                continue
             wanted, cached = known.settle(name, held)
             if held != wanted or name != cached:
                 updates.append((wanted, cached, photo_id, position))
-    conn.executemany("DELETE FROM photo_people WHERE photo_id = ? AND position = ?", gone)
     conn.executemany("UPDATE photo_people SET tag_id = ?, name = ? WHERE photo_id = ? AND position = ?", updates)
-    return len(updates) + len(gone)
+    return len(updates)
 
 
 def _pairs(conn, table):
@@ -424,9 +419,6 @@ def _pairs(conn, table):
 def _sync_table(conn, table, known):
     changed = 0
     for name, held, _rows in _pairs(conn, table):
-        if table == "photo_people" and held is not None and held not in known.node_names:
-            changed += conn.execute("DELETE FROM photo_people WHERE tag_id = ?", (held,)).rowcount   # not a person without a node
-            continue
         wanted, cached = known.settle(name, held)
         if held != wanted or name != cached:
             changed += conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS ?" % table,

@@ -22,7 +22,6 @@ sys.path.insert(0, WORKSPACE_DIR)
 
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store import schema  # noqa: E402
-from tagpup.store import taxonomy as store_taxonomy  # noqa: E402
 from tagpup.store.photos import read_tags, record_tags  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -58,10 +57,8 @@ class TestTheIndexHearsAboutBulkEdits(unittest.TestCase):
         )
         conn.commit()
         conn.close()
-        store_taxonomy.forget_people_paths()
 
         def cleanup():
-            store_taxonomy.forget_people_paths()
             for suffix in ("", "-wal", "-shm"):
                 target = self.db_path + suffix
                 if os.path.exists(target):

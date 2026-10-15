@@ -111,7 +111,6 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     wanted = fields.caption_fields(title or "")
     if date_taken:
         wanted.update(fields.date_taken_fields(date_taken))
-    people = taxonomy.people_paths(library.path)
     photo_path = paths.stored(photo_path)
     if stamp is not None and photo_actions.changed_on_disk(photo_path, stamp):
         result.refuse(CHANGED_ON_DISK_SENTENCE)
@@ -144,7 +143,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
             result.refuse(problem)
             return result
         tags = [t if t in held else vocabulary.normalize(t) for t in tags]
-        flat, hierarchical = fields.expand_tag_fields(vocabulary.resolve_people(tags, people))
+        flat, hierarchical = fields.expand_tag_fields(tags)
         after = dict(fields.keyword_fields(flat, hierarchical))
         after.update(wanted)
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
@@ -384,7 +383,7 @@ def person_filer(library):
     follows (the page's resolveTagOrPerson): a name the tree files once is that path; a name it does
     not hold is filed under the library's one people root (People/<name>); a name it files twice,
     or a tree with several people roots, is left as it is -- the page asks, and a bare name is the
-    form resolve_people still files when the person is added. The tree is read once, here, and only
+    form that a bare keyword is, a tag of its own. The tree is read once, here, and only
     read: no node is made. The people the suggester names bare were written bare by Apply All."""
     filed, roots = taxonomy.people_filing(library.path)
 
@@ -445,14 +444,12 @@ def keywords_planner(library, edit):
     """The `plan_one` of a write of keywords (file_changes.write_fields) whose photos each get their own change: `edit(path, held)`
     gives the (tags to add, tags to take off) for a photo that holds the tags `held`. Each write replaces the photo's whole keyword
     set, in the file's order with what is added after (a set's order changed from run to run, and a file holding every tag already
-    was written again for its order), people resolved to the tags they are filed under."""
-    people = taxonomy.people_paths(library.path)
-
+    was written again for its order)."""
     def plan_one(path, held):
         held_tags = list(_tags_held(held))
         add, remove = edit(path, held_tags)
         tags = [tag for tag in dict.fromkeys(held_tags + list(add)) if tag not in set(remove)]
-        return _keywords_plan(vocabulary.resolve_people(tags, people))
+        return _keywords_plan(tags)
     return plan_one
 
 
@@ -506,7 +503,7 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
 
     Renaming or deleting a node of the tag tree, merging one tag into another and
     renaming a person all come here. Each photo is written through the one keyword
-    writer, people resolved to their tags first, and recorded through the one recorder,
+    writer and recorded through the one recorder,
     as a bulk edit is: this used to write its own rows, recording two of the keyword
     fields and not the file's new mtime, so a renamed tag's photos were re-read on every
     scan and a stale IPTC:Keywords was re-derived straight back into the tags.
@@ -523,17 +520,12 @@ def replace_tag(library, photo_paths, old, new, exiftool_path):
     outside between the plan and its write, is an error.
     """
     rows = photos.read_tags(library.path, photo_paths)
-    people = taxonomy.people_paths(library.path)
-    if new:
-        # The tree moves after the files: a bare name resolves to where its person's tag is going, not back to where it was.
-        people = {name: vocabulary.retag([tag], old, new)[0][0] for name, tag in people.items()}
-
     def plan_one(path, held):
         new_tags, changed = vocabulary.retag(_tags_held(held), old, new)
         if not changed:
             # Its row is made to say what the file holds (file_changes.write_fields).
             return file_changes.skip("does not carry the tag")
-        return _keywords_plan(vocabulary.resolve_people(new_tags, people))
+        return _keywords_plan(new_tags)
 
     operation = "rename tag" if new else "remove tag"
     # A photo whose file is gone (or whose root is not there) carries nothing to rewrite: skipped, so it does not hold the tree

@@ -119,6 +119,18 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
         self.assertEqual((node, ZED), self.face(face_id)[:2])
         self.assertEqual([(node, ZED, "face")], self.listed(self.photo)[-1:])
 
+    def test_a_face_is_named_by_a_person_not_a_path(self):
+        """A path no person has once made nodes `a` and `a/b` (has_face 0) and named the face for a node that is no person; a
+        person's own path still names them. Lifted: test_a_face_is_named_by_a_person_not_a_path.py. Mutation: faces._target without
+        its refusal of a name with a separator fails the first assertion."""
+        before = len(self.tags())
+        with self.assertRaises(ValueError):
+            people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], "Vessels/Gull"))
+        self.assertEqual(before, len(self.tags()))
+        self.assertEqual((None, None), self.face(self.faces[0])[:2])
+        people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[1]], people_by_id.WREN))
+        self.assertEqual((self.node(people_by_id.WREN), "Wren Halloway"), self.face(self.faces[1])[:2])
+
     def test_naming_two_faces_with_the_same_new_name_makes_one_node(self):
         people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], ZED))
         people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[1], self.faces[2]], ZED.upper()))
@@ -173,7 +185,6 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
         self.assertEqual([ZED], filed[ZED.lower()])
         self.assertNotIn(ZED, roots, "a person is not a root that people are filed under")
         self.assertNotIn(ZED, taxonomy.face_roots(self.path))
-        self.assertEqual(ZED, taxonomy.people_paths(self.path)[ZED.lower()])
 
     def test_the_first_node_of_an_empty_tree_keeps_people_the_face_root(self):
         def empty(conn):

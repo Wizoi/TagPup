@@ -1,5 +1,17 @@
-"""People by id, stage 2, the pages' writes (docs/ARCHITECTURE.md, "People by id, stage 2"): two cousins called Sam under two groups,
-one photo, two faces.
+"""Scenario P6, two cousins called alike (docs/ARCHITECTURE.md, "People by id, stage 2"): two cousins called Sam under two groups,
+a dog and a friend called Max, one photo, two faces.
+
+Naming a face by id names exactly that person; a typed bare 'Sam' is refused naming both paths; a group is refused as a person;
+both cousins on one photo get both tags; every refusal writes nothing; and a bare keyword is a tag of its own that names nobody
+(DECISIONS 2026-10-11, 2026-10-15: no write rewrites one into a person's path). The shared leaf is live: photo_index.db holds two
+leaf names that two people have (counted 2026-10-15).
+
+Lifted: test_people_by_id_writers.py (Writers, TheCacheFollowsTheNode, ThePhotosList: 18 tests; the renames and moves are
+test_people_by_id_tree.py's), test_two_people_one_leaf_on_a_photo.py (this file, the route tests kept), test_an_ambiguous_person_gets_no_path.py
+(#27, the last class). Mutation, each failing the test named: person_ids.People.person falling back to the leaf when no id is given
+(a name two people have answers with the first) -> test_every_refusal_writes_nothing and the route tests that refuse a shared name;
+vocabulary.names_same_person comparing leaves always -> test_both_cousins_on_one_photo_get_both_tags and
+test_unnaming_one_takes_only_their_tag; the bare-keyword test fails on the code before this commit (git archive of HEAD).
 
 The keyword writer used to leave out a person "the file already names by their leaf": adding the second Sam to a photo that held
 the first wrote nothing, and reported nothing wrong -- the second face could be named only on a photo that lost the tag it needed.
@@ -17,11 +29,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_faces_and_tags_in_step import InStep  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
-from tagpup.services import inspect  # noqa: E402
-from tagpup.core.vocabulary import Ref  # noqa: E402
-from tagpup.store import db, people, removals, taxonomy  # noqa: E402
+from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, TwoSams, look, write  # noqa: E402
+from test_organize_faces import WREN  # noqa: E402
 
-SAM_T, SAM_I = "Family/Thackeray/Sam", "Family/Ingersoll/Sam"
+import numpy as np  # noqa: E402
+from unittest import mock  # noqa: E402
+
+from tagpup.core import clustering  # noqa: E402
+from tagpup.core.result import NotFound  # noqa: E402
+from tagpup.services import faces as faces_service  # noqa: E402
+from tagpup.services import inspect, tagging  # noqa: E402
+from tagpup.services.suggester import TagSuggester  # noqa: E402
+from tagpup.core.vocabulary import Ref  # noqa: E402
+from tagpup.store import db, faces, people, person_ids, photos, removals, taxonomy  # noqa: E402
+from tagpup.store.taxonomy import TagTaxonomy  # noqa: E402
 
 
 class TwoSamsOnAPhoto(InStep):
@@ -205,6 +226,130 @@ class TwoSamsOnAPhoto(InStep):
         write = self.match(self.first, person_name="Sam")
         self.assertEqual(400, write.status_code, "a write with the shared name still names the candidates")
         self.assertIn(SAM_I, write.get_json()["error"])
+
+
+class ABareKeywordNamesNobody(InStep):
+    def test_an_edit_leaves_a_bare_keyword_as_it_is_beside_the_person_of_that_name(self):
+        """A bare keyword beside the person of that name: the writer rewrote it into their path, and a photo the owner had
+        tagged by hand gained the person (and a people row) with no click."""
+        photo = self.held("quay_20.jpg", [WREN])
+        done = tagging.change_tags(self.library, [photo], ["Regatta"], [], "exiftool")
+        self.assertEqual(1, done.changed, done.errors)
+        self.assertEqual({WREN, "Regatta"}, set(self.tags(photo)), "no person's path was added")
+        self.assertEqual([], self.indexed_people(), "and no people row")
+
+
+class TwoSamsInTheStore(TwoSams, unittest.TestCase):
+    def setUp(self):
+        self.make_library()
+        self.sam_t, self.sam_i = self.node(SAM_T), self.node(SAM_I)
+
+    def counts(self):
+        return look(self.path, "SELECT (SELECT COUNT(*) FROM tag_taxonomy), (SELECT COUNT(*) FROM photo_people),"
+                               " (SELECT COUNT(*) FROM faces WHERE tag_id IS NOT NULL OR name IS NOT NULL)")[0]
+
+    def test_naming_by_id_names_exactly_that_person(self):
+        faces_service.name_face(self.library, self.faces[0], self.sam_i)
+        self.assertEqual((self.sam_i, "Sam", "manual"), self.face(self.faces[0]))
+        self.assertEqual([(self.sam_t, "Sam", "keyword"), (self.sam_i, "Sam", "face")], self.listed(self.photo),
+                         "the photo lists two people with one leaf, each by id")
+        again = faces_service.name_face(self.library, self.faces[1], self.sam_i)
+        self.assertIn("already tagged on another face", again.refused)
+        self.assertEqual(1, faces_service.name_face(self.library, self.faces[1], self.sam_t).changed)
+        self.assertEqual(1, look(self.path, "SELECT COUNT(*) FROM faces WHERE tag_id = ?", (self.sam_i,))[0][0], "counted by node")
+
+    def test_every_refusal_writes_nothing(self):
+        before = self.counts()
+        by_name = faces_service.name_face(self.library, self.faces[0], "Sam")
+        self.assertTrue(SAM_T in by_name.refused and SAM_I in by_name.refused, by_name.refused)
+        self.assertIn("/", faces_service.name_face(self.library, self.faces[0], SAM_I).refused, "a path is a tag, not a name")
+        group = faces_service.name_face(self.library, self.faces[0], self.node("Family/Thackeray"))
+        self.assertIn("Family/Thackeray is a group of people, not a person", group.refused)
+        self.assertIn("group of people", faces_service.name_face(self.library, self.faces[0], "Thackeray").refused)
+        with self.assertRaises(NotFound):
+            faces_service.name_face(self.library, self.faces[0], 99999)
+        with self.assertRaises(person_ids.AmbiguousPerson):
+            write(self.path, lambda conn: faces.insert(conn, self.other, [5, 5, 9, 9], b"\x03" * 8, name="Sam"))
+        with self.assertRaises(ValueError):
+            write(self.path, lambda conn: faces.name(conn, [self.faces[0]], "Vessels/Gull"))
+        self.assertEqual(before, self.counts())
+
+    def test_a_bare_keyword_names_neither_sam_and_a_face_that_says_which_makes_the_person_the_photos(self):
+        photos.record_tags(self.path, self.other, ["Sam"])
+        self.assertEqual([], self.listed(self.other))
+        faces_service.name_face(self.library, self.faces[2], self.sam_i)
+        self.assertEqual([(self.sam_i, "Sam", "face")], self.listed(self.other))
+
+    def test_a_pet_and_a_friend_called_alike_are_told_apart_and_a_guess_is_taken_back_by_id(self):
+        pet, friend = self.node(MAX_PET), self.node(MAX_FRIEND)
+        write(self.path, lambda conn: faces.set_names(conn, {self.faces[0]: pet, self.faces[2]: friend},
+                                                      {self.faces[0]: None, self.faces[2]: None}))
+        self.assertEqual([(pet, "Max"), (friend, "Max")], [self.face(self.faces[0])[:2], self.face(self.faces[2])[:2]])
+        write(self.path, lambda conn: faces.name_unnamed(conn, {self.faces[1]: self.sam_i}))
+        self.assertEqual([], write(self.path, lambda conn: faces.revert_automatic(conn, {self.faces[1]: self.sam_t})),
+                         "it is not Sam Thackeray's guess")
+        self.assertEqual([self.faces[1]], write(self.path, lambda conn: faces.revert_automatic(conn, {self.faces[1]: self.sam_i})))
+
+    def test_the_id_is_the_key_and_the_name_a_cache_the_next_settle_puts_right(self):
+        write(self.path, lambda conn: faces.name(conn, [self.faces[0]], self.sam_t))
+        write(self.path, lambda conn: conn.execute("UPDATE faces SET name = 'Max' WHERE id = ?", (self.faces[0],)))
+        person_ids.repair(self.path)
+        self.assertEqual((self.sam_t, "Sam", "manual"), self.face(self.faces[0]))
+        write(self.path, lambda conn: taxonomy.add_node(conn, "Friends/Sam"))
+        write(self.path, lambda conn: taxonomy.remove_node(conn, "Friends/Sam"))
+        self.assertEqual(self.sam_t, self.face(self.faces[0])[0], "a second node of the name does not take the id away")
+
+
+TWICE = {"People/Harbour/Rowan Thackeray", "People/School/Rowan Thackeray", "People/Imogen Vale"}
+
+
+def tree_of(tag_paths):
+    tree = TagTaxonomy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "no such library.db"))
+    tree.paths = set(tag_paths)
+    return tree
+
+
+def unit(vector):
+    vector = np.asarray(vector, dtype=np.float32)
+    return vector / np.linalg.norm(vector)
+
+
+class NoIndex:
+    conn = None
+    db_path = "no such library.db"
+
+    def search(self, embedding, k=15):
+        return []
+
+
+class OneFace:
+    def detect_and_embed_faces(self, path):
+        return [{"box": [0, 0, 100, 100], "embedding": unit([1, 0, 0]).tolist(), "prob": 0.99}]
+
+
+class AFilingTwiceIsSuggestedByTheNode(unittest.TestCase):
+    """docs/findings.md, #27: a lookup of a person's path returned the first path it met in a set, so a person filed twice was
+    suggested under one path on one run and the other on the next. The suggester takes the tag of the person's node."""
+
+    def test_a_name_filed_twice_has_both_paths_and_once_its_path(self):
+        self.assertEqual(["People/Harbour/Rowan Thackeray", "People/School/Rowan Thackeray"],
+                         tree_of(TWICE).person_paths("Rowan Thackeray"))
+        self.assertEqual(["People/Imogen Vale"], tree_of(TWICE).person_paths("imogen vale"))
+
+    def suggested(self, tags_by_id, person_id):
+        known = clustering.KnownFaces.of([(person_id, unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg",
+                                           Ref(person_id, "Imogen Vale"))])
+        run = TagSuggester(NoIndex(), tree_of(TWICE), faces=OneFace())
+        with mock.patch.object(faces_service, "known_faces", return_value=known), \
+                mock.patch.object(TagSuggester, "_tags_by_id", return_value=tags_by_id), \
+                mock.patch.object(faces_service, "record_detected", return_value=0):
+            result = run.suggest_for_photo(r"D:\Pictures\Run\01.jpg", [1.0, 0.0, 0.0])
+        return [t["tag"] for t in result["suggested_tags"]]
+
+    def test_a_face_of_a_person_the_tree_files_is_offered_under_their_path(self):
+        by_id = {7: "People/Imogen Vale", 8: "People/School/Imogen Vale"}
+        self.assertIn("People/Imogen Vale", self.suggested(by_id, 7))
+        self.assertIn("People/School/Imogen Vale", self.suggested(by_id, 8))
 
 
 if __name__ == "__main__":

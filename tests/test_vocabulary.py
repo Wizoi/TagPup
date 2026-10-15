@@ -121,19 +121,6 @@ class WhatAPhotosMetadataSays(unittest.TestCase):
         self.assertEqual(vocabulary.retag(["Beach", "Places/Harbour"], "Beach"), (["Places/Harbour"], True))
         self.assertEqual(vocabulary.retag(["Places/Harbour"], "Beach"), (["Places/Harbour"], False))
 
-    def test_a_bare_name_is_written_as_the_tag_the_person_is_filed_under(self):
-        filed = {"hazel brookmire": "People/Hazel Brookmire"}
-        self.assertEqual(vocabulary.resolve_people(["Hazel Brookmire", "Cross Country"], filed),
-                         ["People/Hazel Brookmire", "Cross Country"])
-
-    def test_a_bare_name_beside_its_own_path_is_dropped(self):
-        filed = {"hazel brookmire": "People/Hazel Brookmire"}
-        self.assertEqual(vocabulary.resolve_people(
-            ["People/Hazel Brookmire", "hazel brookmire"], filed), ["People/Hazel Brookmire"])
-
-    def test_with_nobody_filed_the_tags_are_left_as_they_are(self):
-        self.assertEqual(vocabulary.resolve_people(["Hazel Brookmire"], {}), ["Hazel Brookmire"])
-
     def test_a_named_face_counts_once_whatever_its_case(self):
         people = vocabulary.people_in_photo({}, ["People/Rowan Thackeray"],
                                             ["rowan thackeray", "Hazel Brookmire"])

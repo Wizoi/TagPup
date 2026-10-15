@@ -10,7 +10,7 @@ import os
 import unicodedata
 from typing import Dict, List, Optional, Set
 
-from tagpup.core import paths, vocabulary
+from tagpup.core import vocabulary
 from tagpup.core.vocabulary import PeopleVocabulary
 from tagpup.store import db, derived, generations, people, person_ids, schema
 
@@ -198,57 +198,6 @@ def people_filing(db_path):
         return {leaf: sorted(each) for leaf, each in found.items()}, sorted(roots.values())
     finally:
         conn.close()
-
-
-def _read_people_paths(conn):
-    """{lowercased leaf name: tag path} of everyone the tree on `conn` files under a
-    people root, leaving out anyone filed in two places."""
-    roots = people_roots(conn)
-    mapping, groups = {}, set(group_tags(conn))
-    top = set(top_level_people(conn))
-    for tag_path in tags(conn):
-        if tag_path in groups or (tag_path not in top and (
-                "/" not in tag_path or vocabulary.key(vocabulary.root_of(tag_path)) not in roots)):
-            continue   # a group of people is not a person to file under (#986)
-        leaf = vocabulary.key(vocabulary.leaf_of(tag_path))
-        mapping[leaf] = None if leaf in mapping and mapping[leaf] != tag_path else tag_path
-    return {k: v for k, v in mapping.items() if v}
-
-
-#: One reading of each library's people, so resolving on every write costs nothing
-#: after the first. Kept by the tree's generation, which catches the edits this process
-#: cannot see -- TagTuner's, in another process; this process also forgets it when it
-#: writes the tree (forget_people_paths).
-_people_paths = generations.Cache(["taxonomy"], _read_people_paths)
-
-
-def people_paths(db_path):
-    """Every person the library's tag tree names, keyed by their lowercased leaf name.
-
-    Someone filed in two places is left out: which one a bare name means cannot be
-    told without guessing. A library that cannot be read just now keeps what was last
-    read of it.
-    """
-    if not db_path:
-        return {}
-    key = paths.key(str(db_path))
-    if not os.path.exists(db_path):
-        return _people_paths.last(key, {})
-    try:
-        conn = db.connect(db.readonly_uri(db_path), uri=True)
-        try:
-            return _people_paths.get(conn, key)
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.debug("Could not load people paths from %s: %s", db_path, e)
-        return _people_paths.last(key, {})
-
-
-def forget_people_paths(db_path=None):
-    """Forget what was read of a library's people -- every library's, without one --
-    after something changed its tree."""
-    _people_paths.forget(None if db_path is None else paths.key(str(db_path)))
 
 
 def people_vocabulary(db_path=None, conn=None):

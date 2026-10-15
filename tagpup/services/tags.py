@@ -85,7 +85,6 @@ def create(library, name, parent_id=None, has_face=0):
         return result
     if not existed:
         result.changed = 1
-        _tree_changed(library)
     result.details.update(id=node_id, tag=tag)
     return result
 
@@ -104,7 +103,6 @@ def set_flags(library, node_id, has_face=None, hidden=None):
     result.changed = db.write_with_connection(
         library.path, lambda conn: taxonomy.set_branch_flags(conn, node["tag"], has_face, hidden),
         label="tag tree: flags of %s" % node["tag"])
-    taxonomy.forget_people_paths(library.path)
     return result
 
 
@@ -210,7 +208,6 @@ def rename(library, node_id, new_name, exiftool_path):
         return result
     leaf = len(under) == 1
     result.details["faces_renamed"] = _faces_of(library, under, named=vocabulary.leaf_of(new) if leaf else None)
-    _tree_changed(library)
     return result
 
 
@@ -335,7 +332,6 @@ def rename_person(library, person, new_name, exiftool_path):
         # The node and the faces already have the new name; what is left is said, not thrown.
         logger.error("Person rename: failed to update the photo files: %s", e)
         result.fail(found.name, e)
-    _tree_changed(library)
     return result
 
 
@@ -417,8 +413,6 @@ def _retag(library, old, new, carrying, exiftool_path, result, always_move=False
         if new and not rename:
             db.write_with_connection(library.path, lambda conn: taxonomy.add_node(conn, new),
                                      label="tag tree: add %s" % new)
-            # The writes resolve names against the tree, which now has the target.
-            taxonomy.forget_people_paths(library.path)
         rewritten, unwritten, stopped, failed = _rewrite(library, carrying, old, new, exiftool_path)
         _name_failed(result, failed)
     _count(result, len(carrying), rewritten, add_up)
@@ -442,7 +436,6 @@ def _retag(library, old, new, carrying, exiftool_path, result, always_move=False
         result.fail(old, str(why))
         return False
     result.changed = 1
-    _tree_changed(library)
     return True
 
 
@@ -533,11 +526,6 @@ def _node(library, node_id):
     if not node:
         raise NotFound("Tag not found")
     return node
-
-
-def _tree_changed(library):
-    """What follows every edit of the tree: what was read of its people forgotten."""
-    taxonomy.forget_people_paths(library.path)
 
 
 # ---- The word tags, read ------------------------------------------------------------------

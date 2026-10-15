@@ -114,6 +114,7 @@ _SCENARIO_FILES = {
     "P3": "test_reexamine_folder",
     "P4": "test_a_person_count_reads_only_their_photos test_name_faces_routes test_naming_faces_job",
     "P5": "test_tag_tree_edits_are_batches test_taxonomy_lifecycle",
+    "P6": "test_two_cousins_called_alike",
     "V1": "test_library_views_scenarios",
     "V2": "test_library_search",
     "V3": "test_analyse_only_looks_are_kept test_analyse_only_suggest",
@@ -149,8 +150,8 @@ _FILES = {
             "identify-faces-in-place-removal library-sort-and-organize-header name-faces organize-faces person-directory "
             "person-faces person-filing-table person-names person-tag-form review-dialog review-from-activity "
             "show-matched-toggle tag-editor-in-place tag-order tag-view tag-vocabulary tagpup-people-by-id "
-            "tagpup-people-lists-by-id tags-shown-alphabetical test_a_face_is_named_by_a_person_not_a_path "
-            "test_a_library_keeps_a_face_root test_a_listed_person_of_a_gone_node test_an_ambiguous_person_gets_no_path "
+            "tagpup-people-lists-by-id tags-shown-alphabetical "
+            "test_a_library_keeps_a_face_root "
             "test_answers_carry_their_person test_automatch_references test_automatch_writes_once test_cluster_candidates "
             "test_clustering_evidence test_dedupe_faces_keeps_decisions test_every_tag_has_an_id "
             "test_excluded_faces_stay_unnamed test_face_click_reads_named_faces_once test_face_clustering_rules "
@@ -160,15 +161,15 @@ _FILES = {
             "test_identify_cache_keeps_others_writes test_identify_cache_sees_every_change test_identify_faces_hot_paths "
             "test_index_resolves_people test_journal_through_the_services test_name_faces_routes_in_a_folder "
             "test_naming_faces_in_a_folder test_new_person_reads_the_pool_once test_organize_faces test_people_by_id_tree "
-            "test_people_by_id_writers test_people_cache_sees_other_processes test_people_representative_faces "
-            "test_people_resolved_on_write test_people_vocabulary test_person_face_samples test_person_ids "
+            "test_people_representative_faces "
+            "test_people_vocabulary test_person_face_samples test_person_ids "
             "test_person_rename_reaches_the_files test_queued_clustering_is_guarded "
             "test_reindex_keeps_face_decisions test_server_lists_are_alphabetical test_service_faces test_service_tags "
             "test_shared_taxonomy_routes test_stability test_store_people test_store_taxonomy_add_path test_tag_order "
             "test_tag_sort_key_edges test_tag_view_api test_tags_are_checked_where_they_are_set test_tags_from_faces "
             "test_taxonomy_edits_report_what_they_wrote test_top_level_person "
             "test_trace_file_per_library test_tree_fill test_tuner_photo_copy_upright test_tuner_reads "
-            "test_tuner_server_api test_two_people_one_leaf_on_a_photo test_vocabulary tuner-assign-label-tells-the-truth "
+            "test_tuner_server_api test_vocabulary tuner-assign-label-tells-the-truth "
             "tuner-face-zoom tuner-hidden-people-exist tuner-lists-alphabetical tuner-new-person-group "
             "tuner-people-by-face tuner-people-by-id tuner-reexamine-folder tuner-refresh-keeps-the-grid-loading "
             "tuner-select-all-is-linear tuner-starts-last tuner-suggestions-belong-to-their-grid "

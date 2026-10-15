@@ -48,7 +48,7 @@ class TopLevelPerson(unittest.TestCase, people_by_id.TwoSams):
             taxonomy.remove_node(conn, people_by_id.WREN)
         people_by_id.write(self.path, empty)
         self.assertIsNone(self.read(lambda conn: person_ids.resolve(conn, "People")))
-        self.assertNotIn("People", taxonomy.people_paths(self.path))
+        self.assertNotIn("people", taxonomy.people_filing(self.path)[0])
         self.assertEqual([], vocabulary.extract_refs({}, ["People"], self.read(taxonomy.read_people_vocabulary)))
 
     def test_a_top_level_person_becomes_a_group_when_a_node_goes_under_it(self):
@@ -83,7 +83,6 @@ class TopLevelPerson(unittest.TestCase, people_by_id.TwoSams):
     def test_the_filing_of_people_lists_the_top_level_person_by_their_path(self):
         filed, _roots = taxonomy.people_filing(self.path)
         self.assertEqual([SOLO], filed[vocabulary.key(SOLO)])
-        self.assertEqual(SOLO, taxonomy.people_paths(self.path)[vocabulary.key(SOLO)])
 
     def test_the_navigator_files_them_at_the_top_level_and_not_as_unfiled(self):
         from tagpup.services import library_view
