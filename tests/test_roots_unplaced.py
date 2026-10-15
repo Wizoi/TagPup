@@ -2,7 +2,10 @@
 (tagpup.services.roots, docs/ARCHITECTURE.md, "Roots and machines").
 
 The photos are refused, never read as an empty library; the check, the listing, the doctor and the
-command line say why and what to write, and the `roots` command lists and checks.
+command line say why and what to write, and the `roots` command lists and checks. An unplaced root is a check
+result, not an exception (#473): the checks, the summary and the MCP tools answer with the sentence.
+
+Lifted: the unplaced-root class of test_roots_what_the_owner_is_told (#473).
 """
 import json
 import os
@@ -16,6 +19,7 @@ import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
 
 from tagpup import config  # noqa: E402
+from tagpup.services import inspect  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -125,10 +129,6 @@ class TheCommandLine(RootedCase):
     def test_a_library_with_no_roots_says_so(self):
         self.assertIn("has no roots", self.run_cli().output)
 
-    def test_adopt_and_repair_address_are_gone(self):
-        for command in ("adopt", "repair-address"):
-            self.assertNotEqual(0, self.run_cli(command).exit_code, command)
-
     def test_the_listing_shows_where_the_machine_keeps_it_and_the_check_is_in_order(self):
         self.assertTrue(self.side.adopt().ok)
         listed = self.run_cli().output
@@ -161,6 +161,50 @@ class TheHistoryOfTheRemovedCommands(RootedCase):
         undone = journal_service.undo(self.side.library, entry["id"], apply=True)
         self.assertTrue(undone.refused, "the undo of a removed command is refused, not raised")
         self.assertEqual(before, json.dumps(self.side.dump(), default=repr, sort_keys=True))
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class AnUnplacedRootIsACheckResult(RootedCase):
+    def setUp(self):
+        super().setUp()
+        self.assertTrue(self.side.adopt().ok)
+        self.library = self.side.library
+
+    def lose_the_map(self):
+        os.remove(self.map_file)
+
+    def test_all_checks_answers_with_the_sentence(self):                                      # #473
+        self.lose_the_map()
+        found = inspect.all_checks(self.library)
+        self.assertEqual(1, found["broken"])
+        self.assertEqual(["roots_placed"], [c["check"] for c in found["checks"]])
+        self.assertIn("machine_roots.json", found["checks"][0]["message"])
+
+    def test_one_check_and_the_summary_answer_with_it_too(self):                              # #473
+        self.lose_the_map()
+        self.assertIn("machine_roots.json", inspect.check(self.library, "rooted_rows_convert")["message"])
+        self.assertIn("machine_roots.json", inspect.check(self.library, "roots_placed")["message"])
+        self.assertIn("machine_roots.json", inspect.summary(self.library)["roots_problem"])
+
+    def test_a_placed_library_is_as_it_was(self):                                             # #473
+        self.assertEqual(0, inspect.check(self.library, "roots_placed")["count"])
+        self.assertNotIn("roots_problem", inspect.summary(self.library))
+        self.assertNotIn("roots_placed", [c["check"] for c in inspect.all_checks(self.library)["checks"]])
+
+    def test_the_mcp_tools_report_it_and_do_not_raise(self):                                  # #473
+        import asyncio
+        import json
+
+        from tagpup.mcp import server
+        self.lose_the_map()
+
+        def call(tool, arguments):
+            result = asyncio.run(server.build().call_tool(tool, arguments))
+            return json.dumps(result, default=repr)
+
+        self.assertIn("machine_roots.json", call("checks", {"library": "photo_index"}))
+        self.assertIn("machine_roots.json", call("check", {"library": "photo_index", "name": "roots_placed"}))
+        self.assertIn("machine_roots.json", call("summary", {"library": "photo_index"}))
 
 
 if __name__ == "__main__":

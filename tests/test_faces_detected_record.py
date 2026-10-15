@@ -11,6 +11,12 @@ The photo's row and vector are made as the indexer makes them (tests/photo_rows.
 store.embeddings.put); the detection as the indexer records it (record_batch). The face
 model is a stand-in that says which settings it detects with and counts what is asked of
 it: `ready` is what takes a Suggest run's turn on the graphics card (tagpup.runtime).
+
+A photo whose face rows are deleted is detected again (#779): the record says detection ran on a photo, and deleting
+every face row of it -- by the faces store, by id, or by the journal -- left the record, so Suggest believed the photo's
+faces known. A photo that keeps a face keeps its record; a detection that replaces the faces is recorded.
+Lifted: test_faces_detected_follows_the_faces. Break that fails the kept tests: faces_detected.forget_faceless doing
+nothing fails test_a_photo_that_loses_its_last_face_is_detected_again.
 """
 import os
 import sys
@@ -22,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+from face_rows import add_face  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
@@ -33,7 +40,7 @@ from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
-from tagpup.store import faces_detected  # noqa: E402
+from tagpup.store import faces, faces_detected, journal  # noqa: E402
 from tagpup.store.taxonomy import TagTaxonomy  # noqa: E402
 
 
@@ -133,6 +140,68 @@ class SuggestRecordsWhatItDetects(Case):
         again = FaceModel()
         self.suggest(again)
         self.assertEqual((0, 0), (again.readied, again.detected))
+
+
+class ThePhotoThatLosesItsFaces(unittest.TestCase):
+    DETECTOR = faces_detected.detector({"min_face_size": 20})
+
+    def setUp(self):
+        home = own_home.for_test(self, prefix="faces_detected_")
+        self.db_path = home.library("harbour.db")
+        library_actions.create(self.db_path)
+        self.photo = os.path.join(home.root, "Regatta", "a.jpg")
+        conn = db.connect(self.db_path)
+        try:
+            photo_rows.add_read(conn, self.photo, {})
+            self.faces = [add_face(conn, self.photo, [0, 0, 10 + n, 10]) for n in range(2)]
+            faces_detected.record(conn, self.photo, self.DETECTOR, None, 2)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def write(self, work):
+        return db.write_with_connection(self.db_path, work)
+
+    def recorded(self):
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            return faces_detected.detected(conn, self.photo, self.DETECTOR)
+        finally:
+            conn.close()
+
+    def test_removing_a_photos_faces_forgets_that_they_were_detected(self):
+        self.assertTrue(self.recorded())
+        self.assertEqual(2, self.write(lambda conn: faces.remove_for_photo(conn, self.photo)))
+        self.assertFalse(self.recorded())
+
+    def test_a_photo_that_loses_its_last_face_is_detected_again(self):
+        self.write(lambda conn: faces.delete(conn, []))
+        self.write(lambda conn: faces.delete(conn, self.faces[:1]))
+        self.assertTrue(self.recorded(), "a photo that keeps a face keeps its record")
+        self.write(lambda conn: faces.delete(conn, self.faces[1:]))
+        self.assertFalse(self.recorded())
+
+    def test_the_journals_delete_of_the_last_face_forgets_it_too_and_its_undo_puts_the_face_back(self):
+        # The journal writes face rows of its own (a duplicate face removed, a photo's rows merged): same rule.
+        journal.apply(self.db_path, "delete faces", [journal.delete("faces", (face,), {}) for face in self.faces[:1]])
+        self.assertTrue(self.recorded(), "a photo that keeps a face keeps its record")
+        applied = journal.apply(self.db_path, "delete faces", [journal.delete("faces", (face,), {}) for face in self.faces[1:]])
+        self.assertFalse(self.recorded())
+        journal.undo(self.db_path, applied.change_id)
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0])
+        finally:
+            conn.close()
+
+    def test_a_detection_that_replaces_the_faces_is_recorded(self):
+        conn = db.connect(self.db_path)
+        try:
+            face_records.record_batch(conn, {self.photo: [{"box": [0, 0, 10, 10], "embedding": [0.0, 1.0], "prob": 0.99}]},
+                                     overwrite=True, detector=self.DETECTOR)
+        finally:
+            conn.close()
+        self.assertTrue(self.recorded())
 
 
 if __name__ == "__main__":
