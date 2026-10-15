@@ -504,7 +504,7 @@ def folder_time_shift():
         return responses.error(500, str(e))
     return jsonify({"success": True, "updated_photos": list(photos.values()),
                     "updated_count": result.changed, "requested_count": result.attempted,
-                    **_skipped_damaged(result), **_where(result)})
+                    **_where(result)})
 
 
 @routes.post("/api/folder/rename-photos")
@@ -577,7 +577,7 @@ def folder_rename_photos():
         "updated_photos": _sorted(photos),
         "index_rows_moved": result.details["index_rows_moved"],
         "index_skipped": [new for _, new in result.details["index_skipped"]],
-        **_skipped_damaged(result), **_where(result),
+        **_where(result),
     })
 
 
