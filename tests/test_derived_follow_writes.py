@@ -381,9 +381,9 @@ class RenamingATagInTagTuner(TreeCase):
         try:
             self.assertEqual([], derived.problems(conn))
             self.assertEqual({}, dict(derived.tags_without_a_node(conn)))
-            self.assertEqual([one, two], derived.photos_under_tag(conn, "Crew/Frogmen"))
         finally:
             conn.close()
+        self.assertEqual([one, two], [photo for photo, tag in self.rows() if tag == divers], "Crew/Frogmen is the node's")
 
     def test_a_photo_that_could_not_be_rewritten_keeps_the_node_and_the_one_rewritten_holds_a_tag_with_no_node_until_it_is_made_again(self):
         divers = self.node("Crew/Divers")
@@ -398,9 +398,9 @@ class RenamingATagInTagTuner(TreeCase):
         try:
             self.assertEqual([], derived.problems(conn), "what the rows say is what the files do")
             self.assertEqual({"Crew/Frogmen": 1}, dict(derived.tags_without_a_node(conn)), "the tree moves when every photo is written")
-            self.assertEqual([stuck_id], derived.photos_under_tag(conn, "Crew/Divers"), "the photo that failed still has its node")
         finally:
             conn.close()
+        self.assertEqual([stuck_id], [photo for photo, tag in self.rows() if tag == divers], "the photo that failed still has its node")
 
     def id_of_photo(self, path):
         return self.lib.rows("SELECT id FROM photos WHERE path = ?", (path,))[0][0]

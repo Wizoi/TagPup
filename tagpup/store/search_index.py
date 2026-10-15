@@ -23,7 +23,7 @@ deletes it (`search_goes_with_its_photo`), as the derived tables do.
 **Who keeps them.** `refresh(conn, photo_ids)`, in the writer's transaction: called by tagpup.store.derived for every
 photo whose keywords, path, metadata or captions it refreshes (so the index's record, the bulk tag writes, sync, the moves
 and renames, the journal's undo), by people.rebuild for the photos whose people it wrote (so a face named, a tree edit that
-changes who is a person, a rename of a person), and by derived.rebuild_all and rebuild_folders whole. `rebuild(conn)`
+changes who is a person, a rename of a person), and by derived.rebuild_all whole. `rebuild(conn)`
 makes both from the photos, whole.
 
 **A search's words** (`clause`): the text typed, split at blanks, each TERM a set condition, ANDed with every other and with

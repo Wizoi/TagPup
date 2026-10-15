@@ -13,7 +13,7 @@ made from the photos, never written by anything else, never journaled (journal.D
   (`make_nodes`, owner 2026-10-10: every tag has an id), so its photo has the row; a bare keyword that is a person's
   leaf is that person's, and gets none. A keyword written some other way, or read before, and with no node has no row.
   "A keyword and everything under it" is a range on `tag_taxonomy.tag`, the node's ids joined to
-  this table (`photos_under_tag`).
+  this table (`under`, which the library views read by).
 * `folders(id, parent_id, path, name)` and `photo_folder(photo_id, folder_id)`: the folder tree of
   the library's photos and the folder each is directly in. A folder has a row for every ancestor of
   a photo's folder up to the top of its spelling -- the root (`@pictures`) of a rooted row, the
@@ -22,8 +22,7 @@ made from the photos, never written by anything else, never journaled (journal.D
   folder in ROW form (docs/ARCHITECTURE.md, "Roots and machines"), `@pictures/2024/Coast` in a
   library that holds a root and the machine's native path in one that holds none, compared without
   case where the filesystem is. `from_row` makes it native on the way out (`folder_tree`).
-  A folder's id is kept while the folder is, and is not kept across the roots' adoption (the paths
-  change spelling): a page names a folder by its path.
+  A folder's id is kept while the folder is: a page names a folder by its path.
 A fourth, `photo_meta` (rating, camera, size and place from the raw metadata), was written here until migration 30 dropped
 it: nothing read it. The camera a photo names is read from its metadata when it is shown or searched
 (tagpup.core.photo_meta.gear; the search's cache is tagpup.store.search_index.cameras_with).
@@ -410,17 +409,6 @@ def _write_folders(conn, placed, wanted):
     return len(wanted), sum(1 for folder in placed.values() if folder is not None)
 
 
-def rebuild_folders(conn):
-    """Make the folder tree what the photos' paths say, whole: for the roots' adoption and its
-    undo, which change the spelling of every path in one transaction. Returns (folders, photos in
-    one)."""
-    placed = {photo_id: paths.row_parent(path) for photo_id, path in conn.execute("SELECT id, path FROM photos")}
-    written = _write_folders(conn, placed, _wanted(set(folder for folder in placed.values() if folder is not None)))
-    # Every path's spelling changed, so every photo's folders as the word index holds them (below the root, or the drive).
-    search_index.rebuild(conn)
-    return written
-
-
 def rebuild_all(conn):
     """Make all three tables what the photos say, whole, in the caller's transaction: the
     repair's. Reads each photo once. Returns {photos, tag_rows, folders,
@@ -585,25 +573,6 @@ def under(tag):
     """(SQL, parameters) of the ids of the node `tag` and of every node under it."""
     prefix = tag + vocabulary.SEPARATOR
     return UNDER, (tag, prefix, tag + chr(ord(vocabulary.SEPARATOR) + 1))
-
-
-def photos_under_tag(conn, tag, limit=None, offset=0):
-    """The ids of the photos carrying `tag` or a tag under it, each once, by id: a page of them
-    with `limit`. `tag` is as the tree spells it; a photo whose keyword spells it otherwise (case,
-    blanks) is found by its node. One seek of photo_tags for each node."""
-    sql, params = under(tag)
-    query = ("SELECT pt.photo_id FROM photo_tags pt WHERE pt.tag_id IN (%s) GROUP BY pt.photo_id"
-             " ORDER BY pt.photo_id" % sql)
-    if limit is not None:
-        query, params = query + " LIMIT ? OFFSET ?", params + (limit, offset)
-    return [photo_id for (photo_id,) in conn.execute(query, params)]
-
-
-def count_under_tag(conn, tag):
-    """How many photos carry `tag` or a tag under it."""
-    sql, params = under(tag)
-    return conn.execute("SELECT COUNT(DISTINCT pt.photo_id) FROM photo_tags pt WHERE pt.tag_id IN (%s)" % sql,
-                        params).fetchone()[0]
 
 
 def folder_tree(conn):

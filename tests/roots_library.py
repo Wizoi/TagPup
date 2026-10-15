@@ -131,7 +131,7 @@ def convert_to_root(db_path, location, name=NAME, address=ADDRESS):
                     conn.execute("UPDATE settings SET value = ? WHERE key = ?",
                                  (validation.FOLDER_SEPARATOR.join(lines), key))
             store_roots.insert(conn, name, address)
-            derived.rebuild_folders(conn)
+            derived.rebuild_all(conn)
             conn.commit()
         finally:
             conn.close()
