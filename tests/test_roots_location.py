@@ -7,6 +7,12 @@ result is refused unless the request says override; a place that is not there, a
 connected, one over another root, are refused whatever is said; while anything of the library is running
 or queued nothing moves; two tabs and a double click move it once; a map edited by hand while the owner
 looked is not overwritten.
+
+Lifted: test_roots_what_the_owner_is_told (the stage 3 review's #466-#474, each with the case that found it): what a
+verify of a copy says before a move (#466, #469), what the refusal and the dialog say a move can and cannot see (#467),
+what a write stopped half-way says it wrote (#468), a library behind the schema (#470), only the current and previous
+place kept (#472), one owner of "a share is away" (#474). Its unplaced-root check results (#473) went to
+test_roots_unplaced; its test that roots_verify holds no thread of its own read source text and is gone.
 """
 import json
 import os
@@ -21,12 +27,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 import roots_library as rl  # noqa: E402
+import share_waits  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core.result import NotFound  # noqa: E402
-from tagpup.services import activity  # noqa: E402
-from tagpup.services import roots_location, roots_verify  # noqa: E402
+from tagpup.files import shares  # noqa: E402
+from tagpup.services import activity, file_changes, roots_location, roots_verify, tagging  # noqa: E402
+from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import job_runs as store_job_runs  # noqa: E402
 
@@ -133,10 +142,11 @@ class TheMapsWriter(unittest.TestCase):
 
 class RootsCase(unittest.TestCase):
     REAL = 6
+    OUTSIDE = 2
 
     def setUp(self):
         self.home = own_home.for_test(self, prefix="roots_move_")
-        self.side = rl.Side(self.home, "photo_index", real=self.REAL, bulk=0, outside=2)
+        self.side = rl.Side(self.home, "photo_index", real=self.REAL, bulk=0, outside=self.OUTSIDE)
         self.assertIsNone(self.side.adopt().refused)
         self.machine = machine()
         self.library = self.side.library
@@ -462,6 +472,184 @@ class TheOverview(RootsCase):
         found = roots_location.overview(self.library, self.machine)
         self.assertIn("machine_roots.json", found["problem"])
         self.assertEqual("pictures", found["roots"][0]["name"])
+
+
+class BeforeAMove(RootsCase):
+    OUTSIDE = 0
+
+    def verify(self, location, **kwargs):
+        return roots_verify.verify(self.library, "pictures", location, self.machine, **kwargs)
+
+
+class AStaleCopy(BeforeAMove):
+    def make_stale(self):
+        for folder, _dirs, files in os.walk(self.copy):
+            for name in files:
+                with open(os.path.join(folder, name), "ab") as handle:
+                    handle.write(b"\x00" * 5)       # other size: an older or edited copy
+
+    def test_a_copy_that_differs_in_most_rows_is_poor_and_says_what_sync_does(self):          # #466
+        self.make_stale()
+        found = self.verify(self.copy)
+        self.assertEqual((0, 18, 0), (found["matches"], found["differs"], found["missing"]))
+        self.assertTrue(found["poor"])
+        said = " ".join(found["poor_why"])
+        self.assertIn("18 of the 18 rows", said)
+        self.assertIn("re-reads those rows from the files there", said)
+        self.assertIn("tag newer in a row than in its file is replaced", found["summary"])
+        self.assertIn("18 differ", found["summary"])
+
+    def test_it_is_refused_unless_overridden_and_the_map_is_untouched(self):                  # #466
+        self.make_stale()
+        before = open(config.machine_roots_path(), "rb").read()
+        refused = self.move(self.copy, apply=True)
+        self.assertIn("older or edited copy", refused.refused)
+        self.assertIn("Say override", refused.refused)
+        self.assertEqual(before, open(config.machine_roots_path(), "rb").read())
+        self.assertIsNone(self.move(self.copy, apply=True, override=True).refused)
+
+    def test_a_few_differing_files_are_not_poor(self):                                        # #466
+        with open(os.path.join(self.copy, rl.FOLDERS[0], "IMG_1001.jpg"), "ab") as handle:
+            handle.write(b"\x00")
+        found = self.verify(self.copy)
+        self.assertEqual(1, found["differs"])
+        self.assertFalse(found["poor"], found["poor_why"])
+        self.assertIn("Sync re-reads", found["summary"], "the dry run says what sync does with the one that differs")
+
+
+class ARowTheIndexNeverRead(BeforeAMove):
+    def test_it_is_counted_apart_from_differs(self):                                          # #469
+        extra = os.path.join(self.side.pictures, "Suggest saw this.jpg")
+        rl.make_jpeg(extra)
+        shutil.copy2(extra, os.path.join(self.copy, "Suggest saw this.jpg"))
+        conn = db.connect(self.side.db_path)
+        try:
+            photo_rows.add_unread(conn, extra)
+            conn.commit()
+        finally:
+            conn.close()
+        found = self.verify(self.copy)
+        self.assertEqual((18, 0, 1, 0), (found["matches"], found["differs"], found["unread"], found["missing"]))
+        self.assertIn("1 never read by the index (sync reads them)", found["summary"])
+        self.assertIn("0 differ", found["summary"])
+        self.assertFalse(found["poor"])
+
+
+class WhatTheOwnerIsToldBeforeAMove(BeforeAMove):
+    def test_the_refusal_names_what_tagtuner_cannot_see(self):                                # #467
+        result = self.move(self.copy, apply=True, busy=lambda: ["an index run is running or queued"])
+        self.assertIn("an index run is running or queued", result.refused)
+        self.assertIn("TagTuner sees only its own runs", result.refused)
+        self.assertIn("stop Suggest in TagPup", result.refused)
+        self.assertIn("a sync", result.refused)
+
+    def test_the_architecture_does_not_claim_more(self):                                      # #467
+        # "Roots and machines" moved verbatim to docs/history/ when ARCHITECTURE.md became a map
+        text = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "history",
+                                 "ARCHITECTURE_roots_and_markers.md"), encoding="utf-8").read()
+        self.assertNotIn("refused **while anything of the library is running or queued**", text)
+        self.assertIn("TagTuner's own runs", text)
+
+
+class AWriteStoppedHalfWay(BeforeAMove):
+    def test_it_says_what_was_written_and_recorded_before_it_stopped(self):                   # #468
+        real = file_changes._carry
+        calls = []
+
+        def stop_after_the_first(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise roots_service.RootsChanged("changed")
+            return real(*args, **kwargs)
+
+        with mock.patch.object(file_changes, "_carry", stop_after_the_first):
+            result = tagging.change_tags(self.library, self.side.real[:3], ["Harbour"], [], rl.EXIFTOOL)
+        self.assertIn(roots_service.STOPPED, result.refused)
+        self.assertIn("Before it stopped 1 file(s) were written", result.refused)
+        self.assertEqual(1, result.changed)
+        self.assertIsNotNone(result.details["change"])
+        self.assertEqual(1, len(result.details["written"]))
+        from tagpup.files.exiftool_session import ExifToolSession
+        with ExifToolSession(executable=rl.EXIFTOOL) as et:
+            tagged = [p for p in self.side.real[:3] if "Harbour" in et.get_tags([p], tags=["XMP:Subject"])[0].get(
+                "XMP:Subject", [])]
+        self.assertEqual(1, len(tagged), "the file written is the one the Result says")
+
+
+class ALibraryBehindTheSchema(BeforeAMove):
+    def behind(self):
+        return mock.patch.object(store_job_runs, "claim", return_value=store_job_runs.Claim(why="behind"))
+
+    def test_a_move_says_so_in_words(self):                                                   # #470
+        with self.behind():
+            result = self.move(self.copy, apply=True)
+        self.assertIn("open it with TagPup or the CLI once", result.refused)
+        self.assertNotIn("under way", result.refused)
+        self.assertNotIn("in a moment", result.refused)
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class OnlyTheCurrentAndThePreviousPlace(unittest.TestCase):
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="roots_keep_")
+        self.places = []
+        for name in "ABCD":
+            self.places.append(os.path.join(self.home.root, name))
+            os.makedirs(self.places[-1])
+        config.add_machine_root("pictures", self.places[0])
+
+    def test_a_move_drops_anything_older(self):                                               # #472
+        config.set_location("pictures", self.places[1])
+        config.set_location("pictures", self.places[2])
+        self.assertEqual([self.places[2], self.places[1]], list(config.machine_roots()["pictures"]))
+        config.set_location("pictures", self.places[3])
+        self.assertEqual([self.places[3], self.places[2]], list(config.machine_roots()["pictures"]))
+
+    def test_going_to_the_previous_place_by_name_keeps_two(self):                             # #472
+        config.set_location("pictures", self.places[1])
+        config.set_location("pictures", self.places[0])
+        self.assertEqual([self.places[0], self.places[1]], list(config.machine_roots()["pictures"]))
+
+    def test_a_place_older_than_that_is_no_longer_recognised(self):                           # #472
+        from tagpup.core import paths
+        config.set_location("pictures", self.places[1])
+        config.set_location("pictures", self.places[2])
+        roots = config.roots_of({"pictures": ""})
+        self.assertIsNone(roots.locate(os.path.join(self.places[0], "x.jpg")))
+        self.assertIsNotNone(roots.locate(os.path.join(self.places[1], "x.jpg")))
+        self.assertEqual("@pictures/x.jpg", paths.to_row(os.path.join(self.places[2], "x.jpg"), roots))
+
+
+@unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
+class OneOwnerOfAShareBeingAway(unittest.TestCase):
+    SHARE = "\\\\idziserver\\Pictures\\Pictures"
+
+    def setUp(self):
+        shares.forget()
+        self.addCleanup(shares.forget)
+
+    def test_a_look_at_one_file_and_verify_use_the_same_cache(self):                          # #474
+        release = threading.Event()
+        self.addCleanup(release.set)
+        state, _ = roots_verify._bounded(self.SHARE, lambda: release.wait(30), 0.2)
+        self.assertEqual("away", state)
+        waits, counting = share_waits.counted()
+        with counting:
+            self.assertIs(shares.UNANSWERED, shares.stamp_of(self.SHARE + "\\2024\\a.jpg"),
+                          "a share Verify found away was asked for again by a look at one file")
+        self.assertEqual([], waits, "and waited for")
+
+    def test_and_the_other_way(self):                                                         # #474
+        release = threading.Event()
+        self.addCleanup(release.set)
+        with mock.patch.object(shares, "_stat_state", lambda path: release.wait(30)), \
+                mock.patch.object(shares, "SHARE_WAIT", 0.2):
+            self.assertIs(shares.UNANSWERED, shares.stamp_of(self.SHARE + "\\2024\\a.jpg"))
+        self.assertIn(shares.share_of(self.SHARE), shares._away)
+        waits, counting = share_waits.counted()
+        with counting:
+            self.assertEqual("away", roots_verify._bounded(self.SHARE, lambda: "never asked", 5)[0])
+        self.assertEqual([], waits, "a share a look at one file found away was waited for by Verify")
 
 
 if __name__ == "__main__":
