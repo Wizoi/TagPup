@@ -162,7 +162,7 @@ _FILES = {
             "test_naming_faces_in_a_folder test_new_person_reads_the_pool_once test_organize_faces test_people_by_id_tree "
             "test_people_by_id_writers test_people_cache_sees_other_processes test_people_representative_faces "
             "test_people_resolved_on_write test_people_vocabulary test_person_face_samples test_person_ids "
-            "test_person_rename_reaches_the_files test_person_tag_duplication test_queued_clustering_is_guarded "
+            "test_person_rename_reaches_the_files test_queued_clustering_is_guarded "
             "test_reindex_keeps_face_decisions test_server_lists_are_alphabetical test_service_faces test_service_tags "
             "test_shared_taxonomy_routes test_stability test_store_people test_store_taxonomy_add_path test_tag_order "
             "test_tag_sort_key_edges test_tag_view_api test_tags_are_checked_where_they_are_set test_tags_from_faces "

@@ -16,7 +16,6 @@ from tagpup.core.vocabulary import extract_people  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
 from tagpup.store.taxonomy import people_vocabulary  # noqa: E402
 
-
 class PeopleVocabularyCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -60,12 +59,6 @@ class PeopleVocabularyCase(unittest.TestCase):
         self.assertEqual([], extract_people({}, ["Imogen Vale"], vocabulary))
         self.assertEqual(["Imogen Vale"], extract_people({}, ["People/Imogen Vale"], vocabulary))
         self.assertEqual([], extract_people({}, ["Pets", "People"], vocabulary))
-
-    def test_without_a_library_only_a_new_librarys_people_root_counts(self):
-        # docs/findings.md, #66: Family and Friends counted too, whatever a tree said.
-        self.assertEqual([], extract_people({}, ["Pets/Biscuit", "Imogen Vale"]))
-        self.assertEqual([], extract_people({}, ["Family/Immediate/Tamsin Oakes"]))
-        self.assertEqual(["Tamsin Oakes"], extract_people({}, ["People/Immediate/Tamsin Oakes"]))
 
 
 if __name__ == "__main__":

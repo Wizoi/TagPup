@@ -41,5 +41,25 @@ class CaptionFields(unittest.TestCase):
         self.assertEqual(spelled, [], "use tagpup.core.fields.caption_fields")
 
 
+class KeywordsKeepTheirLevels(unittest.TestCase):
+    """The levels are the keyword. Its fragments are not keywords (a person's bare leaf was once written beside the
+    path, and the Add Person list offered both)."""
+
+    def test_a_deep_tag_is_written_whole_and_its_pieces_not_beside_it(self):
+        flat, hierarchical = fields.expand_tag_fields(["Family/Immediate/Cora Ingersoll"])
+        self.assertEqual(flat, ["Family/Immediate/Cora Ingersoll"])
+        self.assertEqual(hierarchical, ["Family/Immediate/Cora Ingersoll"])
+
+    def test_a_tag_with_no_levels_is_left_as_it_is(self):
+        flat, hierarchical = fields.expand_tag_fields(["Sunset"])
+        self.assertEqual((flat, hierarchical), (["Sunset"], []))
+
+    def test_order_is_kept_and_a_repeated_tag_is_written_once(self):
+        tags = ["Family/Immediate/Cora Ingersoll", "Activity/Running", "Sunset"]
+        self.assertEqual(fields.expand_tag_fields(tags)[0], tags)
+        flat, hierarchical = fields.expand_tag_fields(["Activity/Running", "Activity/Running"])
+        self.assertEqual((flat, hierarchical), (["Activity/Running"], ["Activity/Running"]))
+
+
 if __name__ == "__main__":
     unittest.main()
