@@ -38,12 +38,6 @@ def detector(settings):
     return json.dumps(settings, sort_keys=True)
 
 
-def _there(conn):
-    """Has the library the table? One behind this version's schema has none."""
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                        (TABLE,)).fetchone() is not None
-
-
 def _photo_id(conn, photo_path):
     where, params = store_roots.sql_equals(conn, "path", photo_path)
     row = conn.execute("SELECT id FROM photos WHERE " + where + " LIMIT 1", params).fetchone()
@@ -54,8 +48,6 @@ def record(conn, photo_path, name, stamp, found, now=None):
     """Record that detector `name` ran on the photo at `photo_path`, its file at `stamp`
     ((mtime, size) or None), and found `found` faces. 1 when the photo has a row to record
     it on, else 0. The caller commits."""
-    if not _there(conn):
-        return 0
     photo_id = _photo_id(conn, photo_path)
     if photo_id is None:
         return 0
@@ -67,7 +59,7 @@ def record(conn, photo_path, name, stamp, found, now=None):
 
 def detected(conn, photo_path, name):
     """Has detector `name` run on the photo at `photo_path`?"""
-    if conn is None or not _there(conn):
+    if conn is None:
         return False
     where, params = store_roots.sql_equals(conn, "p.path", photo_path)
     return conn.execute("SELECT 1 FROM photos p JOIN faces_detected d ON d.photo_id = p.id WHERE " + where
@@ -80,7 +72,7 @@ def forget_faceless(conn, photo_ids):
     longer true, and Suggest detects it again (docs/findings.md, #779). A photo that keeps a face keeps its row.
     Returns rows taken away. The caller commits."""
     photo_ids = sorted(photo_ids)
-    if not photo_ids or not _there(conn):
+    if not photo_ids:
         return 0
     removed = 0
     for start in range(0, len(photo_ids), 500):

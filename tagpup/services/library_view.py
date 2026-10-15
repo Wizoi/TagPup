@@ -22,8 +22,7 @@ TOTAL; `cards` turns any list of ids into cards.
   is as the row says, is on a share that did not answer, cannot be read, or whose row was never stamped.
 * **The navigator**: `navigator(library, section)` for `folders`, `keywords`, `people` or `dates`, each one query
   (or one read of a derived table) and a pass in memory; native paths, tag paths and names out, never ids.
-* **What fails, and how it says so**: a library that has not had migrations 19 and 20 (the derived tables and
-  the date indexes) is `NotReady`, a sentence; a root this machine does not place raises paths.RootsError, whose
+* **What fails, and how it says so**: a root this machine does not place raises paths.RootsError, whose
   sentence the web layer's gate answers first; a request that cannot mean anything is `Refused`, with why. Reads
   only, on a read-only connection: nothing here migrates or writes a library.
 """
@@ -66,42 +65,19 @@ MAX_MEMBERS = 1000
 
 ORDERS = store.ORDERS
 
-#: A search of words asked while the library's word index is being made (#753): the web layer answers it 503, Retry-After.
-WordIndexComing = store.WordIndexComing
-
 _MONTH = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 _YEAR = re.compile(r"^\d{1,4}$")
 
 
-class NotReady(Refused):
-    """The library has not been brought up to date for the views: its derived tables or its date indexes are
-    missing. TagPup does that as it opens a library; a program that could not (the library held by another, or
-    read-only) says so here. A web route answers it 409."""
-
-
-def not_ready_sentence(library):
-    return ("%s has not been brought up to date for browsing by folder, keyword, person or date yet. TagPup does "
-            "that when it opens a library: open it in TagPup once, or run `tagpup_cli.py --db %s thumbs warm --apply`, "
-            "which brings it up to date first, and try again." % (library.name, library.name))
-
-
 def _open(library):
-    """A read-only connection to a library that is ready for the views."""
+    """A read-only connection to a library."""
     if not os.path.exists(library.path):
         raise NotFound("There is no library at %s." % library.path)
-    conn = db.connect(db.readonly_uri(library.path), uri=True)
-    try:
-        if not store.ready(conn):
-            raise NotReady(not_ready_sentence(library))
-    except BaseException:
-        conn.close()
-        raise
-    return conn
+    return db.connect(db.readonly_uri(library.path), uri=True)
 
 
 def opened(library):
-    """A read-only connection to a library that is ready for the views, for the services that read beside this one
-    (tagpup.services.selection): NotReady, as the views answer it, when it is not."""
+    """A read-only connection to a library, for the services that read beside this one (tagpup.services.selection)."""
     return _open(library)
 
 

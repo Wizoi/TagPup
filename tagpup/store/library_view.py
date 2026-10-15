@@ -25,8 +25,7 @@ import collections
 import time
 
 from tagpup.core import vocabulary
-from tagpup.core.result import Refused
-from tagpup.store import db, derived, person_ids, schema, search_index
+from tagpup.store import db, derived, person_ids, search_index
 from tagpup.store import roots as store_roots
 from tagpup.store.people import PEOPLE_JSON
 from tagpup.core.vocabulary import Ref
@@ -58,25 +57,6 @@ Source = collections.namedtuple("Source", "kind value recursive", defaults=(None
 #: matching every word typed. Tuples, so a Source holding one is hashable as a union's members are.
 Search = collections.namedtuple("Search", "all_of any_of none_of words", defaults=((), (), (), ""))
 
-
-class NoWordIndex(Refused):
-    """A search asked for words of a library at the version that makes the word index and without it (its tables dropped
-    by hand): refused with a sentence, wherever the search is read -- a page, the ids, a selection, a bulk edit."""
-
-    def __init__(self, sentence=None):
-        super().__init__(sentence or "This library has no word index, though it is at the version that makes one: search "
-                                     "by tags, people, folders and dates.")
-
-
-class WordIndexComing(NoWordIndex):
-    """A search asked for words of a library below migration 24 (#753). The server brings every library it serves up to
-    date as it starts and as a request first names it, so such a library is one whose migration is under way -- the
-    startup thread, or another program, holds it -- or due: the web layer answers 503 with Retry-After, and the page asks
-    again (docs/ARCHITECTURE.md, phase 9e-1, the contract for 9e-2)."""
-
-    def __init__(self):
-        super().__init__("The word index is being made now; try again in a few seconds. Searching by tags, people, "
-                         "folders and dates works meanwhile.")
 
 #: The orders a source is read in (phase 9, #671, #714): by Date Taken -- the photos with none AFTER the dated ones in both
 #: directions, by id in the order's direction --, by file name, or by caption -- the photos with none after the captioned
@@ -117,17 +97,6 @@ def caption_sql(column="captions"):
 
 #: Ids read in one statement.
 CHUNK = 500
-
-#: The indexes migration 20 makes.
-INDEXES = ("idx_photos_taken", "idx_photos_year")
-
-
-def ready(conn):
-    """Has the library on `conn` the indexes the pages are ordered by (migration 20)?"""
-    found = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN (%s)"
-                         % ",".join("?" * len(INDEXES)), INDEXES).fetchone()[0]
-    return found == len(INDEXES)
-
 
 # ---- A source's photos -----------------------------------------------------------------------
 
@@ -186,11 +155,7 @@ def _marks(items):
 
 def _words_clause(conn, words):
     """(SQL over `p`, params) of the photos holding every term of `words` (tagpup.store.search_index.clause: a set, never
-    ranked), or None when no term says anything; NoWordIndex for a library without the index (before migration 24)."""
-    if not search_index.present(conn):
-        if schema.version(conn) < search_index.MIGRATION:
-            raise WordIndexComing()
-        raise NoWordIndex()
+    ranked), or None when no term says anything."""
     return search_index.clause(conn, words)
 
 

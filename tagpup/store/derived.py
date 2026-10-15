@@ -28,7 +28,7 @@ A fourth, `photo_meta` (rating, camera, size and place from the raw metadata), w
 it: nothing read it. The camera a photo names is read from its metadata when it is shown or searched
 (tagpup.core.photo_meta.gear; the search's cache is tagpup.store.search_index.cameras_with).
 
-Written by `rebuild_all` (migration 19, the doctor's repair) and by the writers of the photos'
+Written by `rebuild_all` (the doctor's repair) and by the writers of the photos'
 keywords, path, metadata and captions in the SAME transaction as the write (`refresh_photos`, `record`), and
 by the tag tree's edits for the photos whose keywords a changed node names (`follow_tree`,
 `follow_nodes`). A delete of a photo, or of a node, takes its rows by a trigger whichever
@@ -36,11 +36,10 @@ connection deletes it, as photo_people does; only the folders a delete emptied a
 takes them. tests/test_derived_writers.py fails the build on a writer of a photo's tags, path or
 metadata that does not go through here.
 
-The word index a search's words are matched in (tagpup.store.search_index, migration 24) is kept from here too: every
+The word index a search's words are matched in (tagpup.store.search_index) is kept from here too: every
 photo refreshed here has its rows of it made again, whatever of its rows changed (a caption is in no table of these three).
 
-The caller commits. Every function does nothing, and says 0, on a library that has not had
-migration 19 yet: the migrations before it write photos too.
+The caller commits.
 """
 import collections
 import json
@@ -61,21 +60,6 @@ ALL = ("photo_people",) + TABLES + search_index.TABLES
 
 #: How many photos one read or write handles at a time.
 CHUNK = 500
-
-
-def present(conn):
-    """Has the library on `conn` the three tables (migration 19)? Remembered once true."""
-    if getattr(conn, "derived_ready", False):
-        return True
-    found = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (%s)"
-                         % ",".join("?" * len(TABLES)), TABLES).fetchone()[0]
-    if found != len(TABLES):
-        return False
-    try:
-        conn.derived_ready = True
-    except AttributeError:
-        pass   # a connection that is not db.connect's cannot remember
-    return True
 
 
 # ---- Keywords and the tree ----------------------------------------------------------------
@@ -249,8 +233,6 @@ def refresh_photos(conn, photo_ids, batch=None):
     """Make the rows of the photos `photo_ids` what their keywords and path say now:
     called by every write of either, in its transaction. An id with no photo has its rows
     taken. Returns how many photos' rows changed."""
-    if not present(conn):
-        return 0
     ids = sorted({int(photo_id) for photo_id in photo_ids})
     if not ids:
         return 0
@@ -279,8 +261,6 @@ def make_nodes(conn, tag_lists, batch=None):
     node; and a batch that would make more than MAX_NEW_NODES_PER_BATCH makes none. Run before the photos' people are rebuilt: a
     keyword under a face root makes a person, linked in the same transaction. A keyword that would go under a person faces or
     photos use is left without a node. The caller commits. Returns how many nodes were made, the levels above a keyword too."""
-    if not present(conn):
-        return 0
     from tagpup.store import people, taxonomy   # taxonomy imports this module
     batch = batch or Batch(conn)
     tree, wanted, levels = batch.tree, {}, set()
@@ -311,8 +291,6 @@ def record(conn, photo_id, path, tags, batch=None):
     """refresh_photos for one photo whose row the caller has just written and holds: `path` as
     stored (the row form) and `tags` the list written -- what the index records of a read, which
     has no need to read its own row back. Returns 0 or 1."""
-    if not present(conn):
-        return 0
     batch = batch or Batch(conn)
     # What record_indexed wrote is what keywords_of reads back: tags that are None or not a list say nothing.
     keywords = [tag for tag in tags if isinstance(tag, str)] if isinstance(tags, (list, tuple)) else []
@@ -325,8 +303,6 @@ def prune(conn, candidates=None):
     """Take the folders with no photo at or below them: those in `candidates` (ids) and the
     ancestors they leave empty, or, without, every one. A delete of photos leaves them, since a
     trigger cannot walk up a tree. Returns how many were taken."""
-    if not present(conn):
-        return 0
     taken = 0
     if candidates is None:
         while True:
@@ -352,16 +328,13 @@ def prune(conn, candidates=None):
 # ---- The tag tree's edits --------------------------------------------------------------------
 
 def tree_before(conn):
-    """{node id: tag} of the tree now, to hand to follow_tree once an edit of it is done; None for
-    a library that has no derived tables yet."""
-    return dict(conn.execute("SELECT id, tag FROM tag_taxonomy")) if present(conn) else None
+    """{node id: tag} of the tree now, to hand to follow_tree once an edit of it is done."""
+    return dict(conn.execute("SELECT id, tag FROM tag_taxonomy"))
 
 
 def follow_tree(conn, before):
     """Refresh the photos a tree edit changed the keywords' nodes of: the nodes added, taken away
     or moved from `before` (tree_before). Returns how many photos' rows changed."""
-    if before is None or not present(conn):
-        return 0
     after = dict(conn.execute("SELECT id, tag FROM tag_taxonomy"))
     changed = {tag for node_id, tag in before.items() if after.get(node_id) != tag}
     changed |= {tag for node_id, tag in after.items() if before.get(node_id) != tag}
@@ -375,7 +348,7 @@ def follow_nodes(conn, tags):
     are found by reading every photo's keywords once, as people.follow_tree does, since a keyword
     with no node has no row to find them by. Returns how many photos' rows changed."""
     keys = {keyword(tag) for tag in tags if tag}
-    if not keys or not present(conn):
+    if not keys:
         return 0
     affected = []
     for photo_id, tags_json in conn.execute("SELECT id, tags FROM photos WHERE tags IS NOT NULL AND tags != '[]'"):
@@ -441,8 +414,6 @@ def rebuild_folders(conn):
     """Make the folder tree what the photos' paths say, whole: for the roots' adoption and its
     undo, which change the spelling of every path in one transaction. Returns (folders, photos in
     one)."""
-    if not present(conn):
-        return 0, 0
     placed = {photo_id: paths.row_parent(path) for photo_id, path in conn.execute("SELECT id, path FROM photos")}
     written = _write_folders(conn, placed, _wanted(set(folder for folder in placed.values() if folder is not None)))
     # Every path's spelling changed, so every photo's folders as the word index holds them (below the root, or the drive).
@@ -452,7 +423,7 @@ def rebuild_folders(conn):
 
 def rebuild_all(conn):
     """Make all three tables what the photos say, whole, in the caller's transaction: the
-    migration's and the repair's. Reads each photo once. Returns {photos, tag_rows, folders,
+    repair's. Reads each photo once. Returns {photos, tag_rows, folders,
     in_a_folder, word_rows}."""
     tree = Tree.read(conn)
     placed, tag_rows = {}, []
@@ -480,8 +451,6 @@ def listing(conn, photo_ids, node_ids=()):
     nodes `node_ids`, as lists to compare: ([(photo, node)], [(photo, folder path)]).
     The folder by its path, not its id: a folder pruned and made again is the same folder. What
     the journal's rehearsal compares before a change and after its undo. Reads only."""
-    if not present(conn):
-        return [], []
     tags, folders = [], []
     ids = sorted(set(photo_ids))
     for start in range(0, len(ids), CHUNK):

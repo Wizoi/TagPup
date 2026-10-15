@@ -78,10 +78,6 @@ def _prune(conn, job, library, keep):
                  (job, library, job, library, keep))
 
 
-def has_table(conn):
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'job_runs'").fetchone() is not None
-
-
 def _running(conn, job, library):
     return conn.execute("SELECT id, owner FROM job_runs WHERE job = ? AND library IS ?"
                         " AND outcome = 'running' ORDER BY id", (job, library)).fetchall()
@@ -192,8 +188,6 @@ def get(db_path, run_id):
     """The run `run_id` of the library, or None. Reads only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return None
         found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE id = ?", (run_id,)).fetchone()
         return _run(found) if found else None
     finally:
@@ -202,12 +196,9 @@ def get(db_path, run_id):
 
 def latest(db_path):
     """{(job, library): (the latest run, the latest that ended)} of every job the library
-    at `db_path` has run, each a Run or None. Reads only; {} for a library without the
-    table (one a look has not migrated)."""
+    at `db_path` has run, each a Run or None. Reads only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return {}
         found = {}
         for row in conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE id IN"
                                 " (SELECT MAX(id) FROM job_runs GROUP BY job, library)"):
@@ -283,16 +274,12 @@ def _sync_rows(conn, jobs, limit=1):
 
 
 def recent_syncs(conn, limit=50):
-    """The newest `limit` syncs, newest first ([] for a library from before migration 13)."""
-    if not has_table(conn):
-        return []
+    """The newest `limit` syncs, newest first."""
     return [_sync(_run(row)) for row in _sync_rows(conn, SYNC_JOBS, limit)]
 
 
 def newest_sync(conn, whole=None):
     """The newest sync of the whole library (`whole`), of one folder (not), or of either (None), or None."""
-    if not has_table(conn):
-        return None
     jobs = SYNC_JOBS if whole is None else (SYNC_WHOLE,) if whole else (SYNC_FOLDER,)
     row = _sync_rows(conn, jobs).fetchone()
     return _sync(_run(row)) if row else None
@@ -300,8 +287,6 @@ def newest_sync(conn, whole=None):
 
 def last_in_step(conn):
     """When the newest sync of the whole library that left it in step finished, or None."""
-    if not has_table(conn):
-        return None
     for row in _sync_rows(conn, (SYNC_WHOLE,), SYNC_KEEP):
         found = _sync(_run(row))
         if found["in_step"]:
@@ -319,8 +304,6 @@ def runs(db_path, job=None, limit=20, exclude=()):
     """The library's runs, newest first, of `job` or of every job but those in `exclude`. Reads only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return []
         if job is None:
             found = conn.execute("SELECT " + _COLUMNS + " FROM job_runs WHERE job NOT IN (" + ",".join("?" * len(exclude)) + ")"
                                  " ORDER BY id DESC LIMIT ?", tuple(exclude) + (limit,))

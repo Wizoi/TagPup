@@ -45,8 +45,6 @@ from tagpup.core.result import Refused
 from tagpup.store import generations
 
 WORDS, NAMES = "search_words", "search_names"
-#: The migration that makes the tables (tagpup.store.schema).
-MIGRATION = 24
 TABLES = (WORDS, NAMES)
 #: The tables FTS5 makes for each (contentless: no _content).
 SHADOWS = tuple("%s_%s" % (table, shadow) for table in TABLES for shadow in ("data", "idx", "docsize", "config"))
@@ -72,20 +70,6 @@ SUBSTRING = 3
 
 #: How many photos the check compares with their sources (spread over the ids).
 SAMPLE = 500
-
-
-def present(conn):
-    """Has the library on `conn` the word index (migration 24)? Remembered once true."""
-    if getattr(conn, "search_ready", False):
-        return True
-    found = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (?, ?)", TABLES).fetchone()[0]
-    if found != len(TABLES):
-        return False
-    try:
-        conn.search_ready = True
-    except AttributeError:
-        pass   # a connection that is not db.connect's cannot remember
-    return True
 
 
 # ---- A photo's text ------------------------------------------------------------------------------
@@ -146,8 +130,6 @@ def _write(conn, found):
 def refresh(conn, photo_ids):
     """Make the rows of the photos `photo_ids` what their keywords, captions, people, name and folders say now: called by
     every writer of any of them, in its transaction. An id with no photo has its rows taken. Returns how many photos."""
-    if not present(conn):
-        return 0
     ids = sorted({int(photo_id) for photo_id in photo_ids})
     for start in range(0, len(ids), CHUNK):
         chunk = ids[start:start + CHUNK]
@@ -164,8 +146,6 @@ def rebuild(conn):
     """Make both tables what the photos say, whole, in the caller's transaction: migration 24's, the doctor's repair, and
     an adoption's (every path's spelling changes). Reads each photo once, in chunks by id; merges the index's segments
     after (`optimize`). Returns how many photos."""
-    if not present(conn):
-        return 0
     for table in TABLES:
         conn.execute("INSERT INTO %s (%s) VALUES ('delete-all')" % (table, table))
     last, count = -1, 0
@@ -204,8 +184,6 @@ def stale(conn, sample=SAMPLE):
     row that is no photo's, and of `sample` photos spread over the ids (None: every photo), those a column of whose text
     -- matched as one phrase, its words in order -- is not found in its row. A contentless table cannot be read back, so a
     word left behind that the text no longer holds is not seen by the sample. Reads only."""
-    if not present(conn):
-        return []
     found = set()
     for table in TABLES:
         found.update(photo_id for (photo_id,) in conn.execute(

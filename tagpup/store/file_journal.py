@@ -153,11 +153,6 @@ def _now():
     return time.strftime(TIME)
 
 
-def has_table(conn):
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'change_files'"
-                        ).fetchone() is not None
-
-
 def _row(found, roots):
     """A FileRow of a change_files row, its paths as this machine spells them. A change
     recorded before the library's roots were adopted holds native paths, and one recorded
@@ -263,8 +258,6 @@ def files_of(db_path, change_id):
     """The files of change `change_id`, in the order they were planned."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return []
         roots = store_roots.roots_for(conn)
         return [_row(found, roots) for found in conn.execute(
             "SELECT " + _FILE_COLUMNS + " FROM change_files WHERE change_id = ? ORDER BY id", (change_id,))]
@@ -276,8 +269,6 @@ def change(db_path, change_id):
     """Change `change_id` (Change), or None."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return None
         found = conn.execute("SELECT id, operation, status, undone, owner, summary FROM changes WHERE id = ?",
                              (change_id,)).fetchone()
     finally:
@@ -291,7 +282,7 @@ def writes_files(db_path, change_id):
     """Did change `change_id` plan photo files?"""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        return has_table(conn) and conn.execute(
+        return conn.execute(
             "SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone() is not None
     finally:
         conn.close()
@@ -305,8 +296,6 @@ def unfinished(db_path):
     #274), and finishing it marks it failed."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        if not has_table(conn):
-            return []
         found = conn.execute(
             "SELECT id, operation, status, undone, owner, summary FROM changes"
             " WHERE status = 'planned' ORDER BY id").fetchall()
@@ -355,8 +344,6 @@ def newer_overlapping(conn, change_id):
     under its new name included. An undo of `change_id` would take back part of a file
     the newer change planned from, as an undo of rows would rows a newer change wrote
     over (tagpup.store.journal). The caller's connection."""
-    if not has_table(conn):
-        return []
     return conn.execute(
         "SELECT DISTINCT c.id, c.operation FROM change_files mine"
         " JOIN change_files theirs ON theirs.change_id > mine.change_id"
@@ -370,8 +357,6 @@ def newer_overlapping(conn, change_id):
 def counts(conn, change_ids):
     """{change id: {state: files}} of `change_ids`. The caller's connection."""
     found = {}
-    if not has_table(conn):
-        return found
     change_ids = list(change_ids)
     for start in range(0, len(change_ids), CHUNK):
         chunk = change_ids[start:start + CHUNK]
