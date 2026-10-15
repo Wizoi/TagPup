@@ -64,6 +64,13 @@ class RootsChanged(RuntimeError):
     from here would be converted by roots the library no longer has."""
 
 
+#: The columns of paths a root holds as `@name/rel`: (table, the key a row is named by, column). The one list
+#: (tagpup.store.roots_check reads it for `roots check` and the doctor). Not the derived `folders`: its paths are the
+#: photos' folders in the form the photos' rows are in, and derived.stale_folders compares it with the photos.
+PATH_COLUMNS = (("photos", "id", "path"), ("change_files", "id", "path"), ("change_files", "id", "new_path"),
+                ("added_folders", "rowid", "path"))
+
+
 # ---- The table -------------------------------------------------------------------------
 
 def _rows(conn):

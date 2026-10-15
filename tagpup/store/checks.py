@@ -9,7 +9,7 @@ import collections
 import os
 
 from tagpup.core import paths, vocabulary
-from tagpup.store import derived, generations, people, person_ids, schema, search_index, taxonomy
+from tagpup.store import derived, generations, people, person_ids, roots_check, schema, search_index, taxonomy
 from tagpup.store import roots as store_roots
 
 #: One rule and what breaks it. `examples` are paths, ids or tags, a few at most.
@@ -261,13 +261,6 @@ def missing_files(conn):
 
 # ---- The library's roots (docs/ARCHITECTURE.md, "Roots and machines") -------------------------
 
-#: The tables with a column of paths the roots convert, and the column (tagpup.store.adoption.TABLES). Not
-#: the derived `folders`: its paths are the photos' folders in the form the photos' rows are in, which the
-#: adoption rebuilds, and `photo_folders_out_of_date` / `folders_out_of_date` compare it with the photos.
-ROOT_COLUMNS = (("photos", "path"), ("change_files", "path"), ("change_files", "new_path"),
-                ("added_folders", "path"))
-
-
 def _roots_or_why(conn):
     """(the Roots of the library on `conn`, None) -- or (None, why not): the machine's map is
     missing or does not place a root. A check says so; it does not stop."""
@@ -277,56 +270,22 @@ def _roots_or_why(conn):
         return None, str(problem)
 
 
-def _path_rows(conn):
-    """(table, row id, the path) of every row of each ROOT_COLUMNS: the key of the row in its
-    table (the id; the path itself, as a rowid, for the tables keyed by it)."""
-    for table, column in ROOT_COLUMNS:
-        key = "id" if table in ("photos", "change_files") else "rowid"
-        for row_id, value in conn.execute("SELECT %s, %s FROM %s WHERE %s IS NOT NULL" % (key, column, table, column)):
-            yield table, row_id, value
-
-
 def rooted_rows_convert(conn):
     """Rooted rows -- `@name/...` in a path column -- that cannot be read: the root is not the
-    library's, this machine does not place it (machine_roots.json), or the row is not what
-    paths.to_row writes. A photo is named by its id, any other row by its table and key."""
-    held = set(store_roots.logical(conn))
-    roots, _why = _roots_or_why(conn)
-    broken = []
-    for table, row_id, value in _path_rows(conn):
-        if not value.startswith(paths.ROOT_MARK):
-            continue
-        name = value[1:].partition(paths.ROW_SEP)[0].lower()
-        good = name in held and roots is not None
-        if good:
-            try:
-                found = roots.locate(paths.from_row(value, roots))
-                # Held under one root, though the file lies under another's place: a nested root's
-                # rows left under the outer one, which a lookup under the inner root misses.
-                good = found is None or found[0] == name
-            except paths.RootsError:
-                good = False
-        if not good:
-            broken.append(row_id if table == "photos" else "%s %s" % (table, row_id))
-    return _check("rooted rows that do not convert back", broken)
+    library's, this machine does not place it (machine_roots.json), the row is not what
+    paths.to_row writes, or the file lies under another root's place (roots_check.broken). A photo
+    is named by its id, any other row by its table and key."""
+    found, _why = roots_check.broken(conn, _roots_or_why(conn)[0])
+    return _check("rooted rows that do not convert back", [row for kind in roots_check.DO_NOT_CONVERT for row in found[kind]])
 
 
 def native_rows_under_a_root(conn):
-    """Rows that still hold a native path under the location of a root the library has: a
-    write that converted by the roots the library had before another process adopted one. The
-    adoption converts every row under the root, and every write after it converts its own; one
-    here was written between (docs/ARCHITECTURE.md, "Roots and machines"). A photo is named by
-    its id."""
-    if not store_roots.logical(conn):
-        return _check("native rows under a root", [])
-    roots, _why = _roots_or_why(conn)
-    if roots is None:
-        return _check("native rows under a root", [])
-    broken = []
-    for table, row_id, value in _path_rows(conn):
-        if value and not value.startswith(paths.ROOT_MARK) and roots.locate(value) is not None:
-            broken.append(row_id if table == "photos" else "%s %s" % (table, row_id))
-    return _check("native rows under a root", broken)
+    """Rows that still hold a native path under the location of a root the library has: a write
+    that converted by the roots the library had before another process added one
+    (docs/ARCHITECTURE.md, "Roots and machines"; roots_check.broken). Nothing when this machine
+    does not place the roots: rooted_rows_convert says so. A photo is named by its id."""
+    found, _why = roots_check.broken(conn, _roots_or_why(conn)[0])
+    return _check("native rows under a root", found[roots_check.NATIVE])
 
 
 def unrooted_by_folder(conn):
