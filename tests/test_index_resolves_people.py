@@ -56,7 +56,7 @@ class TheIndexResolvesPeople(unittest.TestCase):
                 "people": extract_people(raw, tags)}
         self.assertEqual([], meta["people"], "fixture: the reader alone finds nobody")
 
-        self.index.build_or_update([[0.1] * 512], [meta], reload=False)
+        self.index.build_or_update([[0.1] * 512], [meta])
 
         self.assertEqual({"Rowan Thackeray"}, set(self.stored_people(path)))
 
@@ -65,7 +65,7 @@ class TheIndexResolvesPeople(unittest.TestCase):
         raw = {"XMP:PersonInImage": ["Tamsin Oakes"]}
         meta = {"path": path, "tags": [], "captions": [], "raw_metadata": raw,
                 "mtime": 1.0, "size": 1, "people": ["Tamsin Oakes"]}
-        self.index.build_or_update([[0.1] * 512], [meta], reload=False)
+        self.index.build_or_update([[0.1] * 512], [meta])
         self.assertEqual(["Tamsin Oakes"], self.stored_people(path))
 
 

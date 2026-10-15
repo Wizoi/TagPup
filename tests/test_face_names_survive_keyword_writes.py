@@ -71,7 +71,7 @@ class FaceNamesSurviveKeywordWrites(unittest.TestCase):
         try:
             index.build_or_update([[0.0, 0.0, 0.0, 1.0]], [{
                 "path": self.photo, "mtime": 1.0, "size": 4, "tags": ["Activity/Running"],
-                "people": [], "captions": [], "raw_metadata": {}}], reload=False)
+                "people": [], "captions": [], "raw_metadata": {}}])
         finally:
             index.close()
         self.assertEqual(self.listed(), ["Rowan Thackeray"])

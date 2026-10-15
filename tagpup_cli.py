@@ -433,7 +433,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 
                 # Save progress incrementally in batches of 100
                 if len(batch_embeddings) >= 100:
-                    photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=False)
+                    photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
                     
                     # Save faces for the batch in a single transaction
                     if batch_faces:
@@ -458,7 +458,7 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
         # Rebuild or update the FAISS index for the final batch
         if batch_embeddings:
             # Not reloaded: nothing below searches this index, and a reload reads every vector again.
-            photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]), reload=False)
+            photo_index.build_or_update(batch_embeddings, batch_metas, dim=len(batch_embeddings[0]))
             
             # Save the remaining face embeddings
             if batch_faces:

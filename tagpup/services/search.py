@@ -277,7 +277,7 @@ class PhotoIndex:
         by_id = {record["id"]: record for record in found}
         return [by_id[photo_id] for photo_id in photo_ids if photo_id in by_id]
 
-    def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512, reload: bool = True):
+    def build_or_update(self, embeddings: List[List[float]], metas: List[Dict[str, Any]], dim: int = 512):
         """Batch insert/update photos inside the SQLite database (transaction-safe)."""
         if not embeddings or self.conn is None:
             return
@@ -307,10 +307,6 @@ class PhotoIndex:
                                     or read_document_id(meta.get("raw_metadata", {}))),
                 }, model=self.model, known=known, batch=batch)
             self.conn.commit()
-
-            if reload:
-                # Reload to rebuild the in-memory FAISS index to reflect the updates
-                self.load()
         except Exception as e:
             index_log.error(f"Error saving batch to SQLite: {e}")
             self.conn.rollback()

@@ -461,7 +461,7 @@ class HowAConnectionHoldsItsRoots(unittest.TestCase):
                 path = os.path.join(self.side.pictures, "2024 Regatta", name)
                 index.build_or_update([[0.0] * 4], [{"path": path, "mtime": 1.0, "size": 2, "tags": [], "captions": [],
                                                       "raw_metadata": {"SourceFile": path.replace(os.sep, "/")}}],
-                                      dim=4, reload=False)
+                                      dim=4)
 
             batch("Before.jpg")
             self.assertIn(os.path.join(self.side.pictures, "2024 Regatta", "Before.jpg"), self.side.raw_paths())
