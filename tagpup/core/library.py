@@ -62,13 +62,6 @@ class Library:
         return os.path.join(self.folder, "cache", self.name, "thumbs")
 
     @property
-    def bulk_jobs(self):
-        """Where an older version kept the plans and states of its face assignments (cache/<name>/bulk beside the library): nothing
-        writes there now, and the first read of the library's settings in a process lets go of what is left
-        (tagpup.services.face_assignment.forget_old_jobs)."""
-        return os.path.join(self.folder, "cache", self.name, "bulk")
-
-    @property
     def snapshots(self):
         """Where the library's snapshots are kept, a folder for each kind: backups/<name>/
         daily, weekly and monthly (tagpup.store.snapshots)."""
