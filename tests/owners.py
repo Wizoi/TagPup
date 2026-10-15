@@ -124,6 +124,7 @@ _SCENARIO_FILES = {
     "P4": "test_a_person_count_reads_only_their_photos test_name_faces_routes test_naming_faces_job",
     "P5": "test_tag_tree_edits_are_batches test_taxonomy_lifecycle",
     "P6": "test_two_cousins_called_alike",
+    "P7": "test_identify_ignore_assign_restore_undo",
     "V1": "test_library_views_scenarios",
     "V2": "test_library_search",
     "V3": "test_analyse_only_looks_are_kept test_analyse_only_suggest test_suggest_then_apply_all",
@@ -168,7 +169,7 @@ _FILES = {
             "test_face_exclusion test_face_roots_are_the_trees "
             "test_faces_from_tags test_folder_scope_roots test_group_tag_is_not_a_person "
             "test_grouping_keeps_names_the_tags_confirm test_hidden_people_still_exist "
-            "test_identify_cache_keeps_others_writes test_identify_cache_sees_every_change test_identify_faces_hot_paths "
+            "test_identify_cache_keeps_others_writes test_identify_cache_sees_every_change test_identify_queries "
             "test_index_resolves_people test_journal_through_the_services "
             "test_new_person_reads_the_pool_once test_organize_faces test_people_by_id_tree "
             "test_people_representative_faces "

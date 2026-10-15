@@ -2,7 +2,7 @@
 
 Called directly on a temporary library. What the routes add -- parsing, and taking the
 faces a write removed off TagTuner's cached grids -- is in test_tuner_server_api.py and
-test_identify_faces_hot_paths.py.
+test_identify_ignore_assign_restore_undo.py.
 """
 import os
 import sys
