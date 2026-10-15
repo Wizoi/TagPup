@@ -10,6 +10,8 @@ its own ViT-H-14; both sat at 0 of 165 for over half an hour. Now:
   naming who has it and since when; Cancel stops it at once, and nothing is kept.
 - The indexer waits for its turn before its first photo, saying so on the progress line;
   the queue's Cancel stops it while it waits (a file it watches), having indexed nothing.
+- Suggest in a library naming another CLIP model than a run under way in this process holds is refused, naming that run
+  and both models, and runs once it has ended: one process holds one set of models (#761).
 
 Fictional names; stand-in models that say they are on "cuda", on a lock folder of the
 test's own home. No real model is loaded.
@@ -35,7 +37,7 @@ from tagpup.core.result import Result  # noqa: E402
 from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.ml import gpu  # noqa: E402
-from tagpup.runtime import Runtime  # noqa: E402
+from tagpup.runtime import OtherModelsInUse, Runtime  # noqa: E402
 from tagpup.services import indexing as indexing_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
@@ -349,6 +351,76 @@ class TheIndexerWaitsBeforeItsFirstPhoto(_Library):
         self.assertIn(indexing_service.CANCELLED_WAITING, result.output)
         writer.return_value.give.assert_not_called()
         runtime.embeddings.return_value.of.assert_not_called()
+
+
+class _CpuModel:
+    """A model a runtime builds from a library's settings, off the card: it takes no turn."""
+    device = "cpu"
+
+    def __init__(self, settings):
+        self.settings = dict(settings)
+        self.unloads = 0
+
+    def unload(self):
+        self.unloads += 1
+
+
+class TwoLibrariesNamingTwoModels(_Library):
+    """harbour names the default CLIP model, cove another; Suggest in both at once in one server (#761)."""
+
+    def setUp(self):
+        super().setUp()
+        self.cove = Library(self.home.library("cove.db"))
+        library_actions.create(self.cove.path)
+        self.jetty = paths.stored(os.path.join(self.home.root, "Jetty"))
+        os.makedirs(self.jetty)
+        library_actions.record_added(self.cove, [self.jetty])
+        changed = library_settings.change(self.cove, {"model.name": "ViT-L-14"}, acknowledged=["clip"])
+        self.assertEqual(1, changed.changed, changed.refused)
+        self.built = []
+
+        def build(settings):
+            self.built.append(_CpuModel(settings))
+            return self.built[-1]
+        self.runtime = Runtime(build_clip=build, build_faces=build)
+        self.addCleanup(self.runtime.forget, self.library)
+        self.addCleanup(self.runtime.forget, self.cove)
+        self.cove_runs = suggestion_jobs.runs_for(self.cove)
+        self.addCleanup(suggestion_jobs.forget, self.cove)
+        self.cove_photos = {paths.key(os.path.join(self.jetty, "bollard.jpg")):
+                            {"path": paths.stored(os.path.join(self.jetty, "bollard.jpg"))}}
+
+    def suggest_in_cove(self):
+        with mock.patch.object(suggester_service, "model_for_run", lambda *args, **kwargs: _FakeModel()):
+            self.cove_runs.run(self.jetty, suggestion_jobs.work_for(self.cove, lambda: self.cove_photos, self.runtime))
+        return self.cove_runs.status(self.jetty)
+
+    def test_the_second_waits_for_the_first_and_is_told_why(self):
+        with mock.patch.object(suggester_service, "model_for_run", lambda *args, **kwargs: _FakeModel()):
+            harbours = self.runtime.begin(self.library, what="Suggest Regatta (harbour)")
+        clips = [model for model in self.built if "model_name" in model.settings]
+        self.assertEqual(1, len(clips))
+        harbour_clip = clips[0].settings["model_name"]
+        self.assertNotEqual("ViT-L-14", harbour_clip)
+
+        refused = self.suggest_in_cove()
+        self.assertEqual("error", refused["status"], refused)
+        self.assertIn("Suggest Regatta (harbour) is using the CLIP model %s" % harbour_clip, refused["message"])
+        self.assertIn("cove names ViT-L-14", refused["message"])
+        self.assertIn("Nothing was suggested", refused["message"])
+        self.assertEqual(1, len([model for model in self.built if "model_name" in model.settings]),
+                         "cove's model was built beside harbour's")
+        with self.assertRaises(OtherModelsInUse):
+            self.runtime.begin(self.cove)
+
+        # A second run on harbour's models is no second set.
+        with mock.patch.object(suggester_service, "model_for_run", lambda *args, **kwargs: _FakeModel()):
+            self.runtime.begin(self.library, what="Suggest Breakwater (harbour)").end()
+
+        harbours.end()
+        self.assertEqual("completed", self.suggest_in_cove()["status"])
+        self.assertEqual(["Activity/Sailing"], [each["tag"] for entry in self.cove_runs.status(self.jetty)["suggestions"].values()
+                                                for each in entry["tags"]])
 
 
 if __name__ == "__main__":

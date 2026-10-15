@@ -469,11 +469,24 @@ class _OnTheCard:
 
 
 class _Lease:
-    """One run's hold on a photo index and a pair of models."""
+    """One run's hold on a photo index and a pair of models: `what` the run is ("Suggest Regatta (harbour)"), `models`
+    the set it holds (Runtime._model_set) and `embedder` its CLIP settings, to name them to a run refused beside it."""
 
-    def __init__(self, index, clip_key, faces_key):
+    def __init__(self, index, clip_key, faces_key, what, models, embedder):
         self.index, self.clip_key, self.faces_key = index, clip_key, faces_key
+        self.what, self.models, self.embedder = what, models, embedder
         self.ended = False
+
+
+class OtherModelsInUse(RuntimeError):
+    """A Suggest run asked for while another run of this process holds another set of models: the two would be two
+    model sets in one process under one turn on the graphics card (#761). Nothing was begun."""
+
+
+def _clip_name(embedder):
+    """A CLIP model as the owner chose it: "ViT-H-14 (laion2b_s32b_b79k)"."""
+    embedder = embedder or {}
+    return "%s (%s)" % (embedder.get("model_name"), embedder.get("pretrained"))
 
 
 def _unload(models):
@@ -550,6 +563,8 @@ class Runtime:
         #: id(index) -> how many runs hold it; and the indexes replaced while one did.
         self._index_runs = collections.Counter()
         self._retired = {}
+        #: The runs under way: each its _Lease, until it ends.
+        self._leases = []
 
     # ---- A library's settings --------------------------------------------------------
 
@@ -871,17 +886,25 @@ class Runtime:
         The models it is given take the process's turn on the graphics card the first
         time the run uses one (_RunTurn), as `what` ("Suggest Regatta (harbour)"), and
         hold it until the run ends: `report(line)` hears the waiting line meanwhile, and
-        None once the turn is had; `cancelled()` true stops the wait (gpu_turns.Cancelled)."""
+        None once the turn is had; `cancelled()` true stops the wait (gpu_turns.Cancelled).
+
+        Refused, OtherModelsInUse and nothing begun, while another run holds models of other settings: a library naming
+        another CLIP model (or face settings) waits for the run before it to end (#761)."""
         settings = self.settings(library)
         model_key = self.model_key(library, settings)
+        what = what or "Suggest in %s" % library.name
         with self._lock:
+            models = self._model_set(settings)
+            self._refuse_another_set(library, settings, models)
             photo_index = self._index(library, model_key)
             clip, faces = self.clip(library, settings), self.faces(library, settings)
-            lease = _Lease(photo_index, _frozen(settings.embedder), _frozen(settings.faces))
+            lease = _Lease(photo_index, _frozen(settings.embedder), _frozen(settings.faces), what, models,
+                           settings.embedder)
+            self._leases.append(lease)
             self._index_runs[id(photo_index)] += 1
             self._held[("clip", lease.clip_key)] += 1
             self._held[("faces", lease.faces_key)] += 1
-        turn = _RunTurn(self.card, what or "Suggest in %s" % library.name, (clip, faces), cancelled, report)
+        turn = _RunTurn(self.card, what, (clip, faces), cancelled, report)
         clip, faces = _OnTheCard(clip, turn), _OnTheCard(faces, turn)
 
         def end():
@@ -899,12 +922,33 @@ class Runtime:
             raise
         return RunModel(model, end)
 
+    def _model_set(self, settings):
+        """The models a run on `settings` would hold: its CLIP and face settings, None for a model the runtime was given
+        (a test's, one for every library)."""
+        return (None if self._clip is not None else _part(settings, "embedder"),
+                None if self._faces is not None else _part(settings, "faces"))
+
+    def _refuse_another_set(self, library, settings, models):
+        """Raise OtherModelsInUse when a run under way holds other models than `models`: this process holds one set at a
+        time, whichever libraries name them (#761). Under the lock."""
+        for other in self._leases:
+            if other.models == models:
+                continue
+            if other.models[0] != models[0]:
+                theirs = "the CLIP model %s; %s names %s" % (_clip_name(other.embedder), library.name,
+                                                              _clip_name(settings.embedder))
+            else:
+                theirs = "face models of other settings than %s names" % library.name
+            raise OtherModelsInUse("%s is using %s, and TagPup holds one set of models at a time. Nothing was suggested: "
+                                   "Suggest again once it has ended." % (other.what, theirs))
+
     def _end(self, lease):
         """A run is done: what it held, and nothing else uses, is let go."""
         with self._lock:
             if lease.ended:
                 return
             lease.ended = True
+            self._leases.remove(lease)
             self.idle.used(MODELS)
             self.idle.used(PHOTO_INDEXES)
             for kind, key in (("clip", lease.clip_key), ("faces", lease.faces_key)):

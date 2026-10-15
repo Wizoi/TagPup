@@ -66,7 +66,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 14. Does a Just look run write anything (vectors, rows, settings, derived tables)?
 15. Interrupted or two at once: a view read while a bulk write runs; a Suggest beside a CLI index wanting the card; the server's idle release racing a request.
 
-Recurring classes: orders and ties; a plan that scans on the real library; a derived table that missed a writer; the page keeping its own rule; a navigator stale or capped; models on the card (two big models on one card, a model kept after a settings change, a warm-up that loads with nobody asking); memory held by a library of this size; a stale vector; a looking run that leaks. Open: #761 (two libraries naming different CLIP models in one process).
+Recurring classes: orders and ties; a plan that scans on the real library; a derived table that missed a writer; the page keeping its own rule; a navigator stale or capped; models on the card (two big models on one card, a model kept after a settings change, a warm-up that loads with nobody asking); memory held by a library of this size; a stale vector; a looking run that leaks. #761 is refused at the source: `Runtime.begin` turns away a run whose models differ from a run under way.
 
 ## Who decides
 - **Tests answer scenarios, not code** (CLAUDE.md): you review every change in your domain for the scenario it must keep
