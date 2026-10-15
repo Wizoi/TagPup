@@ -21,17 +21,17 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | A concern | Its owner | Guard |
 |---|---|---|
 | Opening the database, journal mode, the per-file write lock | `tagpup/store/db.py` | `tests/test_db_access.py` |
-| Every SQL statement | `tagpup/store/` | `tests/test_sql_single_owner.py` |
+| Every SQL statement | `tagpup/store/` | `tests/test_layers.py` |
 | Schema and migrations (each declares additive, data-changing or destructive) | `tagpup/store/schema.py` | `tests/test_migrations.py`, `tests/test_schema.py` |
 | Bulk edits and migrations recorded, rehearsed, undoable | `tagpup/store/journal.py`, `tagpup/store/file_journal.py`, `tagpup/services/journal.py`, `tagpup/services/file_changes.py` | `tests/test_journal*.py`, `tests/test_file_journal.py` |
-| A photo path's spelling, comparison and SQL form; the root-relative form | `tagpup/core/paths.py`, `tagpup/store/roots.py` | `tests/test_paths_single_owner.py` |
+| A photo path's spelling, comparison and SQL form; the root-relative form | `tagpup/core/paths.py`, `tagpup/store/roots.py` | `tests/test_rules_have_one_owner.py` |
 | Tags, people, captions taken apart; the person tag | `tagpup/core/vocabulary.py`, `tagpup/store/taxonomy.py` | `tests/test_vocabulary.py` |
 | A person by the id of their tag-tree node | `tagpup/store/person_ids.py` | `tests/test_person_ids.py` |
-| ExifTool | `tagpup/files/exiftool_session.py` | `tests/test_exiftool_single_owner.py` |
+| ExifTool | `tagpup/files/exiftool_session.py` | `tests/test_rules_have_one_owner.py` |
 | Writing a photo file's fields | `tagpup/files/field_values.py`, `tagpup/services/file_changes.py` | `tests/test_file_journal.py` |
 | Child processes | `tagpup/core/processes.py` | `tests/test_processes_single_owner.py` |
 | The graphics card, one process at a time | `tagpup/ml/gpu.py` (turns through `tagpup/runtime.py`) | `tests/test_gpu_single_owner.py` |
-| Models built once, from a library's settings | `tagpup/runtime.py` | `tests/test_models_single_owner.py` |
+| Models built once, from a library's settings | `tagpup/runtime.py` | `tests/test_gpu_single_owner.py` |
 | A library's settings; where the libraries are | `tagpup/services/settings.py`; `tagpup/config.py` | `tests/test_config_single_owner.py` |
 | What may be set (one rule per kind of input) | `tagpup/core/validation.py`, `web/common/validate.js` | `tests/test_validation.py` |
 | Derived tables (`photo_tags`, `folders`, `photo_folder`, the search words) | `tagpup/store/derived.py`, `tagpup/store/search_index.py` | `tests/test_derived_writers.py` |
@@ -115,12 +115,12 @@ Guard tests, each of which fails the build. The ones marked *exists* are in plac
 
 - Imports inside `tagpup/` go down the layers, and package code never imports an old module from `scripts/` by name. *Exists:* `tests/test_layers.py`.
 - `sqlite3.connect` only in `tagpup.store.db`. *Exists:* `tests/test_db_access.py`.
-- pyexiftool's classes constructed only in `tagpup.files.exiftool_session`. *Exists:* `tests/test_exiftool_single_owner.py`.
-- Photo paths spelled and compared only by `tagpup.core.paths`. *Exists:* `tests/test_paths_single_owner.py`.
+- pyexiftool's classes constructed only in `tagpup.files.exiftool_session`. *Exists:* `tests/test_rules_have_one_owner.py`.
+- Photo paths spelled and compared only by `tagpup.core.paths`. *Exists:* `tests/test_rules_have_one_owner.py`.
 - Tags taken apart only by `tagpup.core.vocabulary`. *Exists:* `tests/test_vocabulary.py`.
-- SQL only inside `tagpup.store`. *Exists:* `tests/test_sql_single_owner.py`.
+- SQL only inside `tagpup.store`. *Exists:* `tests/test_layers.py`.
 - `config.ini` read by nothing (an old file in a home is ignored, never written or deleted); inside `tagpup/`, only `tagpup.config` finds folders from `__file__`. *Exists:* `tests/test_config_single_owner.py`.
-- A model (CLIP, the face models) built only by `tagpup.runtime`, and what it is made of only in its own `tagpup.ml` module. *Exists:* `tests/test_models_single_owner.py`.
+- A model (CLIP, the face models) built only by `tagpup.runtime`, and what it is made of only in its own `tagpup.ml` module. *Exists:* `tests/test_gpu_single_owner.py`.
 - The graphics card's turns taken only through `tagpup.runtime` (and each model's own check before it loads), its lock made only by `tagpup.ml.gpu`, and every module that loads weights checks for a turn first. *Exists:* `tests/test_gpu_single_owner.py`.
 - ExifTool and `Image.open` only inside `tagpup.files`.
 - Entry points import services and jobs, never store, files or ml directly.
@@ -193,7 +193,7 @@ tools/                 development tools: run_tests, affected_tests, doctor, add
 tests/                 Python (unittest) and tests/frontend (node --test)
 ```
 
-`tests/test_layers.py` says what may import what; `tests/test_scripts_are_entry_points.py` says `scripts/` holds
+`tests/test_layers.py` says what may import what, where SQL may sit, and that `scripts/` holds
 programs only. A moved module takes every importer with it and leaves nothing at its old name.
 
 ## Processes, servers and apps

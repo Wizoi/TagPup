@@ -13,10 +13,13 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import owners  # noqa: E402
 from shipped_sources import ROOT  # noqa: E402
 
 AGENTS = os.path.join(ROOT, ".claude", "agents")
 OWNERS = ("data", "people", "files", "views-ai", "integration")
+#: A charter's name for the owner tests/owners.py calls it.
+IN_THE_MAP = dict(zip(OWNERS, owners.OWNERS))
 
 #: A backticked token is a repository path when it starts with one of these.
 PATH = re.compile(r"^(?:(?:tagpup|tests|web|scripts|tools|docs|\.claude)/\S+|tagpup_cli\.py|tagpup_web\.py)$")
@@ -71,6 +74,14 @@ class OwnerCharters(unittest.TestCase):
                 self.assertIn("name: tagpup-owner-%s\n" % owner, text)
                 tools = re.search(r"^tools: (.*)$", text, re.M).group(1)
                 self.assertEqual(tools, "Read, Grep, Glob, Bash")
+
+    def test_a_charter_lists_the_scenarios_the_map_gives_its_owner(self):
+        for owner in OWNERS:
+            with self.subTest(owner=owner):
+                line = re.search(r"^Scenario ids: (.*)$", read(charter_path(owner)), re.M)
+                self.assertIsNotNone(line, "a charter ends with its scenario ids (tests/owners.py)")
+                mine = {i for i, (o, _sentence) in owners.SCENARIOS.items() if o == IN_THE_MAP[owner]}
+                self.assertEqual(mine, set(re.findall(r"\b[A-Z]\d+\b", line.group(1))))
 
     def test_the_owners_page_names_every_charter(self):
         page = read(os.path.join(ROOT, "docs", "OWNERS.md"))

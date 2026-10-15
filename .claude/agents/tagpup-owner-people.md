@@ -46,7 +46,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | A person is written with the id of a node and no other way: no writer leaves a `photo_people` row, or a face with a name, without `tag_id`; nothing links a name to a person (owner, 2026-10-11) | `tests/test_no_person_row_without_an_id.py`, `tests/test_person_ids.py` |
 | Every name and keyword first seen gets a node, in the transaction that saw it (a name two people have or a group's leaf is another path: a node under the root); a batch makes at most 500 | `tests/test_every_tag_has_an_id.py`, `tests/test_tree_fill.py` |
 | Who a face is is decided in `clustering` | `tests/test_face_values_have_one_owner.py` |
-| Face roots and bucket names have one owner | `tests/test_face_roots_are_the_trees.py`, `tests/test_bucket_names_have_one_owner.py` |
+| Face roots and bucket names have one owner | `tests/test_face_roots_are_the_trees.py`, `tests/test_rules_have_one_owner.py` |
 | A person goes over the wire as an id; answers carry their person | `tests/test_answers_carry_their_person.py`, `tests/test_people_representative_faces.py`, `tests/test_two_people_one_leaf_on_a_photo.py` |
 | Tag against leaf conversion has one owner on each side | `tests/test_vocabulary.py`, `tests/frontend/tag-vocabulary.test.mjs`, `tests/test_person_filing_table.py`, `tests/frontend/person-filing-table.test.mjs` |
 | A person tag removed unnames the face; a keyword write keeps face names | `tests/test_taking_a_person_off_unnames_the_face.py`, `tests/test_face_names_survive_keyword_writes.py` |
@@ -87,3 +87,6 @@ Read `.claude/agents/tagpup-reviewer.md` and review as it says: read-only; name 
 
 ## Output
 Findings ranked. Each: a severity word (`data` can lose or corrupt data, `wrong` a wrong result the owner sees, `low`; only the first two block a merge), `file:line`, a concrete failure scenario with concrete inputs, the evidence, and confidence (confirmed, likely, possible); as a row for docs/findings.md with `| ? |`. Say plainly when nothing blocks, and what you checked. At most two rounds; the second asks which single place should own this.
+
+## Scenarios (tests/owners.py)
+Scenario ids: P1 P2 P3 P4 P5. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_guard_tests_have_one_owner.py` names one that is not).

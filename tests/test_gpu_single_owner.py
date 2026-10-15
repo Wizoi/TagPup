@@ -16,10 +16,41 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shipped_sources import ROOT, python_sources  # noqa: E402
-from test_models_single_owner import calls  # noqa: E402
 
 OWNER = os.path.join("tagpup", "ml", "gpu.py")
 RUNTIME = os.path.join("tagpup", "runtime.py")
+
+# --- The models are built in one place, tagpup.runtime, from the settings it is given (#112): each ClipEmbedder read
+# --- config.ini for itself and shared its loaded model through a class attribute, and nobody could say which settings a
+# --- model in the process had been built from. A model is built by the runtime and handed to what needs it.
+CLIP = os.path.join("tagpup", "ml", "clip.py")
+FACES = os.path.join("tagpup", "ml", "faces.py")
+#: What builds a model, and the one file each may be called in. The old names, which read the config themselves, nowhere.
+BUILDERS = {
+    "ClipModel": RUNTIME,
+    "FaceModel": RUNTIME,
+    "create_model_and_transforms": CLIP,
+    "MTCNN": FACES,
+    "InceptionResnetV1": FACES,
+    "ClipEmbedder": None,
+    "FaceProcessor": None,
+}
+
+
+def calls(source):
+    """(name, line) of each call whose callee is named -- `X(...)` or `a.X(...)`."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+            if name:
+                yield name, node.lineno
+
+
+def offenders(relative, source):
+    return ["%s:%d builds %s" % (relative, line, name) for name, line in calls(source)
+            if name in BUILDERS and BUILDERS[name] != relative]
+
 #: Where a turn may be taken: the owner, the runtime that hands models their turn, and
 #: each model's own check before it loads.
 TAKERS = {OWNER, RUNTIME, os.path.join("tagpup", "ml", "clip.py"), os.path.join("tagpup", "ml", "faces.py")}
@@ -66,6 +97,23 @@ def lines_matching(pattern, relative):
 
 
 class TheCardHasOneOwner(unittest.TestCase):
+    def test_only_the_runtime_builds_a_model(self):
+        problems, checked = [], 0
+        for relative in python_sources():
+            with open(os.path.join(ROOT, relative), encoding="utf-8") as handle:
+                problems += offenders(relative, handle.read())
+            checked += 1
+        self.assertGreater(checked, 50, "the guard found nothing to check")
+        self.assertEqual(problems, [], "\n\nBuild a model in tagpup.runtime and hand it on:\n\n" + "\n".join(problems))
+        for relative, source, expected in [
+                ("tagpup_cli.py", "processor = FaceProcessor()", True),
+                (os.path.join("tagpup", "services", "suggester.py"), "model = clip.ClipModel(**settings)", True),
+                (os.path.join("scripts", "faces.py"), "detector = MTCNN(keep_all=True)", True),
+                (RUNTIME, "self._clip = ClipModel(**self.embedder_settings)", False),
+                (FACES, "self.mtcnn = MTCNN(keep_all=True)", False),
+                ("tagpup_cli.py", "processor = runtime.faces", False)]:
+            self.assertEqual(expected, bool(offenders(relative, source)), "%s: %s" % (relative, source))
+
     def test_a_module_that_loads_weights_takes_the_turn_first(self):
         problems, checked = [], 0
         for relative in python_sources():

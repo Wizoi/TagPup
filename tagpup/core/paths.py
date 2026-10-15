@@ -42,7 +42,7 @@ The name ends where the first "/" does, so "@photos/" is a prefix of nothing in
 [a-z0-9_-], 1 to 32, folded to lower case; the part after it keeps the case the file has.
 
 Nothing outside this module converts separators or case on a path. The test
-tests/test_paths_single_owner.py fails the build on anything that does.
+tests/test_rules_have_one_owner.py fails the build on anything that does.
 """
 import contextlib
 import os

@@ -37,7 +37,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 ## Invariants and their guards
 | Invariant | Guard |
 |---|---|
-| ExifTool only through `ExifToolSession` | `tests/test_exiftool_single_owner.py`, `tests/test_exiftool_session.py` |
+| ExifTool only through `ExifToolSession` | `tests/test_rules_have_one_owner.py`, `tests/test_exiftool_session.py` |
 | A photo file written through the journaled path; a click three times writes once | `tests/test_file_journal.py`, `tests/test_file_changes_one_at_a_time.py` |
 | A rotation is a journaled change; its face boxes and vectors follow in the transaction that marks the file done | `tests/test_rotate_is_journaled.py` |
 | A write reports what changed | `tests/test_changed_counts_what_changed.py` |
@@ -46,7 +46,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | A share that does not answer is not missing | `tests/test_unreachable_is_not_missing.py` |
 | Rows only in folders held or asked to add | `tests/test_writes_only_in_folders_held.py`, `tests/test_rows_only_in_folders_added.py` |
 | A row nobody read is never stamped | `tests/test_partial_writes_leave_rows_unread.py` |
-| Paths have one owner | `tests/test_paths_single_owner.py` |
+| Paths have one owner | `tests/test_rules_have_one_owner.py` |
 | Sync never removes, never writes a file | `tests/test_sync.py` |
 | The watcher syncs a moved folder, not a file gone | `tests/test_folder_watcher.py` |
 | Two libraries sharing a folder | `tests/test_scenario_two_libraries_share_a_folder.py` |
@@ -88,3 +88,6 @@ Read `.claude/agents/tagpup-reviewer.md` and review as it says: read-only; name 
 
 ## Output
 Findings ranked. Each: a severity word (`data` can lose or corrupt data, `wrong` a wrong result the owner sees, `low`; only the first two block a merge), `file:line`, a concrete failure scenario with concrete inputs, the evidence, and confidence (confirmed, likely, possible); as a row for docs/findings.md with `| ? |`. Say plainly when nothing blocks, and what you checked. At most two rounds; the second asks which single place should own this.
+
+## Scenarios (tests/owners.py)
+Scenario ids: F1 F2 F3 F4 F5 F6 F7 F8. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_guard_tests_have_one_owner.py` names one that is not).

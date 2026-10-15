@@ -38,7 +38,7 @@ Paths are checked by `tests/test_owner_charters_name_real_paths.py`; a moved mod
 | Invariant | Guard |
 |---|---|
 | One process on the card at a time | `tests/test_gpu_single_owner.py`, `tests/test_one_gpu_at_a_time.py`, `tests/test_one_gpu_jobs.py` |
-| Models built once by the runtime; no test loads one | `tests/test_models_single_owner.py`, `tests/test_no_test_loads_a_model.py` |
+| Models built once by the runtime; no test loads one | `tests/test_gpu_single_owner.py`, `tests/test_no_test_loads_a_model.py` |
 | Idle models and indexes released | `tests/test_models_released_when_idle.py`, `tests/test_vectors_and_pool_released_when_idle.py`, `tests/test_unload_models_now.py` |
 | A view page searches an index, never scans `photos` | `tests/test_library_view_plans.py` |
 | Ties and orders | `tests/test_library_view.py`, `tests/test_library_view_routes.py` |
@@ -84,3 +84,6 @@ Read `.claude/agents/tagpup-reviewer.md` and review as it says: read-only; name 
 
 ## Output
 Findings ranked. Each: a severity word (`data` can lose or corrupt data, `wrong` a wrong result the owner sees, `low`; only the first two block a merge), `file:line`, a concrete failure scenario with concrete inputs, the evidence, and confidence (confirmed, likely, possible); as a row for docs/findings.md with `| ? |`. Say plainly when nothing blocks, and what you checked. At most two rounds; the second asks which single place should own this.
+
+## Scenarios (tests/owners.py)
+Scenario ids: V1 V2 V3 V4 V5. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_guard_tests_have_one_owner.py` names one that is not).
