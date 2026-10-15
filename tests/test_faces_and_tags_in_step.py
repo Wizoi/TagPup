@@ -279,6 +279,24 @@ class TakingANameOffTakesThePersonOff(InStep):
         self.assertEqual(1, reply.get_json()["tags_removed"])
         self.assertEqual([], self.tags(photo))
 
+    def test_not_important_clears_the_name_and_keeps_the_reason_and_the_person_leaves_with_the_last_face_that_carried_them(self):
+        """Lifted: test_face_exclusion.py's TestExcludeEndpoint (7 of 9 tests, deleted; #63 the person who is on the photo by a
+        face alone leaves it with that face). Breaks that fail this and them: face_people.exclude not taking the tag off (its
+        _finish_untag call removed), and store/faces.exclude not rebuilding the photos' people (`return changed`)."""
+        photo = self.held("off_013.jpg", [PEOPLE + WREN, "Regatta"])
+        first = self.face(photo, name=WREN, name_source="manual")
+        second = self.face(photo, box=(70, 10, 110, 60), name=WREN)
+        alone = self.held("off_014.jpg")                  # no keyword names her: she is on this photo by her face alone
+        by_face = self.face(alone, name=ODA, name_source="manual")
+        self.assertIn((ODA, "face"), self.indexed_people())
+        self.tuner_post("faces/exclude", {"face_ids": [first], "reason": "bad crop"})
+        self.assertEqual((None, "manual", 1), self.row(first)[:3])
+        self.assertEqual("bad crop", self.look("SELECT excluded_reason FROM faces WHERE id = ?", (first,))[0][0])
+        self.assertEqual([PEOPLE + WREN, "Regatta"], self.tags(photo), "another face of the photo is still her")
+        self.tuner_post("faces/exclude", {"face_ids": [second, by_face]})
+        self.assertEqual(["Regatta"], self.tags(photo), "no face carries her now")
+        self.assertEqual([], self.indexed_people())
+
     def test_tagpups_page_is_told_which_tags_go_when_it_rules_a_face_out_too(self):
         photo = self.held("off_010.jpg", [PEOPLE + WREN, "Regatta"])
         face = self.face(photo, name=WREN, name_source="manual")
