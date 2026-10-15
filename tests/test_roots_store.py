@@ -157,8 +157,7 @@ class EveryReadAnswersNative(TwoLibraries):
 
     def test_faces(self):
         def ask(conn, side):
-            return (sorted(faces.for_clustering(conn)), sorted(faces.photos_with_faces(conn)),
-                    sorted(faces.names_by_photo(conn).items(), key=lambda kv: kv[0]),
+            return (sorted(faces.for_clustering(conn)), sorted(faces.names_by_photo(conn).items(), key=lambda kv: kv[0]),
                     sorted(faces.names_by_photo_key(conn).items(), key=lambda kv: kv[0]),
                     sorted(faces.decisions(conn)), faces.unnamed(conn, folder=side.pictures),
                     sorted(faces.unnamed_counts(conn, side.pictures).items()),

@@ -79,7 +79,7 @@ class Writers(TwoSams, unittest.TestCase):
 
     def test_a_pet_and_a_friend_called_alike_are_told_apart(self):
         max_pet, max_friend = self.node(MAX_PET), self.node(MAX_FRIEND)
-        write(self.path, lambda conn: faces.set_names(conn, {self.faces[0]: max_pet, self.faces[2]: max_friend}))
+        write(self.path, lambda conn: faces.set_names(conn, {self.faces[0]: max_pet, self.faces[2]: max_friend}, {self.faces[0]: None, self.faces[2]: None}))
         self.assertEqual([(max_pet, "Max"), (max_friend, "Max")],
                          [self.face(self.faces[0])[:2], self.face(self.faces[2])[:2]])
         conn = _conn(self.path)

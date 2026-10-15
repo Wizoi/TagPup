@@ -193,7 +193,7 @@ class TestBuildOrUpdateWritesInPlace(FaceDecisionCase):
 
 
 class TestResetKeepsHandGivenNames(FaceDecisionCase):
-    @patch("tagpup.services.identities.resolve", lambda photo_index, max_iterations=5: {})
+    @patch("tagpup.services.identities.resolve", lambda photo_index, max_iterations=5, on_step=None: {})
     def test_cluster_faces_reset_clears_only_automatic_names(self):
         ids = self.seed()
         result = self.run_cli(["cluster-faces", "--reset"])

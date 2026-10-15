@@ -302,14 +302,9 @@ def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
     from tagpup.store import photos   # photos imports this module
     photo_id = photos.ensure_row(conn, photo_path)
     tag_id, name = _target(conn, name) if name is not None else (None, None)
-    if person_ids.present(conn):
-        face_id = conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name, tag_id, prob) VALUES (?, ?, ?, ?, ?, ?)",
-            (photo_id, json.dumps(box), embedding, name, tag_id, prob)).lastrowid
-    else:
-        face_id = conn.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name, prob) VALUES (?, ?, ?, ?, ?)",
-            (photo_id, json.dumps(box), embedding, name, prob)).lastrowid
+    face_id = conn.execute(
+        "INSERT INTO faces (photo_id, box, embedding, name, tag_id, prob) VALUES (?, ?, ?, ?, ?, ?)",
+        (photo_id, json.dumps(box), embedding, name, tag_id, prob)).lastrowid
     if crop:
         conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, crop))
     _rebuilt(conn, [photo_id], bool(name))
@@ -360,7 +355,7 @@ def _target(conn, person, known=None):
     """person_ids.target, for a WRITER: a name no node is called is given its node first (taxonomy.ensure_node: every tag has an
     id), so a face is never written with a name and no id."""
     tag_id, name = person_ids.target(conn, person, known)
-    if tag_id is not None or not name or not person_ids.present(conn):
+    if tag_id is not None or not name:
         return tag_id, name
     from tagpup.store import taxonomy   # taxonomy imports this module's neighbours
     if vocabulary.SEPARATOR in name:
@@ -382,30 +377,32 @@ def _targets(conn, persons, known=None):
     return targets, known
 
 
-def _assign(conn):
-    """The SET fragment that gives a face a person, and the order its parameters go in: (SQL, "pair") -- name then id --
-    where the library has the id column (migration 21), the name alone before."""
-    return "name = ?, tag_id = ?" if person_ids.present(conn) else "name = ?"
+#: The SET fragment that gives a face a person (name then id), and the one that takes it off.
+ASSIGN = "name = ?, tag_id = ?"
+UNASSIGN = "name = NULL, tag_id = NULL"
 
 
-def _pair(conn, target):
-    """The parameters of `_assign` for a (id, name) target."""
+def _pair(target):
+    """The parameters of ASSIGN for a (id, name) target."""
     tag_id, name = target
-    return (name, tag_id) if person_ids.present(conn) else (name,)
+    return (name, tag_id)
 
 
-def _unassign(conn):
-    """The SET fragment that takes a face's person off."""
-    return "name = NULL, tag_id = NULL" if person_ids.present(conn) else "name = NULL"
-
-
-def set_names(conn, persons_by_id):
-    """Give each face in {id: person} its person (an id, a tag path or a name: person_ids.target), leaving who decided
-    it alone. The caller commits."""
+def set_names(conn, persons_by_id, as_read):
+    """Give each face in {id: person} its person (an id, a tag path or a name: person_ids.target) -- only where the face
+    is still what the caller read: `as_read` is {id: the person's id the face carried then, or None}, and a face a person
+    decided meanwhile (name_source 'manual') or one that carries another person now is left alone. Clustering reads the
+    faces at its start and writes at its end, 53 minutes later on the 68,000-photo library; a face the owner named in
+    between is theirs. Returns (the ids written, the ids skipped). The caller commits."""
     targets, known = _targets(conn, persons_by_id.values())
-    conn.executemany("UPDATE faces SET " + _assign(conn) + " WHERE id = ?",
-                     [_pair(conn, targets[person]) + (face_id,) for face_id, person in persons_by_id.items()])
-    _rebuilt(conn, _photos_of(conn, persons_by_id), bool(persons_by_id), known=known)
+    written = []
+    for face_id, person in persons_by_id.items():
+        if conn.execute("UPDATE faces SET " + ASSIGN + " WHERE id = ? AND COALESCE(name_source, '') <> 'manual'"
+                        " AND tag_id IS ?", _pair(targets[person]) + (face_id, as_read[face_id])).rowcount:
+            written.append(face_id)
+    _rebuilt(conn, _photos_of(conn, written), bool(written), known=known)
+    done = set(written)
+    return written, [face_id for face_id in persons_by_id if face_id not in done]
 
 
 def clear_automatic_names(conn):
@@ -413,7 +410,7 @@ def clear_automatic_names(conn):
     were cleared. The caller commits."""
     automatic = "name IS NOT NULL AND COALESCE(name_source, '') <> 'manual'"
     photo_ids = {photo_id for (photo_id,) in conn.execute("SELECT DISTINCT photo_id FROM faces WHERE " + automatic)}
-    return _rebuilt(conn, photo_ids, conn.execute("UPDATE faces SET " + _unassign(conn) + " WHERE " + automatic).rowcount)
+    return _rebuilt(conn, photo_ids, conn.execute("UPDATE faces SET " + UNASSIGN + " WHERE " + automatic).rowcount)
 
 
 # ---- What the face actions read and write (tagpup.services.faces) ------------------------
@@ -459,14 +456,10 @@ def named_among(conn, face_ids):
 DECISION = ("name", "tag_id", "name_source", "excluded", "excluded_reason")
 
 
-def _decision_columns(conn):
-    return DECISION if person_ids.present(conn) else tuple(column for column in DECISION if column != "tag_id")
-
-
 def planning(conn, face_ids):
     """{face id: (photo id, photo path, {column: value} of DECISION)} of the faces among `face_ids` that exist: what a bulk
     assignment plans from. No crop or vector is read."""
-    columns = _decision_columns(conn)
+    columns = DECISION
     found = {}
     for chunk in _chunks(face_ids):
         rows = conn.execute("SELECT f.id, f.photo_id, p.path, " + ", ".join("f." + column for column in columns) + " FROM faces f"
@@ -478,7 +471,7 @@ def planning(conn, face_ids):
 
 def decisions_of(conn, face_ids):
     """{face id: {column: value} of DECISION} of the faces among `face_ids` that exist, as they stand on `conn`."""
-    columns = _decision_columns(conn)
+    columns = DECISION
     found = {}
     for chunk in _chunks(face_ids):
         for face_id, *values in conn.execute("SELECT id, " + ", ".join(columns) + " FROM faces WHERE " + _in(chunk), chunk):
@@ -493,7 +486,7 @@ def carried_on(conn, photo_ids):
     for start in range(0, len(photo_ids), CHUNK):
         chunk = photo_ids[start:start + CHUNK]
         for photo_id, face_id, tag_id, name in conn.execute(
-                "SELECT photo_id, id, " + ("tag_id" if person_ids.present(conn) else "NULL") + ", name FROM faces"
+                "SELECT photo_id, id, tag_id, name FROM faces"
                 " INDEXED BY idx_faces_photo_id WHERE photo_id IN (%s) AND name IS NOT NULL" % ",".join("?" * len(chunk)), chunk):
             found.setdefault(photo_id, []).append((face_id, Ref(tag_id, name)))
     return found
@@ -513,9 +506,9 @@ def name(conn, face_ids, person):
     not revise. `person` is an id, a tag path or a name (person_ids.target: refused when the id is stale, the name two
     people have, or it is a group). Excluded faces are left alone. Returns rows named. The caller commits."""
     targets, known = _targets(conn, [person])
-    given = _pair(conn, targets[person])
+    given = _pair(targets[person])
     changed = sum(conn.execute(
-        "UPDATE faces SET " + _assign(conn) + ", name_source = 'manual' WHERE " + _in(chunk) + " AND excluded = 0",
+        "UPDATE faces SET " + ASSIGN + ", name_source = 'manual' WHERE " + _in(chunk) + " AND excluded = 0",
         list(given) + chunk).rowcount for chunk in _chunks(face_ids))
     return _rebuilt(conn, _photos_of(conn, face_ids), changed, known=known)
 
@@ -534,8 +527,8 @@ def name_if_unnamed(conn, face_id, person):
     nobody" is a decision, which a guess does not overrule (docs/findings.md, #643).
     Returns rows named. The caller commits."""
     targets, known = _targets(conn, [person])
-    given = _pair(conn, targets[person])
-    changed = conn.execute("UPDATE faces SET " + _assign(conn) + " WHERE id = ? AND name IS NULL AND excluded = 0"
+    given = _pair(targets[person])
+    changed = conn.execute("UPDATE faces SET " + ASSIGN + " WHERE id = ? AND name IS NULL AND excluded = 0"
                            " AND " + NOT_DECIDED_NOBODY % "", given + (face_id,)).rowcount
     return _rebuilt(conn, _photos_of(conn, [face_id]), changed, known=known)
 
@@ -555,10 +548,10 @@ def name_unnamed(conn, persons_by_id, vocabulary=None, known=None):
         by_person[person].append(face_id)
     named = set()
     for person, face_ids in by_person.items():
-        given = _pair(conn, targets[person])
+        given = _pair(targets[person])
         for chunk in _chunks(face_ids):
             named.update(face_id for (face_id,) in conn.execute(
-                "UPDATE faces SET " + _assign(conn) + " WHERE " + _in(chunk) + guard + " RETURNING id",
+                "UPDATE faces SET " + ASSIGN + " WHERE " + _in(chunk) + guard + " RETURNING id",
                 list(given) + chunk).fetchall())
     done = [face_id for face_id in persons_by_id if face_id in named]
     _rebuilt(conn, _photos_of(conn, done), len(done), vocabulary, known)
@@ -592,7 +585,7 @@ def revert_automatic(conn, persons_by_id):
             continue
         for chunk in _chunks(face_ids):
             reverted.extend(face_id for (face_id,) in conn.execute(
-                "UPDATE faces SET " + _unassign(conn) + " WHERE " + _in(chunk) + " AND " + where
+                "UPDATE faces SET " + UNASSIGN + " WHERE " + _in(chunk) + " AND " + where
                 + " AND name_source IS NULL RETURNING id", chunk + params).fetchall())
     _rebuilt(conn, _photos_of(conn, reverted), len(reverted), known=known)
     return reverted
@@ -602,7 +595,7 @@ def unname(conn, face_ids, source="manual"):
     """Take the names off faces, recording who decided in name_source: 'manual' for
     "this is nobody", None for an undone guess. Returns rows changed. The caller commits."""
     changed = sum(conn.execute(
-        "UPDATE faces SET " + _unassign(conn) + ", name_source = ? WHERE " + _in(chunk),
+        "UPDATE faces SET " + UNASSIGN + ", name_source = ? WHERE " + _in(chunk),
         [source] + chunk).rowcount for chunk in _chunks(face_ids))
     return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
@@ -620,7 +613,7 @@ def unname_person(conn, tag_ids, source=None):
                 "SELECT id, photo_id, name, name_source, tag_id FROM faces WHERE tag_id IN (%s)" % marks, chunk):
             photo_ids.add(photo_id)
             before[face_id] = (name, held_source, held_person)
-        changed += conn.execute("UPDATE faces SET " + _unassign(conn) + ", name_source = ? WHERE tag_id IN (%s)" % marks,
+        changed += conn.execute("UPDATE faces SET " + UNASSIGN + ", name_source = ? WHERE tag_id IN (%s)" % marks,
                                 [source] + chunk).rowcount
     # One journaled change of the faces' identity, in this transaction (History puts their names and decisions back).
     journal.record_faces(conn, journal.PERSON_DELETED, before)
@@ -636,7 +629,7 @@ def unname_photo(conn, photo_path):
     called each of them "nobody" for good, and automatch never named them again
     (docs/findings.md, #656)."""
     where, params = _on_photo(conn, photo_path)
-    changed = conn.execute("UPDATE faces SET " + _unassign(conn) + ", name_source = 'manual' WHERE " + where
+    changed = conn.execute("UPDATE faces SET " + UNASSIGN + ", name_source = 'manual' WHERE " + where
                            + " AND name IS NOT NULL", params).rowcount
     return _rebuilt(conn, {photo_id for (photo_id,) in conn.execute(
         "SELECT DISTINCT photo_id FROM faces WHERE " + where, params)}, changed)
@@ -646,7 +639,7 @@ def exclude(conn, face_ids, reason):
     """Take faces out of identity work, their names with them, as a decision. Returns
     rows excluded. The caller commits."""
     changed = sum(conn.execute(
-        "UPDATE faces SET excluded = 1, excluded_reason = ?, " + _unassign(conn) + ", name_source = 'manual'"
+        "UPDATE faces SET excluded = 1, excluded_reason = ?, " + UNASSIGN + ", name_source = 'manual'"
         " WHERE " + _in(chunk), [reason] + chunk).rowcount for chunk in _chunks(face_ids))
     return _rebuilt(conn, _photos_of(conn, face_ids), changed)
 
@@ -914,12 +907,6 @@ def in_photo_for_panel(conn, photo_path):
             for face_id, box, tag_id, name, prob, embedding, excluded, reason in conn.execute(
                 "SELECT id, box, tag_id, name, prob, embedding, excluded, excluded_reason"
                 " FROM faces WHERE " + where + " ORDER BY id", params).fetchall()]
-
-
-def photos_with_faces(conn):
-    """The photo paths, as stored, that have any face row."""
-    return {photo_path for (photo_path,) in store_roots.natives(conn, conn.execute(
-        "SELECT path FROM photos WHERE id IN (SELECT photo_id FROM faces)").fetchall(), 0)}
 
 
 def names_by_photo_key(conn):

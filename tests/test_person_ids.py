@@ -128,7 +128,7 @@ class WritesKeepTheId(Library):
         self.assertIsNone(self.face_id(self.faces[0]))
 
     def test_clustering_and_a_guess_and_clearing_them(self):
-        write(self.path, lambda conn: faces.set_names(conn, {self.faces[0]: ODA, self.faces[2]: WREN}))
+        write(self.path, lambda conn: faces.set_names(conn, {self.faces[0]: ODA, self.faces[2]: WREN}, {self.faces[0]: None, self.faces[2]: None}))
         write(self.path, lambda conn: faces.name_if_unnamed(conn, self.faces[1], WREN))
         self.assertEqual([node_id(self.path, "Family/Coast/" + ODA), node_id(self.path, "People/" + WREN),
                           node_id(self.path, "People/" + WREN)], [self.face_id(f) for f in self.faces])
@@ -300,7 +300,9 @@ class TheMigration(unittest.TestCase):
             conn.execute("BEGIN IMMEDIATE")
             seed_tree(conn)
             photo_rows.add_read(conn, photo, {"XMP:Subject": ["People/" + WREN]})
-            made = [faces.insert(conn, photo, [n, 0, n + 5, 5], bytes([n])) for n in range(5)]
+            photo_id = conn.execute("SELECT id FROM photos").fetchone()[0]
+            made = [conn.execute("INSERT INTO faces (photo_id, box, embedding, prob) VALUES (?, ?, ?, NULL)",   # as version 20 wrote one
+                                 (photo_id, "[%d, 0, %d, 5]" % (n, n + 5), bytes([n]))).lastrowid for n in range(5)]
             for face, who in zip(made, (ODA, WREN.lower(), ASH, NOBODY, "People")):
                 conn.execute("UPDATE faces SET name = ?, name_source = 'manual' WHERE id = ?", (who, face))   # no id yet
             people.rebuild(conn)
