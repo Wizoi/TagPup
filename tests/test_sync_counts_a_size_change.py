@@ -68,7 +68,6 @@ class ASizeChange(SyncTestCase):
         self.assertEqual((1, 1, 1), self.held(self.path), "its faces, vector and the record of them stay")
         self.assertEqual((1, 1, 1), self.held(self.other), "a photo that did not change was touched")
         self.assertEqual([], self.queued)
-        self.assertEqual([], self.query("SELECT photo_id FROM faces_pending"))
 
     def test_the_row_is_read_again_like_any_changed_row(self):
         self.truth["IMG_0001.jpg"] = {"XMP:Subject": ["Events/Classic"]}

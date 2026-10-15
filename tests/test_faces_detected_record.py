@@ -33,7 +33,7 @@ from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
-from tagpup.store import faces_detected, faces_pending  # noqa: E402
+from tagpup.store import faces_detected  # noqa: E402
 from tagpup.store.taxonomy import TagTaxonomy  # noqa: E402
 
 
@@ -133,14 +133,6 @@ class SuggestRecordsWhatItDetects(Case):
         again = FaceModel()
         self.suggest(again)
         self.assertEqual((0, 0), (again.readied, again.detected))
-
-    def test_a_photo_marked_to_detect_again_is_detected(self):
-        model = FaceModel()
-        self.index_detects(model, [])
-        db.write_with_connection(self.db_path, lambda conn: faces_pending.mark(conn, self.photo))
-        self.assertFalse(self.recorded(model))
-        self.suggest(model)
-        self.assertEqual(1, model.detected)
 
 
 if __name__ == "__main__":
