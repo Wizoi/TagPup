@@ -98,14 +98,17 @@ def tolerating_minor_errors(et, path, write, written=()):
     not set (`written`: the fields it sets, as ExifTool answers them) go in that same
     command as `keep`, with the values they hold: one command, as the file journal
     records it; they were put back afterwards in a second, unrecorded one. Any other
-    failure -- a timeout, a locked file -- is raised as it is. Raises when the write is
-    not made."""
+    failure -- a timeout, a locked file -- is raised as it is, and so is the refusal when
+    the keyword fields cannot be read to carry: a read that fails is not a photo with no
+    keywords, and nothing is forced. Raises when the write is not made."""
     try:
         write([], {})
     except Exception as error:
         if not is_minor_refusal(error):
             raise
-        before = _keywords(et, path) or {}
+        before = _keywords(et, path)
+        if before is None:
+            raise
         keep = {field: values for field, values in before.items() if values and field not in written}
         write(["-m"], keep)
         after = _keywords(et, path)

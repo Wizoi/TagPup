@@ -13,7 +13,8 @@ two XMP blocks here; a stand-in for the refusal that is not minor.
 The identity the indexer mints for a new photo (identity.ensure_document_id, #1355, #310) goes the same way: it
 went past ANY failed mint with -m, which rewrites the XMP, and put back the keywords that cost in a second command,
 outside any record, whose failure was only logged. Now a lock or a timeout leaves the photo as it was, and a minor
-refusal is one forced command carrying the keywords.
+refusal is one forced command carrying the keywords. When the keywords cannot be read before that command, it is not
+made: a read that fails is not a photo with no keywords.
 
 One command (#271): the values set and the cleared fields (`-FIELD=`) were two commands, and a crash between them left a file
 holding neither what the plan read nor what it was to hold, which settling calls a conflict and never finishes; a DocumentID
@@ -30,7 +31,7 @@ import own_home  # noqa: E402
 
 from tagpup.core import fields  # noqa: E402
 from tagpup.files import field_values, identity  # noqa: E402
-from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
+from tagpup.files.exiftool_session import ExifToolFailed, ExifToolSession  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
 
@@ -161,6 +162,29 @@ class ANewPhotoWithTwoXmpBlocksIsGivenAnIdentity(unittest.TestCase):
                              "a second command wrote the file")
             self.assertEqual(before, after, "the photo's keywords changed")
             self.assertEqual([], after[identity.DOCUMENT_ID_FIELD])
+
+
+    def test_a_read_that_fails_after_a_minor_refusal_forces_nothing(self):
+        # The indexer's mint and the journaled identity write share the forced path.
+        def mint(et):
+            self.assertIsNone(identity.ensure_document_id(et, self.photo, {}))
+
+        def journaled(et):
+            # ExifTool's own refusal, as it was, not the read that failed.
+            with self.assertRaises(ExifToolFailed):
+                field_values.write(et, self.photo, {identity.DOCUMENT_ID_FIELD: "xmp.did:harbour-new"})
+
+        for name, write in (("mint", mint), ("journaled", journaled)):
+            with self.subTest(write=name):
+                with ExifToolSession(executable=EXIFTOOL) as et:
+                    before = self.held(et)
+                    with mock.patch.object(et, "get_tags", side_effect=TimeoutError("ExifTool did not answer")), \
+                            mock.patch.object(et, "set_tags", wraps=et.set_tags) as set_tags:
+                        write(et)
+                    after = self.held(et)
+                self.assertEqual(1, set_tags.call_count, "a write was forced with keywords it could not read: %s"
+                                 % set_tags.call_args_list)
+                self.assertEqual(before, after, "the photo changed")
 
 
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
