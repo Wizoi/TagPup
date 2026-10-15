@@ -6,11 +6,11 @@ PhotoIndex.load, TagTuner's start-up (without the write lock), the desktop runne
 tree, which made its own table when it saved. Each carried its own idea of the schema.
 
 A migration runs once per library, in order, and `schema_version` records it. The
-first, version 14 (`BASELINE`), makes a NEW library directly in the schema as it stood after the
-fourteenth step of the old chain; the rest (15 on) are ordinary steps forward. A library below the
-baseline is refused (`TooOld`), not converted: the steps 1 to 14 were deleted on 2026-10-15
-(owner decision), and the kept snapshots are all at 14 or later. Before that, the conversions of
-libraries older than 2026-09 had retired on 2026-09-24.
+first, version 32 (`BASELINE`), makes a NEW library directly in the schema as it stood after the
+thirty-second step of the old chain; a later one (33 on) is an ordinary step forward. A library below the
+baseline is refused (`TooOld`), not converted: the steps 1 to 32 were deleted on 2026-10-15
+(owner decision: no plan to bring up older versions), and the snapshots and backups below 32 can no longer
+be restored. Before that, the conversions of libraries older than 2026-09 had retired on 2026-09-24.
 
 Each migration says what it is (ADDITIVE, DATA or DESTRUCTIVE) and names the checks it
 must pass; it runs in one transaction, and a failed check rolls it back (CheckFailed).
@@ -25,7 +25,6 @@ one. After the first time in a process it costs a stat.
 import collections
 import contextlib
 import contextvars
-import json
 import logging
 import os
 import re
@@ -67,8 +66,8 @@ def _columns(conn, table):
 
 
 #: The first version of the schema this one makes: a new library is made at it (`_baseline`), and a library below it is
-#: refused. The monthly snapshots kept on 2026-10-15 are at 14, 14 and 20.
-BASELINE = 14
+#: refused (owner, 2026-10-15: no plan to bring up older versions; a snapshot or backup below it cannot be restored).
+BASELINE = 32
 
 
 class NewerLibrary(Exception):
@@ -192,26 +191,24 @@ def newer_problem(db_path):
     return None
 
 
-#: What moves the faces generation (tagpup.store.generations): whatever changes who a face is.
-FACES_GENERATION_UPDATE = "UPDATE OF name, name_source, excluded, embedding, photo_id"
-
-
 def _baseline(conn):
-    """A NEW library, made directly in the schema a library had after migration 14 (owner, 2026-10-15: migrations 1 to 14 are
-    collapsed; the steps from 15 on remain). Every table, index and trigger of that schema, in the one transaction the runner
-    gives it: a failure leaves a library with no table, which the next open makes again. Not a migration of an older library:
-    one below BASELINE is refused (`_migrate`). It was checked once against the schema the old chain made at 14 (2026-10-15: every object identical), and migrations 15 to 32 run on it in tests/test_migrations.py."""
+    """A NEW library, made directly in the schema a library had after migration 32 (owner, 2026-10-15: migrations 1 to 32 are
+    collapsed; the next is 33). Every table, index and trigger of that schema, in the one transaction the runner gives it: a
+    failure leaves a library with no table, which the next open makes again. Not a migration of an older library: one below
+    BASELINE is refused (`_migrate`). Checked once against the library the old chain made and the three live libraries
+    (2026-10-15: every table, column, index, foreign key and trigger identical; docs/DATABASE.md, "The baseline")."""
     for statement in (
         "CREATE TABLE photos (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE, mtime REAL, size INTEGER,"
         " tags TEXT, captions TEXT, raw_metadata TEXT, document_id TEXT, taken TEXT, year INTEGER)",
         "CREATE TABLE faces (id INTEGER PRIMARY KEY AUTOINCREMENT, photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,"
-        " box TEXT, embedding BLOB, name TEXT, prob REAL, name_source TEXT, excluded INTEGER DEFAULT 0, excluded_reason TEXT)",
+        " box TEXT, embedding BLOB, name TEXT, prob REAL, name_source TEXT, excluded INTEGER DEFAULT 0, excluded_reason TEXT,"
+        " tag_id INTEGER)",
         "CREATE TABLE face_crops (face_id INTEGER PRIMARY KEY REFERENCES faces(id) ON DELETE CASCADE, jpeg BLOB NOT NULL)",
         "CREATE TABLE embeddings (photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE, model TEXT NOT NULL,"
         " mtime REAL, size INTEGER, vector BLOB NOT NULL, PRIMARY KEY (photo_id, model))",
         "CREATE TABLE photo_people (photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,"
         " position INTEGER NOT NULL, name TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('keyword', 'face')),"
-        " PRIMARY KEY (photo_id, position))",
+        " tag_id INTEGER, PRIMARY KEY (photo_id, position))",
         "CREATE TABLE suggestions (photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE, tags TEXT,"
         " people TEXT, title TEXT, raw TEXT, before_consensus INTEGER NOT NULL DEFAULT 0, error TEXT, model TEXT, created TEXT)",
         "CREATE TABLE tag_taxonomy (id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT UNIQUE, parent_id INTEGER, name TEXT,"
@@ -233,21 +230,46 @@ def _baseline(conn):
         "CREATE TABLE job_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, library TEXT COLLATE NOCASE,"
         " started TEXT NOT NULL, finished TEXT, outcome TEXT NOT NULL CHECK"
         " (outcome IN ('running', 'done', 'failed', 'abandoned')), changed TEXT, owner TEXT, note TEXT)",
+        # The folders asked to be added, the photos whose faces are to be detected (a mark whose photo is gone is read as none)
+        # and those whose faces were detected, and the library's roots (tagpup.store.added_folders, faces_detected, roots).
+        "CREATE TABLE added_folders (path TEXT PRIMARY KEY COLLATE %s, subfolders INTEGER NOT NULL, added TEXT NOT NULL)"
+        % paths.COLLATE,
+        "CREATE TABLE faces_pending (photo_id INTEGER PRIMARY KEY, since TEXT NOT NULL)",
+        "CREATE TABLE faces_detected (photo_id INTEGER PRIMARY KEY, detector TEXT NOT NULL, mtime REAL, size INTEGER,"
+        " found INTEGER NOT NULL, at TEXT NOT NULL)",
+        "CREATE TABLE roots (name TEXT PRIMARY KEY NOT NULL, address TEXT NOT NULL, added TEXT NOT NULL)",
+        # What the library views stand on, derived from the photos (tagpup.store.derived).
+        "CREATE TABLE photo_tags (photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,"
+        " tag_id INTEGER NOT NULL REFERENCES tag_taxonomy(id) ON DELETE CASCADE, PRIMARY KEY (photo_id, tag_id)) WITHOUT ROWID",
+        "CREATE TABLE folders (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER REFERENCES folders(id) ON DELETE CASCADE,"
+        " path TEXT NOT NULL UNIQUE COLLATE %s, name TEXT NOT NULL)" % paths.COLLATE,
+        "CREATE TABLE photo_folder (photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,"
+        " folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE)",
         "CREATE INDEX idx_photos_document_id ON photos(document_id)",
+        "CREATE INDEX idx_photos_taken ON photos(taken, id)",
+        "CREATE INDEX idx_photos_year ON photos(year, taken, id)",
         "CREATE INDEX idx_faces_photo_id ON faces(photo_id)",
         "CREATE INDEX idx_faces_name ON faces(name)",
         # Identify Faces filters on `excluded` and `name` together, on every load. Leading with `excluded` answers a count of
         # the excluded bucket from the index alone, without touching rows that carry a 2 KB embedding.
         "CREATE INDEX idx_faces_identify ON faces(excluded, name)",
+        # A person read by id: `WHERE tag_id = ?` needs these, and the pairs of name and id come out of idx_faces_person.
+        "CREATE INDEX idx_faces_person ON faces(name, tag_id)",
+        "CREATE INDEX idx_faces_tag ON faces(tag_id)",
         "CREATE INDEX idx_photo_people_name ON photo_people(name)",
+        "CREATE INDEX idx_photo_people_tag ON photo_people(tag_id, photo_id)",
         "CREATE INDEX idx_tag_taxonomy_tag ON tag_taxonomy(tag)",
         "CREATE INDEX idx_change_rows_change ON change_rows(change_id)",
         "CREATE INDEX idx_change_rows_row ON change_rows(table_name, row_key)",
         "CREATE INDEX idx_changes_status ON changes(status)",
         "CREATE INDEX idx_change_files_change ON change_files(change_id)",
         "CREATE INDEX idx_job_runs_job ON job_runs(job, library, id)",
-        # A crop, an embedding, a person's line and a suggestion go with their photo or face, on any connection: only one
-        # connection in the app turns foreign keys on, so ON DELETE CASCADE alone would leave them behind.
+        # A tag's photos, by one seek, and covering: the photo ids come out of the index.
+        "CREATE INDEX idx_photo_tags_tag ON photo_tags(tag_id, photo_id)",
+        "CREATE INDEX idx_folders_parent ON folders(parent_id)",
+        "CREATE INDEX idx_photo_folder_folder ON photo_folder(folder_id)",
+        # A crop, an embedding, a person's line, a suggestion and the derived rows go with their photo, face or node, on any
+        # connection: only one connection in the app turns foreign keys on, so ON DELETE CASCADE alone would leave them behind.
         "CREATE TRIGGER face_crops_go_with_their_face AFTER DELETE ON faces"
         " BEGIN DELETE FROM face_crops WHERE face_id = OLD.id; END",
         "CREATE TRIGGER embeddings_go_with_their_photo AFTER DELETE ON photos"
@@ -256,11 +278,30 @@ def _baseline(conn):
         " BEGIN DELETE FROM photo_people WHERE photo_id = OLD.id; END",
         "CREATE TRIGGER suggestions_go_with_their_photo AFTER DELETE ON photos"
         " BEGIN DELETE FROM suggestions WHERE photo_id = OLD.id; END",
+        "CREATE TRIGGER derived_go_with_their_photo AFTER DELETE ON photos BEGIN"
+        " DELETE FROM photo_tags WHERE photo_id = OLD.id; DELETE FROM photo_folder WHERE photo_id = OLD.id; END",
+        "CREATE TRIGGER photo_tags_go_with_their_node AFTER DELETE ON tag_taxonomy"
+        " BEGIN DELETE FROM photo_tags WHERE tag_id = OLD.id; END",
+        # The backstop for a person that faces name: the DELETE of a node of the tag tree a face names aborts, whichever
+        # connection deletes it (an old checkout, a script, an undo). The tree edits that delete a person the right way
+        # unname or repoint their faces first, so the trigger sees nothing.
+        "CREATE TRIGGER person_tag_not_deleted_while_named BEFORE DELETE ON tag_taxonomy"
+        " WHEN EXISTS (SELECT 1 FROM faces WHERE tag_id = OLD.id)"
+        " BEGIN SELECT RAISE(ABORT, 'person_tag_not_deleted_while_named'); END",
     ):
         conn.execute(statement)
+    # The word index a search matches words in (two contentless FTS5 tables and the trigger that takes a deleted photo's rows),
+    # and the two indexes a library view orders by file name and by caption with: expressions of built-in functions, so nothing
+    # writes them but SQLite (tagpup.store.search_index, library_view).
+    from tagpup.store import library_view   # the store imports this module
+    for statement in search_index.CREATE:
+        conn.execute(statement)
+    conn.execute("CREATE INDEX %s ON photos(%s COLLATE NOCASE, id)" % (library_view.NAME_INDEX, library_view.name_sql("path")))
+    conn.execute("CREATE INDEX %s ON photos(%s COLLATE NOCASE, id)" % (library_view.CAPTION_INDEX,
+                                                                     library_view.caption_sql("captions")))
     # What moves each generation (tagpup.store.generations). Faces: whatever changes who a face is -- a crop being cached is not
     # that. The tree: any node's path, name, place or face flag. Photos: any change to a row, and to a photo's people.
-    for name, table, update in (("faces", "faces", FACES_GENERATION_UPDATE),
+    for name, table, update in (("faces", "faces", "UPDATE OF name, name_source, excluded, embedding, photo_id, tag_id"),
                                 ("taxonomy", "tag_taxonomy", "UPDATE OF tag, name, parent_id, has_face"),
                                 ("photos", "photos", "UPDATE")):
         conn.execute("INSERT INTO generations (name, value) VALUES (?, 0)", (name,))
@@ -274,335 +315,6 @@ def _baseline(conn):
     # can only use an index declared with it.
     if paths.COLLATE != "BINARY":
         conn.execute("CREATE INDEX idx_photos_path_nocase ON photos(path COLLATE %s)" % paths.COLLATE)
-
-
-def _added_folders(conn):
-    """The folders a library was asked to add: `added_folders`, each folder's path, whether
-    its subfolders were added with it, and when (tagpup.store.added_folders). A folder
-    added is the library's before the index has read a photo of it: adding made a row for
-    every photo under it at once. Only adds a table, so it needs no backup.
-    """
-    conn.execute("CREATE TABLE IF NOT EXISTS added_folders ("
-                 " path TEXT PRIMARY KEY COLLATE %s,"
-                 " subfolders INTEGER NOT NULL,"
-                 " added TEXT NOT NULL)" % paths.COLLATE)
-
-
-def _damaged_files(conn):
-    """The photo files found damaged (`damaged_files`): nothing is made any more. A library that ran this migration when it
-    made the table holds it, empty, until migration 31 drops it."""
-
-
-def _faces_pending(conn):
-    """The photos whose faces are still to be detected: `faces_pending`, each photo's id and
-    since when (tagpup.store.faces_pending; docs/findings.md, #407). No foreign key and no
-    trigger: a mark whose photo is gone is read as none -- a photo's id is AUTOINCREMENT,
-    never handed out again -- so deleting a photo takes nothing the journal must account
-    for. Only adds a table, so it needs no backup.
-    """
-    conn.execute("CREATE TABLE IF NOT EXISTS faces_pending ("
-                 " photo_id INTEGER PRIMARY KEY,"
-                 " since TEXT NOT NULL)")
-
-
-def _faces_detected(conn):
-    """The photos whose faces were detected: `faces_detected`, each photo's id, the detector
-    that ran (its settings), the file's stamp it read, how many faces it found and when
-    (tagpup.store.faces_detected; docs/findings.md, #773). No foreign key and no trigger,
-    as faces_pending: a row whose photo is gone is read as none, so deleting a photo takes
-    nothing the journal must account for. Only adds a table, empty: a photo indexed before
-    it is detected once more by the next Suggest that looks at it.
-    """
-    conn.execute("CREATE TABLE IF NOT EXISTS faces_detected ("
-                 " photo_id INTEGER PRIMARY KEY,"
-                 " detector TEXT NOT NULL,"
-                 " mtime REAL,"
-                 " size INTEGER,"
-                 " found INTEGER NOT NULL,"
-                 " at TEXT NOT NULL)")
-
-
-def _folder_ids(conn):
-    """The ids folders carried (`library_identity` and `folder_ids`, empty tables, unused since 2026-10-10): nothing is made
-    any more. A library that ran this migration when it made them holds them until migration 30 drops them; one that has
-    not run it yet never has them."""
-
-
-def _roots(conn):
-    """The library's roots: `roots`, one row for each, its name (`pictures`), the share's own
-    address and when it was added (tagpup.store.roots; docs/ARCHITECTURE.md, "Roots and
-    machines"). A library with a root holds each photo's path as the root's name and the path
-    under it, and each machine says where it keeps the root. Only adds a table, empty: opening
-    a library never converts its paths, and one with no roots behaves exactly as it did. A
-    library is converted only by the explicit `roots adopt`, which the owner runs and which can
-    be undone. Needs no backup.
-    """
-    conn.execute("CREATE TABLE IF NOT EXISTS roots ("
-                 " name TEXT PRIMARY KEY NOT NULL,"
-                 " address TEXT NOT NULL,"
-                 " added TEXT NOT NULL)")
-
-
-#: The trigger that takes a deleted photo's rows of the derived tables, whichever connection deletes it (migrations 19 and 30).
-DERIVED_GO_WITH_THEIR_PHOTO = ("CREATE TRIGGER derived_go_with_their_photo AFTER DELETE ON photos BEGIN"
-                               " DELETE FROM photo_tags WHERE photo_id = OLD.id;"
-                               " DELETE FROM photo_folder WHERE photo_id = OLD.id; END")
-
-
-def _derived_tables(conn):
-    """The tables the library views stand on, derived from the photos (tagpup.store.derived;
-    docs/ARCHITECTURE.md, phase 9a): `photo_tags` (a photo's keywords as tag-tree node ids),
-    `folders` and `photo_folder` (the folder tree and the folder each photo is directly in, the
-    path in ROW form). (A fourth, `photo_meta`, was made here until migration 30 dropped it: nothing read it.) Made
-    from the rows that are there by `derived.rebuild_all`, in this transaction, and then kept by the
-    writes that keep photo_people. Nothing that was there changes, so it needs no backup: a failed
-    check rolls the whole migration back, and the tables are rebuilt from the photos whenever they
-    are wrong.
-
-    Triggers take a photo's rows with the photo and a node's with the node, on any connection, as
-    photo_people's does; foreign keys say the same where a connection turns them on.
-    """
-    conn.execute("CREATE TABLE photo_tags ("
-                 " photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,"
-                 " tag_id INTEGER NOT NULL REFERENCES tag_taxonomy(id) ON DELETE CASCADE,"
-                 " PRIMARY KEY (photo_id, tag_id)) WITHOUT ROWID")
-    # A tag's photos, by one seek, and covering: the photo ids come out of the index.
-    conn.execute("CREATE INDEX idx_photo_tags_tag ON photo_tags(tag_id, photo_id)")
-    conn.execute("CREATE TABLE folders ("
-                 " id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                 " parent_id INTEGER REFERENCES folders(id) ON DELETE CASCADE,"
-                 " path TEXT NOT NULL UNIQUE COLLATE %s,"
-                 " name TEXT NOT NULL)" % paths.COLLATE)
-    conn.execute("CREATE INDEX idx_folders_parent ON folders(parent_id)")
-    conn.execute("CREATE TABLE photo_folder ("
-                 " photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,"
-                 " folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE)")
-    conn.execute("CREATE INDEX idx_photo_folder_folder ON photo_folder(folder_id)")
-    conn.execute(DERIVED_GO_WITH_THEIR_PHOTO)
-    conn.execute("CREATE TRIGGER photo_tags_go_with_their_node AFTER DELETE ON tag_taxonomy"
-                 " BEGIN DELETE FROM photo_tags WHERE tag_id = OLD.id; END")
-    from tagpup.store import derived   # the store imports this module
-    derived.rebuild_all(conn)
-
-
-def _taken_indexes(conn):
-    """The two indexes a library view pages by (tagpup.store.library_view; docs/ARCHITECTURE.md, phase 9a-2):
-    `idx_photos_taken` (taken, id), which orders the whole library by when its photos were taken and
-    serves a month as a range of it, and `idx_photos_year` (year, taken, id), which does the same
-    for one year. Without them "all photos" and a year are a scan of photos and a sort. A
-    keyset page -- the photos after (taken, id) -- is a seek of either. Indexes only: no row of any
-    table changes, nothing is recorded in the journal, and the migration needs no backup."""
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_taken ON photos(taken, id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_year ON photos(year, taken, id)")
-
-
-def _name_index(conn):
-    """The index a library view orders by file name with (tagpup.store.library_view; docs/ARCHITECTURE.md, phase 9,
-    #671): `idx_photos_name` on the file name of each photo's path, without case, then id -- an expression of built-in
-    functions (`library_view.name_sql`), so nothing writes it but SQLite and no writer of a path has to know of it.
-    Without it an order by name computes each photo's name and sorts them: 630 ms for the whole of photo_index. Index
-    only: no row of any table changes, nothing is recorded in the journal, and no backup is needed."""
-    from tagpup.store import library_view   # the store imports this module
-    conn.execute("CREATE INDEX IF NOT EXISTS %s ON photos(%s COLLATE NOCASE, id)"
-                 % (library_view.NAME_INDEX, library_view.name_sql("path")))
-
-
-def _caption_index(conn):
-    """The index a library view orders by caption with (tagpup.store.library_view; docs/ARCHITECTURE.md, phase 9, #714):
-    `idx_photos_caption` on the first caption of each photo (`library_view.caption_sql`: the first CAPTION_KEY characters,
-    NULL for none and for text that is not JSON), without case, then id -- an expression of built-in functions, as
-    migration 22's, so nothing writes it but SQLite and no writer of a caption has to know of it. Index only: no row of
-    any table changes, nothing is recorded in the journal, and no backup is needed."""
-    from tagpup.store import library_view   # the store imports this module
-    conn.execute("CREATE INDEX IF NOT EXISTS %s ON photos(%s COLLATE NOCASE, id)"
-                 % (library_view.CAPTION_INDEX, library_view.caption_sql("captions")))
-
-
-def _person_indexes(conn):
-    """The indexes a person is read by id with, and the table of names set aside (docs/ARCHITECTURE.md, "People by id,
-    stage 2"; docs/findings.md, #1013): `idx_faces_tag` on faces(tag_id) and `idx_photo_people_tag` on
-    photo_people(tag_id, photo_id) -- `WHERE tag_id = ?` scanned idx_faces_person (name, tag_id) whole and had no
-    index at all on photo_people. (It also made `name_review_dismissals`, empty, which migration 31 drops: nothing is made
-    of it now.) No row of any table changes, so nothing is recorded in the journal and no backup is needed."""
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_tag ON faces(tag_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_photo_people_tag ON photo_people(tag_id, photo_id)")
-
-
-def _person_ids(conn):
-    """Each face and each photo's listed person name the node of the tag tree that is that person:
-    `faces.tag_id` and `photo_people.tag_id`, beside `name` (docs/ARCHITECTURE.md, "Identity by id",
-    stage 1; tagpup.store.person_ids). Filled by the one rule, one lookup per distinct name, in this
-    transaction; a name no person node is called, or that two are, is left NULL and the doctor names
-    it. Every read still reads the name: nothing that was there changes, and no backup is needed.
-
-    `idx_faces_person` (name, tag_id) is made first, so the backfill and the doctor read the pairs
-    of name and id from the index, never the faces' rows with their vectors. It also serves every
-    lookup idx_faces_name serves, which stage 2 drops."""
-    conn.execute("ALTER TABLE faces ADD COLUMN tag_id INTEGER")
-    conn.execute("ALTER TABLE photo_people ADD COLUMN tag_id INTEGER")
-    conn.execute("CREATE INDEX idx_faces_person ON faces(name, tag_id)")
-    from tagpup.store import person_ids   # the store imports this module
-    person_ids.fill(conn)
-
-
-def _person_tag_guard(conn):
-    """The backstop for a person that faces name (docs/ARCHITECTURE.md, "People by id, stage 2", "Tree operations, by id"): a
-    trigger, `person_tag_not_deleted_while_named`, aborts the DELETE of a node of the tag tree that a face names
-    (`faces.tag_id`, by idx_faces_tag), whichever connection deletes it -- an old checkout, a script, an undo of the journal. The
-    tree edits that delete a person the right way unname or repoint their faces first (taxonomy.delete_branch with force,
-    taxonomy.move_branch's join), so the trigger sees nothing. And the faces' generation moves when a face's `tag_id` is
-    written (a face given to another person who is called alike), as it moves when its name is. Triggers only: no row of any
-    table changes, nothing is recorded in the journal, and no backup is needed."""
-    conn.execute("DROP TRIGGER IF EXISTS person_tag_not_deleted_while_named")
-    conn.execute("CREATE TRIGGER person_tag_not_deleted_while_named BEFORE DELETE ON tag_taxonomy"
-                 " WHEN EXISTS (SELECT 1 FROM faces WHERE tag_id = OLD.id)"
-                 " BEGIN SELECT RAISE(ABORT, 'person_tag_not_deleted_while_named'); END")
-    conn.execute("DROP TRIGGER IF EXISTS generation_faces_update")
-    conn.execute("CREATE TRIGGER generation_faces_update AFTER %s ON faces"
-                 " BEGIN UPDATE generations SET value = value + 1 WHERE name = 'faces'; END"
-                 % (FACES_GENERATION_UPDATE + ", tag_id"))
-
-
-def _search_index(conn):
-    """The word index a search's words are matched in (tagpup.store.search_index; docs/ARCHITECTURE.md, phase 9e-1): two
-    contentless FTS5 tables -- `search_words` (the words of keywords, captions and people) and `search_names` (the file
-    name and its folders, by trigram) -- with the shadow tables FTS5 makes for each, and the trigger that takes a photo's
-    rows when the photo is deleted; filled from every photo's row and its listed people, in this transaction. Nothing
-    that was there changes: derived, never journaled, no backup. A crash leaves the library at 23 and the next open runs it
-    again (the CREATEs are in the transaction)."""
-    from tagpup.store import search_index   # the store imports this module
-    for statement in search_index.CREATE:
-        conn.execute(statement)
-    search_index.rebuild(conn)
-
-
-def _camera_words(conn):
-    """The camera and lens words (`search_gear`, an FTS5 table): nothing is made any more. A search finds a camera in the
-    photos' metadata (tagpup.store.search_index.cameras_with). A library that ran this migration when it made the table holds
-    it until migration 30 drops it."""
-
-
-#: The tables migration 30 drops. The FTS5 table's shadow tables (search_gear_data, _idx, _docsize, _config) go with it.
-DROPPED = ("search_gear", "photo_meta", "folder_ids", "library_identity")
-
-
-def _take_out_of_the_journal(conn, tables, column=None):
-    """Take the rows of `tables` out of the journal (they could not be undone once the tables are gone), or only those of
-    `column` of them (a column that is gone), and a change they leave with no row and no file with them; any other change is
-    untouched. Returns (rows taken, ids of changes taken)."""
-    marks = ",".join("?" * len(tables))
-    only = " AND column_name = ?" if column else ""
-    given = tuple(tables) + ((column,) if column else ())
-    named = [change_id for (change_id,) in conn.execute(
-        "SELECT DISTINCT change_id FROM change_rows WHERE table_name IN (%s)%s" % (marks, only), given)]
-    rows = conn.execute("DELETE FROM change_rows WHERE table_name IN (%s)%s" % (marks, only), given).rowcount
-    emptied = []
-    for change_id in named:
-        if (not conn.execute("SELECT 1 FROM change_rows WHERE change_id = ? LIMIT 1", (change_id,)).fetchone()
-                and not conn.execute("SELECT 1 FROM change_files WHERE change_id = ? LIMIT 1", (change_id,)).fetchone()):
-            conn.execute("DELETE FROM changes WHERE id = ?", (change_id,))
-            emptied.append(change_id)
-    return rows, emptied
-
-
-def _drop_unused(conn):
-    """The tables nothing reads (docs/DATABASE.md; owner, 2026-10-10): `search_gear`, the FTS5 table of camera and lens words (a
-    search reads the photos' metadata now: search_index.cameras_with), `photo_meta` (a table of each photo's rating, camera,
-    size and place that nothing read), and `library_identity` and `folder_ids` (the ids folder markers carried, unused since
-    the markers were deleted). Not name_review_dismissals: the names-to-review list is still there.
-
-    Each live library holds ONE journaled change of `folder_ids` (`mark_folders`: its rows inserted by the only
-    `folder-ids mark --apply` that was run). Its rows could not be undone once the table is gone, so they are taken out of the
-    journal, and a change they leave empty with them; any other change is untouched, and still undoable (journal.schema_gap_blocker:
-    this migration is in ONLY_DROPS). Returns what it took, which the migration's own change records.
-
-    The trigger that took a photo's rows of the derived tables named photo_meta, so it is made again without it, and the
-    trigger of search_gear goes. One transaction (the runner's): a failure drops nothing."""
-    rows, emptied = _take_out_of_the_journal(conn, ("folder_ids",))
-    conn.execute("DROP TRIGGER IF EXISTS search_gear_goes_with_its_photo")
-    conn.execute("DROP TRIGGER IF EXISTS derived_go_with_their_photo")
-    conn.execute(DERIVED_GO_WITH_THEIR_PHOTO)
-    for table in DROPPED:
-        conn.execute("DROP TABLE IF EXISTS %s" % table)
-    return {"journal rows taken out": rows, "changes taken out": len(emptied)}
-
-
-#: The tables migration 31 drops: the names set aside from the names to review, and the photo files found damaged. Both
-#: features are deleted (owner, 2026-10-11); all three live libraries held both empty and no recorded change named either.
-DROPPED_31 = ("name_review_dismissals", "damaged_files")
-
-
-def _drop_dismissals_and_damaged(conn):
-    """Migration 31: drops `name_review_dismissals` and `damaged_files`, which nothing reads or writes. Should a recorded change
-    name one of them (none does in a live library), its rows are taken out of the journal first, as migration 30 did for
-    `folder_ids`, since they could not be undone with the table gone. A library that never had them (made at the latest,
-    or behind 16 and 28, which make nothing now) loses nothing. One transaction (the runner's): a failure drops nothing.
-    Returns what it took, which the migration's own change records."""
-    rows, emptied = _take_out_of_the_journal(conn, DROPPED_31)
-    for table in DROPPED_31:
-        conn.execute("DROP TABLE IF EXISTS %s" % table)
-    return {"journal rows taken out": rows, "changes taken out": len(emptied)}
-
-
-#: The column migration 32 drops from a table the journal keys, by migration: {version: {table: columns}}. `tag_taxonomy.is_people`
-#: was made by the first schema, filled by code that is gone, and read and written by nothing since (counted 2026-10-11:
-#: `photo_index` alone still has it, 539 rows 0 and 360 rows 1). The migration takes the rows of the journal that name the
-#: column out of it (as 30 and 31 took the rows of their tables), so no recorded change names a column that is gone, and it
-#: blocks no undo of an older change (journal.schema_gap_blocker): the table keeps every row and key.
-COLUMNS_DROPPED = {32: {"tag_taxonomy": ("is_people",)}}
-
-#: `tag_taxonomy` as the first schema and a new library make it (`_tables`), without `is_people`.
-TAG_TAXONOMY = ("id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT UNIQUE, parent_id INTEGER, name TEXT,"
-                " has_face INTEGER DEFAULT 0, hidden_from_autocomplete INTEGER DEFAULT 0,"
-                " FOREIGN KEY(parent_id) REFERENCES tag_taxonomy(id) ON DELETE CASCADE")
-
-#: Migration 32 spells these itself, not by tagpup.store.job_runs (a migration runs today's code, and these must stay what
-#: they were when it ran): the jobs a sync is recorded as, and the counts it records. tests/test_unused_tables_32.py holds them
-#: to record_sync.
-SYNC_WHOLE_JOB = "sync-whole"
-
-
-def _fold_sync_runs(conn):
-    """Migration 32's second half: the newest sync of the whole library that left it in step becomes a finished run of the job
-    "sync-whole" in `job_runs`, as record_sync writes one (so "last in step" shows what it showed); the other records of
-    `sync_runs` are not kept (the owner approved, 2026-10-11: the changes the syncs made stay in the journal); then the table
-    goes. Returns (records kept, records dropped). A library without the table (made at the latest, or behind 14) has none."""
-    if "sync_runs" not in _tables_now(conn):
-        return 0, 0
-    total = _count(conn, "sync_runs")
-    newest = conn.execute("SELECT started, finished, found, changed, change_id FROM sync_runs"
-                          " WHERE whole = 1 AND in_step = 1 ORDER BY id DESC LIMIT 1").fetchone()
-    kept = 0
-    if newest is not None:
-        started, finished, found, changed, change_id = newest
-        counts = {"in_step": 1}
-        counts.update({"found_" + what: n for what, n in (json.loads(found) or {}).items()})
-        counts.update(json.loads(changed) or {})
-        if change_id is not None:
-            counts["change"] = change_id
-        # The library's name, as tagpup.core.library.Library.name spells it: its file's.
-        library = os.path.splitext(os.path.basename(conn.execute("PRAGMA database_list").fetchone()[2]))[0]
-        conn.execute("INSERT INTO job_runs (job, library, started, finished, outcome, changed) VALUES (?, ?, ?, ?, 'done', ?)",
-                     (SYNC_WHOLE_JOB, library, started, finished, json.dumps(counts, sort_keys=True)))
-        kept = 1
-    conn.execute("DROP TABLE sync_runs")
-    return kept, total - kept
-
-
-def _drop_is_people_and_fold_syncs(conn):
-    """Migration 32: drops `tag_taxonomy.is_people` and folds `sync_runs` into `job_runs`, two tables nothing reads any more.
-
-    The column: `tag_taxonomy` is rebuilt (rebuild_table: SQLite's twelve steps, inside the runner's transaction with foreign keys
-    off), every id, row, index and trigger kept, the AUTOINCREMENT counter too. A library without the column (two of the three
-    live ones) is not rebuilt: the migration is then the fold alone. The journal's rows that name the column are taken out
-    first, and a change they leave empty with them. Returns what it did, which the migration's own change records."""
-    rebuilt, taken, emptied = None, 0, []
-    if "is_people" in _columns(conn, "tag_taxonomy"):
-        taken, emptied = _take_out_of_the_journal(conn, ("tag_taxonomy",), "is_people")
-        rebuilt = rebuild_table(conn, "tag_taxonomy", TAG_TAXONOMY)
-    kept, dropped = _fold_sync_runs(conn)
-    return {"tag_taxonomy rows rebuilt": rebuilt or 0, "journal rows taken out": taken, "changes taken out": len(emptied),
-            "sync records kept": kept, "sync records dropped": dropped}
 
 
 # ---- What a migration holds true before it commits ----------------------------------------
@@ -757,104 +469,6 @@ class Integrity(Check):
                 found = [row[0] for row in conn.execute("PRAGMA quick_check(%s)" % _quoted(table))]
                 if found != ["ok"]:
                     problems += ["%s: %s" % (table, text) for text in found[:5]]
-        return problems
-
-
-#: Every migration names these two, and a count of rows; a test holds it to them.
-class DerivedAgree(Check):
-    """The derived tables (tagpup.store.derived) are what the photos give: what rebuilding them
-    made is what a check that reads the photos again finds."""
-    name = "derived tables agree with the photos"
-
-    def after(self, conn, migration, state):
-        from tagpup.store import derived   # the store imports this module
-        return derived.problems(conn)
-
-
-class PersonIdsAgree(Check):
-    """Every face and listed person holds the id its name gives (tagpup.store.person_ids)."""
-    name = "people's ids agree with their names"
-
-    def after(self, conn, migration, state):
-        from tagpup.store import person_ids   # the store imports this module
-        return ["%d row(s) of %s" % (found.rows, table) for table in person_ids.TABLES
-                for found in [person_ids.out_of_step(conn, table, spelling=False)] if found.rows]
-
-
-class SearchIndexAgrees(Check):
-    """The word index (tagpup.store.search_index) has a row for every photo and none other, and a sample of photos'
-    texts are found in their rows."""
-    name = "word index agrees with the photos"
-
-    def after(self, conn, migration, state):
-        from tagpup.store import search_index   # the store imports this module
-        return search_index.problems(conn)
-
-
-class UnusedTablesGone(Check):
-    """Migrations 30 and 31: the tables each drops (and the FTS5 table's shadows) are gone, the trigger that took a photo's rows of
-    them is replaced by one that names none of them, and no recorded change names one of them: the journal's history is
-    what the library can still undo."""
-    name = "unused tables gone, and none named by the journal"
-
-    def __init__(self, tables, shadows=()):
-        self.tables, self.shadows = tuple(tables), tuple(shadows)
-
-    def after(self, conn, migration, state):
-        problems = ["%s is still there" % table for table in _tables_now(conn)
-                    if table in self.tables or table.startswith(self.shadows)]
-        if _count_named(conn, self.tables):
-            problems.append("a recorded change still names a dropped table")
-        for (sql,) in conn.execute("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND sql IS NOT NULL"):
-            problems += ["a trigger still names %s" % table for table in self.tables if table in sql]
-        return problems
-
-
-def _count_named(conn, tables):
-    return conn.execute("SELECT COUNT(*) FROM change_rows WHERE table_name IN (%s)"
-                        % ",".join("?" * len(tables)), tables).fetchone()[0]
-
-
-class ColumnGone(Check):
-    """Migration 32: the column is gone from the table, and no recorded change names it."""
-
-    def __init__(self, table, column):
-        self.table, self.column = table, column
-        self.name = "%s.%s gone, and none named by the journal" % (table, column)
-
-    def after(self, conn, migration, state):
-        problems = ["%s.%s is still there" % (self.table, self.column)] if self.column in _columns(conn, self.table) else []
-        if conn.execute("SELECT 1 FROM change_rows WHERE table_name = ? AND column_name = ? LIMIT 1",
-                        (self.table, self.column)).fetchone():
-            problems.append("a recorded change still names the column")
-        return problems
-
-
-class SyncRunsFolded(Check):
-    """Migration 32: `sync_runs` is gone, and `job_runs` holds one run of the job "sync-whole" more if the table held a sync of
-    the whole library that left it in step, the newest, with its times, and none more otherwise."""
-    name = "the newest whole sync in step is a run of job_runs, and sync_runs is gone"
-
-    def before(self, conn, migration):
-        if "sync_runs" not in _tables_now(conn):
-            return None
-        newest = conn.execute("SELECT started, finished FROM sync_runs WHERE whole = 1 AND in_step = 1"
-                              " ORDER BY id DESC LIMIT 1").fetchone()
-        return {"newest": newest, "runs": _count(conn, "job_runs")}
-
-    def after(self, conn, migration, state):
-        problems = ["sync_runs is still there"] if "sync_runs" in _tables_now(conn) else []
-        if state is None:
-            return problems
-        runs = _count(conn, "job_runs")
-        expected = state["runs"] + (1 if state["newest"] else 0)
-        if runs != expected:
-            problems.append("job_runs had %d run(s) and has %d, not %d" % (state["runs"], runs, expected))
-        if state["newest"]:
-            held = conn.execute("SELECT started, finished, outcome FROM job_runs WHERE job = ? ORDER BY id DESC LIMIT 1",
-                                (SYNC_WHOLE_JOB,)).fetchone()
-            if held != tuple(state["newest"]) + ("done",):
-                problems.append("the newest whole sync in step is not the newest run of %s" % SYNC_WHOLE_JOB)
         return problems
 
 
@@ -1091,119 +705,12 @@ def _journal_rows(conn, seen, moved, made):
 
 
 MIGRATIONS = (
-    Migration(BASELINE, "the baseline: a new library, as migration 14 left one", _baseline, ADDITIVE,
+    Migration(BASELINE, "the baseline: a new library, as migration 32 left one", _baseline, ADDITIVE,
               "makes every table, index and trigger of a new library in one transaction; a library below it is refused, not "
-              "converted (steps 1 to 14 were deleted on 2026-10-15)",
+              "converted (steps 1 to 32 were deleted on 2026-10-15)",
               (),
               (RowsKept(),) + STANDARD),
-    Migration(15, "the folders asked to be added", _added_folders, ADDITIVE,
-              "adds the added_folders table, empty",
-              ("added_folders",),
-              (RowsKept(),) + STANDARD),
-    Migration(16, "the photo files found damaged", _damaged_files, ADDITIVE,
-              "makes nothing now (it made damaged_files, which migration 31 drops)",
-              (),
-              (RowsKept(),) + STANDARD),
-    Migration(17, "the photos whose faces are to be detected", _faces_pending, ADDITIVE,
-              "adds the faces_pending table, empty",
-              ("faces_pending",),
-              (RowsKept(),) + STANDARD),
-    Migration(18, "the library's roots", _roots, ADDITIVE,
-              "adds the roots table, empty: no path changes until the owner adopts a root",
-              ("roots",),
-              (RowsKept(),) + STANDARD),
-    Migration(19, "the tables the library views stand on", _derived_tables, ADDITIVE,
-              "adds photo_tags, folders and photo_folder, derived from the photos' rows; nothing that "
-              "was there changes",
-              ("photo_tags", "folders", "photo_folder"),
-              (RowsKept(), DerivedAgree()) + STANDARD),
-    Migration(20, "photos by when they were taken", _taken_indexes, ADDITIVE,
-              "adds idx_photos_taken and idx_photos_year, indexes the library views page by; no row of any table changes, "
-              "so it touches none and blocks no undo",
-              (),
-              (RowsKept(),) + STANDARD),
-    Migration(21, "people by their node's id", _person_ids, ADDITIVE,
-              "adds faces.tag_id and photo_people.tag_id, filled from each row's name and the tag tree, and "
-              "idx_faces_person; every read still reads the name",
-              ("faces", "photo_people"),
-              (RowsKept(), PersonIdsAgree()) + STANDARD),
-    Migration(22, "photos by file name", _name_index, ADDITIVE,
-              "adds idx_photos_name, the index a library view orders by file name with; no row of any table changes, "
-              "so it touches none and blocks no undo",
-              (),
-              (RowsKept(),) + STANDARD),
-    Migration(23, "photos by caption", _caption_index, ADDITIVE,
-              "adds idx_photos_caption, the index a library view orders by caption with; no row of any table changes, "
-              "so it touches none and blocks no undo",
-              (),
-              (RowsKept(),) + STANDARD),
-    Migration(24, "photos by their words", _search_index, ADDITIVE,
-              "adds the word index a search matches words in (search_words, search_names and their FTS5 shadow tables) "
-              "and the trigger that takes a deleted photo's rows of it, derived from the photos' rows; nothing that was "
-              "there changes",
-              ("search_words", "search_names"),
-              (RowsKept(), SearchIndexAgrees()) + STANDARD),
-    Migration(25, "the photos whose faces were detected", _faces_detected, ADDITIVE,
-              "adds the faces_detected table, empty: a photo indexed before it has its faces detected once more by "
-              "the next Suggest that looks at it",
-              ("faces_detected",),
-              (RowsKept(),) + STANDARD),
-    Migration(26, "the ids folders carry", _folder_ids, ADDITIVE,
-              "makes nothing now (it made library_identity and folder_ids, both empty, which migration 30 drops)",
-              (),
-              (RowsKept(),) + STANDARD),
-    Migration(27, "photos by their camera and lens", _camera_words, ADDITIVE,
-              "makes nothing now (it made the FTS5 table search_gear, which migration 30 drops)",
-              (),
-              (RowsKept(),) + STANDARD),
-    Migration(28, "people read by id, and the names set aside", _person_indexes, ADDITIVE,
-              "adds idx_faces_tag and idx_photo_people_tag, the indexes a person is read by id with, and "
-              "name_review_dismissals, empty, which migration 31 drops; no row of any table changes, and a change "
-              "journaled before it can still be undone",
-              (),
-              (RowsKept(),) + STANDARD),
-    Migration(29, "a person that faces name is not deleted", _person_tag_guard, ADDITIVE,
-              "adds the trigger person_tag_not_deleted_while_named, which aborts the delete of a tag-tree node a face names, "
-              "and makes the faces' generation move when a face's person id is written; triggers only, no row of any table "
-              "changes, and a change journaled before it can still be undone",
-              (),
-              (RowsKept(),) + STANDARD),
-    Migration(30, "the tables nothing reads", _drop_unused, DESTRUCTIVE,
-              "drops search_gear (the camera words), photo_meta, folder_ids and library_identity, and takes the journal's "
-              "one marker change of folder_ids out of its history; one full backup first",
-              DROPPED,
-              (RowsKept("photos", "faces", "tag_taxonomy", "photo_people", "photo_tags", "folders", "photo_folder",
-                        "suggestions", "settings", "roots"), UnusedTablesGone(DROPPED, shadows=("search_gear_",))) + STANDARD),
-    Migration(31, "the names set aside and the damaged files", _drop_dismissals_and_damaged, DESTRUCTIVE,
-              "drops name_review_dismissals and damaged_files, empty in every live library, and takes the rows of any recorded "
-              "change that names them out of the journal; one full backup first",
-              DROPPED_31,
-              (RowsKept("photos", "faces", "tag_taxonomy", "photo_people", "photo_tags", "folders", "photo_folder",
-                        "suggestions", "settings", "roots"), UnusedTablesGone(DROPPED_31)) + STANDARD),
-    Migration(32, "no is_people, and syncs among the job runs", _drop_is_people_and_fold_syncs, DESTRUCTIVE,
-              "drops tag_taxonomy.is_people by rebuilding the table (every id, row, index and trigger kept) and folds sync_runs "
-              "into job_runs, keeping the newest whole sync that left the library in step and dropping the other records; one "
-              "full backup first",
-              ("tag_taxonomy", "sync_runs", "job_runs"),
-              (RowsKept("photos", "faces", "tag_taxonomy", "photo_people", "photo_tags", "folders", "photo_folder",
-                        "suggestions", "settings", "roots"), ColumnGone("tag_taxonomy", "is_people"),
-               SyncRunsFolded(), UnusedTablesGone(("sync_runs",))) + STANDARD),
 )
-
-#: The migrations that only DROP tables nothing journaled names, and the tables each drops: they change no row a recorded
-#: change holds, so (like an ADDITIVE one that touches none) they block no undo of a change made before them
-#: (journal.schema_gap_blocker). Holds the declaration to what the migration drops: tests/test_unused_tables.py.
-ONLY_DROPS = {30: DROPPED, 31: DROPPED_31}
-# Migration 32 rebuilds a journaled table to drop a column, so it is not in ONLY_DROPS: it is in COLUMNS_DROPPED, which says
-# the same of a column.
-
-#: The columns a migration adds to a table the journal keys that the journal derives
-#: (derived when it added them) -- {version: {table: columns}}. Such a migration changes nothing an
-#: older change's rows mean: an undo writes the columns it recorded and the derived ones are made
-#: again from them (journal._derive), so it blocks no undo of a change made before it
-#: (journal.schema_gap_blocker). Version 21's `faces.tag_id` was derived from the name then; it is the
-#: person since 29 (journal.cache_columns). tests/test_person_ids.py holds each to the columns it really adds.
-ADDS_DERIVED_COLUMNS = {21: {"faces": ("tag_id",)}}
 
 LATEST = MIGRATIONS[-1].version
 
@@ -1391,7 +898,7 @@ class _Run:
                 conn.rollback()
                 return False
             from tagpup.store import journal   # the journal imports this module
-            journaled = migration.kind == DATA and not self.made and journal.has_journal(conn)
+            journaled = migration.kind == DATA and not self.made
             summary = {"kind": migration.kind}
             if migration.kind == DESTRUCTIVE or (migration.kind == DATA and not journaled):
                 # A change of data the journal cannot hold (a library with none) is backed up like one that destroys.

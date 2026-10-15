@@ -1,24 +1,20 @@
 """The derived tables the library views stand on (tagpup.store.derived; docs/ARCHITECTURE.md,
 phase 9a): photo_tags (keywords as tag-tree node ids), folders and photo_folder (the folder tree),
-made from the photos by rebuild_all and by migration 19.
+made from the photos by rebuild_all.
 
 Rows are made as the indexer makes them (tests/photo_rows.py: what a read gives, recorded by
 store.photos.record_indexed), never through the module under test. Fictional names only: the
 libraries are photographs of real people, many of them minors.
 """
-import json
 import os
 import sys
 import unittest
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
-import migration_names  # noqa: E402
 import photo_rows  # noqa: E402
-from test_migrations import at_version  # noqa: E402
 
 from tagpup.store import db, derived, photos, schema, taxonomy  # noqa: E402
 
@@ -370,142 +366,15 @@ class WhatRebuildingDoes(ALibrary):
         self.assertEqual(["Trips/Coast"], self.tags_of(one))
 
 
-class TheMigration(unittest.TestCase):
-    def library_at(self, version):
-        home = own_home.for_test(self)
-        path = home.library("harbour.db")
-        at_version(path, version)
-        return home, path
-
-    def seed(self, path):
-        """Photos as the indexer recorded them at version 18, and a tree."""
-        conn = db.connect(path)
-        try:
-            for tag in ("Trips/Coast", "People/Rowan Thackeray"):
-                taxonomy.add_path(conn, tag)
-            root = os.path.dirname(path)
-            for n in range(6):
-                photo_rows.add_read(conn, os.path.join(root, "Pictures", "2024" if n % 2 else "2025", "p%d.jpg" % n),
-                                    {"XMP:Subject": ["Trips/Coast", "Unknown/Thing"] if n % 3 else [],
-                                     "XMP:Rating": n})
-            conn.commit()
-        finally:
-            conn.close()
-
-    def look(self, path, sql):
-        conn = db.connect(db.readonly_uri(path), uri=True)
-        try:
-            return conn.execute(sql).fetchall()
-        finally:
-            conn.close()
-
-    def test_a_library_at_18_gets_the_tables_filled_from_its_rows_and_changes_nothing_else(self):
-        _home, path = self.library_at(18)
-        self.seed(path)
-        # The columns that were there: a later migration (21) adds one to faces.
-        columns = {table: ", ".join(row[1] for row in self.look(path, "PRAGMA table_info(%s)" % table))
-                   for table in ("photos", "tag_taxonomy", "faces", "settings")}
-        before = {table: self.look(path, "SELECT %s FROM %s ORDER BY 1" % (columns[table], table)) for table in columns}
-        total = len(before["photos"])
-        lists = [json.loads(tags or "[]") for (tags,) in self.look(path, "SELECT tags FROM photos")]
-        self.assertGreater(total, 6, "the six seeded, and the two the older library holds")
-        schema._current.clear()
-        self.assertEqual(migration_names.after(18), schema.ensure(path))
-        self.assertEqual(before, {table: self.look(path, "SELECT %s FROM %s ORDER BY 1" % (columns[table], table))
-                                  for table in before})
-        conn = db.connect(db.readonly_uri(path), uri=True)
-        try:
-            self.assertEqual([], derived.problems(conn))
-            self.assertEqual(total, conn.execute("SELECT COUNT(*) FROM photo_folder").fetchone()[0])
-            nodes = {tag for (tag,) in conn.execute("SELECT tag FROM tag_taxonomy")}
-            self.assertEqual(sum(1 for tags in lists for tag in set(tags) if tag in nodes),
-                             conn.execute("SELECT COUNT(*) FROM photo_tags").fetchone()[0])
-            self.assertEqual({"Unknown/Thing": 4}, dict(derived.tags_without_a_node(conn)))
-        finally:
-            conn.close()
-
-    def test_it_is_recorded_in_the_journal_as_additive_and_needs_no_backup(self):
-        home, path = self.library_at(18)
-        self.seed(path)
-        schema._current.clear()
-        schema.ensure(path)
-        entry = [e for e in journal_history(path) if e["operation"].startswith("migration 19")][0]
-        self.assertEqual("additive", entry["summary"]["kind"])
-        self.assertIn("nothing that was there changed", entry["summary"]["checks"])
-        self.assertIsNone(entry["summary"].get("backup"))
-
-    def test_interrupted_part_way_it_leaves_the_library_at_18_and_a_second_run_does_it(self):
-        _home, path = self.library_at(18)
-        self.seed(path)
-        schema._current.clear()
-        with mock.patch.object(derived, "rebuild_all", side_effect=RuntimeError("the power went")):
-            with self.assertRaises(RuntimeError):
-                schema.ensure(path)
-        self.assertEqual([(18,)], self.look(path, "SELECT MAX(version) FROM schema_version"))
-        names = {name for (name,) in self.look(path, "SELECT name FROM sqlite_master")}
-        self.assertFalse(names & {"photo_tags", "folders", "photo_folder", "derived_go_with_their_photo",
-                                  "photo_tags_go_with_their_node", "idx_photo_tags_tag"}, "all or nothing")
-        schema._current.clear()
-        self.assertEqual(migration_names.after(18), schema.ensure(path))
-        self.assertEqual([(schema.LATEST,)], self.look(path, "SELECT MAX(version) FROM schema_version"))
-
-    def test_a_failed_check_rolls_it_back(self):
-        _home, path = self.library_at(18)
-        self.seed(path)
-        schema._current.clear()
-        with mock.patch.object(derived, "problems", return_value=["1 photo(s) are wrong"]):
-            with self.assertRaises(schema.CheckFailed) as failed:
-                schema.ensure(path)
-        self.assertIn("derived tables agree with the photos", str(failed.exception))
-        self.assertEqual([(18,)], self.look(path, "SELECT MAX(version) FROM schema_version"))
-
-    def test_a_snapshot_from_before_it_is_migrated_again_when_opened(self):
-        home, path = self.library_at(18)
-        self.seed(path)
-        snapshot = home.library("snapshot-18.db")
-        conn = db.connect(path)
-        try:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        finally:
-            conn.close()
-        import shutil
-        shutil.copyfile(path, snapshot)
-        schema._current.clear()
-        schema.ensure(path)
-        shutil.copyfile(snapshot, path)   # restored over the migrated library
-        schema._current.clear()
-        self.assertEqual(migration_names.after(18), schema.ensure(path))
-        self.assertEqual(self.look(path, "SELECT COUNT(*) FROM photos")[0][0],
-                         self.look(path, "SELECT COUNT(*) FROM photo_folder")[0][0])
-
-    def test_two_openers_apply_it_once(self):
-        _home, path = self.library_at(18)
-        self.seed(path)
-        schema._current.clear()
-        first = schema.ensure(path)
-        schema._current.clear()
-        second = schema.ensure(path)
-        self.assertEqual((migration_names.after(18), []), (first, second))
-
-    def test_a_library_made_new_has_the_tables_empty(self):
+class ANewLibrary(unittest.TestCase):
+    def test_has_the_tables_empty(self):
         home = own_home.for_test(self)
         path = home.library("fresh.db")
         schema.ensure(path)
-        for table in derived.TABLES:
-            self.assertEqual([(0,)], self.look(path, "SELECT COUNT(*) FROM %s" % table), table)
-
-    def test_nothing_is_written_to_a_library_that_has_not_the_tables_yet(self):
-        _home, path = self.library_at(18)
-        self.seed(path)
-        conn = db.connect(path)
+        conn = db.connect(db.readonly_uri(path), uri=True)
         try:
-            self.assertFalse(derived.present(conn))
-            self.assertEqual(0, derived.refresh_photos(conn, [1, 2, 3]))
-            self.assertEqual(0, derived.record(conn, 1, "x", []))
-            self.assertEqual((0, 0), derived.rebuild_folders(conn))
-            self.assertIsNone(derived.tree_before(conn))
-            self.assertEqual(0, derived.follow_tree(conn, None))
-            self.assertEqual(0, derived.follow_nodes(conn, ["Trips"]))
+            for table in derived.TABLES:
+                self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM %s" % table).fetchone()[0], table)
         finally:
             conn.close()
 

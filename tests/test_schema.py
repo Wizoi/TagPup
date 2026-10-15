@@ -2,8 +2,8 @@
 
 There were four: PhotoIndex.load, TagTuner's start-up, the desktop runner and the tag
 tree, each with its own idea of the schema (docs/findings.md, #48). A new library is made by the baseline
-(migration 14) and brought to the latest by the steps after it; a library below the baseline is refused
-(tests/test_migrations.py, ALibraryBelowTheBaseline).
+(schema 32) whole; a library below the baseline is refused and one behind a later step is brought forward
+(tests/test_migrations.py, which holds the runner and the baseline's refusals).
 """
 import os
 import shutil
@@ -16,8 +16,8 @@ from unittest import mock
 from tagpup.store import db, generations, schema
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import migration_names  # noqa: E402
 from face_rows import add_face  # noqa: E402
-from test_migrations import at_version  # noqa: E402
 
 
 def tables(conn):
@@ -144,44 +144,13 @@ class ALibraryRestoredInPlace(SchemaTestCase):
         # a library restored from before the migration stayed unmigrated (#56).
         schema.ensure(self.db_path)
         old = os.path.join(self.dir, "backup.db")
-        at_version(old, schema.BASELINE)
-        shutil.copyfile(old, self.db_path)
-        schema.ensure(self.db_path)
-        self.assertEqual(schema.LATEST, schema.version(self.connect()))
-
-
-class ALibraryAtTheBaseline(SchemaTestCase):
-    def setUp(self):
-        super().setUp()
-        at_version(self.db_path, schema.BASELINE)
-
-    def test_is_copied_once_before_it_is_migrated(self):
-        # However many pending migrations destroy something, one copy from before the
-        # first holds the library as it was for all of them: a second was another 3 GB
-        # of photo_index, and another of the five kept (#76).
-        destroying = [m for m in schema.MIGRATIONS if m.kind == schema.DESTRUCTIVE]
-        self.assertGreater(len(destroying), 1)
-        schema.ensure(self.db_path)
-        self.assertEqual(1, len(os.listdir(os.path.join(self.dir, "backups"))))
-
-    def test_opened_by_many_at_once_is_migrated_once(self):
-        errors = []
-
-        def open_it():
-            try:
-                schema._ensure(self.db_path)   # past the in-process memory, as another process would be
-            except Exception as e:  # noqa: BLE001 - collected and reported below
-                errors.append(e)
-
-        threads = [threading.Thread(target=open_it) for _ in range(4)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        self.assertEqual([], errors)
-        rows = self.connect().execute("SELECT version FROM schema_version ORDER BY version").fetchall()
-        self.assertEqual([(m.version,) for m in schema.MIGRATIONS], rows)
-        self.assertEqual(1, len(os.listdir(os.path.join(self.dir, "backups"))))
+        shutil.copyfile(self.db_path, old)
+        with migration_names.ahead():
+            self.assertEqual(1, len(schema.ensure(self.db_path)))   # migrated to the step, and remembered as current
+            self.assertEqual(33, schema.version(self.connect()))
+            shutil.copyfile(old, self.db_path)   # the restore: the file at the baseline again, under a library found current
+            self.assertEqual(1, len(schema.ensure(self.db_path)))
+            self.assertEqual(33, schema.version(self.connect()))
 
 
 class Generations(SchemaTestCase):

@@ -98,20 +98,6 @@ class GroupNotPerson(PersonProblem):
         super().__init__("%s is a group of people, not a person." % tag)
 
 
-def present(conn):
-    """Has the library on `conn` the column (migration 21)? Remembered on the connection once true:
-    the migration adds it mid-connection, so a False is asked again."""
-    if getattr(conn, "person_ids_ready", False):
-        return True
-    found = all(COLUMN in {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)} for table in TABLES)
-    if found:
-        try:
-            conn.person_ids_ready = True
-        except AttributeError:
-            pass   # a connection that is not db.connect's cannot remember
-    return found
-
-
 def wire(ref):
     """A person as it travels in a plan, a job's state or a request: the id of the node (None for a Ref or a Person with none:
     a row from before names had ids is not a person). A typed name is passed on as it is, for `target` to resolve. `ref` is a Ref,
@@ -373,7 +359,7 @@ def follow_faces(conn, photo_ids, known=None):
     leaf, the id of a node that is gone is dropped; a face with a name and no id stays an unresolved name (follow_tree is the
     only thing that links one, when a node is added). Returns faces changed.
     idx_faces_photo_id finds them; the embedding is not read."""
-    if not photo_ids or not present(conn):
+    if not photo_ids:
         return 0
     known = known or read(conn)
     updates = []
@@ -390,8 +376,6 @@ def follow_faces(conn, photo_ids, known=None):
 def follow_listed(conn, photo_ids, known=None):
     """Settle each person listed for the photos `photo_ids` (photo_people), as follow_faces does. Every photo, without
     `photo_ids`. Returns rows changed."""
-    if not present(conn):
-        return 0
     if photo_ids is None:
         return _sync_table(conn, "photo_people", known or read(conn))
     if not photo_ids:
@@ -426,34 +410,11 @@ def _sync_table(conn, table, known):
     return changed
 
 
-def fill(conn, known=None):
-    """Give every face and every listed person that has a name and no id the one person that name is -- and nothing else: no
-    cached name is rewritten, no id that is set is touched. Migration 21's backfill (it adds the column, so every id is NULL, and
-    "nothing that was there changed" is one of its checks), and what a restored snapshot from before it needs. One lookup per
-    distinct name, never per row. Returns {table: rows changed}."""
-    if not present(conn):
-        return {table: 0 for table in TABLES}
-    known = known or read(conn)
-    changed = {}
-    for table in TABLES:
-        changed[table] = 0
-        for name, held, _rows in _pairs(conn, table):
-            if held is not None:
-                continue
-            wanted = known.id_of(name)
-            if wanted is not None:
-                changed[table] += conn.execute("UPDATE %s SET tag_id = ? WHERE name = ? AND tag_id IS NULL" % table,
-                                               (wanted, name)).rowcount
-    return changed
-
-
 def sync(conn, known=None):
     """Settle every face and every listed person (People.settle): the migration's backfill, the repair, and what
     follows an edit that changed who the tree's people are. One lookup per distinct pair of name and id, never per
     row: the pairs are read (from the index, for faces), and only a pair that is wrong is written. Returns {table:
     rows changed}."""
-    if not present(conn):
-        return {table: 0 for table in TABLES}
     known = known or read(conn)
     changed = {table: _sync_table(conn, table, known) for table in TABLES}
     # A face whose name was taken off by a writer that did not follow it.
@@ -466,8 +427,6 @@ def follow_tree(conn, before):
     that hold its id (UPDATE ... WHERE tag_id = ?, by idx_faces_tag); a node gone takes its faces' id off (a name left, which
     the doctor lists) and its listed people away. Nothing links a name to a person: a row has the id or is not a person (owner,
     2026-10-11). An edit that renames or removes nothing costs two reads of the tree. Returns rows changed."""
-    if not present(conn):
-        return 0
     after = read(conn)
     if after == before:
         return 0
@@ -496,7 +455,7 @@ def release(conn, node_ids):
     """The rows that name the nodes `node_ids` let go of them: the journal's undo of a node's insert takes the node away; the
     listed people it was given are not listed (they are worked out again from the photos), the faces go back to being a name.
     The caller refused first for a face a person named. Returns rows changed."""
-    if not node_ids or not present(conn):
+    if not node_ids:
         return 0
     changed = 0
     for chunk in _chunks(node_ids):
@@ -525,8 +484,6 @@ def out_of_step(conn, table, examples=5, spelling=True):
     id is not one: it is an unresolved name, see `unresolved` -- and a few of their ids: face ids, or photo ids for photo_people). Reads
     only. Without `spelling`, the cached name's spelling is let be: only an id that is missing, or of a node gone (migration
     21's own post-condition, which changes no name)."""
-    if not present(conn):
-        return Disagreement(0, [])
     known = read(conn)
     rows, found = 0, []
     key = "id" if table == "faces" else "photo_id"
@@ -562,8 +519,6 @@ def unresolved(conn):
     until the owner renames the person or makes the rows' person by hand.
     A row that holds an id is a person already, whatever its name is. Reported, not broken: no id is guessed, the
     names are left as they are, and the tree is the owner's to settle. Reads only."""
-    if not present(conn):
-        return Unresolved({}, {}, {})
     known = read(conn)
     none, branch, one = collections.Counter(), {}, {}
     for table in TABLES:

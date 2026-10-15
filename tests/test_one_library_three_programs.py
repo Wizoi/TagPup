@@ -29,7 +29,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 from free_port import free_port  # noqa: E402
-from test_migrations import at_version  # noqa: E402
+import migration_names  # noqa: E402
 
 import tagpup_web  # noqa: E402
 from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
@@ -126,7 +126,8 @@ class OneLibrary(unittest.TestCase):
 
     def test_an_mcp_look_at_a_library_one_migration_behind_does_not_migrate_it(self):
         behind = self.home.library("regatta.db")
-        at_version(behind, schema.LATEST - 1)
+        schema.ensure(behind)
+        self.enterContext(migration_names.ahead())   # the code knows a step the library has not had
         with open(behind, "rb") as handle:
             before = handle.read()
 
@@ -139,7 +140,7 @@ class OneLibrary(unittest.TestCase):
         self.assertEqual(3, len(asked))
         with open(behind, "rb") as handle:
             self.assertEqual(before, handle.read(), "a look migrated the library")
-        self.assertEqual(schema.LATEST - 1, schema.version_of(behind))
+        self.assertEqual(schema.BASELINE, schema.version_of(behind))
 
     def test_the_clis_sync_and_the_servers_sync_over_one_drift_write_it_once(self):
         folder = os.path.join(self.home.root, "Regatta")

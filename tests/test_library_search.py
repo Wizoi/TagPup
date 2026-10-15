@@ -212,16 +212,7 @@ class TheShapeOfASearch(Library):
         with self.assertRaises(Refused):
             library_view.ids(self.vl.library, "any_of", json.dumps([member("search", {})]))
 
-    def test_words_of_a_library_without_the_word_index_are_refused_with_a_sentence(self):
-        # A library not brought up to migration 24 (opened to look, or held by another program).
-        for table in ("search_words", "search_names"):
-            self.vl.conn.execute("DROP TABLE %s" % table)
-        self.vl.conn.commit()
-        with self.assertRaises(Refused) as caught:
-            self.found(search(words="harbour"))
-        self.assertIn("word index", str(caught.exception))
-        with self.assertRaises(store.NoWordIndex):
-            self.found(search(all_of=[member("person", PEOPLE + WREN)], words="harbour"))
+    def test_words_that_say_nothing_ask_nothing_of_the_index(self):
         self.assertEqual(self.of("person", PEOPLE + WREN), set(self.found(search(all_of=[member("person", PEOPLE + WREN)], words=" - "))["ids"]),
                          "words that say nothing ask nothing of the index")
 

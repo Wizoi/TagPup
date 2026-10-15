@@ -26,17 +26,18 @@ RETIRED = frozenset({
     82,    # migration below the baseline deleted (migration 4's stored form of a never-indexed photo); its test went with it
     83,    # migration below the baseline deleted (migration 4 with foreign keys on); its test went with it
     96,    # migration below the baseline deleted (migration 7's saved suggestions under two folders); its test went with it
+    753,   # migration below the baseline deleted (migration 24's word index being made, answered 503); its test went with it
 })
 
 SCENARIOS = {
     "D1": ("data", "A library one migration behind, or newer than the code, is served or refused at start without losing a row."),
     "D2": ("data", "A change is one journaled step and Undo puts every row of it back."),
     "D3": ("data", "A crash between writing and done, or a restart part-way through a write, is finished at the next start."),
-    "D4": ("data", "A snapshot restore puts the library back as it was, the monthly from before roots included, under a running index."),
+    "D4": ("data", "A snapshot restore puts the library back as it was, a monthly from before the library had roots included, under a running index; one below the baseline is refused."),
     "D5": ("data", "Every writer rebuilds the derived rows in its own transaction."),
     "D6": ("data", "A library's settings are its own: stamped, changed, undone, and read by the next run."),
     "D7": ("data", "The folders a library holds (roots) are stored, verified and followed through the same flows with and without them."),
-    "D8": ("data", "A kept old snapshot migrates to the latest: interrupted, two openers, a failing check, a backup, an older app, and it is undoable."),
+    "D8": ("data", "A library kept at the baseline meets an additive and a destructive step: interrupted, two openers, a failing check, a backup, an older app, undoable; one below the baseline is refused untouched."),
     "P1": ("people", "A person is the id of a tag-tree node: two processes naming, renaming or merging at once leave one answer."),
     "P2": ("people", "Names, tags and faces stay in step across photo files, jobs and the CLI's journaled apply."),
     "P3": ("people", "Identify faces: a cluster is named, ignored or split, and the page shows what the server says."),
@@ -77,7 +78,7 @@ SCENARIOS = {
 
 #: scenario id -> its scenario files; a file listed under more than one runs more than one scenario (the first is its owner's).
 _SCENARIO_FILES = {
-    "D1": "test_migration_28_and_the_newer_library test_newer_library_guard_in_a_long_lived_process",
+    "D1": "test_a_library_from_a_newer_tagpup test_newer_library_guard_in_a_long_lived_process",
     "D2": "test_journal test_maintenance",
     "D3": "test_journal test_a_crash_part_way_is_settled_at_the_next_start",
     "D4": "test_snapshots",
@@ -149,8 +150,7 @@ _FILES = {
             "test_mcp_photo_against_file test_path_locker "
             "test_roots_unplaced test_roots_verify test_search_words "
             "test_services_refuse_what_the_rules_refuse "
-            "test_sync_records test_the_tree_is_the_librarys test_unused_tables test_unused_tables_31 "
-            "test_unused_tables_32 test_validation test_view_indexes"
+            "test_sync_records test_the_tree_is_the_librarys test_validation test_view_indexes"
         ),
         "migration": "test_a_library_that_cannot_be_migrated_is_still_served test_schema",
         "guard": "test_db_access test_derived_writers test_journal_keys_and_cascades test_photo_rows test_sandbox_roots",

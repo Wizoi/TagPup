@@ -18,7 +18,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import own_home  # noqa: E402
-import migration_names  # noqa: E402
 import photo_rows  # noqa: E402
 from test_service_tags import TreeCase  # noqa: E402
 
@@ -467,27 +466,6 @@ class TheJournalsWrites(WithALibrary):
         self.assertTrue(rehearsal.exact, rehearsal.differences)
         self.assertTrue(rehearsal.derived_exact)
         self.assertEqual(self.held, self.dump(), "a rehearsal writes nothing")
-
-    def test_the_undo_of_a_change_made_before_the_derived_tables_existed_rebuilds_them(self):
-        """A change made at schema 18 is undone at 19 (journal.schema_gap_blocker): the undo's own
-        rebuild covers the photos it wrote."""
-        from test_migrations import at_version
-        from unittest import mock
-        old = self.home.library("old.db")
-        at_version(old, 18)
-        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(18)), mock.patch.object(schema, "LATEST", 18):
-            schema._current.clear()
-            applied = journal.apply(old, "retag", [journal.update(
-                "photos", (1,), {"tags": '["People/Wren Halloway"]'}, {"tags": '["Trips/Coast"]'})])
-        schema._current.clear()
-        self.assertEqual(migration_names.after(18),
-                         schema.ensure(old))
-        journal.undo(old, applied.change_id)
-        conn = db.connect(db.readonly_uri(old), uri=True)
-        try:
-            self.assertEqual([], derived.problems(conn))
-        finally:
-            conn.close()
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")

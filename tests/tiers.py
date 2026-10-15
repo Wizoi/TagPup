@@ -62,7 +62,7 @@ SCENARIO = frozenset({
     # Two real processes on one library, and folders renamed or marked on disk.
     "test_people_by_id_at_once",
     "test_two_cousins_called_alike",
-    "test_migration_28_and_the_newer_library",
+    "test_a_library_from_a_newer_tagpup",
     # Roots: the folders a library holds, through a whole scenario.
     "test_roots_scenarios",
     # Pages run against the real apps (node + jsdom, tests/page_server.py), not a hand-written fake.

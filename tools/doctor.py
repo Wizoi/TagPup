@@ -93,7 +93,6 @@ def report(db_path, show=0, out=print):
         nameless = checks.names_without_a_person(conn)
         at_the_top = checks.people_at_the_top(conn)
         under_a_person = checks.keywords_under_a_person(conn)
-        words = search_index.present(conn)
     finally:
         conn.close()
 
@@ -108,8 +107,7 @@ def report(db_path, show=0, out=print):
             for example in check.examples[:show]:
                 out("    %s" % example)
     out("")
-    if words:
-        out(search_index.LIMITS + " (#752).")
+    out(search_index.LIMITS + " (#752).")
     if unplaced:
         out("this machine does not say where the library's roots are, so its photos' paths cannot be read "
             "(what needs them is not reported): %s" % unplaced)
@@ -189,16 +187,10 @@ def rebuild_derived(db_path, apply=False, out=print):
     _refuse_newer(db_path)
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        version = schema.version(conn)
-        if version < 19:
-            out("the library is at schema %d: the derived tables are made by migration 19, which opening it with "
-                "TagPup or the CLI applies" % version)
-            return 1
         derived_problems = derived.problems(conn)
         tables = list(derived_problems)
-        listed = people.stale(conn)   # photo_people is migration 6's; this tool starts at 19
+        listed = people.stale(conn)
         ids = _person_ids_wrong(conn)
-        has_ids = person_ids.present(conn)
     finally:
         conn.close()
     if listed:
@@ -206,7 +198,7 @@ def rebuild_derived(db_path, apply=False, out=print):
     for line in tables + ids:
         out("  " + line)
     if not tables and not ids:
-        out("the derived tables are what the photos say" + (", and every person's name what their node is called" if has_ids else ""))
+        out("the derived tables are what the photos say, and every person's name what their node is called")
         return 0
     if not apply:
         out("a dry run: nothing was written. --apply makes them so; only derived rows and columns change")

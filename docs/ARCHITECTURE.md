@@ -37,7 +37,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | Derived tables (`photo_tags`, `folders`, `photo_folder`, the search words) | `tagpup/store/derived.py`, `tagpup/store/search_index.py` | `tests/test_derived_writers.py` |
 | Who is who (clustering, a face's name looking wrong) | `tagpup/core/clustering.py`, `tagpup/services/identities.py` | `tests/test_face_values_have_one_owner.py` |
 | Keeping a library in step with its folders | `tagpup/services/sync.py`, `tagpup/jobs/watching.py` | `tests/test_sync.py` |
-| A folder renamed outside the apps | `tagpup/services/sync.py` (pairs the files by name, size and modified time; a folder renamed and re-saved is reported missing and renamed back by hand) | `tests/test_sync.py`, `tests/test_unused_tables.py` |
+| A folder renamed outside the apps | `tagpup/services/sync.py` (pairs the files by name, size and modified time; a folder renamed and re-saved is reported missing and renamed back by hand) | `tests/test_sync.py` |
 | Roots (where a library's folders are, per machine) | `tagpup/services/roots*.py`, `tagpup/store/roots_check.py`, `tagpup/config.py` | `tests/test_roots*.py` |
 | The library views (grid, navigator, search) | `tagpup/services/library_view.py`, `tagpup/store/library_view.py`, `web/tagpup/` | `tests/test_library_view.py`, `tests/frontend/` |
 | A page's request, its DOM output | `web/common/api.js`, `web/common/dom.js` | `tests/frontend/` |
@@ -227,8 +227,8 @@ programs only. A moved module takes every importer with it and leaves nothing at
 
 ## Data model on one page
 
-One SQLite file per library (`data/<name>.db`, WAL, the baseline (migration 14) and the steps after it, to 32, in `tagpup.store.schema`; each runs in
-one transaction with its checks, and only a destructive one takes a backup). Columns are in
+One SQLite file per library (`data/<name>.db`, WAL, the baseline (schema 32: a new library is made whole; one below it is refused, DATABASE.md, section 10) and the
+steps after it, from 33, in `tagpup.store.schema`; each runs in one transaction with its checks, and only a destructive one takes a backup). Columns are in
 [DATABASE.md](DATABASE.md). Every table has one kind and one writer.
 
 **Ids.** A photo is `photos.id` (an integer kept across renames and moves; `path` is an attribute, and
@@ -242,7 +242,7 @@ the owner merges it into a branch); a branch is a group, never a person. A batch
 and none when it would make more than 500 (`derived.MAX_NEW_NODES_PER_BATCH`): a folder from another program with thousands
 of keywords would make thousands of tags to merge or delete by hand, each embedded by Suggest; the doctor counts them. The navigator files a top-level person under "Top level".
 A folder is the derived `folders` row (rebuilt, its integer ids change). The `folder_ids` and `library_identity`
-tables the folder markers wrote were dropped by migration 30 (owner, 2026-10-10: the marker code is deleted; the
+tables the folder markers wrote were dropped (owner, 2026-10-10: the marker code is deleted; the
 `.tagpup` files stay on disk and nothing reads them).
 
 **Roots.** `roots` (name, the share's address) holds the roots the library was adopted by (all three live libraries
@@ -375,7 +375,7 @@ Every section of the former `ARCHITECTURE.md` is in `docs/history/`, unedited. C
 | Name faces from tags | [history/ARCHITECTURE_faces_and_naming.md](history/ARCHITECTURE_faces_and_naming.md) |
 | Backlog: face regions and the expensive results in the photo file | [history/ARCHITECTURE_faces_and_naming.md](history/ARCHITECTURE_faces_and_naming.md) |
 | The library view's selection details navigate, and a photo has a way back | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |
-| Camera and lens words (the FTS5 table of them was dropped by migration 30; a camera is now found in the photos' metadata, `search_index.cameras_with`) | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |
+| Camera and lens words (the FTS5 table of them was dropped; a camera is now found in the photos' metadata, `search_index.cameras_with`) | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |
 | Backlog: which photo fields are searchable | [history/ARCHITECTURE_library_views_and_search.md](history/ARCHITECTURE_library_views_and_search.md) |
 | The owner's decisions for the three big projects | [history/ARCHITECTURE_faces_and_naming.md](history/ARCHITECTURE_faces_and_naming.md) |
 | Phase 10: Family albums from many sources | [history/ARCHITECTURE_phases.md](history/ARCHITECTURE_phases.md) |

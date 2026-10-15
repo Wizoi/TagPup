@@ -7,7 +7,7 @@ worked the id out by a rule of its own -- would leave rows whose id names someon
 fails the build on a function in tagpup/ that
 
 * writes `tag_id` of faces or photo_people anywhere but person_ids and is not one of the named few that take the pair from it
-  (schema.py adds the column, and calls person_ids to fill it); or
+  (IDS_WRITTEN_WITH_THE_PAIR below); or
 * writes a face's name (UPDATE faces SET ... name, INSERT INTO faces) or a photo's people (INSERT INTO
   or UPDATE photo_people) and neither calls person_ids nor ends in faces._rebuilt, which does.
 
@@ -117,7 +117,7 @@ class PersonIdsHaveOneOwner(unittest.TestCase):
             covered = COVERED_ELSEWHERE.get((module, name))
             if covered is not None:
                 self.assertIn(covered, self.nodes, "the function said to cover %s.%s is gone" % (module, name))
-                if not mentions(self.nodes[covered], "person_ids") and covered[1] != "_person_ids":
+                if not mentions(self.nodes[covered], "person_ids"):
                     unfollowed.append("%s.%s (by %s)" % (module, name, covered[1]))
                 continue
             if mentions(node, "person_ids") or any(mentions(node, d) for d in DELEGATES):
@@ -130,7 +130,6 @@ class PersonIdsHaveOneOwner(unittest.TestCase):
             self.assertTrue(mentions(self.nodes[(module, delegate)], "person_ids"), delegate)
         self.assertTrue(mentions(self.nodes[("tagpup/store/people.py", "tree_edit")], "follow_tree"))
         self.assertTrue(mentions(self.nodes[("tagpup/store/journal.py", "_derive")], "person_ids"))
-        self.assertTrue(mentions(self.nodes[("tagpup/store/schema.py", "_person_ids")], "person_ids"))
 
 
 if __name__ == "__main__":

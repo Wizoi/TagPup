@@ -1,22 +1,18 @@
-"""Migration 28 and the guard against a library from a newer TagPup (docs/ARCHITECTURE.md, "People by id, stage 2",
-phase 2; docs/findings.md, #1012, #1013).
+"""The guard against a library from a newer TagPup (docs/ARCHITECTURE.md, "People by id, stage 2", phase 2; docs/findings.md,
+#1012, #1013), and what an older app can still do with one.
 
-Migration 28 is additive: `idx_faces_tag` and `idx_photo_people_tag`, the indexes a person is read by id with
-(`WHERE tag_id = ?` scanned `idx_faces_person` whole on faces and had no index on photo_people); it made the empty
-`name_review_dismissals` too, until migration 31 dropped it. No row of any table changes, and a change journaled before it can still be undone.
-
-The guard: stage 2 turns the id/name direction round, so a version of the app from before it that opened a migrated
-library would write names without ids and read ids it does not know. `schema.ensure` refuses a library whose schema is
-newer than the app's `LATEST` -- NewerLibrary, a sentence naming the library and what to start -- and every entry point
-shows that sentence, not a traceback: the server (409 under the library's address, the picker's Create 400), the CLI,
-the MCP, the doctor, and a snapshot restore.
+Stage 2 turned the id/name direction round, so a version of the app from before it that opened a migrated library would
+write names without ids and read ids it does not know. `schema.ensure` refuses a library whose schema is newer than the
+app's `LATEST` -- NewerLibrary, a sentence naming the library and what to start -- and every entry point shows that sentence,
+not a traceback: the server (409 under the library's address, the picker's Create 400), the CLI, the MCP, the doctor, and a
+snapshot restore. The recovery tools of an older checkout (the snapshots, the journal's read, the doctor's report, the MCP's
+reads) still work on it, as it is. None of this needs a real migration: a library newer than the code is made by writing a
+version the code does not know, or by giving the code a synthetic step the other copy lacks (tests/migration_names.py).
 """
 import hashlib
 import json
 import os
 import sys
-import textwrap
-import threading
 import unittest
 from unittest import mock
 
@@ -24,13 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import migration_names  # noqa: E402
-import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
-from face_rows import add_face  # noqa: E402
-from test_migrations import at_version  # noqa: E402
 
-from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db, journal, schema  # noqa: E402
@@ -67,113 +59,6 @@ def make_newer(path, by=1):
     schema._current.clear()
 
 
-class MigrationTwentyEight(unittest.TestCase):
-    def setUp(self):
-        self.home = own_home.for_test(self)
-        self.path = self.home.library("harbour.db")
-        at_version(self.path, 27)
-        conn = db.connect(self.path)
-        try:
-            for name in ("a.jpg", "b.jpg"):
-                photo = os.path.join(self.home.root, "Pictures", "Coast", name)
-                photo_rows.add_read(conn, photo, {"EXIF:DateTimeOriginal": "2024:06:01 10:00:00"})
-                add_face(conn, photo, name="Wren Halloway")
-            conn.commit()
-        finally:
-            conn.close()
-        schema._current.clear()
-
-    def schema_rows(self):
-        return look(self.path, "SELECT type, name, tbl_name FROM sqlite_master ORDER BY type, name")
-
-    def test_a_library_at_27_gets_two_indexes_and_the_trigger_of_29_and_nothing_else(self):
-        before_schema = self.schema_rows()
-        tables = [name for (name,) in look(self.path, "SELECT name FROM sqlite_master WHERE type = 'table' "
-                                                       "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-        tables = [table for table in tables if table not in ("schema_version", "changes", "change_rows")]
-        before = {table: look(self.path, "SELECT * FROM %s" % table) for table in tables}
-        self.assertEqual(migration_names.after(27), schema.ensure(self.path))
-        added = {row for row in self.schema_rows() if row not in before_schema}
-        self.assertEqual({("index", "idx_faces_tag", "faces"), ("index", "idx_photo_people_tag", "photo_people"),
-                          ("trigger", "person_tag_not_deleted_while_named", "tag_taxonomy")}, added,
-                         "no column, no other table; the trigger is migration 29's")
-        self.assertEqual(before, {table: look(self.path, "SELECT * FROM %s" % table) for table in tables})
-        migration = [m for m in schema.MIGRATIONS if m.version == 28][0]
-        self.assertEqual((schema.ADDITIVE, ()), (migration.kind, migration.touches))
-
-    def test_the_planner_reads_a_person_by_id_from_the_indexes(self):
-        schema.ensure(self.path)
-        faces = " ".join(row[3] for row in look(self.path, "EXPLAIN QUERY PLAN SELECT id FROM faces WHERE tag_id = ?", (1,)))
-        listed = " ".join(row[3] for row in look(
-            self.path, "EXPLAIN QUERY PLAN SELECT photo_id FROM photo_people WHERE tag_id = ?", (1,)))
-        self.assertIn("idx_faces_tag", faces)
-        self.assertIn("idx_photo_people_tag", listed)
-        self.assertNotIn("SCAN", listed)
-
-    def test_before_it_a_person_by_id_scanned_the_name_index_and_the_table(self):
-        # The gap the migration closes (#1013): at 27 neither query has an index of its own.
-        faces = " ".join(row[3] for row in look(self.path, "EXPLAIN QUERY PLAN SELECT id FROM faces WHERE tag_id = ?", (1,)))
-        listed = " ".join(row[3] for row in look(
-            self.path, "EXPLAIN QUERY PLAN SELECT photo_id FROM photo_people WHERE tag_id = ?", (1,)))
-        self.assertIn("SCAN", faces)
-        self.assertIn("SCAN", listed)
-
-    def test_a_change_made_at_27_is_still_undoable_after_it(self):
-        applied = journal.apply(self.path, "add a node", [journal.insert("tag_taxonomy", {"tag": "Fresh", "name": "Fresh"})])
-        schema._current.clear()
-        schema.ensure(self.path)
-        conn = db.connect(db.readonly_uri(self.path), uri=True)
-        try:
-            self.assertEqual([], journal.refusal(conn, applied.change_id))
-            self.assertIsNone(journal.schema_gap_blocker(27, 28))
-        finally:
-            conn.close()
-
-    def test_interrupted_it_leaves_27_and_the_next_open_runs_it_again(self):
-        def crashes(conn):
-            schema._person_indexes(conn)
-            raise RuntimeError("the power went")
-
-        broken = list(migration_names.upto(27)) + [migration_names.get(28)._replace(apply=crashes)]
-        with mock.patch.object(schema, "MIGRATIONS", tuple(broken)):
-            with self.assertRaises(RuntimeError):
-                schema.ensure(self.path)
-        names = [name for (_t, name, _tbl) in self.schema_rows()]
-        self.assertEqual(27, look(self.path, "SELECT MAX(version) FROM schema_version")[0][0])
-        self.assertNotIn("idx_faces_tag", names)
-        schema._current.clear()
-        self.assertEqual(migration_names.after(27), schema.ensure(self.path))
-        self.assertIn("idx_faces_tag", [name for (_t, name, _tbl) in self.schema_rows()])
-
-    def test_two_processes_opening_it_at_once_apply_it_once(self):
-        code = ("import sys; sys.path.insert(0, %r); from tagpup.store import schema; "
-                "print(len(schema.ensure(%r)))" % (ROOT, self.path))
-        env = dict(os.environ, TAGPUP_HOME=self.home.root)
-        running = [processes.start([sys.executable, "-c", code], env=env, stdout=-1, stderr=-1, text=True) for _ in range(2)]
-        answers = []
-        for each in running:
-            out, err = each.communicate(timeout=120)
-            self.assertEqual(0, each.returncode, err)
-            answers.append(out.strip())
-        self.assertEqual(["0", str(len(migration_names.after(27)))], sorted(answers))
-        self.assertEqual(1, len(look(self.path, "SELECT 1 FROM schema_version WHERE version = 28")))
-
-    def test_two_threads_opening_it_at_once_apply_it_once(self):
-        applied = []
-        barrier = threading.Barrier(2)
-
-        def open_it():
-            barrier.wait()
-            applied.append(len(schema.ensure(self.path)))
-
-        threads = [threading.Thread(target=open_it) for _ in range(2)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(60)
-        self.assertEqual([0, len(migration_names.after(27))], sorted(applied))
-
-
 class AnOlderAppAndALibraryItHasNotSeen(unittest.TestCase):
     def setUp(self):
         self.home = own_home.for_test(self)
@@ -197,25 +82,22 @@ class AnOlderAppAndALibraryItHasNotSeen(unittest.TestCase):
         self.assertEqual((schema.LATEST + 1, schema.LATEST), (refused.exception.found, refused.exception.known))
         self.assertEqual(before, fingerprint(self.path))
 
-    def test_the_app_before_migration_28_refuses_a_library_that_has_it(self):
-        # 28 is in the library, and the app asking is one that knows 27. NOT the installed app of today: its `_ensure`
-        # is `if version >= LATEST: return`, so it opens a 28 library as it opens any; the guard first bites at the
-        # update AFTER this one is installed (an app that has it), which is why it must not stand in the way of
-        # recovery (RecoveryOfANewerLibrary).
+    def test_the_app_before_a_step_refuses_a_library_that_has_it(self):
+        # The library has a step the app asking does not know (the guard first bites at the update AFTER the one that
+        # brought the step is installed, which is why it must not stand in the way of recovery: RecoveryOfANewerLibrary).
         path = self.home.library("older.db")
-        library_actions.create(path)
-        with mock.patch.object(schema, "MIGRATIONS", migration_names.upto(27)), mock.patch.object(schema, "LATEST", 27):
-            schema._current.clear()
-            with self.assertRaises(schema.NewerLibrary):
-                schema.ensure(path)
+        with migration_names.ahead():
+            library_actions.create(path)
+        with self.assertRaises(schema.NewerLibrary):
+            schema.ensure(path)
 
     def test_a_library_at_the_apps_own_version_or_behind_it_is_opened(self):
         path = self.home.library("current.db")
-        at_version(path, schema.LATEST - 1)
-        schema._current.clear()
-        self.assertEqual(1, len(schema.ensure(path)))
-        self.assertEqual([], schema.ensure(path))
-        self.assertIsNone(schema.newer_problem(path))
+        library_actions.create(path)
+        with migration_names.ahead():   # one step behind
+            self.assertEqual(1, len(schema.ensure(path)))
+            self.assertEqual([], schema.ensure(path))
+            self.assertIsNone(schema.newer_problem(path))
 
     def test_what_writes_through_the_store_is_refused_before_it_writes(self):
         before = fingerprint(self.path)
@@ -297,64 +179,6 @@ class EveryEntryPointSaysItInWords(unittest.TestCase):
             with self.assertRaises(SystemExit) as refused:
                 run()
             self.assertEqual(self.sentence, str(refused.exception))
-
-
-class TwoProcessesBringingALibraryAt26UpToDate(unittest.TestCase):
-    def test_the_servers_startup_thread_and_a_cli_run_migrate_27_then_28_once(self):
-        home = own_home.for_test(self)
-        path = home.library("harbour.db")
-        at_version(path, 26)
-        a_in, b_ready = os.path.join(home.root, "a_is_in_27"), os.path.join(home.root, "b_is_in_ensure")
-        # The overlap is made certain, not hoped for: the server's thread holds migration 27 (inside its transaction,
-        # with the write lock) until the CLI run has said it is about to open the library, and a while longer, so the
-        # CLI is waiting at the lock when 27 completes. Only the test's own processes patch anything.
-        server = textwrap.dedent("""
-            import os, sys, time
-            sys.path.insert(0, %(root)r)
-            from tagpup.core.library import Library
-            from tagpup.services import libraries
-            from tagpup.store import schema
-            real = [m for m in schema.MIGRATIONS if m.version == 27][0]
-
-            def hold(conn):
-                open(%(a_in)r, "w").close()
-                until = time.time() + 60
-                while not os.path.exists(%(b_ready)r) and time.time() < until:
-                    time.sleep(0.05)
-                time.sleep(3)
-                real.apply(conn)
-
-            schema.MIGRATIONS = (tuple(m for m in schema.MIGRATIONS if m.version < 27) + (real._replace(apply=hold),)
-                                 + tuple(m for m in schema.MIGRATIONS if m.version > 27))
-            libraries.bring_up_to_date_in_background([Library(%(path)r)]).join()
-            print("server done")
-            """) % {"root": ROOT, "a_in": a_in, "b_ready": b_ready, "path": path}
-        cli = textwrap.dedent("""
-            import os, sys, time
-            sys.path.insert(0, %(root)r)
-            from tagpup.services import libraries
-            until = time.time() + 60
-            while not os.path.exists(%(a_in)r) and time.time() < until:
-                time.sleep(0.05)
-            open(%(b_ready)r, "w").close()
-            print(len(libraries.bring_up_to_date(%(path)r)))
-            """) % {"root": ROOT, "a_in": a_in, "b_ready": b_ready, "path": path}
-        env = dict(os.environ, TAGPUP_HOME=home.root)
-        running = [processes.start([sys.executable, "-c", code], env=env, stdout=-1, stderr=-1, text=True)
-                   for code in (server, cli)]
-        answers = []
-        for each in running:
-            out, err = each.communicate(timeout=180)
-            answers.append(out.strip())
-            self.assertEqual(0, each.returncode, err)
-        self.assertTrue(os.path.exists(a_in) and os.path.exists(b_ready), "they overlapped")
-        self.assertEqual("0", answers[1], "the CLI run, waiting at the lock, found 27 and the rest done and applied nothing")
-        self.assertEqual([(m.version,) for m in schema.MIGRATIONS if m.version >= 27],
-                         look(path, "SELECT version FROM schema_version WHERE version >= 27 ORDER BY version"))
-        expected = migration_names.operations_after(26)
-        self.assertEqual(expected, [row[0] for row in look(path, "SELECT operation FROM changes WHERE operation LIKE 'migration %' "
-                                                                 "ORDER BY id") if row[0] in expected], "each recorded once")
-        self.assertEqual(schema.LATEST, look(path, "SELECT MAX(version) FROM schema_version")[0][0])
 
 
 class RecoveryOfANewerLibrary(unittest.TestCase):

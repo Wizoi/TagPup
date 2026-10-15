@@ -44,9 +44,8 @@ def _faces_named(conn, photo_ids):
     """{photo id: the people on its faces that are not excluded, as Refs (id, name), in detection order}."""
     named = collections.defaultdict(list)
     marks = ",".join("?" * len(photo_ids))
-    tag_id = "tag_id" if person_ids.present(conn) else "NULL"
     for held, name, photo_id in conn.execute(
-            "SELECT " + tag_id + ", name, photo_id FROM faces WHERE photo_id IN (%s) AND name IS NOT NULL AND name != ''"
+            "SELECT tag_id, name, photo_id FROM faces WHERE photo_id IN (%s) AND name IS NOT NULL AND name != ''"
             " AND COALESCE(excluded, 0) = 0 ORDER BY id" % marks, photo_ids):
         named[photo_id].append(vocabulary.Ref(held, name))
     return named
@@ -63,14 +62,13 @@ def _differences(conn, photo_ids, known, wanting=None):
     if photo_ids is None:
         photo_ids = [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos")]
     photo_ids = sorted(set(photo_ids))
-    ided = person_ids.present(conn)   # before migration 21 a person has no id to be listed by
     for start in range(0, len(photo_ids), CHUNK):
         chunk = photo_ids[start:start + CHUNK]
         marks = ",".join("?" * len(chunk))
         named = _faces_named(conn, chunk)
         held = collections.defaultdict(list)
         for photo_id, held_id, name, source in conn.execute(
-                "SELECT photo_id, " + ("tag_id" if person_ids.present(conn) else "NULL") + ", name, source FROM photo_people"
+                "SELECT photo_id, tag_id, name, source FROM photo_people"
                 " WHERE photo_id IN (%s) ORDER BY photo_id, position" % marks, chunk):
             held[photo_id].append((held_id, name, source))
         for photo_id, raw_json, tags_json in conn.execute(
@@ -83,14 +81,14 @@ def _differences(conn, photo_ids, known, wanting=None):
             if not isinstance(tags, list):
                 tags = []   # a damaged read wrote null, or a string: no keywords, as derived.keywords_of reads it
             rows = vocabulary.people_rows(raw, tags, named.get(photo_id, []), known)
-            if wanting is not None and ided:
+            if wanting is not None:
                 # A keyword that is a PATH names its leaf as a person when it sits under a face root: when it has no node
                 # (the writer of a keyword gives it one: derived.make_nodes) its leaf is no name to make a person of.
                 pathed = {vocabulary.key(vocabulary.leaf_of(tag)) for tag in tags
                           if isinstance(tag, str) and vocabulary.SEPARATOR in vocabulary.normalize(tag)}
                 wanting.update({vocabulary.key(ref.name): ref.name for ref, source in rows
                                 if ref.id is None and source == "keyword" and vocabulary.key(ref.name) not in pathed})
-            people = [(ref.id, ref.name, source) for ref, source in rows if ref.id is not None or not ided]
+            people = [(ref.id, ref.name, source) for ref, source in rows if ref.id is not None]
             if people != held.get(photo_id, []):
                 yield photo_id, people
 
@@ -119,7 +117,7 @@ def rebuild(conn, photo_ids=None, known=None, ids=None, make=False):
     The caller commits."""
     written, wanting = [], {}
     changes = dict(_differences(conn, photo_ids, known, wanting if make else None))
-    if wanting and person_ids.present(conn):
+    if wanting:
         if _make_nodes(conn, wanting):
             ids = None   # read again: it holds none of the people just made
             again = None if photo_ids is None else sorted(set(photo_ids))
@@ -132,12 +130,8 @@ def rebuild(conn, photo_ids=None, known=None, ids=None, make=False):
     changes = list(changes.items())
     for photo_id, people in changes:
         conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))
-        if person_ids.present(conn):
-            conn.executemany("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, ?, ?)",
-                             [(photo_id, n, name, source, tag_id) for n, (tag_id, name, source) in enumerate(people)])
-        else:
-            conn.executemany("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, ?, ?, ?)",
-                             [(photo_id, n, name, source) for n, (_tag_id, name, source) in enumerate(people)])
+        conn.executemany("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, ?, ?)",
+                         [(photo_id, n, name, source, tag_id) for n, (tag_id, name, source) in enumerate(people)])
         written.append(photo_id)
     # Only the rows written can be without their id: a tree edit gives every other its new one
     # (tree_edit), and reading the tree for each of 5,000 one-photo rebuilds would cost them.
@@ -177,9 +171,8 @@ def keyword_keys(conn):
     person is filed under}, for each photo with a face named and not excluded. photo_people is read by its primary key,
     one photo at a time."""
     listed = collections.defaultdict(set)
-    tag_id = "tag_id" if person_ids.present(conn) else "NULL"
     for photo_id, held, name in conn.execute(
-            "SELECT photo_id, " + tag_id + ", name FROM photo_people WHERE source = 'keyword' AND photo_id IN"
+            "SELECT photo_id, tag_id, name FROM photo_people WHERE source = 'keyword' AND photo_id IN"
             " (SELECT photo_id FROM faces WHERE name IS NOT NULL AND excluded = 0)"):
         listed[photo_id].add(person_ids.key_of(held, name))
     return listed
