@@ -12,6 +12,12 @@ from tagpup.services import settings as library_settings
 from tagpup.services import suggester
 
 
+class Faces:
+    """A face model's settings, which tagpup.ml.faces.FaceModel always holds and a detection is recorded under
+    (tagpup.services.faces.detector_of): a test's face model is one of these, and says what it detects."""
+    min_face_size, confidence_threshold, mtcnn_thresholds = 40, 0.9, [0.6, 0.7, 0.7]
+
+
 class Clip:
     """CLIP as the runtime hands it to a run: the library's default settings, a word embedded to a zero vector `dim` long
     (alike nothing), and `ready` -- the run's turn on the graphics card -- with nothing to wait for."""

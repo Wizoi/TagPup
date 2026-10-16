@@ -27,6 +27,7 @@ from tagpup.services.search import PhotoIndex
 from tagpup_cli import cli
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stand_in_models  # noqa: E402
 from face_rows import add_face, configured_model  # noqa: E402
 
 
@@ -50,7 +51,7 @@ def fake_meta(path):
             "mtime": stat.st_mtime, "size": stat.st_size}
 
 
-class FakeFaceProcessor:
+class FakeFaceProcessor(stand_in_models.Faces):
     """Detects one new, unnamed face in every photo -- what the real detector returns."""
 
     def detect_and_embed_faces(self, path):

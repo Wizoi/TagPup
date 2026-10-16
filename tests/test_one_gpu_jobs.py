@@ -29,6 +29,7 @@ from unittest import mock
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stand_in_models  # noqa: E402
 import own_home  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -167,7 +168,7 @@ class _CudaClip:
         pass
 
 
-class _CudaFaces:
+class _CudaFaces(stand_in_models.Faces):
     device = "cuda"
 
     def detect_and_embed_faces(self, path):

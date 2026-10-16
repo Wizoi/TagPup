@@ -597,17 +597,10 @@ DETECTOR_SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds"
 
 
 def detector_of(model):
-    """The name the detections of face model `model` are recorded under
-    (tagpup.store.faces_detected): its settings. A setting it does not hold reads as None."""
-    settings = {}
-    for key in DETECTOR_SETTINGS:
-        value = getattr(model, key, None)
-        if isinstance(value, tuple):
-            value = list(value)
-        if not isinstance(value, (int, float, str, list, type(None))) or isinstance(value, bool):
-            value = None
-        settings[key] = value
-    return faces_detected.detector(settings)
+    """The name the detections of face model `model` are recorded under (tagpup.store.faces_detected): its settings, which a
+    tagpup.ml.faces.FaceModel always holds (a test's stand-in holds them too)."""
+    values = {key: getattr(model, key) for key in DETECTOR_SETTINGS}
+    return faces_detected.detector({key: list(value) if isinstance(value, tuple) else value for key, value in values.items()})
 
 
 def ran(detected):
