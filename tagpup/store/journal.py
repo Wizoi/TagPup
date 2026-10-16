@@ -699,10 +699,10 @@ def _not_as_left(conn, change_id, changes):
                                 (change.new[KEYS[parent][0]],)).fetchone():
                     reasons.append("%s has rows in %s made since" % (_named(change.table, change.key), child))
             if change.table == "tag_taxonomy" and conn.execute(
-                    "SELECT 1 FROM faces WHERE tag_id = ? AND name_source = 'manual' LIMIT 1", (change.key[0],)).fetchone():
-                # The faces linked to it by their name, or named by a guess, go back to the name alone; a face a person named
-                # is theirs (docs/ARCHITECTURE.md, "People by id, stage 2").
-                reasons.append("%s is the person of faces a person named: unname them first"
+                    "SELECT 1 FROM faces WHERE tag_id = ? LIMIT 1", (change.key[0],)).fetchone():
+                # A face named by it, by hand or by a guess, is that person's: the node is not taken from under it (the trigger
+                # person_tag_not_deleted_while_named would refuse the delete; this says so first, as _resolve does).
+                reasons.append("%s is the person of faces: unname them first (or merge it into the person they are)"
                                % _named(change.table, change.key))
     return reasons
 

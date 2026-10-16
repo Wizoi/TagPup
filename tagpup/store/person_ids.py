@@ -98,7 +98,7 @@ class GroupNotPerson(PersonProblem):
 
 def wire(ref):
     """A person as it travels in a plan, a job's state or a request: the id of the node (None for a Ref or a Person with none:
-    a row from before names had ids is not a person). A typed name is passed on as it is, for `target` to resolve. `ref` is a Ref,
+    a name alone is nobody). A typed name is passed on as it is, for `target` to resolve. `ref` is a Ref,
     a Person, an id or a name."""
     if isinstance(ref, (vocabulary.Ref, Person)):
         return ref.id
@@ -119,7 +119,7 @@ class People:
         self.listing = []    # (id, tag, name) of each of them: what Directory tells the pages
         self.by_id, self.by_tag = {}, {}
         self.groups, self.group_by_tag = {}, {}
-        #: {id: tag} of a new library's empty People: where people are filed, never a person (#1470).
+        #: {id: tag} of a new library's empty People: where people are filed, never a person, by id too (#1470).
         self.filing_roots = {}
         #: {key: tag} of the nodes at the top with nodes under them that are not marked as holding faces (Places): groups too.
         self.words = {vocabulary.key(tag): tag for tag in words}
@@ -221,9 +221,8 @@ class People:
                 raise GroupNotPerson(self.groups[self.branches[key][0]].tag)
             if key in self.words:
                 raise GroupNotPerson(self.words[key])
-            for tag in self.filing_roots.values():
-                if vocabulary.key(tag) == key:
-                    raise GroupNotPerson(tag)
+            if vocabulary.is_filing_root(text):   # with its node or without: where people are filed, never a person (#1470)
+                raise GroupNotPerson(vocabulary.NEW_LIBRARY_FACE_ROOT)
             return None
         if found is People.AMBIGUOUS:
             raise AmbiguousPerson(text, self.called(text))
@@ -344,28 +343,37 @@ def _marks(chunk):
     return ",".join("?" * len(chunk))
 
 
+#: A face People.settle makes nobody is UNNAMED: no person, no name and no decider, so it is not "decided nobody" (owner,
+#: 2026-10-15). A listed person it makes nobody is not listed: the row goes (photo_people.name is NOT NULL).
+FACE_UNNAMED = "tag_id = NULL, name = NULL, name_source = NULL"
+
+
 def follow_faces(conn, photo_ids, known=None):
     """Settle each face of the photos `photo_ids` (People.settle): an id that is set stays with its name the node's
-    leaf; a face that holds no id is nobody. Returns faces changed.
+    leaf; a face named with no id is unnamed (FACE_UNNAMED), an id on a face with no name comes off. Returns faces changed.
     idx_faces_photo_id finds them; the embedding is not read."""
     if not photo_ids:
         return 0
     known = known or read(conn)
-    updates = []
+    kept, unnamed, stray = [], [], []
     for chunk in _chunks(photo_ids):
         for face_id, name, held in conn.execute(
                 "SELECT id, name, tag_id FROM faces WHERE photo_id IN (%s)" % _marks(chunk), chunk):
             wanted, cached = known.settle(name, held)
             if held != wanted or name != cached:
-                updates.append((wanted, cached, face_id))
-    conn.executemany("UPDATE faces SET tag_id = ?, name = ? WHERE id = ?", updates)
-    return len(updates)
+                if wanted is not None:
+                    kept.append((wanted, cached, face_id))
+                else:
+                    (unnamed if name is not None else stray).append((face_id,))
+    conn.executemany("UPDATE faces SET tag_id = ?, name = ? WHERE id = ?", kept)
+    conn.executemany("UPDATE faces SET " + FACE_UNNAMED + " WHERE id = ?", unnamed)
+    conn.executemany("UPDATE faces SET tag_id = NULL WHERE id = ?", stray)   # a decided nobody keeps its decider
+    return len(kept) + len(unnamed) + len(stray)
 
 
 def follow_listed(conn, photo_ids, known=None):
-    """Settle each person listed for the photos `photo_ids` (photo_people), as follow_faces does. Every photo, without
-    `photo_ids`. Returns rows changed. No listed person is nobody: `people.rebuild` lists a person by id only, and a node gone
-    takes its rows (follow_tree, or the rebuild of the photos whose keywords name it)."""
+    """Settle each person listed for the photos `photo_ids` (photo_people), as follow_faces does; one who is nobody is not listed
+    (FACE_UNNAMED). Every photo, without `photo_ids`. Returns rows changed."""
     if photo_ids is None:
         return _sync_table(conn, "photo_people", known or read(conn))
     if not photo_ids:
@@ -379,7 +387,10 @@ def follow_listed(conn, photo_ids, known=None):
             wanted, cached = known.settle(name, held)
             if held != wanted or name != cached:
                 updates.append((wanted, cached, photo_id, position))
-    conn.executemany("UPDATE photo_people SET tag_id = ?, name = ? WHERE photo_id = ? AND position = ?", updates)
+    conn.executemany("UPDATE photo_people SET tag_id = ?, name = ? WHERE photo_id = ? AND position = ?",
+                     [update for update in updates if update[0] is not None])
+    conn.executemany("DELETE FROM photo_people WHERE photo_id = ? AND position = ?",
+                     [(photo_id, position) for wanted, _cached, photo_id, position in updates if wanted is None])
     return len(updates)
 
 
@@ -395,8 +406,13 @@ def _sync_table(conn, table, known):
     for name, held, _rows in _pairs(conn, table):
         wanted, cached = known.settle(name, held)
         if held != wanted or name != cached:
-            changed += conn.execute("UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS ?" % table,
-                                    (wanted, cached, name, held)).rowcount
+            if wanted is not None:
+                sql, params = "UPDATE %s SET tag_id = ?, name = ? WHERE name = ? AND tag_id IS ?" % table, (wanted, cached, name, held)
+            elif table == "faces":
+                sql, params = "UPDATE faces SET " + FACE_UNNAMED + " WHERE name = ? AND tag_id IS ?", (name, held)
+            else:
+                sql, params = "DELETE FROM photo_people WHERE name = ? AND tag_id IS ?", (name, held)
+            changed += conn.execute(sql, params).rowcount
     return changed
 
 
@@ -483,7 +499,7 @@ def out_of_step(conn, table, examples=5, spelling=True):
 
 def repair(db_path):
     """Settle every id and cached name, in one write under the library's write lock: a row of a node that is gone, or with a
-    name and no id, is nobody; a row gets its node's name; an id comes off a face with no name. A name is NOT linked (People.settle). Returns {table: rows changed}. Only the id and name columns of faces
+    name and no id, is nobody (FACE_UNNAMED); a row gets its node's name; an id comes off a face with no name. A name is NOT linked (People.settle). Returns {table: rows changed}. Only the id and name columns of faces
     and photo_people change: no photo, tag or file."""
     def write(conn):
         return sync(conn)

@@ -42,7 +42,7 @@ def faces_of(conn, change_id):
 def removed_people(conn, face_ids):
     """{face id: Ref} for each of `face_ids` -- faces a person called nobody -- that the newest APPLIED change named OPERATION
     unnamed: who they were (the node's id, which the change recorded as the face's `tag_id`, and the name; a named face holds
-    an id, 2026-10-15). removed_names, with the ids."""
+    an id, 2026-10-15). One indexed read of the journal a face (idx_change_rows_row)."""
     found = {}
     for face_id, (change_id, name) in _newest(conn, face_ids).items():
         recorded = conn.execute(
@@ -50,13 +50,6 @@ def removed_people(conn, face_ids):
             (change_id, _key(face_id))).fetchone()
         found[face_id] = Ref(int(recorded[0]), name)
     return found
-
-
-def removed_names(conn, face_ids):
-    """{face id: the name it had} for each of `face_ids` -- faces a person called nobody -- that the newest APPLIED change
-    named OPERATION unnamed (an undone change does not count). One indexed read of the journal a face
-    (idx_change_rows_row)."""
-    return {face_id: name for face_id, (_change, name) in _newest(conn, face_ids).items()}
 
 
 def _newest(conn, face_ids):

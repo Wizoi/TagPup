@@ -193,6 +193,16 @@ class TwoSamsOnAPhoto(InStep):
         finally:
             conn.close()
         self.assertEqual(Ref(self.sam_t, "Sam"), gone, "the first Sam, by id: the other Sam is not blocked")
+        for name, sam in (("regatta_002.jpg", self.sam_t), ("regatta_003.jpg", self.sam_i)):   # each Sam named elsewhere
+            self.match(self.face(self.held(name)), person_id=sam)
+        for sam, chosen in ((self.sam_t, []), (self.sam_i, [(self.second, self.sam_i, self.photo_path)])):
+            with self.subTest(sam=sam):
+                conn = db.connect(db.readonly_uri(self.path), uri=True)
+                try:
+                    decided, _gone = faces_service.decide_guesses(conn, {self.photo_path: [(self.second, sam)]})
+                finally:
+                    conn.close()
+                self.assertEqual(chosen, decided, "the Sam taken off is not guessed back; the other Sam is")
 
     def test_the_queue_and_the_grid_tell_the_two_apart(self):
         """The queue lists a person by their node: two Sams are two rows, each opening its own grid."""

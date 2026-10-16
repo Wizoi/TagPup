@@ -607,8 +607,8 @@ def keyword_counts(conn):
 
 def people_counts(conn):
     """[(Ref, photos)] of everyone in photo_people, most photos first, then by name: one pass of photo_people. A person is
-    the node (their id, the cached name beside it), so two people called alike are two entries. A row without an id (from before
-    names had ids) is not a person and is not counted."""
+    the node (their id, the cached name beside it), so two people called alike are two entries. Only a row with an id is
+    counted: a name alone is nobody."""
     names = person_ids.read(conn).node_names
     found = []
     # The people the tree files: one row a photo each, by the covering index of the id; named by their node.

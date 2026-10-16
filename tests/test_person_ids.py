@@ -387,7 +387,7 @@ class TheDoctor(Library):
         self.name([self.faces[1]], WREN)
         conn = db.connect(self.path)
         try:
-            conn.execute("UPDATE faces SET tag_id = NULL WHERE id = ?", (self.faces[1],))   # a name whose id was not written
+            conn.execute("UPDATE faces SET tag_id = NULL, name_source = 'manual' WHERE id = ?", (self.faces[1],))   # no id written
             people.rebuild(conn)
             conn.execute("UPDATE faces SET name = ? WHERE id = ?", (ODA.lower(), self.faces[0]))   # a cache the node does not spell so
             conn.commit()
@@ -406,9 +406,24 @@ class TheDoctor(Library):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(0, doctor.rebuild_derived(self.path, apply=True))
         self.assertEqual([0, 0], in_step(self.path))
-        self.assertEqual((None, None), look(self.path, "SELECT tag_id, name FROM faces WHERE id = ?", (self.faces[1],))[0],
-                         "the repair links no name: a name alone is nobody (owner, 2026-10-15)")
+        self.assertEqual((None, None, None), look(self.path, "SELECT tag_id, name, name_source FROM faces WHERE id = ?",
+                                                  (self.faces[1],))[0],
+                         "the repair links no name: a name alone is nobody (owner, 2026-10-15, superseding #985's names to"
+                         " review), and the face is unnamed, not decided")
         self.assertEqual(ODA, look(self.path, "SELECT name FROM faces WHERE id = ?", (self.faces[0],))[0][0])
+
+
+class AListedPersonWithNoId(Library):
+    def test_the_repair_takes_a_listed_person_with_no_id_or_a_gone_nodes_id_away(self):
+        """A photo_people row holding a name and no id, or the id of a node gone (hand-written: nothing makes one), is nobody:
+        the repair, and the sync every tree-touching change runs, take the row away -- photo_people.name is NOT NULL."""
+        photo = look(self.path, "SELECT id FROM photos ORDER BY id LIMIT 1")[0][0]
+        write(self.path, lambda conn: conn.executemany(
+            "INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, 'keyword', ?)",
+            [(photo, 90, "Somebody Else", None), (photo, 91, "Long Gone", 999999)]))
+        self.assertEqual({"faces": 0, "photo_people": 2}, person_ids.repair(self.path))
+        self.assertEqual([], look(self.path, "SELECT position FROM photo_people WHERE position >= 90"))
+        self.assertEqual([0, 0], in_step(self.path))
 
 
 class AStrayIdAnOlderAppLeaves(Library):

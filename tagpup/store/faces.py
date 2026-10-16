@@ -739,7 +739,7 @@ def unnamed_counts(conn, folder):
 
 def counts_by_person(conn):
     """[(Ref, faces)] for everyone named, most faces first: a person is the node (the id), so two people called alike are two
-    rows. A face with a name and no id (from before ids) is no person and is not counted."""
+    rows. Only a face with an id is counted: a name alone is nobody."""
     return sorted(((Ref(tag_id, name), count) for tag_id, name, count in conn.execute(
         "SELECT tag_id, name, COUNT(*) FROM faces WHERE tag_id IS NOT NULL GROUP BY tag_id, name").fetchall()),
         key=lambda found: -found[1])

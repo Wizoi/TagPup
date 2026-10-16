@@ -469,7 +469,7 @@ def people_rows(tags, face_refs, known=None):
     two people called alike list both. A named face holds its person's id (a name alone is nobody, owner 2026-10-15)."""
     rows = [[ref, "keyword"] for ref in extract_refs(tags, known)]
     for face in face_refs:
-        if not face.name or any(row[0].id == face.id for row in rows):
+        if not face.name or face.id is None or any(row[0].id == face.id for row in rows):
             continue
         # The bare keyword of a leaf two people have, beside the face that says which of them.
         same = [row for row in rows if row[0].id is None and key(row[0].name) == key(face.name)]
