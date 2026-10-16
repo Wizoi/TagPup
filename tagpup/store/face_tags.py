@@ -45,7 +45,7 @@ import numpy as np
 
 from tagpup.core import clustering
 from tagpup.core.vocabulary import Ref
-from tagpup.store import db, faces, person_ids, removals
+from tagpup.store import db, faces, removals
 from tagpup.store import roots as store_roots
 
 #: How many photos or faces go in one IN (...).
@@ -132,7 +132,7 @@ def _embeddings(conn, face_ids):
 
 
 def _key(person):
-    return person_ids.key_of(person.id, person.name)
+    return person.id
 
 
 def _free_people(people, faces_here):
@@ -267,8 +267,8 @@ BLOCK = 512
 def _reached(vectors, references, on_step=None):
     """{face id: {the keys of the people some decided face of whom it is alike enough to}} for the
     faces of `vectors` {face id: embedding bytes} that can be compared: compared a block at a
-    time, never a face at a time (a library's faces to place are tens of thousands). A person's key is
-    person_ids.key_of."""
+    time, never a face at a time (a library's faces to place are tens of thousands). A person's key is the id of their
+    node."""
     _ids, people, matrix = references
     if matrix is None or not len(people):
         return {}

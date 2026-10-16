@@ -9,8 +9,7 @@ A face names its person by the id of the person's node (`tag_id`): a writer here
 an id, a tag path or a bare name (`person`), turns it into the pair of id and cached name through
 tagpup.store.person_ids.target -- the one door, which refuses a stale id, a name two people have and
 a group -- and writes both in the one statement. `name` is the cache of the node's leaf, never what a
-face is told apart by. Readers group, count and join by the id, and by the name's key for a face whose
-name no person is filed under (person_ids.key_of). `_rebuilt` settles what a statement left (a name
+face is told apart by. Readers group, count and join by the id. `_rebuilt` settles what a statement left (a name
 that is one person's links, a renamed node's leaf follows: person_ids.follow_faces).
 
 The names a photo's faces were given, turning their boxes when a photo is turned, a

@@ -104,17 +104,6 @@ def wire(ref):
     return ref
 
 
-def wire_key(ref):
-    """What `key_of` gives for a person in wire form: the id."""
-    return ref
-
-
-def key_of(tag_id, name):
-    """What a row's person is KEYED by wherever people are grouped, counted or compared in memory: the node's id. A row with
-    none -- a name from before names had ids -- is nobody: None (owner, 2026-10-11: only the id)."""
-    return tag_id
-
-
 class People:
     """The tree's people as names are matched to them: {name's key: the node's id}, or AMBIGUOUS
     when two nodes are called it; the people by id and by tag; and the groups -- has_face nodes with

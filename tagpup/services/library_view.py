@@ -410,7 +410,7 @@ def navigator(library, section):
             everyone = person_ids.Directory.read(conn)
             # `group` is the navigator's own (the tag of the branch the person is filed in); `person` is the person.
             return {"people": [{"name": person.name, "count": count,
-                                "group": group_of.get(person_ids.key_of(person.id, person.name)),
+                                "group": group_of.get(person.id),
                                 "person": everyone.of_id(person.id), "person_id": person.id}
                                for person, count in counted],
                     "groups": [{"tag": group["tag"], "name": group["name"], "parent": tag_of.get(group["parent_id"]),

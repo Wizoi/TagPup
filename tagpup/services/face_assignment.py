@@ -101,9 +101,9 @@ def _removal(library, op, face_ids, **changes):
         work.face(path, face_id, old, _new(old, **changes))
         by_photo.setdefault(photo_id, (path, []))[1].append(Ref(old.get("tag_id"), old["name"]))
     for photo_id, (path, going) in by_photo.items():
-        staying = {person_ids.key_of(person.id, person.name) for face_id, person in carried.get(photo_id, ())
+        staying = {person.id for face_id, person in carried.get(photo_id, ())
                    if face_id not in named}
-        losing = {person_ids.key_of(person.id, person.name): person for person in going}
+        losing = {person.id: person for person in going}
         work.remove[paths.key(path)] = [person for key, person in losing.items() if key not in staying]
     return work, [face_id for face_id in face_ids if face_id in found and face_id not in named]
 

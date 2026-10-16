@@ -220,7 +220,7 @@ def untag_plan(library, items):
         return {}
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        carried = {photo_path: {person_ids.key_of(each.id, each.name) for each in faces.people_in_photo(conn, photo_path)}
+        carried = {photo_path: {each.id for each in faces.people_in_photo(conn, photo_path)}
                    for photo_path in wanted}
         known = taxonomy.read_people_vocabulary(conn)
     finally:
@@ -230,7 +230,7 @@ def untag_plan(library, items):
     for photo_path, people in wanted.items():
         tags = held.get(paths.key(photo_path), [])
         for person in dict.fromkeys(people):
-            if person_ids.wire_key(person) in carried[photo_path]:
+            if person in carried[photo_path]:
                 continue
             for tag in person_tags(tags, person, known):
                 if tag not in plan.setdefault(photo_path, []):

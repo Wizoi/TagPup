@@ -10,7 +10,7 @@ kept its shape: each was tuned against that library (docs/findings.md, #45, #49,
 `named()` is how a read gets every named face as unit vectors -- (ids, people, matrix), a Ref
 (the node's id, the cached name) for each row --, built once per state of the table rather than per
 click: reading all 35,758 of them from SQLite to answer one click cost half a second, every click.
-People are told apart by the id of their node (person_ids.key_of): two people called alike are two.
+People are told apart by the id of their node: two people called alike are two.
 """
 import json
 import logging
@@ -128,7 +128,7 @@ def decided_faces(library):
         keywords = people.keyword_keys(conn)
         ids, refs, vecs = [], [], []
         for face_id, person, blob, source, photo_id in faces.for_decided_matrix(conn):
-            if source != DECIDED and person_ids.key_of(person.id, person.name) not in keywords.get(photo_id, ()):
+            if source != DECIDED and person.id not in keywords.get(photo_id, ()):
                 continue
             try:
                 vec = np.frombuffer(blob, dtype=np.float32)
@@ -146,12 +146,10 @@ def decided_faces(library):
 
 
 def _groups(people_of_rows):
-    """{person key: (the person as it travels -- the id, or the name --, [rows])} of a matrix's rows: a person is the node
-    (person_ids.key_of), so two people called alike are two groups."""
+    """{person id: (the id, [rows])} of a matrix's rows: a person is the node, so two people called alike are two groups."""
     groups = {}
     for row, person in enumerate(people_of_rows):
-        key = person_ids.key_of(person.id, person.name)
-        groups.setdefault(key, (person_ids.wire(person), []))[1].append(row)
+        groups.setdefault(person.id, (person.id, []))[1].append(row)
     return groups
 
 
@@ -373,7 +371,7 @@ def nearest_people(known, embedding, skip_id=None, limit=5):
         if known_ids[idx] == skip_id:
             continue
         person = known_people[idx]
-        key = person_ids.key_of(person.id, person.name)
+        key = person.id
         if key in seen:
             continue
         seen.add(key)
@@ -668,7 +666,7 @@ def queue(library):
         matched_keys = matched_by_photo.get(photo_path, set())
         unmatched_tags = []
         for tag_id, name in _listed(people_json):
-            key = person_ids.key_of(tag_id, name)
+            key = tag_id
             if key not in matched_keys:
                 unmatched_tags.append(key)
                 labels.setdefault(key, (tag_id, name))
@@ -777,7 +775,7 @@ def grid(library, name, named, on_progress=None):
     if name == vocabulary.BUCKETS["ungrouped"]:
         for r in unmatched_rows:
             for tag_id, tag_name in _listed(r[7]):
-                key = person_ids.key_of(tag_id, tag_name)
+                key = tag_id
                 if key not in matched_by_photo.get(r[1], set()):
                     tag_candidate_counts[key] = tag_candidate_counts.get(key, 0) + 1
 
@@ -785,8 +783,7 @@ def grid(library, name, named, on_progress=None):
     for r in unmatched_rows:
         photo_path = r[1]
         matched_names = matched_by_photo.get(photo_path, set())
-        unmatched_tags = [key for key in (person_ids.key_of(tag_id, tag_name) for tag_id, tag_name in _listed(r[7]))
-                          if key not in matched_names]
+        unmatched_tags = [tag_id for tag_id, _name in _listed(r[7]) if tag_id not in matched_names]
 
         if name == vocabulary.BUCKETS["unknown"]:
             # Photos with no unmatched tags
@@ -817,7 +814,7 @@ def grid(library, name, named, on_progress=None):
         the reason this cannot simply replace the keyword queue."""
         if known_matrix is None or not person_keys:
             return None
-        rows = [i for i, found in enumerate(known_people) if person_ids.key_of(found.id, found.name) in person_keys]
+        rows = [i for i, found in enumerate(known_people) if found.id in person_keys]
         return known_matrix[rows] if rows else None
 
     def suggest_for_all(centroids):
@@ -859,7 +856,7 @@ def grid(library, name, named, on_progress=None):
         reads as noise until you are told why."""
         matched = matched_by_photo.get(row[1], set())
         return [tag_name for tag_id, tag_name in _listed(row[7])
-                if (key := person_ids.key_of(tag_id, tag_name)) not in matched and key not in seeking_keys]
+                if tag_id not in matched and tag_id not in seeking_keys]
 
     valid_rows, embs = [], []
     for r in candidate_rows:

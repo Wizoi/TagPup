@@ -22,7 +22,7 @@ import collections
 
 from tagpup.core import paths
 from tagpup.services import maintenance
-from tagpup.store import db, journal, person_ids
+from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 
 
@@ -66,8 +66,8 @@ def find_duplicates(conn):
         photo_path = copies[0][1]
         face_ids = sorted(r[0] for r in copies)
 
-        # Told apart by the node (person_ids.key_of): two people called alike are two.
-        people = {person_ids.key_of(r[3].id, r[3].name): r[3].name for r in copies if r[3]}
+        # Told apart by the node's id: two people called alike are two.
+        people = {r[3].id: r[3].name for r in copies if r[3]}
         names = sorted(people.values())
         if len(people) > 1:
             # Two people for one face is a disagreement, not a duplicate.

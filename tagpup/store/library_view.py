@@ -627,7 +627,7 @@ TOP = -1
 
 def people_groups(conn, counted):
     """The branches of the tag tree the people of `counted` -- people_counts's [(Ref, photos)] -- are filed under, as the
-    navigator's People shows them (phase 9, #673): ({person_ids.key_of(person): the tag of the node above the person, or None},
+    navigator's People shows them (phase 9, #673): ({the person's id: the tag of the node above the person, or None},
     [{"id", "tag", "name", "parent_id", "count"}] of every branch above a person, `count` the photos naming anyone under it,
     each photo once), and how many photos name someone who is not filed (None above).
 
@@ -646,7 +646,7 @@ def people_groups(conn, counted):
         parent = nodes[node][1] if node in nodes else None
         if node is not None and parent is None:
             parent = TOP   # a person at the top of the tree is filed there, not nowhere
-        group_of[person_ids.key_of(person.id, person.name)] = nodes[parent][0] if parent in nodes else None
+        group_of[person.id] = nodes[parent][0] if parent in nodes else None
         if node is not None:
             parent_of[node] = parent if parent in nodes else None
     upward = {}   # each group and every node above it: a damaged tree that loops ends the walk, never the call

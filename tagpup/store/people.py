@@ -139,14 +139,13 @@ def rebuild_photos(conn, photo_paths, known=None):
 
 
 def keyword_keys(conn):
-    """{photo id: the people its keywords name, as person_ids.key_of -- the node's id, or the name's key for a name no
-    person is filed under}, for each photo with a face named and not excluded. photo_people is read by its primary key,
-    one photo at a time."""
+    """{photo id: the ids of the people its keywords name}, for each photo with a face named and not excluded. photo_people
+    is read by its primary key, one photo at a time."""
     listed = collections.defaultdict(set)
-    for photo_id, held, name in conn.execute(
-            "SELECT photo_id, tag_id, name FROM photo_people WHERE source = 'keyword' AND photo_id IN"
+    for photo_id, held in conn.execute(
+            "SELECT photo_id, tag_id FROM photo_people WHERE source = 'keyword' AND photo_id IN"
             " (SELECT photo_id FROM faces WHERE name IS NOT NULL AND excluded = 0)"):
-        listed[photo_id].add(person_ids.key_of(held, name))
+        listed[photo_id].add(held)
     return listed
 
 
