@@ -27,7 +27,6 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_faces_and_tags_in_step import InStep  # noqa: E402
-from face_rows import add_face  # noqa: E402
 
 from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, TwoSams, look, write  # noqa: E402
 from test_face_clustering_rules import identity_vector as clustering_vector, near as near_vector  # noqa: E402
@@ -153,25 +152,20 @@ class TwoSamsOnAPhoto(InStep):
         stale = self.tuner_client.get("/library/api/person-faces", query_string={"person_id": 99999})
         self.assertEqual(404, stale.status_code)
 
-    def test_an_old_page_with_only_a_name_one_person_has_still_works_and_a_loose_row_is_nobodys(self):
-        """An open page sends a name until it is reloaded: for a name one person has it works, as a read and a write. A face named
-        only 'Sam' with no id (an automatic guess from before ids) is in neither Sam's page, however it is asked for."""
+    def test_an_old_page_with_only_a_name_one_person_has_still_works(self):
+        """An open page sends a name until it is reloaded: for a name one person has it works, as a read and a write; a name two
+        people have is asked which one."""
         def wren(conn):
             with people.tree_edit(conn):
                 taxonomy.add_path(conn, "People", root_has_face=1)
                 taxonomy.add_path(conn, "People/Wren Halloway")
-            return add_face(conn, self.photo_path, box=(120, 10, 160, 60), name="Sam", name_source="auto", tag_id=None)
-        loose = db.write_with_connection(self.path, wren)
-        self.assertEqual((None, "Sam"), self.row(loose)[3:4] + self.row(loose)[0:1], "the guess has a name and no id")
+        db.write_with_connection(self.path, wren)
         node = self.node("People/Wren Halloway")
         written = self.match(self.first, person_name="Wren Halloway")
         self.assertEqual(200, written.status_code, written.get_json())
         self.assertEqual(node, self.row(self.first)[3])
         read = self.tuner_client.get("/library/api/person-faces", query_string={"name": "Wren Halloway", "limit": -1})
         self.assertEqual([self.first], [face["id"] for face in read.get_json()["faces"]])
-        for sam in (self.sam_t, self.sam_i):
-            page = self.tuner_client.get("/library/api/person-faces", query_string={"person_id": sam, "limit": -1}).get_json()
-            self.assertNotIn(loose, [face["id"] for face in page["faces"]], "a name alone is nobody's face")
         by_name = self.tuner_client.get("/library/api/person-faces", query_string={"name": "Sam", "limit": -1})
         self.assertEqual(400, by_name.status_code, "and asking for the name is asked which one")
 
@@ -184,7 +178,7 @@ class TwoSamsOnAPhoto(InStep):
         self.assertEqual(1, by_path["count"], by_path)
         self.assertEqual(2, inspect.photos(self.library, person="Sam")["count"], "a name is everyone called it")
         self.assertEqual(0, inspect.photos(self.library, person="Family/Nowhere/Sam")["count"],
-                         "a path no node holds is nobody filed: only rows with no id, spelled as its leaf, would answer")
+                         "a path no node holds is nobody: a name alone is nobody's")
 
     def test_a_person_taken_off_a_photo_is_remembered_by_their_id_not_by_their_name(self):
         """Fix round 1: the record of a removal carried the name alone, so taking the first Sam off a photo blocked guessing the
@@ -198,9 +192,17 @@ class TwoSamsOnAPhoto(InStep):
             gone = removals.removed_people(conn, [self.first])[self.first]
         finally:
             conn.close()
-        self.assertEqual(Ref(self.sam_t, "Sam"), gone)
-        self.assertTrue(removals.same_person(gone, Ref(self.sam_t, "Sam")))
-        self.assertFalse(removals.same_person(gone, Ref(self.sam_i, "Sam")), "the other Sam is not blocked")
+        self.assertEqual(Ref(self.sam_t, "Sam"), gone, "the first Sam, by id: the other Sam is not blocked")
+        for name, sam in (("regatta_002.jpg", self.sam_t), ("regatta_003.jpg", self.sam_i)):   # each Sam named elsewhere
+            self.match(self.face(self.held(name)), person_id=sam)
+        for sam, chosen in ((self.sam_t, []), (self.sam_i, [(self.second, self.sam_i, self.photo_path)])):
+            with self.subTest(sam=sam):
+                conn = db.connect(db.readonly_uri(self.path), uri=True)
+                try:
+                    decided, _gone = faces_service.decide_guesses(conn, {self.photo_path: [(self.second, sam)]})
+                finally:
+                    conn.close()
+                self.assertEqual(chosen, decided, "the Sam taken off is not guessed back; the other Sam is")
 
     def test_the_queue_and_the_grid_tell_the_two_apart(self):
         """The queue lists a person by their node: two Sams are two rows, each opening its own grid."""

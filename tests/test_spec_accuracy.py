@@ -36,7 +36,8 @@ FLASK_QUERY = re.compile(r'(?:request\.args\.get|_?int_arg)\(\s*"([^"]+)"')
 
 def flask_routes(kind):
     """Each /api route of the Flask app for `kind`, with the parameters its view reads,
-    following one level of the module's own helpers as implemented_routes does."""
+    following one level of the module's own helpers as implemented_routes does: a private one, or an alias of one (TagTuner's
+    `_read_face_ids`), and a public function the module itself defines (`face_routes.read_face_ids`)."""
     import inspect
 
     from tagpup.web import app as web
@@ -49,9 +50,10 @@ def flask_routes(kind):
         view = app.view_functions[rule.endpoint]
         source = inspect.getsource(view)
         module = inspect.getmodule(view)
-        for helper in set(re.findall(r"\b(_\w+)\(", source)):
+        for helper in set(re.findall(r"\b([A-Za-z_]\w*)\(", source)):
             found = getattr(module, helper, None)
-            if inspect.isfunction(found):
+            if inspect.isfunction(found) and found is not view and (
+                    helper.startswith("_") or found.__module__ == module.__name__):
                 source += "\n" + inspect.getsource(found)
         out[rule.rule] = {"handler": view.__name__, "body": set(FLASK_BODY.findall(source)),
                           "query": set(FLASK_QUERY.findall(source))}

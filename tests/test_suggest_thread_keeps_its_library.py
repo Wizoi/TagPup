@@ -27,6 +27,7 @@ from tagpup.core.library import Library  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
+from tagpup.core.idle import IdleCaches  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
 THREAD_NAME = "FolderSuggestionsThread"   # tagpup.jobs.suggestions.SuggestionRuns.start
@@ -39,6 +40,7 @@ class FakeModels:
     def __init__(self):
         self.began = []
         self.suggested_on = set()
+        self.idle = IdleCaches()   # a runtime's idle timer, which the routes register their caches on; None keeps all
 
     def begin(self, library, **turn):
         self.began.append((library, threading.current_thread().name))

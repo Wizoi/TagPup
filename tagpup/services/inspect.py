@@ -26,7 +26,7 @@ from tagpup.files import images, shares
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import roots as roots_service
 from tagpup.store import checks as rules
-from tagpup.store import db, embeddings, inspection, taxonomy
+from tagpup.store import db, embeddings, inspection, schema, taxonomy
 from tagpup.store import photos as photo_rows
 
 #: How many ids an answer lists at most, unless asked for more; the count is always whole.
@@ -89,11 +89,11 @@ def summary(library, embedder_settings=None):
     sentence = _unplaced(library)
     if sentence:
         with _reading(library) as conn:
-            return {"roots_problem": sentence, "schema_version": inspection.schema_version(conn),
+            return {"roots_problem": sentence, "schema_version": schema.version(conn),
                     "tree_nodes": inspection.tree_nodes(conn)}
     with _reading(library) as conn:
         held = dict(rules.summary(conn))
-        held["schema_version"] = inspection.schema_version(conn)
+        held["schema_version"] = schema.version(conn)
         held["tree_nodes"] = inspection.tree_nodes(conn)
         held["people"] = inspection.people_named(conn)
         if embedder_settings is not None:

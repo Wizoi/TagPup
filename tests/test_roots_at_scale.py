@@ -1,4 +1,5 @@
-"""A library held under a root, the size of photo_index (68,466 photos, 225,000 faces), is read in
+"""A library held under a root, photo_index's size on 2026-10-02 (68,466 photos, 225,000 faces; 59,519 and 187,784
+on 2026-10-15, so the test is the larger), is read in
 seconds, and the lookups a click makes use their indexes.
 
 The library is synthetic and made here, in a home of the test's own: rows shaped as the

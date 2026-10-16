@@ -118,6 +118,7 @@ _SCENARIO_FILES = {
     "I6": "test_roots_scenarios",
     "I7": "test_mcp_server test_one_library_three_programs",
     "I8": "test_stale_record_precondition",
+    "I9": "scenario-a-scan-kept-by-an-older-page",
     "P1": "test_people_by_id_at_once",
     "P2": (
         "test_bulk_faces_and_tags test_clustering_meets_naming test_face_people_follow_file_changes "
@@ -151,7 +152,7 @@ _FILES = {
             "test_faces_detected_record "
             "test_folder_membership test_journal_undo_refusals "
             "test_mcp_photo_against_file test_path_locker "
-            "test_roots_unplaced test_roots_verify test_search_words "
+            "test_roots_sample test_roots_unplaced test_search_words "
             "test_services_refuse_what_the_rules_refuse "
             "test_sync_records test_the_tree_is_the_librarys test_validation test_view_indexes"
         ),

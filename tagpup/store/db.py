@@ -55,8 +55,9 @@ _locks = {}
 _locks_guard = threading.Lock()
 
 
-def _key(target):
-    """The database a connection target refers to, as a comparable key.
+def key(target):
+    """The database a connection target refers to, as a comparable key: the one the write lock, schema's record of the
+    libraries found current and being migrated, and the journal key a library by.
 
     Accepts a plain path or a `file:` URI, since read-only connections are opened as
     `file:...?mode=ro`. Two spellings of one file must map to one lock, or the lock
@@ -94,13 +95,13 @@ def _is_readonly(target, kwargs):
 
 def lock_for(target):
     """The write lock for a database, shared by every connection to it."""
-    key = _key(target)
+    held = key(target)
     with _locks_guard:
-        lock = _locks.get(key)
+        lock = _locks.get(held)
         if lock is None:
             # Reentrant: a write path may call into another one.
             lock = threading.RLock()
-            _locks[key] = lock
+            _locks[held] = lock
         return lock
 
 
@@ -114,7 +115,7 @@ def configure(conn, readonly=False):
     except Exception as e:
         # A read-only connection to a database another process has locked can refuse
         # even these. Worth knowing about, not worth failing over.
-        logger.debug("Could not configure connection to %s: %s", _key(conn), e)
+        logger.debug("Could not configure connection to %s: %s", key(conn), e)
     return conn
 
 

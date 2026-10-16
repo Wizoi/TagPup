@@ -15,9 +15,10 @@ that is renamed or deleted leaves the charter pointing at nothing, and the owner
 wrong. This fails the build on any backticked repository path in a charter that does not exist (a `*` is a glob), so the
 commit that moves a module changes its charter too. Dotted module names and prose are not paths and are not checked.
 
-Every module of the package (tagpup/, but its __init__.py files) is in one charter's Scope: a module in none was
-reviewed by nobody (services/tagging.py, store/inspection.py and mcp/__main__.py were, #1368). A module two Scopes each
-claim a part of is listed in SHARED, which only goes down.
+Every module of the package (tagpup/, but its __init__.py files) and every module of the pages (web/**/*.js) is in one
+charter's Scope: a module in none was reviewed by nobody (services/tagging.py, store/inspection.py and mcp/__main__.py
+were, #1368; 58 of the 99 page modules were, #1449). A module two Scopes each claim a part of is listed in SHARED, which
+only goes down.
 
 Lifted: test_guard_tests_have_one_owner, test_tiers_name_real_files and test_owner_charters_name_real_paths, every
 assertion kept. Mutation: a test file with no entry in owners.py, a tier naming a missing file, and a charter naming a
@@ -119,6 +120,15 @@ def package_modules():
     return sorted(found)
 
 
+def page_modules():
+    """web/**/*.js, the pages' ES modules, as charters spell them."""
+    found = []
+    for here, folders, names in os.walk(os.path.join(ROOT, "web")):
+        folders[:] = [f for f in folders if f != "node_modules"]
+        found += [os.path.relpath(os.path.join(here, n), ROOT).replace(os.sep, "/") for n in names if n.endswith(".js")]
+    return sorted(found)
+
+
 def claimed_by(module, token):
     return fnmatch.fnmatch(module, token) or module.startswith(token.rstrip("/") + "/")
 
@@ -203,10 +213,12 @@ class OwnerCharters(unittest.TestCase):
                 mine = {i for i, (o, _sentence) in owners.SCENARIOS.items() if o == IN_THE_MAP[owner]}
                 self.assertEqual(mine, set(re.findall(r"\b[A-Z]\d+\b", line.group(1))))
 
-    def test_every_module_of_the_package_is_in_one_charters_scope(self):
+    def test_every_module_of_the_package_and_the_pages_is_in_one_charters_scope(self):
         claims = {owner: scope_claims(owner) for owner in CHARTERS}
+        modules = package_modules() + page_modules()
+        self.assertGreater(len(page_modules()), 90, "the walk of web/ found almost no page module")
         owners_of = {module: tuple(sorted(owner for owner in CHARTERS if any(claimed_by(module, t) for t in claims[owner])))
-                     for module in package_modules()}
+                     for module in modules}
         self.assertEqual([], [m for m, found in owners_of.items() if not found],
                          "a module in no charter's Scope: add it to its owner's, in the commit that makes it")
         self.assertEqual(SHARED, {m: found for m, found in owners_of.items() if len(found) > 1},

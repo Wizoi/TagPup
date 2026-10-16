@@ -2,8 +2,9 @@
 photo vectors, 6 KB JPEG crops, JSON tags and metadata, a tree with a people root.
 
 Seeded in plain SQL, as the indexer stores rows, never through the journal under test;
-each photo's dates and people are then made by the functions the indexer calls. In a
-TagPup home of the test's own (tests/own_home.py).
+the faces by the store's writers (tagpup.store.faces: insert, name, exclude, name_if_unnamed),
+so each holds what a detection and a decision leave; each photo's dates and people are then
+made by the functions the indexer calls. In a TagPup home of the test's own (tests/own_home.py).
 """
 import json
 import os
@@ -16,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.store import db, people, person_ids, schema  # noqa: E402
+from tagpup.store import db, faces, people, person_ids, schema  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
 #: The tables a change can touch, derived ones included, with the order to list them in.
@@ -81,21 +82,20 @@ class JournalLibrary(unittest.TestCase):
             ids["finish"] = photo("regatta_002.jpg", ["Friends/Imogen Vale", "People/Rowan Thackeray"], "2024:06:01 11:30:00", 2)
             ids["prize"] = photo("regatta_003.jpg", ["Activity/Sailing"], "2024:06:02 09:15:00", 3)
 
-            def face(photo_id, n, **columns):
-                values = dict({"photo_id": photo_id, "box": json.dumps([120 + n, 80, 260 + n, 240]),
-                               "embedding": vector(n), "prob": 0.99873 - n / 1000.0, "excluded": 0}, **columns)
-                names = sorted(values)
-                face_id = conn.execute("INSERT INTO faces (%s) VALUES (%s)" % (", ".join(names), ",".join("?" * len(names))),
-                                       [values[k] for k in names]).lastrowid
-                conn.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (face_id, jpeg(n)))
-                return face_id
+            def face(photo_id, n, crop=True):
+                """A detected face, as the indexer records one (its crop cut, unless it is never shown)."""
+                path = conn.execute("SELECT path FROM photos WHERE id = ?", (photo_id,)).fetchone()[0]
+                return faces.insert(conn, path, [120 + n, 80, 260 + n, 240], vector(n), crop=jpeg(n) if crop else None,
+                                    prob=0.99873 - n / 1000.0)
 
-            ids["kept"] = face(ids["start"], 1, name="Rowan Thackeray", tag_id=ids["People/Rowan Thackeray"], name_source="manual")
+            ids["kept"] = face(ids["start"], 1)
+            faces.name(conn, [ids["kept"]], ids["People/Rowan Thackeray"])   # a person's decision
             ids["copy"] = face(ids["start"], 2)
-            ids["excluded"] = face(ids["finish"], 3, excluded=1, excluded_reason="not a face")
-            # Named on a face only: the photo's keywords do not name her.
-            ids["named"] = face(ids["finish"], 4, name="Maren Oakhollow", tag_id=ids["People/Maren Oakhollow"], name_source="cluster")
-            conn.execute("DELETE FROM face_crops WHERE face_id = ?", (ids["excluded"],))   # never shown
+            ids["excluded"] = face(ids["finish"], 3, crop=False)
+            faces.exclude(conn, [ids["excluded"]], "not a face")
+            # Named on a face only, by a guess: the photo's keywords do not name her.
+            ids["named"] = face(ids["finish"], 4)
+            faces.name_if_unnamed(conn, ids["named"], ids["People/Maren Oakhollow"])
             for photo_id in (ids["start"], ids["finish"], ids["prize"]):
                 conn.execute("INSERT INTO embeddings (photo_id, model, mtime, size, vector) VALUES (?, ?, ?, ?, ?)",
                              (photo_id, MODEL, 1727000000.5, 4812345, vector(100 + photo_id)))

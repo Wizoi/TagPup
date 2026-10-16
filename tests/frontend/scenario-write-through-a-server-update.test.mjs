@@ -5,10 +5,17 @@
  * page's write queue (web/tagpup/write-queue.js): the queued write must still complete,
  * the queue's indicator must say so, and the queue must not be left stuck for what is
  * clicked next.
+ *
+ * Against the real server (tests/test_pages_against_the_real_server.py runs it): a library view is opened while the new
+ * version migrates its library. tagpup/web/libraries.py answers 503 X-TagPup-Updating at once, the page waits it out
+ * (web/common/api.js), and the view shows the library's photos with no error (#1225; the page half alone, from a fake,
+ * is library-view.test.mjs).
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import {
+  loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, pageExports, realLibrary, until, REAL,
+} from "./harness.mjs";
 
 const PHOTOS = [
   photoRecord({ filename: "a.jpg", tags: [], people: [] }),
@@ -82,6 +89,23 @@ function throughAnUpdate(ctx) {
 }
 
 afterEach(() => closeAllApps());
+
+describe("a library view opened while its library is migrated, against the server", { skip: !REAL }, () => {
+  test("the page waits the migration out and shows the library's photos, no error", async (t) => {
+    // The seed holds a.jpg, b.jpg and c.jpg, and the server migrates the library as the page opens on it.
+    const real = await realLibrary("migrating");
+    const ctx = await loadApp("tagpup", { server: real.server, url: real.url + "?view=all", t });
+    const { state } = pageExports(ctx.window, "web/tagpup/state.js");
+    const grid = ctx.document.getElementById("thumbnails-grid");
+    const shown = () => [...grid.querySelectorAll(".thumbnail-card:not(.placeholder)")]
+      .map((card) => (card.getAttribute("data-path") || "").split(/[\\/]/).pop()).filter(Boolean).sort();
+    const held = ["a.jpg", "b.jpg", "c.jpg"];
+    await until(ctx, () => state.library && state.library.complete && held.every((name) => shown().includes(name)),
+      () => "the view's photos, shown " + JSON.stringify(shown()), 60);
+    assert.ok(ctx.server.urls().some((u) => u.includes("/api/library/ids")), "the view never asked for its photos");
+    assert.doesNotMatch(grid.textContent, /updating|could not|error/i);
+  });
+});
 
 describe("a write queued just as the server updates", () => {
   test("completes, the queue says so, and the next write is unaffected", async (t) => {

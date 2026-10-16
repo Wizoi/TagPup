@@ -85,7 +85,7 @@ def idle_caches(idle):
 
 def _used(name):
     runtime = state.runtime()
-    if runtime is not None and getattr(runtime, "idle", None) is not None:
+    if runtime is not None:
         runtime.idle.used(name)
 
 
@@ -124,7 +124,7 @@ _library_there = face_routes.library_there
 _named = face_routes.named
 _decided = face_routes.decided
 _int_arg = face_routes.int_arg
-_read_face_ids = face_routes._read_face_ids
+_read_face_ids = face_routes.read_face_ids
 
 
 #: What a write of faces, tags or rows is answered with while "Name faces from tags" gives names or groups faces (#871, #872).

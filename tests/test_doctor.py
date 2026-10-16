@@ -10,8 +10,9 @@ tag tree give, and `--rebuild-derived --apply` makes them so and writes nothing 
 Lifted: test_derived_checks and test_doctor_sees_the_derived_tables (each rule is one scenario here: a writer
 forgot, the doctor counts it, the repair settles it). Break that fails the kept test: checks.photo_tags_out_of_date
 returns [] -> test_a_writer_that_changed_a_photos_keywords_and_did_not_refresh fails. Deleted with no scenario, since
-no library below migration 4 exists (the three live ones are at 31 and the kept snapshots at 14 or later): the doctor
-reading a library "from before photo ids" (#78); the not-yet-migrated arm stays in the two tests that say it.
+no library below migration 4 exists (the three live ones are at 32, the baseline, and one below it is refused): the doctor
+reading a library "from before photo ids" (#78); the not-yet-migrated arm stays in the doctor's test that says it (a
+step ahead of the library, migration_names.ahead), not in one that deleted the version row, which no library has.
 """
 import hashlib
 import json
@@ -20,8 +21,9 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
-from tagpup.store import checks, db, derived, people, schema, taxonomy
+from tagpup.store import checks, db, derived, people, roots_check, schema, taxonomy
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 import doctor  # noqa: E402
@@ -80,8 +82,10 @@ class TheRules(Library):
     def test_people_written_by_hand(self):
         # Rows the rule would not make: someone no keyword or face names, a person the
         # rule lists missing, and the right names in the wrong order.
-        for name, broken in (("a.jpg", "INSERT INTO photo_people (photo_id, position, name, source)"
-                                       " SELECT id, 9, 'Somebody Else', 'keyword' FROM photos WHERE path = ?"),
+        taxonomy.add_path(self.conn, "People/Somebody Else", root_has_face=1)
+        for name, broken in (("a.jpg", "INSERT INTO photo_people (photo_id, position, name, source, tag_id)"
+                                       " SELECT id, 9, 'Somebody Else', 'keyword',"
+                                       " (SELECT id FROM tag_taxonomy WHERE tag = 'People/Somebody Else') FROM photos WHERE path = ?"),
                              ("b.jpg", "DELETE FROM photo_people WHERE name = 'Wren Halloway'"
                                        " AND photo_id = (SELECT id FROM photos WHERE path = ?)"),
                              ("c.jpg", "UPDATE photo_people SET name = CASE name WHEN 'Wren Halloway'"
@@ -92,8 +96,8 @@ class TheRules(Library):
             self.conn.execute(broken, (photo,))
             self.conn.commit()
         # The people are words of the word index, kept by people.rebuild: two of the three hand-made lists hold a name the
-        # index does not (the third holds the same names in another order); the first and third carry a name that is not
-        # their node's, since the hand-made rows hold a name and the id of another.
+        # index does not (the third holds the same names in another order); the third carries two names that are not their
+        # node's, since the hand-made rows hold a name and the id of another.
         self.assertEqual({"photos whose people are out of date": 3, "photos whose word index rows are out of date": 2,
                           "people listed whose name is not their person's": 2}, self.broken())
 
@@ -114,8 +118,9 @@ class TheRules(Library):
         # Written past the store, or on a copy restored without its triggers.
         gone = 999
         self.conn.execute("INSERT INTO embeddings (photo_id, model, vector) VALUES (?, 'm', x'00')", (gone,))
-        self.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, 0, 'Oda Castellane', 'keyword')",
-                          (gone,))
+        oda = taxonomy.add_path(self.conn, "People/Oda Castellane", root_has_face=1)
+        self.conn.execute("INSERT INTO photo_people (photo_id, position, name, source, tag_id)"
+                          " VALUES (?, 0, 'Oda Castellane', 'keyword', ?)", (gone, oda))
         self.conn.execute("INSERT INTO suggestions (photo_id, tags) VALUES (?, '[]')", (gone,))
         self.assertEqual({"vectors whose photo is gone": 1, "people listed for a photo that is gone": 1,
                           "suggestions for a photo that is gone": 1}, self.broken())
@@ -139,11 +144,6 @@ class TheRules(Library):
         self.conn.commit()
         self.assertEqual({"tree nodes whose parent is missing": 1}, self.broken())
 
-    def test_a_library_not_yet_migrated(self):
-        self.conn.execute("DELETE FROM schema_version WHERE version = ?", (schema.LATEST,))
-        self.conn.commit()
-        self.assertEqual({"migrations not applied": 1}, self.broken())
-
     def test_a_trigger_that_keeps_a_generation_gone(self):
         # Three rows in `generations` say nothing about whether anything moves them (#60).
         self.conn.execute("DROP TRIGGER generation_faces_update")
@@ -158,6 +158,34 @@ class TheRules(Library):
         self.assertIn("rows whose file is not on disk: 1, in 1 folder(s); 0 folder(s) are gone entirely; 0 row(s) not "
                       "looked at", " | ".join(said))
         self.assertIn("         1  %s" % self.dir, said)
+
+
+class TheRootedRowsAreReadOnce(Library):
+    """The doctor's two rules of the rooted rows (rooted_rows_convert, native_rows_under_a_root) read one scan of every
+    path row, not one each (#1383); a write on the connection, its rollback, or another's commit, reads them again."""
+
+    def test_one_scan_for_both_and_another_after_each_write(self):
+        self.photo("a.jpg")
+        rooted = "INSERT INTO photos (path, mtime, size, tags) VALUES ('@nowhere/b.jpg', 1, 1, '[]')"
+        with mock.patch.object(roots_check, "broken", wraps=roots_check.broken) as scan:
+            self.assertEqual({}, self.broken())
+            self.assertEqual(1, scan.call_count, "the two rules scanned the rows each")
+            self.conn.execute(rooted)
+            self.assertEqual(1, checks.rooted_rows_convert(self.conn).count, "its own write was not read")
+            self.conn.rollback()
+            self.assertEqual(0, checks.rooted_rows_convert(self.conn).count, "a row rolled back was still counted")
+            self.conn.execute(rooted)
+            self.conn.commit()
+            self.assertEqual(1, checks.rooted_rows_convert(self.conn).count)
+            other = db.connect(self.db_path)
+            try:
+                other.execute("INSERT INTO photos (path, mtime, size, tags) VALUES ('@nowhere/c.jpg', 1, 1, '[]')")
+                other.commit()
+            finally:
+                other.close()
+            self.assertEqual(2, checks.rooted_rows_convert(self.conn).count, "another connection's commit was not read")
+            self.assertEqual(0, checks.native_rows_under_a_root(self.conn).count)
+            self.assertEqual(5, scan.call_count)
 
 
 class TheDoctor(Library):
