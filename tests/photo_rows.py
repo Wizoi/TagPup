@@ -17,7 +17,9 @@ from tagpup.store import added_folders, db, photos
 
 def stamp_of(photo_path):
     """(mtime, size) of the file, as the indexer takes it before its read (MetadataExtractor._stamp); (0.0, 0) for a
-    path no file is at -- most fixtures name a photo and make no file -- so that its row is a row that was read."""
+    path no file is at -- most fixtures name a photo and make no file -- so that its row is a row that was read. By design
+    (#1496): a stamp of 0 describes no file on disk (store.photos.describes), so anything that compares the row with a
+    file reads it again; the real reader leaves such a row unstamped instead, which only the fixtures cannot be."""
     stamp = MetadataExtractor._stamp(photo_path)
     return (0.0, 0) if stamp == (None, None) else stamp
 

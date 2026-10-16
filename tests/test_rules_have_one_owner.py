@@ -97,9 +97,10 @@ LINE_RULES = (
     ("pyexiftool constructed directly", EXIFTOOL, r"\b(?:exiftool\.)?(ExifToolHelper|ExifToolAlpha|ExifTool)\s*\(",
      "with exiftool.ExifTool(executable=path) as et:", "class ExifToolSession(exiftool.ExifToolHelper", ""),
     # A photo's fields are written by one writer, field_values.write: the indexer's identity mint built its own set_tags,
-    # outside the writer's clears, its minor-error rule and its guard (#1473, #1418).
-    ("an ExifTool write outside field_values", FIELD_VALUES, r"\.set_tags\(|-overwrite_original",
-     'et.set_tags([path], tags=tags, params=["-overwrite_original"])', "-overwrite_original", ""),
+    # outside the writer's clears, its minor-error rule and its guard (#1473, #1418). An execute of a "-TAG=value" is a
+    # write too, and one without -overwrite_original leaves an _original copy beside the photo (#1496).
+    ("an ExifTool write outside field_values", FIELD_VALUES, r"\.set_tags\(|-overwrite_original|\.execute\([^)]*[\"']-[\w:-]+<?=",
+     'et.execute("-XMP:Subject=Quay", path)', "-overwrite_original", ""),
     # Other processes are started, run and stopped through tagpup.core.processes: every spawn decided for itself
     # whether the child got a console window, and a test run put a terminal window on the desktop for every server it
     # started and every reaper (#124).
