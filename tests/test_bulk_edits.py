@@ -169,10 +169,13 @@ class Tags(Bulk):
         self.assertEqual(1, len(found), "60 photos are one change")
         self.assertEqual(("bulk tags", "applied"), found[0][1:])
 
-    def test_the_cached_scans_of_folders_are_forgotten_after_it(self):
-        with mock.patch.object(tagpup_routes, "forget_scans") as forget:
-            self.tags_edit(add=["Trips/Coast"])
-        forget.assert_called_once_with(self.library)
+    def test_the_cached_scans_of_folders_are_read_again_after_it(self):
+        photo = self.path(self.ids[0])
+        cache = tagpup_routes.folders.of(self.library)
+        self.addCleanup(tagpup_routes.folders.forget, self.library)
+        cache.put(os.path.dirname(photo), {paths.key(photo): {"path": photo, "tags": []}})
+        self.tags_edit(add=["Trips/Coast"])
+        self.assertIsNone(cache.get(os.path.dirname(photo)), "the scan says what the photos held before the edit")
 
     def test_nothing_is_a_job_any_more(self):
         for path in ("start", "status?job=1", "current", "cancel"):

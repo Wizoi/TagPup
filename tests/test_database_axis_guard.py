@@ -82,7 +82,7 @@ class TestNoLibraryIsResolvedImplicitly(unittest.TestCase):
 
         self.assertEqual(["library", "photos", "models", "looking", "held_now"],
                          list(inspect.signature(suggestion_jobs.work_for).parameters))
-        self.assertEqual(["library", "folder"], list(inspect.signature(tagpup_routes._folder_photos).parameters))
+        self.assertEqual(["library", "folder", "force"], list(inspect.signature(tagpup_routes._folder_photos).parameters))
         self.assertEqual(["library"], list(inspect.signature(tagpup_routes._folder_indexer).parameters))
 
     def test_guard_detects_an_implicit_library(self):

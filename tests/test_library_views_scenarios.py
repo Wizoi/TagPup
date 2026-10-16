@@ -16,9 +16,9 @@ test_library_find.py and test_a_queued_folder_drops_its_scan.py (#341), and what
   Lifted: the undated read dropped from all_ids (`if len(ids) <= cap and not scope.dated:` -> `if False:`) fails the same test.
   Lifted: store.photo_id_of matching with `path LIKE ?` instead of paths.sql_equals (`_` and `%` wildcards) fails
           underscore_and_percent_are_not_wildcards.
-  Lifted: runtime.index_folder telling folder_indexed only when the index succeeded (the `finally` made a plain
-          fall-through; #341: the page went on showing a scan from before the photos were read) fails
-          a_folder_the_queue_finished_has_no_cached_scan_whoever_queued_it.
+  Lifted: #341, the page went on showing a scan from before the photos were read: the scan is kept with the photos
+          counter (tagpup.web.tagpup_routes.FolderCache), which the indexer's rows move; scan_stamp reading no
+          counter fails a_folder_the_queue_indexed_has_no_cached_scan_whoever_queued_it.
 
 Photos are rows as the indexer records them (tests/view_library.py); fictional names only.
 """
@@ -230,12 +230,21 @@ class AfterAWriteElsewhere(Views):
         self.assertIn("There is no photo", missing.get_json()["error"])
         self.assertEqual([self.a, self.b, self.c], self.ids(kind="all")["ids"])
 
-    def test_a_folder_the_queue_finished_has_no_cached_scan_whoever_queued_it(self):
+    def test_a_folder_the_queue_indexed_has_no_cached_scan_whoever_queued_it(self):
         """#341: only the server's own route dropped the folder's scan when indexing ended; the folders sync, a recurring sync
-        and "include" went through runtime.index_folder, which did not, and the page showed the folder as scanned before."""
+        and "include" went through runtime.index_folder, which did not, and the page showed the folder as scanned before. The
+        indexer is a process of its own: what it wrote reaches the scan through the photos counter, even when clustering
+        failed after the rows were written."""
         library = self.vl.library
-        for failing in (None, RuntimeError("clustering failed")):   # rows were written even when clustering failed after
-            with mock.patch.object(indexing, "index_folder", side_effect=failing, return_value=None):
+        self.addCleanup(tagpup_routes.folders.forget, library)
+        for failing in (None, RuntimeError("clustering failed")):
+            def index(*_args, **_kwargs):
+                # The indexer read the folder's photos again: its rows, from a connection of its own.
+                photo_rows.add_read(self.vl.conn, self.vl.path_of(self.a), {"EXIF:DateTimeOriginal": "2024:06:01 11:00:00"})
+                self.vl.conn.commit()
+                if failing:
+                    raise failing
+            with mock.patch.object(indexing, "index_folder", side_effect=index):
                 for make in (runtime.index_folder(library, subfolders=False), tagpup_routes._folder_indexer(library)):
                     tagpup_routes.folders.of(library).put(self.folder, {"a": {"path": "a"}})
                     try:

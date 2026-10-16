@@ -86,15 +86,16 @@ def taken_order(record):
 
 @roots_service.canonical_args("folder")
 def scan_stamp(library):
-    """What the library's photos were at this moment, to be taken BEFORE a scan and kept with it
-    (tagpup.web.tagpup_routes.FolderCache): the photos counter that the triggers move for a write from any process --
-    this server, a CLI `sync --apply`, an MCP undo, a snapshot restore -- so a scan kept past one is read again. None
-    when the library cannot be read just now: a scan is then kept as it was, and a scan of an unreadable library fails
-    by itself."""
+    """What the library's photos and tag tree were at this moment, to be taken BEFORE a scan and kept with it
+    (tagpup.web.tagpup_routes.FolderCache): the photos and taxonomy counters that the triggers move for a write from any
+    process -- this server, an index, a CLI `sync --apply`, an MCP undo, a snapshot restore, a tree edit (a file read
+    from disk is told the tree's people) -- and that a move of a root moves (generations' salt), so a scan kept past one
+    is read again. None when the library cannot be read just now: a scan is then kept as it was, and a scan of an
+    unreadable library fails by itself."""
     try:
         conn = db.connect(db.readonly_uri(library.path), uri=True)
         try:
-            return generations.values(conn, ("photos",))
+            return generations.values(conn, ("photos", "taxonomy"))
         finally:
             conn.close()
     except Exception as e:

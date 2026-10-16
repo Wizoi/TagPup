@@ -37,7 +37,7 @@ from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.services import roots_location
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, face_routes, responses, roots_gate, roots_ingress, security, state, tagpup_routes
+from tagpup.web import desktop, face_routes, responses, roots_gate, roots_ingress, security, state
 from tagpup.web import lifecycle as lifecycles
 from tagpup.web import libraries as web_libraries
 
@@ -267,8 +267,6 @@ def tags_merge():
     except Exception as e:
         logger.error("Error merging tag %r: %s", body.get("from"), e)
         _refuse(500, str(e))
-    if body.get("apply"):
-        tagpup_routes.forget_scans(library)     # also when refused: a batch stopped half way wrote files
     if result.refused:
         _refuse(400, result.refused)
     reply = dict(result.details)
@@ -303,7 +301,6 @@ def person_rename():
     except Exception as e:
         logger.error("Error renaming a person: %s", e)
         abort(500, description="Internal error: %s" % e)
-    tagpup_routes.forget_scans(library)
     if result.refused:
         _refuse(400, result.refused)
     if not result.ok and not result.changed:
@@ -754,10 +751,9 @@ def _moved(library, name):
     if result.changed:
         # The map moved: what this process kept of the old places is let go -- the connections
         # find the new map by themselves within a second, and every cache keyed by the library's
-        # generations is built again (tagpup.store.generations).
+        # generations is built again (tagpup.store.generations), TagPup's folder scans among them.
         roots_gate.forget(library)
         roots_ingress.forget(library)
-        tagpup_routes.forget_scans(library)
     answer = {"success": result.refused is None, "dry_run": not apply, "changed": result.changed,
               "error": result.refused, **{key: value for key, value in result.details.items() if key != "dry_run"}}
     return jsonify(answer), (200 if result.refused is None else 409 if result.details.get("conflict") else 400)
