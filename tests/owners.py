@@ -235,7 +235,7 @@ _FILES = {
             "test_index_reload_reuses_its_connection test_jobs_suggestions "
             "test_library_union_and_order test_library_view test_library_view_plans test_models_in_use_survive_an_unload "
             "test_one_value_for_a_suggested_tag "
-            "test_person_tag_edges test_photo_index_keeps_only_vectors "
+            "test_person_tag_edges test_photo_index_keeps_only_vectors test_pipeline_measurements "
             "test_selection test_selection_tally "
             "test_suggest_index_stays_current test_suggest_reads_people_once test_suggest_respects_face_decisions "
             "test_suggest_status_poll_is_a_snapshot test_suggester_scoring "
