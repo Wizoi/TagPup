@@ -317,6 +317,24 @@ class TheJournal(Library):
             journal.undo(self.path, again.change_id)
         self.assertIn("unname them first", str(refused.exception))
 
+    def test_the_undo_of_a_nodes_insert_is_refused_for_a_guessed_face_too(self):
+        """A face only guessed (clustering's name_source None) is refused the same, before anything is written: the old undo
+        took the node away and left the face holding a name and no id (the review of 2026-10-15)."""
+        applied = journal.apply(self.path, "add a person", [journal.insert("tag_taxonomy", {
+            "tag": "Friends/Maren Oakhollow", "parent_id": node_id(self.path, "Friends"), "name": "Maren Oakhollow",
+            "has_face": 1})])
+        maren = node_id(self.path, "Friends/Maren Oakhollow")
+        write(self.path, lambda conn: faces.name_if_unnamed(conn, self.faces[1], maren))
+        self.assertEqual(
+            maren, look(self.path, "SELECT tag_id FROM faces WHERE id = ?", (self.faces[1],))[0][0])
+        with self.assertRaises(journal.Refusal) as refused:
+            journal.undo(self.path, applied.change_id)
+        self.assertIn("unname them first", str(refused.exception))
+        self.assertEqual(maren, node_id(self.path, "Friends/Maren Oakhollow"))
+        self.assertEqual(
+            (maren, "Maren Oakhollow"),
+            look(self.path, "SELECT tag_id, name FROM faces WHERE id = ?", (self.faces[1],))[0])
+
     def test_a_rename_between_a_naming_and_its_undo_is_not_a_conflict(self):
         """The change records the person's id and, beside it, the name as a cache: the rename of the node changes the cache
         and not the face, so the undo finds the face as the change left it."""
