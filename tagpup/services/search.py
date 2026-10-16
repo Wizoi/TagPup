@@ -29,19 +29,6 @@ logger = logging.getLogger("tagpup_cli.embedder")
 index_log = logging.getLogger("tagpup_cli.index")
 
 
-def stored_mismatch(photo_index, model_name):
-    """(stored, made) when the vectors `photo_index` holds for these settings are not the
-    length `model_name` makes; None when they are, or when either is not known."""
-    # Here, not at the top: open_clip takes seconds to import, and the index needs none of it.
-    from tagpup.ml.clip import output_dim
-
-    stored = photo_index.stored_dim()
-    made = output_dim(model_name)
-    if stored is None or made is None or stored == made:
-        return None
-    return (stored, made)
-
-
 class PhotoEmbeddings:
     """The photos' vectors under one CLIP model: the library's when the file is as it
     was when its vector was made, else made by `clip` and kept.
@@ -192,18 +179,10 @@ class PhotoIndex:
 
     def open(self) -> bool:
         """Connect, as load does, but read none of the vectors: for a command that needs only
-        the connection and `stored_dim` (the indexer, which read 267 MB of vectors to learn
+        the connection and the stamps (the indexer, which read 267 MB of vectors to learn
         their length). `index` stays None."""
         with self._load_lock:
             return self._load_unlocked(vectors=False)
-
-    def stored_dim(self):
-        """The length of the vectors the library holds under this index's model, read from one
-        of them; None when it holds none or is not connected."""
-        if self.conn is None or self.model is None:
-            return None
-        with self._read_lock:
-            return store_photos.vector_dim(self.conn, self.model)
 
     def stamps(self):
         """(path, mtime, size, holds a vector) of every photo, read now (store.photos.stamps_with_vectors):
@@ -321,21 +300,6 @@ class PhotoIndex:
         nearest = self.index.search(query_vector, k)
         found = {record["id"]: record for record in self.records([photo_id for _sim, photo_id in nearest])}
         return [(sim, found[photo_id]) for sim, photo_id in nearest if photo_id in found]
-
-    def clear_clip_embeddings(self):
-        """Set all embedding values in photos table to NULL and commit, then clear in-memory FAISS index."""
-        if self.conn is None:
-            return
-        try:
-            store_photos.clear_embeddings(self.conn)
-            self.conn.commit()
-            self.index = None
-            # Reload metadata (has_embedding will be updated to False)
-            self.load()
-        except Exception as e:
-            index_log.error(f"Error clearing clip embeddings from SQLite: {e}")
-            self.conn.rollback()
-            raise e
 
     def _photos_signature(self):
         """Something that moves whenever a photo row is added, removed or rewritten: the

@@ -40,9 +40,7 @@ from tagpup.core import fields, paths  # noqa: E402
 from tagpup.core.dates import record_year  # noqa: E402
 from tagpup.files.images import photos_under  # noqa: E402
 from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
-from tagpup.ml.clip import output_dim  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
-from tagpup.services import settings  # noqa: E402
 from tagpup.services.photos import page_record  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
 from tagpup.store import added_folders  # noqa: E402
@@ -68,8 +66,8 @@ def swap_case(text):
 
 
 def expected_dim():
-    """The length the library's model makes, as the CLI checks it: a library made in a test's home holds the defaults."""
-    return output_dim(settings.DEFAULTS["model.name"]) or 512
+    """Any length: a model's vectors are kept under its own key (tagpup.store.embeddings.model_key)."""
+    return 8
 
 
 class CliDatabaseCase(unittest.TestCase):

@@ -28,23 +28,6 @@ logger = logging.getLogger("tagpup_cli.embedder")
 SETTINGS = ("model_name", "pretrained", "preserve_full_frame", "max_aspect_ratio", "force_image_size")
 
 
-def output_dim(model_name):
-    """How long the vectors `model_name` makes are, from open_clip's own description of
-    the model; None for one it does not describe (from the hub), known only once loaded.
-
-    The CLI guessed it from the name in three places -- 768 for ViT-L, 1024 for ViT-H,
-    else 512 -- and ViT-bigG-14's are 1280: every index cleared the library's vectors,
-    and Suggest and search refused to run (docs/findings.md, #74).
-    """
-    if model_name.startswith("hf-hub:"):
-        return None   # open_clip would fetch its description from the hub to answer
-    try:
-        config = open_clip.get_model_config(model_name)
-    except Exception:
-        return None
-    return config.get("embed_dim") if config else None
-
-
 class ClipModel:
     """One CLIP model, loaded the first time it is used. Thread-safe: the suggestion
     runs embed from a pool."""

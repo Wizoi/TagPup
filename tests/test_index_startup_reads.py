@@ -4,9 +4,10 @@ Every sync, watcher run and Add folder starts an index run, and a run that index
 lasted 14 to 18 s: it read and stacked all of photo_index's vectors (267 MB) to learn their length,
 parsed the JSON of every photo's row to learn its mtime and size, and, if it indexed anything, read the
 vectors a second time at the end for a search nothing made. Here: the vectors are not read
-(PhotoIndex.open, stored_dim), the stamps are (store.photos.stamps_with_vectors), and the same photos are indexed.
+(PhotoIndex.open), the stamps are (store.photos.stamps_with_vectors), and the same photos are indexed.
 A run that finds nothing to index imports no model's library either (#1089): open_clip and torch, 2 of a 3.3 s run in a
-sandbox (6 to 8 s under load), were imported to compare a vector length and make a CLIP model nothing used.
+sandbox (6 to 8 s under load), were imported to compare a vector length and make a CLIP model nothing used. (The length
+check went with it: a model's vectors are kept under its own key, and no key held two lengths in the three libraries.)
 """
 import os
 import sys
@@ -77,8 +78,7 @@ class Harbour(unittest.TestCase):
         runtime.model_key.return_value = MODEL
         extractor = mock.Mock(side_effect=Reached)
         with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime), \
-                mock.patch.object(tagpup_cli, "MetadataExtractor", extractor), \
-                mock.patch("tagpup.ml.clip.output_dim", return_value=DIM):
+                mock.patch.object(tagpup_cli, "MetadataExtractor", extractor):
             result = CliRunner().invoke(tagpup_cli.cli, ["--db", self.db_path, "index", folder or self.folder])
         return result, extractor.called
 
@@ -98,12 +98,6 @@ class TheStore(Harbour):
         self.assertEqual(False, found[self.bare][2])
         self.assertEqual(3, len(found), "the held row, the two photos")
 
-    def test_the_vectors_length_is_read_from_a_vector(self):
-        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
-        self.addCleanup(conn.close)
-        self.assertEqual(DIM, store_photos.vector_dim(conn, MODEL))
-        self.assertIsNone(store_photos.vector_dim(conn, "another|model"))
-
 
 class OpeningTheIndex(Harbour):
     def setUp(self):
@@ -118,23 +112,12 @@ class OpeningTheIndex(Harbour):
             self.assertTrue(index.open())
         self.assertIsNotNone(index.conn)
         self.assertIsNone(index.index)
-        self.assertEqual(DIM, index.stored_dim())
 
     def test_load_still_builds_the_index(self):
         index = search.PhotoIndex(self.db_path, model=MODEL)
         self.addCleanup(index.close)
         self.assertTrue(index.load())
         self.assertEqual(DIM, index.index.d)
-        self.assertEqual(DIM, index.stored_dim())
-
-    def test_a_vector_of_another_length_is_a_mismatch(self):
-        index = search.PhotoIndex(self.db_path, model=MODEL)
-        self.addCleanup(index.close)
-        index.open()
-        with mock.patch("tagpup.ml.clip.output_dim", return_value=DIM * 2):
-            self.assertEqual((DIM, DIM * 2), search.stored_mismatch(index, MODEL))
-        with mock.patch("tagpup.ml.clip.output_dim", return_value=DIM):
-            self.assertIsNone(search.stored_mismatch(index, MODEL))
 
 
 class TheIndexCommand(Harbour):
@@ -205,15 +188,14 @@ class AnIndexWithNothingToDo(Harbour):
     def test_imports_no_models_library(self):
         path = os.path.join(self.folder, "start.jpg")
         Image.new("RGB", (8, 8)).save(path, "JPEG")
-        from tagpup.ml.clip import output_dim
         embedder = library_settings.of(Library(self.db_path)).embedder
         conn = db.connect(self.db_path)
         try:
             photo_rows.add_read(conn, path, {"XMP:Subject": ["Boats/Dinghy"]})
             stat = os.stat(path)
-            # Its vector as the library's model makes it: under its key, of its length.
+            # Its vector under the library's model's key.
             store_embeddings.put(conn, path, store_embeddings.model_key(**embedder), stat.st_mtime, stat.st_size,
-                                 np.ones(output_dim(embedder["model_name"]), dtype=np.float32).tobytes())
+                                 np.ones(DIM, dtype=np.float32).tobytes())
             conn.commit()
         finally:
             conn.close()

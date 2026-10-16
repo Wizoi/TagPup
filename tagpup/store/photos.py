@@ -362,13 +362,6 @@ def vectors(conn, model):
                         " WHERE e.model = ? ORDER BY e.photo_id", (model,)).fetchall()
 
 
-def vector_dim(conn, model):
-    """The length of the vectors held under `model`, read from one of them; None when there is none.
-    The vectors' bytes are four to a number (float32)."""
-    row = conn.execute("SELECT length(vector) / 4 FROM embeddings WHERE model = ? LIMIT 1", (model,)).fetchone()
-    return row[0] if row else None
-
-
 def stamps_with_vectors(conn, model):
     """(path, mtime, size, holds a vector under `model`) of every photo, native paths: all the
     indexer needs to know whether a file is as it was. None of the JSON of the row is read."""
@@ -506,11 +499,6 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
             # Dropped without a word, it left a library without the vector (#85).
             raise ValueError("An embedding is kept under the model that made it; none was named.")
         embeddings.put(conn, stored, model, row.get("mtime", 0.0), row.get("size", 0), row["embedding"])
-
-
-def clear_embeddings(conn):
-    """Forget every photo's CLIP vectors. Returns rows deleted. The caller commits."""
-    return embeddings.clear(conn)
 
 
 def remove_under(conn, folder):
