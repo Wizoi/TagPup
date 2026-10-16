@@ -192,20 +192,13 @@ class WriteTools(unittest.TestCase):
         self.assertEqual(tags(), photo_tags, "photos are counted, not rewritten")
         self.assertEqual(applied["remaining"], {"duplicates": 0})
 
-    def test_a_refused_merge_is_an_answer(self):
-        """No tag tree: refused, nothing written, and the refusal names the library, not
-        where it is."""
-        bare = self.home.library("bare.db")
-        schema.ensure(bare)   # a library whose tree table is gone: a file with no migrations is refused as too old
-        conn = db.connect(bare)
-        conn.execute("DROP TABLE photo_tags")
-        conn.execute("DROP TABLE tag_taxonomy")
-        conn.commit()
-        conn.close()
+    def test_a_refused_write_is_an_answer(self):
+        """A write its plan refuses -- a sync of a folder the library holds nothing under and that is under none of its roots --
+        is an answer: refused, nothing written, and the refusal does not say where the library is."""
+        elsewhere = os.path.join(os.path.dirname(self.home.root), "Elsewhere")
         for apply in (False, True):
-            answer = self.call("merge_duplicate_person_tags", library="bare", apply=apply)
-            self.assertIn("no tag_taxonomy", answer["refused"])
-            self.assertIn("bare", answer["refused"])
+            answer = self.call("sync", library=LIBRARY, folder=elsewhere, apply=apply)
+            self.assertIn("under none of the library's root folders", answer["refused"])
             self.assertNotIn(self.home.root, answer["refused"])
             self.assertEqual((answer["ok"], answer["changed"], answer["change"]), (False, 0, None))
         self.assertEqual(self.backups(), [])

@@ -33,11 +33,7 @@ UNMATCHED = vocabulary.UNMATCHED
 
 def tree(library):
     """Every node of the tag tree, with `usage_count`: the photos carrying it or a tag
-    under it. The tree view. A library without the tree's table is seeded first, and
-    what older writers left wrong in it is put right."""
-    if not taxonomy.has_tree(library.path):
-        taxonomy.seed(library.path)
-    taxonomy.repair(library.path)
+    under it. The tree view. Reads only."""
     counts = photos.tag_usage(library.path)
     return [dict(node, usage_count=counts.get(node["tag"], 0)) for node in taxonomy.nodes(library.path)]
 
