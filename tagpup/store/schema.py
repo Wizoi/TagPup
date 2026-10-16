@@ -24,6 +24,7 @@ one. After the first time in a process it costs a stat.
 import collections
 import contextlib
 import contextvars
+import json
 import logging
 import os
 import sqlite3
@@ -182,6 +183,12 @@ def newer_problem(db_path):
     if found < BASELINE and made:
         return too_old_sentence(os.path.basename(db_path), found)
     return None
+
+
+def row_key(key):
+    """How `change_rows.row_key` spells a row's key (a tuple of its key columns' values): the journal writes it so, and the
+    stores that look up a change's rows by a key (removals, face_batches) ask by it. Read back with json.loads."""
+    return json.dumps(list(key))
 
 
 def _baseline(conn):

@@ -268,10 +268,6 @@ def _now():
     return time.strftime(TIME)
 
 
-def _key_text(key):
-    return json.dumps(list(key))
-
-
 def _named(table, key):
     return "%s %s" % (table, "/".join(str(k) for k in key))
 
@@ -607,7 +603,7 @@ def _write(conn, changes):
 def _record(conn, change_id, changes):
     rows = []
     for change in changes:
-        key = _key_text(change.key)
+        key = schema.row_key(change.key)
         if change.action == "update":
             rows += [(change_id, "update", change.table, key, c, change.old[c], change.new[c]) for c in change.new]
         elif change.action == "delete":

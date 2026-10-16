@@ -24,16 +24,12 @@ Nothing here names a person or a path: counts, ids and columns.
 """
 import json
 
-from tagpup.store import faces, journal, person_ids
+from tagpup.store import faces, journal, person_ids, schema
 
 #: What the change calls a row it records.
 KIND = "face decision"
 
 CHUNK = 500
-
-
-def _key(face_id):
-    return json.dumps([face_id])
 
 
 def record(conn, change_id, intents):
@@ -53,7 +49,7 @@ def recorded(conn, change_id, face_ids):
                 # By the face's key: the planner took the change's index and read the change's every row for each photo.
                 "SELECT row_key, column_name, old, new FROM change_rows INDEXED BY idx_change_rows_row"
                 " WHERE table_name = 'faces' AND row_key IN (%s) AND change_id = ?" % ",".join("?" * len(chunk)),
-                [_key(face_id) for face_id in chunk] + [change_id]):
+                [schema.row_key((face_id,)) for face_id in chunk] + [change_id]):
             before, after = found.setdefault(json.loads(row_key)[0], ({}, {}))
             before[column], after[column] = old, new
     return found
@@ -64,7 +60,7 @@ def _forget(conn, change_id, face_ids):
     for start in range(0, len(face_ids), CHUNK):
         chunk = face_ids[start:start + CHUNK]
         conn.execute("DELETE FROM change_rows INDEXED BY idx_change_rows_row WHERE table_name = 'faces' AND change_id = ?"
-                     " AND row_key IN (%s)" % ",".join("?" * len(chunk)), [change_id] + [_key(face_id) for face_id in chunk])
+                     " AND row_key IN (%s)" % ",".join("?" * len(chunk)), [change_id] + [schema.row_key((face_id,)) for face_id in chunk])
 
 
 def tidy(conn, change_id):
