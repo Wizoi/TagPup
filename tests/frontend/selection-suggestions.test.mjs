@@ -303,3 +303,15 @@ describe("Apply All applies all of it", () => {
     );
   });
 });
+
+describe("a finished run in a folder the library holds names the photos it could not read", () => {
+  test("the status line carries the run's notes, as it does for a run that only looks", async (t) => {
+    const photo = photoRecord({ filename: "a.jpg", tags: [], people: [] });
+    const ctx = await loadSelected(t, [photo], {
+      status: "completed", unread: 1, suggestions: {},
+      notes: ["1 photo(s) could not be analysed, nothing was recorded of them (disk I/O error)."],
+    });
+    assert.match(ctx.document.getElementById("status-text").textContent,
+      /1 photo\(s\) could not be analysed.*disk I\/O error/);
+  });
+});

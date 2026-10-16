@@ -446,6 +446,22 @@ class AFailureIsSaidAndLeavesNothingHalfRun(Base):
         self.assertEqual([], self.faces.detected, "a photo whose faces could not be read was detected again")
         self.assert_library_unchanged()
 
+    def test_a_run_that_remembers_names_the_photos_it_could_not_read_as_a_run_that_looks_does(self):
+        """The same failed read through the folder the library holds: the finished run says how many were not
+        suggested for and why, in the looking run's words, instead of 'completed' with a gap."""
+        import sqlite3
+        with mock.patch("tagpup.store.faces.in_photo", side_effect=sqlite3.OperationalError("disk I/O error")):
+            self.start(self.regatta)
+        found = self.status(self.regatta)
+        self.assertNotIn("in_memory", found)
+        self.assertEqual(("completed", 3), (found["status"], found["unread"]), found)
+        self.assertEqual(["3 photo(s) could not be analysed, nothing was recorded of them (disk I/O error)."],
+                         found["notes"])
+        # Tried again, and said no more once every photo is read.
+        self.start(self.regatta)
+        again = self.status(self.regatta)
+        self.assertEqual((0, []), (again["unread"], again["notes"]), again)
+
     def test_a_model_that_fails_on_every_photo_says_so_and_records_nothing(self):
         self.clip.fail = "CUDA out of memory"
         self.start(self.cup)
