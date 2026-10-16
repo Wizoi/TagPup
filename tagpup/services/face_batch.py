@@ -34,7 +34,7 @@ class Work:
         self._photos = {}          # {paths.key(path): (path, [(face id, old, new)])}
         self.add = {}              # {paths.key(path): [tag]}: the tags a photo is to be given
         self.remove = {}           # {paths.key(path): [person]}: the people a photo is to lose (a Ref), when no face carries them
-        self.people = []           # the people the faces are to be given, as person_ids.wire has them
+        self.people = []           # the people the faces are to be given: the ids of their nodes
         self.applied, self.left = [], []
         self.accounted = []
 

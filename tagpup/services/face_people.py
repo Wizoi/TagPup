@@ -53,28 +53,27 @@ UNNAMED = removals.OPERATION
 
 class Filer:
     """The tag a person is written as, by the one rule a chip and Apply All follow (`vocabulary.person_tag`): the tree
-    read once, and only read -- no node is made. A person given by the id of their node (or as a Person or a Ref with one)
-    is the tag of that node. A NAME is a person the tree does not have yet (`made` and bulk_edit resolve a name a person
-    has first, and refuse the one two people have), filed under the one people root; None when the tree has several: someone
-    must choose (the page's placement question)."""
+    read once, and only read -- no node is made. A person given by the id of their node is the tag of that node (None for a
+    node gone). A NAME is a person the tree does not have yet (`made` and bulk_edit resolve a name a person has first, and
+    refuse the one two people have), filed under the one people root; None when the tree has several: someone must choose
+    (the page's placement question)."""
 
     def __init__(self, library):
         self.roots = taxonomy.people_filing(library.path)[1]
         self.tags_by_id = people_service.tags_by_id(library)
 
     def tag(self, person):
-        person = person_ids.wire(person)
         if isinstance(person, int):
             return self.tags_by_id.get(person)
         return vocabulary.person_tag((person or "").strip(), [], self.roots)
 
 
 def made(library, ref):
-    """`ref` (the id of a person, or a name) as the id of a person that has a node: a name no person is called is given its node
-    at the path the filer chooses -- the tag first, as the New person dialog makes it (every tag has an id, owner 2026-10-10) --
-    and the node's id is returned. Refused for a name two people have (the sentence names their paths), one the filer cannot place,
+    """THE one maker of a new person for a face (the store's face writers make no node): `ref` (the id of a person, or a typed
+    name, as faces.who_is gives it) as the id of a person that has a node: a name no person is called is given its node at the
+    path the filer chooses -- the tag first, as the New person dialog makes it (every tag has an id, owner 2026-10-10) -- and
+    the node's id is returned. Refused for a name two people have (the sentence names their paths), one the filer cannot place,
     or one that would go under a person that faces or photos use; nothing is made then."""
-    ref = person_ids.wire(ref)
     if isinstance(ref, int):
         return ref
     found = people_service.resolve(library, ref)
@@ -99,12 +98,6 @@ def not_filed(name):
             "TagPup's Organize, which asks, or name the path." % name)
 
 
-def shown(person):
-    """What to call a person in a sentence: their name (a Ref's, a name given), or 'that person' for an id alone."""
-    person = person_ids.wire(person) if not isinstance(person, str) else person
-    return "that person" if isinstance(person, int) else str(person)
-
-
 def already_names(tags, tag, known):
     """Do the photo's `tags` name the person `tag` is, by the id of their node (two people called alike are two)? THE rule
     for "this photo already names them" -- the keyword writer's own (tagging._change_each: vocabulary.names_same_person) --
@@ -113,9 +106,8 @@ def already_names(tags, tag, known):
 
 
 def person_tags(tags, person, known):
-    """The tags among `tags` that name `person` (a Ref or an id), by the id of their node: their node's own path, nothing else
-    (a bare name is a path of its own, owner 2026-10-11). None for a name from before ids: that is no person."""
-    person = person_ids.wire(person)
+    """The tags among `tags` that name the person whose node is `person` (an id): their node's own path, nothing else (a bare
+    name is a path of its own, owner 2026-10-11). None for no id: a name alone is nobody."""
     if not isinstance(person, int) or person not in known.names:
         return []
     return [tag for tag in tags if (ref := vocabulary.person_ref_of_tag(tag, known)) is not None and ref.id == person]
@@ -175,18 +167,18 @@ def write_tags(library, changes, writer, operation, persons=None, stop_at_first_
 
 def add_people(library, wanted, writer, filer=None, operation=ADDED, stop_at_first_error=True):
     """Add the person of each (photo path, person) of `wanted` to the photo's keywords, a photo given all its people in
-    one write; a person is their id, a Ref, or a name. A Result: `changed` the files written, details `written`. A photo whose
+    one write; a person is the id of their node. A Result: `changed` the files written, details `written`. A photo whose
     keywords name the person already (by the id of their node: already_names) is not read or written again.
-    Refused, nothing written, for a name the tree has no one root to file under."""
+    Refused, nothing written, for a person whose node is gone (merged or removed meanwhile)."""
     filer = filer or Filer(library)
     result = Result(attempted=len(wanted))
     held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, [path for path, _name in wanted])}
     known = taxonomy.people_vocabulary(library.path)
     changes, persons = {}, {}
-    for photo_path, name in wanted:
-        tag = filer.tag(name)
+    for photo_path, person in wanted:
+        tag = filer.tag(person)
         if tag is None:
-            result.refuse(not_filed(shown(name)))
+            result.refuse(str(person_ids.StalePerson(person)))
             return result
         if already_names(held.get(paths.key(photo_path), []), tag, known):
             continue
@@ -198,13 +190,13 @@ def add_people(library, wanted, writer, filer=None, operation=ADDED, stop_at_fir
 
 
 def untag_plan(library, items):
-    """{photo path: [the tags to take off]} for the (photo path, person) of `items` -- a person is a Ref, an id or a name --
+    """{photo path: [the tags to take off]} for the (photo path, person) of `items` -- a person is the Ref a face carried --
     whose person is on no face of the photo any more -- read from the library NOW, after the faces were written -- and on whose
     keywords the person still is, in every spelling the photo holds (a tag at the person's path and a bare one are one person;
     another person called alike is not)."""
     wanted = {}
     for photo_path, person in items:
-        wanted.setdefault(photo_path, []).append(person_ids.wire(person))
+        wanted.setdefault(photo_path, []).append(person.id)
     if not wanted:
         return {}
     conn = db.connect(db.readonly_uri(library.path), uri=True)
@@ -403,7 +395,7 @@ def _faces_to_unname(library, removed):
         for face_id, person, source in named[photo_path]:
             if person.id is None:
                 continue   # a name from before ids is no person
-            if person_tags(taken_off, person, known) and not person_tags(tags_now, person, known):
+            if person_tags(taken_off, person.id, known) and not person_tags(tags_now, person.id, known):
                 found.append((face_id, person, source))
     return found
 

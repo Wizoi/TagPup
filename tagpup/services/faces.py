@@ -38,11 +38,11 @@ EXCLUSION_REASONS = validation.EXCLUSION_REASONS
 
 
 def who_is(library, person, result):
-    """(the person as a store writer takes it -- the node's id, or a name no person is filed under --, the name to show) for
-    `person`: an id, a Person, a Ref or a name. None, with `result` refused, for what is refused before anything else
-    is asked: a name that is not a name, a name two people have, a group. NotFound for an id that is no person (merged or
-    removed in another window; nobody is made of it)."""
-    person = person_ids.wire(person)
+    """THE door of a face action for the person a request names: (the node's id, or -- for a typed name no person is filed
+    under -- that name, which face_people.made makes the person of; the name to show) for `person`, the id of a node or a typed
+    name. None, with `result` refused, for what is refused before anything else is asked: a name that is not a name, a name
+    two people have, a group. NotFound for an id that is no person (merged or removed in another window; nobody is made of
+    it)."""
     if isinstance(person, str) or person is None:
         # A name is a name: "People/Sam" is a tag, and names nobody (tagpup.core.validation).
         text = (person or "").strip()
@@ -67,9 +67,8 @@ def who_is(library, person, result):
 
 
 def name_face(library, face_id, person):
-    """Name one face. Clicking a suggestion, or typing a name, on a face card. `person` is the person's id (a page that has
-    them), or a tag path or a name (the CLI, the MCP, a page not reloaded since the update): a name two people have is refused
-    naming them, a group is refused, an id that is no person is NotFound and makes nobody.
+    """Name one face as the person whose node is `person` (face_people.name_face makes a new person's node first, the tag
+    first): an id that is no person is NotFound and makes nobody, a group is refused.
 
     A person chose this, so it is recorded as a manual decision: re-clustering re-derives
     every name from scratch and must not discard it -- also when the face already carries
@@ -409,7 +408,7 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
 
 
 def _shown(conn, persons, known=None):
-    """{person: the name to show} for the persons (wire form: an id, or a name no person is filed under) of a guess."""
+    """{person: the name to show} for the persons (the ids of their nodes) of a guess."""
     names = (known or person_ids.read(conn)).node_names
     return {person: names.get(person, str(person)) for person in persons}
 

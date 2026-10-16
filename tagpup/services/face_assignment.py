@@ -143,7 +143,7 @@ def plan_guesses(library, folder, named):
     for face_id, person, _photo in chosen:
         tag = filer.tag(person)
         if tag is None:
-            problems.add(face_people.not_filed(face_people.shown(person)))
+            problems.add(str(person_ids.StalePerson(person)))
         if face_id not in found or tag is None:
             continue
         _photo_id, path, old = found[face_id]
@@ -179,7 +179,7 @@ def _editor(work, known):
     def edit(path, held_tags):
         key = paths.key(path)
         add = [tag for tag in work.add.get(key, ()) if not face_people.already_names(held_tags, tag, known)]
-        gone = [tag for person in work.remove.get(key, ()) for tag in face_people.person_tags(held_tags, person, known)]
+        gone = [tag for person in work.remove.get(key, ()) for tag in face_people.person_tags(held_tags, person.id, known)]
         return add, gone
     return edit
 
