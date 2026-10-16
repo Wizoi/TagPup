@@ -784,7 +784,7 @@ def library_bulk_edit():
     "selection": SELECTION, "params": {...}}` answers when it is done, with what each photo came to: `changed`, `unchanged`,
     `skipped_missing`, `error_count` and the first 50 `errors`. At most 5,000 photos (a selection of more
     is refused, nothing read); about a twentieth of a second each, so a large one takes minutes and the page says so.
-    The edit is read and checked first (a tag the rules refuse, a person filed in two places), then the selection is resolved
+    The edit is read and checked first (a tag the rules refuse, a name two people have), then the selection is resolved
     on the server, then written as one journaled change; it goes on to its end if the page stops waiting."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
