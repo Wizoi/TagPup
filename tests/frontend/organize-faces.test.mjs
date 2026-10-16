@@ -553,7 +553,8 @@ describe("naming a face against the server", { skip: !REAL }, () => {
     assert.equal(ctx.replies("save-metadata"), 1);
     assert.deepEqual(await ctx.faceNames(), [null, WREN, null]);
     assert.deepEqual(await ctx.tagsOfPhoto(), ["People/" + WREN, "Trips"]);
-    assert.match(ctx.$("faces-summary").textContent, /2 unidentified/);
+    // The summary is drawn from the faces read again after the match: waited for, not raced (it failed under load).
+    await until(ctx, () => /2 unidentified/.test(ctx.$("faces-summary").textContent), "the summary to count 2 unidentified");
   });
 
   test("a person added to a one-face photo names its face, and the pill taken off unnames it: the boxes follow the server", async (t) => {
