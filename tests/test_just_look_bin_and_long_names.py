@@ -1,7 +1,7 @@
 """The follow-up review's findings #528-#531 (docs/findings.md).
 
-#528  The file-only check is at parity with the held path: it refuses an empty file or a zero-filled tail by
-      images.zero_tail_of's own rule, and nothing else -- not what follows the end of the picture.
+#528  A photo of a folder the library does not hold is written as the held path writes it: whatever follows the end
+      of the picture (no file is checked before a write since DECISIONS 2026-10-15).
 #529, #530  (goes_to_bin, the long name, the true reason of a permanent delete: tests/test_delete_a_photo.py.)
 #531  Any exception after the held part of a Smart Rename committed answers what did change.
 """
@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import damaged_photos  # noqa: E402
 import test_just_look_edits as jl  # noqa: E402
 
-from tagpup.files import images  # noqa: E402
 from tagpup.services import file_only  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
@@ -74,30 +73,6 @@ class TheCheckIsAtParityWithTheHeldPath(jl.Base):
             held = et.get_tags([photo], tags=["ThumbnailImage"])[0]
         self.assertIn("ThumbnailImage", " ".join(held), "the fixture holds no thumbnail")
         self.assertEqual(200, self.post("/photo/save-metadata", {"path": photo, "title": "x", "tags": []}).status_code)
-
-    def test_a_zero_filled_tail_and_an_empty_file_are_refused(self):
-        filled = os.path.join(self.lighthouse, "zero filled.jpg")
-        whole_jpeg_bytes(filled)
-        with open(filled, "ab") as handle:
-            handle.write(bytes(images.ZERO_TAIL + 5000))
-        empty = os.path.join(self.lighthouse, "empty.jpg")
-        open(empty, "wb").close()
-        for path in (filled, empty):
-            self.assertEqual(409, self.post("/photo/save-metadata", {"path": path, "title": "x",
-                                                                    "tags": []}).status_code, path)
-
-    def test_the_two_checks_agree_on_a_table_of_tails(self):
-        tails = [b"", b"\xff\xd9", bytes(1), bytes(4096), bytes(4097), bytes(images.ZERO_TAIL - 1),
-                 bytes(images.ZERO_TAIL), bytes(images.ZERO_TAIL + 1), bytes(3 * images.ZERO_TAIL),
-                 b"\x01" + bytes(images.ZERO_TAIL - 1), bytes(images.ZERO_TAIL - 1) + b"\x01",
-                 b"\xff" * (images.ZERO_TAIL + 10), b"x" * 70000]
-        for n, tail in enumerate(tails):
-            path = os.path.join(self.lighthouse, "tail %d.jpg" % n)
-            whole_jpeg_bytes(path, seed=n)
-            with open(path, "ab") as handle:
-                handle.write(tail)
-            refused_by_held_rule = images.zero_tail_of(path) >= images.ZERO_TAIL
-            self.assertEqual(refused_by_held_rule, bool(file_only.unwritable([path])), (n, len(tail)))
 
 
 class AnyFailureAfterTheHeldPartAnswersWhatChanged(jl.Base):

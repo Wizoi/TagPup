@@ -290,10 +290,12 @@ def preserve_names(library, photo_paths, exiftool_path, split=None):
     none -- the name it had before Smart Rename first renamed it, which later renames
     leave alone, and which relink_photos finds a renamed photo by -- as one change of
     photo files, `smart rename: original names` (tagpup.services.file_changes), which
-    can be undone. A photo holding one already is skipped; one that cannot be read is
-    skipped too, as the rename leaves it be. A Result, as write_fields'. A photo of a folder
+    can be undone. A photo holding one already is skipped; a held one that cannot be read is
+    skipped too, as its row keeps its record. A Result, as write_fields'. A photo of a folder
     the library does not hold has the name written to its file only (tagpup.services.
-    file_only): no journal change, no row. `split` is (held, loose) as the caller decided it
+    file_only): no journal change, no row; one ExifTool cannot read or write is an error, so
+    Smart Rename renames none: its PreservedFileName is the only record of the name it had,
+    and a photo left out keeps a name the numbering may give another (#523). `split` is (held, loose) as the caller decided it
     (libraries.split): Smart Rename decides once and hands it on, so the folder added in between
     cannot send the names one way and the renames the other (#524).
 
@@ -314,8 +316,7 @@ def preserve_names(library, photo_paths, exiftool_path, split=None):
     journaled = file_changes.write_fields(
         library, "smart rename: original names", exiftool_path, held, [names.PRESERVED_NAME], plan_one,
         summary={"photos": len(held)}, unreadable="skip") if held else None
-    files = file_only.write_fields(exiftool_path, loose, [names.PRESERVED_NAME], plan_one,
-                                   unreadable="skip") if loose else None
+    files = file_only.write_fields(exiftool_path, loose, [names.PRESERVED_NAME], plan_one) if loose else None
     return file_only.combined(journaled, files)
 
 
@@ -358,20 +359,15 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     if problem:
         result.refuse(problem)
         return result
-    # A photo of a folder the library does not hold that is empty, or ends in zeros as an interrupted copy leaves it,
-    # refuses the whole rename, nothing moved: skipped, it kept a name the numbering gave another photo, which moved it
-    # aside and lost its record. (A rename writes no metadata: a held photo is renamed whatever its file holds.)
     held, loose = libraries.split(library, photo_paths)
     if held and libraries.refuse_writes(result, library, held):
-        return result
-    if loose and file_only.refuse_unwritable(result, loose):
         return result
     held_keys = {paths.key(p) for p in held}
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
     present = [p for p in photo_paths if os.path.exists(p)]
     captions = names.read_for_renaming(exiftool_path, present)
-    kept = preserve_names(library, [p for p in present if p in captions], exiftool_path, split=(held, loose))
+    kept = preserve_names(library, present, exiftool_path, split=(held, loose))
     if kept.refused:
         result.refuse(kept.refused)
         return result
@@ -480,12 +476,9 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
         result.refuse(problem)
         return result
     refused = Result(attempted=len(photo_paths))
-    # Photos of folders the library does not hold are shifted in their files only
-    # (tagpup.services.file_only), and are asked for what they decode as. A photo cut short is left out by the writer.
+    # Photos of folders the library does not hold are shifted in their files only (tagpup.services.file_only).
     held, loose = libraries.split(library, photo_paths)
     if held and libraries.refuse_writes(refused, library, held):
-        return refused
-    if loose and file_only.refuse_unwritable(refused, loose):
         return refused
 
     plan_one = date_shift_plan(minutes)
@@ -542,7 +535,6 @@ def delete(library, photo_path):
         result = file_only.delete(photo_path)
         result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
         return result
-    # A damaged photo may be deleted: nothing is written into it.
     if libraries.refuse_writes(result, library, [photo_path]):
         return result
     try:
@@ -598,8 +590,8 @@ def rotate_photos(library, photo_paths, direction, exiftool_path):
     they are. Pillow applies a TIFF's Orientation as it loads it, so a TIFF's boxes turn with the photo. The index row gets
     the file's new mtime and size (only when it described the file just before, #249), or the folder scan would distrust it.
 
-    A photo of a folder the library does not hold (Just look) is turned in its file only, unjournaled (file_only). A photo cut
-    short is left out of a batch (skipped, counted); a single one is refused, with nothing written. details: `written`
+    A photo of a folder the library does not hold (Just look) is turned in its file only, unjournaled (file_only). A file
+    ExifTool cannot write is that photo's error (DECISIONS 2026-10-15). details: `written`
     {path: {"orientation", "faces_turned"}} and `change`, as write_fields gives them, `file_only` and `with_rows`. Refused,
     touching nothing, for a direction that is not a "rotate direction".
     """
@@ -610,11 +602,6 @@ def rotate_photos(library, photo_paths, direction, exiftool_path):
         return result
     held, loose = libraries.split(library, photo_paths)
     if held and libraries.refuse_writes(result, library, held):
-        return result
-    # A loose photo is asked for what it decodes as; a single held one is refused when cut short (a batch skips such a photo).
-    if loose and file_only.refuse_unwritable(result, loose, full=True):
-        return result
-    if len(held) == 1 and file_only.refuse_unwritable(result, held):
         return result
     try:
         journaled = file_changes.write_fields(

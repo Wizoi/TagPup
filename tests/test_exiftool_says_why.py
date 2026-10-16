@@ -47,6 +47,9 @@ class AFailedWrite(unittest.TestCase):
         self.assertIn("Temporary file already exists", said)
         self.assertNotIn("Rowan", said)
         self.assertIn("<file>", said)
+        # What is in the way, and what to do, said without the photo's name (#1411).
+        self.assertIn("_exiftool_tmp after it", said)
+        self.assertIn("rename it back", said)
         self.assertEqual(1, raised.exception.returncode)
         # The log has all of it, the photo named.
         self.assertTrue(any("Rowan at the quay.jpg_exiftool_tmp" in line for line in logged.output), logged.output)

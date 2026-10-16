@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
 from tagpup.files import recycle_bin, shares
-from tagpup.services import batches, file_changes, libraries, library_view, tagging
+from tagpup.services import batches, file_changes, library_view, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.store import taxonomy
@@ -170,12 +170,11 @@ def _people(library, add, remove, add_ids=(), remove_ids=()):
 @dataclass
 class Outcome:
     """What an edit did, counted by outcome: every id is exactly one of `changed` (a file written and read back), `unchanged`
-    (read, and holding what it was to hold), `skipped_missing` (no row, or its file is gone), `skipped_damaged`, or an entry of
+    (read, and holding what it was to hold), `skipped_missing` (no row, or its file is gone), or an entry of
     `errors` -- (id, file name, why)."""
     changed: int = 0
     unchanged: int = 0
     skipped_missing: int = 0
-    skipped_damaged: int = 0
     errors: list = field(default_factory=list)
     #: Why the whole write was refused (a share holding a recorded-damaged photo did not answer, the roots changed), or None.
     refused: str = None
@@ -183,7 +182,7 @@ class Outcome:
     def reply(self):
         """The numbers and the first MOST_ERRORS errors, for the page."""
         return {"changed": self.changed, "unchanged": self.unchanged, "skipped_missing": self.skipped_missing,
-                "skipped_damaged": self.skipped_damaged, "error_count": len(self.errors),
+                "error_count": len(self.errors),
                 "errors": [{"id": photo_id, "name": str(name)[:MOST_TEXT], "why": str(why)[:MOST_TEXT]}
                            for photo_id, name, why in self.errors[:MOST_ERRORS]]}
 
@@ -310,9 +309,7 @@ def _count(out, result, present, by_key):
     away = len(out.errors)
     out.changed = result.changed
     gone = result.details.get(tagging.SKIPPED_MISSING, 0)
-    damaged = result.details.get(libraries.SKIPPED_DAMAGED, 0)
     out.skipped_missing += gone
-    out.skipped_damaged = damaged
     if result.refused:
         out.refused = result.refused
         written = {paths.key(path) for path in (result.details.get("written") or {})}
@@ -324,4 +321,4 @@ def _count(out, result, present, by_key):
         for what, why in result.errors:
             photo_id = by_key.get(paths.key(what))
             out.errors.append((photo_id, os.path.basename(what)[:MOST_TEXT], str(why)[:MOST_TEXT]))
-    out.unchanged = max(0, len(present) - out.changed - gone - damaged - (len(out.errors) - away))
+    out.unchanged = max(0, len(present) - out.changed - gone - (len(out.errors) - away))

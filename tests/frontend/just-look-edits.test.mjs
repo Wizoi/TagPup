@@ -346,7 +346,7 @@ describe("Suggest while just looking", () => {
 
   test("Apply All on the selection goes to the files, with no taxonomy write", async (t) => {
     const s = server()
-      .first("/api/folder/auto-apply", { success: true, written: {}, skipped_damaged: 0, skipped: [], file_only: 1, with_rows: 0 })
+      .first("/api/folder/auto-apply", { success: true, written: {}, file_only: 1, with_rows: 0 })
       .first("/api/folder/suggest-status", offered);
     const ctx = await looking(t, s);
     click(ctx.window, ctx.$("btn-suggest-tags"));

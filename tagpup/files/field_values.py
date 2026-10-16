@@ -28,52 +28,30 @@ MIME_TYPE = "File:MIMEType"
 #: Photos read in one ExifTool command.
 READ_BATCH = 200
 
-
 class Unreadable(Exception):
     """A photo whose fields could not be read: missing, locked, or not a photo."""
 
 
-class CutShort(Unreadable):
-    """A photo whose file does not open whole: the picture stops short, or is damaged inside (read with `validate`).
-    Nothing is written into it."""
-
-
-#: What ExifTool's whole-file scan (-validate) says of a JPEG whose data stops short or is damaged inside: a copy that
-#: stopped, zeros where the picture goes on. Counted on the three live libraries (1,200 photos, 2026-10-11): the
-#: warnings a good photo draws are other words (a tag in the wrong IFD, an IPTC digest out of date); none said this.
-CUT_SHORT_WARNING = "JPEG format error"
-WARNING = "ExifTool:Warning"
-
-#: What the owner is told of a photo that does not open whole.
-CUT_SHORT_WHY = "the file ends before the picture does, or the picture's data is damaged"
-
-
-def _held(row, wanted, validate=False):
+def _held(row, wanted):
     kind = row.get(MIME_TYPE)
     if kind is not None and not str(kind).startswith("image/"):
         # A file of text read as TXT answers no fields, and would read as a photo holding
         # nothing (docs/findings.md, #46).
         raise Unreadable("Not a photo ExifTool can read (%s)" % kind)
-    if validate:
-        said = row.get(WARNING)
-        if CUT_SHORT_WARNING in (" ".join(map(str, said)) if isinstance(said, (list, tuple)) else str(said or "")):
-            raise CutShort(CUT_SHORT_WHY)
     return {field: fields.field_values(row.get(fields.read_key(field))) for field in wanted}
 
 
-def read(et, photo_paths, wanted, also=(), records=None, validate=False):
+def read(et, photo_paths, wanted, also=(), records=None):
     """{paths.key(path): {field: its values}} of each photo in `photo_paths`, for the
     fields in `wanted`; an Unreadable in place of the fields of a photo that could not be
     read. Read in batches; a batch ExifTool refuses is read again a photo at a time, so
     one bad file does not cost the others. `also` are fields asked as well, answered only
     in `records`, when given: {paths.key(path): ExifTool's record} of each photo read.
 
-    With `validate` -- the read a write plans from -- ExifTool scans each file to its end (which a read of its fields
-    does not), and a photo whose picture stops short or is damaged inside is a CutShort in place of its fields: the
-    write leaves it alone. It costs a read of the whole file; the write reads and rewrites it all the same."""
+    The file is not scanned to its end first: a JPEG whose picture stops short takes a write of its fields, and its
+    picture data is left as it was (DECISIONS 2026-10-15); a file ExifTool cannot write fails that write."""
     wanted = list(dict.fromkeys(wanted))
-    asked = list(dict.fromkeys(wanted + list(also) + [MIME_TYPE] + ([WARNING] if validate else [])))
-    ask = {"params": ["-validate"]} if validate else {}
+    asked = list(dict.fromkeys(wanted + list(also) + [MIME_TYPE]))
     if records is None:
         records = {}
     found = {}
@@ -81,7 +59,7 @@ def read(et, photo_paths, wanted, also=(), records=None, validate=False):
     for start in range(0, len(photo_paths), READ_BATCH):
         batch = photo_paths[start:start + READ_BATCH]
         try:
-            rows = et.get_tags(batch, tags=asked, **ask)
+            rows = et.get_tags(batch, tags=asked)
         except (exiftool_session.ExifToolTimeout, ExifToolNotRunning) as stalled:
             # ExifTool did not answer (its process was killed): a share gone away, a disk that stopped. Each photo read again
             # singly would wait its own deadline -- 25 photos of a bad share were two hours -- so the whole batch is unreadable
@@ -99,7 +77,7 @@ def read(et, photo_paths, wanted, also=(), records=None, validate=False):
                 if not source:
                     continue
                 try:
-                    found[paths.key(source)] = _held(row, wanted, validate)
+                    found[paths.key(source)] = _held(row, wanted)
                     records[paths.key(source)] = row
                 except Unreadable as e:
                     found[paths.key(source)] = e
@@ -108,17 +86,17 @@ def read(et, photo_paths, wanted, also=(), records=None, validate=False):
             missed = batch
         for one in missed:
             try:
-                rows = et.get_tags([one], tags=asked, **ask)
-                found[paths.key(one)] = _held(rows[0] if rows else {}, wanted, validate)
+                rows = et.get_tags([one], tags=asked)
+                found[paths.key(one)] = _held(rows[0] if rows else {}, wanted)
                 records[paths.key(one)] = rows[0] if rows else {}
             except Exception as e:
                 found[paths.key(one)] = e if isinstance(e, Unreadable) else Unreadable(str(e))
     return found
 
 
-def read_one(et, photo_path, wanted, validate=False):
-    """The fields of one photo, as read() gives them; raises Unreadable (CutShort, with `validate`)."""
-    held = read(et, [photo_path], wanted, validate=validate).get(paths.key(photo_path))
+def read_one(et, photo_path, wanted):
+    """The fields of one photo, as read() gives them; raises Unreadable."""
+    held = read(et, [photo_path], wanted).get(paths.key(photo_path))
     if isinstance(held, Exception) or held is None:
         raise held or Unreadable("ExifTool answered nothing for it")
     return held
@@ -129,7 +107,8 @@ def write(et, photo_path, values):
     field whose value is empty. A write of the photo's identity that ExifTool refuses is
     made again telling it an objection to the photo's XMP is minor, and checked to have
     cost the keywords nothing (tagpup.files.identity.tolerating_minor_errors). Raises
-    when ExifTool fails."""
+    when ExifTool fails. Nothing beside the photo is deleted, a temporary file ExifTool left included: one ExifTool
+    fails after deleting the original is the photo's only copy (#1410)."""
     params, clear = {}, []
     for field, value in values.items():
         texts = fields.field_values(value)

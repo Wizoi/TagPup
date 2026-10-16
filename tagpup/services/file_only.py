@@ -7,12 +7,11 @@ ensure_row). So the writes that need no database -- a caption, a tag, a rename, 
 date, a delete -- are made here for such a photo, and write only its file:
 
 - no photo row is made or touched, no journal change is planned, nothing is derived
-  (people, dates, embeddings, faces, thumbnails), no damaged-photo record is made, and the
-  folder is not registered with sync or the watcher. The library's database is not opened
-  for writing at all; tests dump every table before and after;
-- a photo whose picture does not decode, or may be an incomplete copy, is still never
-  written into, though nothing is recorded of it (unwritable): the library's records of
-  damaged photos are for the photos it holds;
+  (people, dates, embeddings, faces, thumbnails), and the folder is not registered with
+  sync or the watcher. The library's database is not opened for writing at all; tests
+  dump every table before and after;
+- the file is not looked at before the write, as a held photo's is not (DECISIONS
+  2026-10-15): a file ExifTool cannot read or write fails that photo's write;
 - what is reported is what was written: a file counted changed is one read back holding
   what was written, as the journaled write counts it.
 
@@ -30,10 +29,10 @@ import logging
 import os
 
 from tagpup.core import fields, paths
-from tagpup.core.result import DAMAGED_PHOTOS, Result
+from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, images, lock_owners, metadata, names, recycle_bin
+from tagpup.files import exiftool_session, field_values, lock_owners, metadata, names, recycle_bin
 from tagpup.services import file_changes
 
 logger = logging.getLogger(__name__)
@@ -42,62 +41,6 @@ logger = logging.getLogger(__name__)
 #: it wrote with their rows: how many files each, as written.
 FILE_ONLY = "file_only"
 WITH_ROWS = "with_rows"
-
-INCOMPLETE_REASON = ("possibly an incomplete copy: the file ends in zero bytes, as an interrupted copy leaves it, "
-                     "and the picture may be grey below a line")
-
-
-# ---- Which photos may be written into -----------------------------------------------------
-
-def unwritable(photo_paths, full=False):
-    """[(path, what is wrong)] of the photos of `photo_paths` nothing may be written into:
-    the file is cut short, empty, or ends in zeros as an interrupted copy leaves it ("was found
-    damaged -- <how> --"), or cannot be read ("could not be read -- <why> --"). The end of each
-    file is read (images.tail_check) and ExifTool's own failure to read it, which fails the write,
-    is the other signal; with `full` -- a rotate, which rewrites picture data -- the whole picture
-    is decoded as the indexer decodes it (images.zero_tail_if_whole). No record is read or made. A
-    share that does not answer is a photo that could not be read, and not written."""
-    found = []
-    check = images.zero_tail_if_whole if full else images.tail_check
-    for photo_path in photo_paths:
-        try:
-            zeros = check(photo_path)
-        except images.Unreadable as damage:
-            found.append((photo_path, "was found damaged -- %s --" % images.DAMAGE.get(damage.kind, damage.kind)))
-            continue
-        except OSError as e:
-            found.append((photo_path, "could not be read -- %s --" % (e.strerror or type(e).__name__)))
-            continue
-        if zeros >= images.ZERO_TAIL:
-            found.append((photo_path, "was found damaged -- %s --" % INCOMPLETE_REASON))
-    return found
-
-
-def refuse_unwritable(result, photo_paths, full=False):
-    """Refuse `result` -- a write of files, nothing written yet -- when a photo of `photo_paths`
-    is unwritable. Returns True when refused. details[DAMAGED_PHOTOS] holds them, answered 409
-    as the journaled writes' refusal is."""
-    found = unwritable(photo_paths, full)
-    if not found:
-        return False
-    for path, why in found:
-        logger.warning("%s: the file is damaged, so the write is refused and nothing is written to it: %s", path, why)
-    more = "" if len(found) == 1 else " (and %d more)" % (len(found) - 1)
-    result.refuse("%s%s %s and nothing is written to it. Restore it from a backup, then try again."
-                  % (os.path.basename(found[0][0]), more, found[0][1]))
-    result.details[DAMAGED_PHOTOS] = [path for path, _why in found]
-    return True
-
-
-def leave_out_unwritable(photo_paths):
-    """(`photo_paths` but the unwritable ones, [(path, why)] of those left out): a bulk write
-    skips them and writes the rest."""
-    found = dict(unwritable(photo_paths))
-    for path, why in found.items():
-        logger.warning("%s: the file is damaged, so it is skipped and nothing is written to it: %s", path, why)
-    return ([p for p in photo_paths if p not in found],
-            [(path, "damaged, nothing is written to it: %s" % why) for path, why in found.items()])
-
 
 # ---- Combining a write of held photos with one of the others -----------------------------
 
@@ -128,9 +71,6 @@ def combined(held, loose):
         out.details["conflicts"] = list(held.details.get("conflicts", [])) + list(loose.details.get("conflicts", []))
     out.details[WITH_ROWS] = held.changed
     out.details[FILE_ONLY] = loose.changed
-    if "skipped_damaged" in held.details or "skipped_damaged" in loose.details:
-        out.details["skipped_damaged"] = held.details.get("skipped_damaged", 0) + loose.details.get(
-            "skipped_damaged", 0)
     return out
 
 
@@ -158,13 +98,10 @@ def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_err
     written = result.details["written"] = {}
     result.details.update(change=None, conflicts=[], read_back={})
     stored = [paths.stored(p) for p in photo_paths]
-    held = fresh if fresh is not None else field_values.read(et, stored, read, validate=True)
+    held = fresh if fresh is not None else field_values.read(et, stored, read)
     planned = []
     for path in stored:
         now = held.get(paths.key(path))
-        if isinstance(now, field_values.CutShort):
-            file_changes.skip_cut_short(result, path, now)
-            continue
         if now is None or isinstance(now, Exception):
             why = now or "ExifTool answered nothing for it"
             if unreadable == "skip":

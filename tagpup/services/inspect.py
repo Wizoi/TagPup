@@ -315,8 +315,7 @@ def files_that_fail_to_open(library):
     """The photos whose file is there and does not open: empty, ending in zero bytes as an interrupted copy leaves
     a file (images.ZERO_TAIL), or not a picture Pillow can identify -- the end of each file and its header are
     read, and no picture is decoded (about a millisecond a photo; a whole decode is thirty). A JPEG cut short in the
-    middle of its picture is not found here: the write that meets it leaves it alone (tagpup.files.field_values.read,
-    `validate`). {"count", "unreached": photos whose file could not be looked at (a share, a lock), not counted, and
+    middle of its picture is not found here, and takes a write of its tags (DECISIONS 2026-10-15). {"count", "unreached": photos whose file could not be looked at (a share, a lock), not counted, and
     not the missing ones (`missing_files`), "files": [(id, path, why)] by path}. Reported, not broken. Nothing is
     written; the paths are for a caller that reveals them."""
     with _reading(library) as conn:

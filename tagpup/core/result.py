@@ -53,12 +53,7 @@ class Result:
 #: the folders, which a web route answers with 409.
 NOT_IN_LIBRARY = "not_in_library"
 
-#: Where a Result refused for photos that do not open whole names them (a save of a photo cut short, a rotate of one
-#: that does not decode): nothing is written into one.
-DAMAGED_PHOTOS = "damaged_photos"
 
-#: What a Result's details count of the photos a bulk write left out because their files do not open whole.
-SKIPPED_DAMAGED = "skipped_damaged"
 
 #: What a Result refused because the file is no longer the one the page built its record from (the stamp the
 #: page sent differs from the file's) carries: a web route answers 409, and the page reads the file again.

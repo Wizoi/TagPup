@@ -42,7 +42,6 @@ export function endedSentence(what, result) {
     const note = (key, words) => { if (result[key]) parts.push(`${result[key].toLocaleString()} ${words}`); };
     const skipped = (key, why) => note(key, `${why} ${result[key] === 1 ? 'was' : 'were'} skipped`);
     skipped('skipped_missing', 'missing on disk');
-    skipped('skipped_damaged', 'damaged');
     note('unchanged', `already ${result.unchanged === 1 ? 'was' : 'were'} as asked`);
     const errors = result.error_count || 0;
     parts.push(`${errors.toLocaleString()} ${errors === 1 ? 'error' : 'errors'}`);

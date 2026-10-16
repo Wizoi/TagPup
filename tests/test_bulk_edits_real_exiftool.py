@@ -66,7 +66,7 @@ class RealFiles(unittest.TestCase):
         with open(self.paths[3], "wb") as handle:
             handle.write(b"not a picture at all")
         done = self.run_job("tags", {"add": ["Trips/Coast"]})
-        self.assertEqual((self.PHOTOS - 1, 1), (done["changed"], done["error_count"] + done["skipped_damaged"]))
+        self.assertEqual((self.PHOTOS - 1, 1), (done["changed"], done["error_count"]))
 
 
 if __name__ == "__main__":

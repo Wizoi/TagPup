@@ -46,7 +46,7 @@ SCENARIOS = {
     "P6": ("people", "Two cousins called alike under two groups are named by id; a typed bare name that fits both is refused, naming both paths."),
     "P7": ("people", "Identify Faces: ignore, assign, restore and undo, against the real server."),
     "F1": ("files", "A photo write is journaled, one at a time, read back; a click three times writes once."),
-    "F2": ("files", "Nothing is written into a photo cut short or into a folder the library does not hold."),
+    "F2": ("files", "The indexer writes nothing into a photo that does not decode; nothing is written into a folder the library does not hold."),
     "F3": ("files", "A bulk edit over many photos: dry run first, a crash or a stalled ExifTool part-way, then resume."),
     "F4": ("files", "A folder renamed or a photo moved is followed by sync and the watcher; sync never removes and never writes a file."),
     "F5": ("files", "Two libraries holding one folder stay each their own."),
@@ -94,7 +94,7 @@ _SCENARIO_FILES = {
         "test_file_journal test_rotate_crash_settles_with_the_boxes test_rotate_is_journaled test_rotate_keeps_the_photo "
         "test_tag_a_photo_read_it_back_and_undo test_time_shift"
     ),
-    "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added test_writes_refuse_cut_short_photos",
+    "F2": "test_no_writes_to_damaged_photos test_rows_only_in_folders_added",
     "F3": (
         "test_batches test_bulk_edits test_bulk_edits_real_exiftool test_bulk_edits_stalled_exiftool "
         "test_bulk_writes_start_from_the_file"

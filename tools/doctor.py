@@ -127,7 +127,7 @@ def report(db_path, show=0, out=print):
             out("    %6d  %s%s" % (count, folder, "" if there else "  (folder gone)"))
         opens = inspect.files_that_fail_to_open(Library(db_path))
         out("photos whose file fails to open: %d (reported, not broken: empty, ending in zero bytes as an interrupted copy "
-            "leaves a file, or not a picture; a JPEG cut short inside its picture is left alone by the write that meets it)%s"
+            "leaves a file, or not a picture; a JPEG cut short inside its picture is not looked for)%s"
             % (opens["count"], "; %d could not be looked at" % opens["unreached"] if opens["unreached"] else ""))
         for _photo_id, path, why in opens["files"][:show]:
             out("    %s: %s" % (path, why))

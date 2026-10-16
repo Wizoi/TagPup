@@ -18,6 +18,7 @@ write as always and the others to their files only, and the reply says how many 
 Real ExifTool and real Pillow, on photos made here; the Recycle Bin is stood in for.
 """
 import os
+import stat
 import sys
 import unittest
 from unittest import mock
@@ -300,14 +301,32 @@ class ASmartRename(Base):
         self.assertEqual(original, self.names(), "a name was left changed, or a temporary one left behind")
         self.assert_library_unchanged()
 
-    def test_a_photo_that_does_not_decode_refuses_the_whole_rename(self):
-        damaged = damaged_photos.all_zeros(os.path.join(self.lighthouse, "IMG_0004.jpg"), size=images.ZERO_TAIL + 100)
+    def test_a_photo_exiftool_cannot_read_or_keep_the_name_of_refuses_the_whole_rename(self):
+        """#523: a photo left out of a rename keeps a name the numbering may give another, and the name it had is kept
+        only in its file. One ExifTool cannot read (a file of zeros), or whose PreservedFileName it cannot write (a
+        read-only file), renames none of them; nothing is looked at before ExifTool is asked. The file of zeros
+        stops the rename before anything is written; with the read-only one, the others are given the name they have
+        as their PreservedFileName first (in their files only: the folder is not the library's), which a later rename
+        keeps. ExifTool's temporary file of the failed write may stay beside the read-only photo (#1410, #1411)."""
+        zeros = damaged_photos.all_zeros(os.path.join(self.lighthouse, "IMG_0004.jpg"), size=images.ZERO_TAIL + 100)
+        locked = damaged_photos.whole_jpeg(os.path.join(self.lighthouse, "IMG_0005.jpg"), seed=31) and \
+            os.path.join(self.lighthouse, "IMG_0005.jpg")
+        os.chmod(locked, stat.S_IREAD)
+
+        def writable_again():
+            for name in os.listdir(self.lighthouse):
+                os.chmod(os.path.join(self.lighthouse, name), stat.S_IREAD | stat.S_IWRITE)
+        self.addCleanup(writable_again)
         original = self.names()
         self.before = library_dump.dump(self.library.path)
-        reply = self.rename(self.loose + [damaged])
-        self.assertEqual(409, reply.status_code, reply.data)
-        self.assertIn("IMG_0004.jpg", reply.get_json()["error"])
-        self.assertEqual(original, self.names())
+        for one, kept in ((zeros, [None] * 3), (locked, [os.path.basename(path) for path in self.loose])):
+            reply = self.rename(self.loose + [one])
+            self.assertNotEqual(200, reply.status_code, (one, reply.data))
+            self.assertIn("ExifTool", reply.get_json()["error"], one)
+            self.assertEqual(original, [name for name in self.names() if not name.endswith("_exiftool_tmp")],
+                             "a photo was renamed")
+            self.assertEqual(kept, [in_file(path, "XMP:PreservedFileName").get("XMP:PreservedFileName")
+                                    for path in self.loose], one)
         self.assert_library_unchanged()
 
     def test_the_caption_then_renames_a_photo_that_was_renamed_before(self):
@@ -325,49 +344,37 @@ class ASmartRename(Base):
         self.assert_library_unchanged()
 
 
-class ADamagedPhotoIsNeverWritten(Base):
+class AFileExifToolCannotRead(Base):
+    """A file of nothing but zeros in a folder the library does not hold: nothing looks at it before the write;
+    ExifTool's refusal is the answer, through the one failure path (DECISIONS 2026-10-15)."""
+
     def setUp(self):
         super().setUp()
-        self.cut = damaged_photos.all_zeros(os.path.join(self.lighthouse, "cut short.jpg"), size=images.ZERO_TAIL + 100)
-        self.zeros = damaged_photos.second_half_zeros(os.path.join(self.lighthouse, "incomplete.jpg"))
+        self.zeros = damaged_photos.all_zeros(os.path.join(self.lighthouse, "all zeros.jpg"), size=images.ZERO_TAIL + 100)
         self.before = library_dump.dump(self.library.path)
 
-    def test_one_photo_is_refused_for_each_write_and_nothing_is_recorded(self):
-        for photo in (self.cut, self.zeros):
-            before = stamp(photo)
-            for route, body in (("/photo/save-metadata", {"path": photo, "title": "x", "tags": ["A/B"]}),
-                                ("/photo/rotate", {"path": photo, "direction": "left"})):
-                reply = self.post(route, body)
-                self.assertEqual(409, reply.status_code, (route, reply.data))
-                self.assertIn("nothing is written", reply.get_json()["error"])
-            self.assertEqual(before, stamp(photo))
+    def test_a_save_says_exiftool_failed_and_writes_nothing(self):
+        before = stamp(self.zeros)
+        reply = self.post("/photo/save-metadata", {"path": self.zeros, "title": "x", "tags": ["A/B"]})
+        self.assertEqual(500, reply.status_code, reply.data)
+        self.assertIn("ExifTool", reply.get_json()["error"])
+        self.assertEqual(before, stamp(self.zeros))
         self.assert_library_unchanged()
 
-    def test_a_bulk_write_skips_it_and_writes_the_rest(self):
-        reply = self.post("/photos/bulk-tags", {"paths": [self.loose[0], self.cut, self.zeros],
+    def test_a_bulk_tag_write_stops_at_it_with_the_photos_before_it_written(self):
+        reply = self.post("/photos/bulk-tags", {"paths": [self.loose[0], self.zeros, self.loose[1]],
                                                "add_tags": ["Trips/Lighthouse"], "remove_tags": []})
-        self.assertEqual(200, reply.status_code, reply.data)
-        body = reply.get_json()
-        self.assertEqual((2, 1), (body["skipped_damaged"], body["file_only"]))
-        self.assertEqual(sorted([self.cut, self.zeros]), sorted(each["path"] for each in body["skipped"]))
-        self.assertEqual(["Trips/Lighthouse"], tags_in(self.loose[0]))
-        self.assertEqual(images.ZERO_TAIL + 100, os.path.getsize(self.cut), "a zero-filled file was written into")
+        self.assertEqual(500, reply.status_code, reply.data)
+        self.assertEqual([self.loose[0]], list(reply.get_json()["written"]))
+        self.assertEqual((["Trips/Lighthouse"], []), (tags_in(self.loose[0]), tags_in(self.loose[1])))
+        self.assertEqual(bytes(images.ZERO_TAIL + 100), open(self.zeros, "rb").read(), "the file of zeros was written into")
         self.assert_library_unchanged()
 
-    def test_a_time_shift_is_refused_whole(self):
-        write_into(self.loose[0], DateTimeOriginal=DATE)
-        self.before = library_dump.dump(self.library.path)
-        reply = self.post("/folder/time-shift", {"folder_path": self.lighthouse, "camera_model": fields.ALL_CAMERAS,
-                                                "shift_minutes": 5})
-        self.assertEqual(409, reply.status_code, reply.data)
-        self.assertEqual(DATE, in_file(self.loose[0], "EXIF:DateTimeOriginal")["EXIF:DateTimeOriginal"])
-        self.assert_library_unchanged()
-
-    def test_a_damaged_photo_may_still_be_deleted(self):
+    def test_it_may_still_be_deleted(self):
         with mock.patch("tagpup.files.recycle_bin.send_to_recycle_bin", side_effect=lambda p: os.remove(p) or True):
-            reply = self.post("/photo/delete", {"path": self.cut})
+            reply = self.post("/photo/delete", {"path": self.zeros})
         self.assertEqual(200, reply.status_code, reply.data)
-        self.assertFalse(os.path.exists(self.cut))
+        self.assertFalse(os.path.exists(self.zeros))
         self.assert_library_unchanged()
 
 
