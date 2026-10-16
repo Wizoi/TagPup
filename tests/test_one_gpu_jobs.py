@@ -501,7 +501,7 @@ class TwoLibrariesNamingTwoModels(_Library):
             self.assertTrue(started.wait(DEADLINE))
             refused = self.suggest_in_cove()
             self.assertEqual("error", refused["status"], refused)
-            self.assertIn("warming Suggest's models", refused["message"])
+            self.assertIn("the warm-up of Suggest's models (TagPup server) is using", refused["message"])
             [harbours] = self.clips()
             self.assertEqual(0, harbours.unloads, "the warm-up's models were let go under it")
             release.set()

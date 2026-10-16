@@ -369,14 +369,15 @@ def _models():
         used = state["last_used"]
         text = "Loaded: %s." % " and ".join(state["loaded"])
         if state["in_use"]:
-            text += " In use by Suggest."
+            text += " In use by %s." % " and ".join(state["held_by"])
         elif used is not None:
             text += " Last used %s ago." % _span(used)
             if after:
                 text += " Let go after %d minutes unused." % round(after / 60)
     else:
         text = "Not loaded; loads when Suggest or indexing needs it."
-    return {"loaded": state["loaded"], "in_use": state["in_use"], "last_used_seconds": state["last_used"],
+    return {"loaded": state["loaded"], "in_use": state["in_use"], "held_by": state["held_by"],
+            "last_used_seconds": state["last_used"],
             "release_after_minutes": round(after / 60, 2) if after else None, "text": text}
 
 
@@ -389,13 +390,14 @@ def _span(seconds):
 @routes.post("/api/activity/models/unload")
 def unload_models():
     """Unload models now: every model let go and the graphics card given up at once, unless
-    a Suggest run is using them, which is answered in a sentence and nothing touched."""
+    a run is using them (a Suggest, the startup warm-up), which is named in a sentence and nothing touched."""
     runtime = current_app.config.get("RUNTIME")
     if runtime is None:
         return responses.error(409, "This server keeps no models.")
     done = runtime.unload_models_now()
     if done["busy"]:
-        return responses.error(409, "Suggest is using them: they are let go when it ends.", unloaded=[])
+        return responses.error(409, "In use by %s: they are let go when it ends." % " and ".join(done["held_by"]),
+                               unloaded=[])
     names = done["unloaded"]
     return jsonify({"success": True, "unloaded": names, "models": _models(),
                     "message": ("Unloaded %s; the graphics card is free." % " and ".join(names)) if names

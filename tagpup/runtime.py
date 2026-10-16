@@ -123,6 +123,10 @@ def recurring_jobs(runtime=None, libraries=None, clock=None):
 #: vectors 270 MB, and the server would hold them all day.
 RELEASE_MODELS_AFTER_MINUTES = 5
 
+#: What the startup warm-up is called while it holds the models (Runtime.warm_up): to a Suggest refused beside it, on the
+#: Activity page, and to another process waiting for the graphics card.
+WARM_UP = "the warm-up of Suggest's models (TagPup server)"
+
 #: The runtime's own entries in its idle registry (Runtime.idle).
 MODELS, PHOTO_INDEXES = "models", "photo indexes"
 
@@ -465,8 +469,9 @@ class _Lease:
     The startup warm-up holds one with no index (Runtime.warm_up).
     The runs under way are the runtime's leases, and nothing else: what is held is read from them."""
 
-    def __init__(self, index, what, models, settings):
-        self.index, self.what, self.models, self.settings = index, what, models, settings
+    def __init__(self, index, what, settings):
+        self.index, self.what = index, what
+        self.models, self.settings = _set_of(settings), {part: getattr(settings, part) for part in PARTS}
         self.ended = False
 
 
@@ -696,28 +701,29 @@ class Runtime:
 
     def models_state(self):
         """What the process has loaded: {"loaded": ["CLIP", "faces"] (those in memory), "in_use":
-        a run holds one, "last_used": seconds since a model was last asked for, or None
+        a run holds one, "held_by": what each run holding them is (a Suggest, or the startup warm-up: WARM_UP), once each,
+        "last_used": seconds since a model was last asked for, or None
         when none has been since they were let go, "release_after": the idle period in
         seconds, or None}. What the Activity page shows."""
         with self._lock:
             clips = list(self._clips.values())
             faces = list(self._face_models.values())
-            in_use = bool(self._leases)
+            held_by = list(dict.fromkeys(lease.what for lease in self._leases))
 
         def loaded(models):
             return any(callable(getattr(m, "loaded", None)) and m.loaded() for m in models)
         names = [name for name, models in (("CLIP", clips), ("faces", faces)) if loaded(models)]
-        return {"loaded": names, "in_use": in_use, "last_used": self.idle.idle_for(MODELS) if names else None,
-                "release_after": self.idle_after}
+        return {"loaded": names, "in_use": bool(held_by), "held_by": held_by,
+                "last_used": self.idle.idle_for(MODELS) if names else None, "release_after": self.idle_after}
 
     def unload_models_now(self):
         """The owner's Unload models now: every model let go and the turn on the graphics
-        card given up at once -- unless a Suggest run holds one, when nothing is touched.
-        Returns {"unloaded": [names that were loaded], "busy": bool}."""
+        card given up at once -- unless a run holds one, when nothing is touched.
+        Returns {"unloaded": [names that were loaded], "busy": bool, "held_by": what holds them (models_state)}."""
         before = self.models_state()
         if not self.idle.release_now(MODELS):
-            return {"unloaded": [], "busy": True}
-        return {"unloaded": before["loaded"], "busy": False}
+            return {"unloaded": [], "busy": True, "held_by": self.models_state()["held_by"] or before["held_by"]}
+        return {"unloaded": before["loaded"], "busy": False, "held_by": []}
 
     def _release_models(self):
         """Every model, when no run holds one (the registry asks in_use first). How many."""
@@ -778,16 +784,14 @@ class Runtime:
             return
         # most_common keeps the first seen of equal counts first.
         library, settings = first[counts.most_common(1)[0][0]]
-        what = "warming Suggest's models (TagPup server)"
+        lease = _Lease(None, WARM_UP, settings)
         with self._lock:
-            held = _set_of(settings)
-            if any(other.models != held for other in self._leases):
+            if self._another_set(lease.models) is not None:
                 logger.info("Not warming the models: a Suggest on other models is under way.")
                 return
-            lease = _Lease(None, what, held, {part: getattr(settings, part) for part in PARTS})
             self._leases.append(lease)
         try:
-            self._warm(library, settings, what)
+            self._warm(library, settings, WARM_UP)
         finally:
             self._end(lease)
 
@@ -908,13 +912,12 @@ class Runtime:
         model_key = self.model_key(library, settings)
         what = what or "Suggest in %s" % library.name
         with self._lock:
-            models = _set_of(settings)
-            self._refuse_another_set(library, settings, models)
+            self._refuse_another_set(library, settings)
             photo_index = self._index(library, model_key)
             clip, faces = self.clip(library, settings), self.faces(library, settings)
-            lease = _Lease(photo_index, what, models, {part: getattr(settings, part) for part in PARTS})
+            lease = _Lease(photo_index, what, settings)
             self._leases.append(lease)
-            dropped = self._drop_other_sets(models)
+            dropped = self._drop_other_sets(lease.models)
         # Before the run's first use loads its own (a model built loads nothing until it is used).
         _unload(dropped)
         turn = _RunTurn(self.card, what, (clip, faces), cancelled, report)
@@ -931,13 +934,17 @@ class Runtime:
             raise
         return RunModel(model, end)
 
-    def _refuse_another_set(self, library, settings, models):
-        """Raise gpu_turns.OtherModelsInUse when a run under way holds other models than `models`: this process holds
-        one set at a time, whichever libraries name them (#761). The sentence names the setting that differs. Under
-        the lock."""
-        for other in self._leases:
-            if other.models == models:
-                continue
+    def _another_set(self, models):
+        """The run under way (its _Lease) holding other models than `models`, or None: this process holds one set at a
+        time, whichever libraries name them (#761). Under the lock."""
+        return next((other for other in self._leases if other.models != models), None)
+
+    def _refuse_another_set(self, library, settings):
+        """Raise gpu_turns.OtherModelsInUse when a run under way holds other models than `settings` name
+        (_another_set). The sentence names the setting that differs. Under the lock."""
+        models = _set_of(settings)
+        other = self._another_set(models)
+        if other is not None:
             clip = other.settings["embedder"]
             if other.models[0] == models[0]:
                 theirs = "face models with %s; %s names other face settings" % (

@@ -396,13 +396,13 @@ describe("Unload models now", () => {
   test("a refusal under a running Suggest is shown as the server said it", async (t) => {
     const fake = server({ first: [
       ["/api/activity/server", { ...SERVER, models: { ...LOADED, in_use: true } }],
-      ["/api/activity/models/unload", { success: false, error: "Suggest is using them: they are let go when it ends.", unloaded: [] }],
+      ["/api/activity/models/unload", { success: false, error: "In use by Suggest Regatta (harbour): they are let go when it ends.", unloaded: [] }],
     ] });
     const { document, window } = await open(t, fake);
     await flush(window, 6);
     click(window, button(document));
     await flush(window, 8);
-    assert.match(document.getElementById("server-body").textContent, /Suggest is using them: they are let go when it ends\./);
+    assert.match(document.getElementById("server-body").textContent, /In use by Suggest Regatta \(harbour\): they are let go when it ends\./);
     assert.equal(button(document).disabled, false);
   });
 });
