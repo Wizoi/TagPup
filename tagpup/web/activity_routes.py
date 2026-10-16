@@ -361,7 +361,7 @@ def snapshot_list():
 def _models():
     """What the server has loaded, for the page: names, whether a run uses them, and since when."""
     runtime = current_app.config.get("RUNTIME")
-    if runtime is None or not hasattr(runtime, "models_state"):
+    if runtime is None:
         return None
     state = runtime.models_state()
     after = state["release_after"]
@@ -391,7 +391,7 @@ def unload_models():
     """Unload models now: every model let go and the graphics card given up at once, unless
     a Suggest run is using them, which is answered in a sentence and nothing touched."""
     runtime = current_app.config.get("RUNTIME")
-    if runtime is None or not hasattr(runtime, "unload_models_now"):
+    if runtime is None:
         return responses.error(409, "This server keeps no models.")
     done = runtime.unload_models_now()
     if done["busy"]:
