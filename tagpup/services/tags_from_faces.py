@@ -7,17 +7,17 @@ to what is there already, as `faces-from-tags` (tagpup.services.faces_from_tags)
 
 **It changes PHOTO FILES**, not only the library: each photo gets the person's keyword written into its file by
 ExifTool, as every other keyword write does (tagpup.services.tagging.change_each). A dry run (the default) only counts.
-`apply` writes CHUNK photos at a time, each chunk one journaled change of photo files (operation `OPERATION`), which
-records every file's fields before and after: `undo` takes a chunk back, and a file that was changed outside since is
-a conflict and is never overwritten. That journal is the way back; no copy of the library is taken (a photo's keywords
+`apply` writes them as one journaled change of photo files (operation `OPERATION`; a batch, written a chunk at a time,
+face_people.write_tags), which records every file's fields before and after: `undo` takes it back, and a file that was
+changed outside since is a conflict and is never overwritten. That journal is the way back; no copy of the library is taken (a photo's keywords
 are not in the library alone, and the journal holds what a copy of the library could not). A keyword that only shares the
 person's leaf (`Parkrunner/<name>` under a root that holds no people) is no person, so the person is written beside it (#1394).
 And a person only a GUESS backs -- no face of that name named by hand -- is left unless `--guesses`: the
 keyword would make the guess a decided reference (#640).
 
-Interrupted part-way (a crash, a closed window): the chunks written are written, journaled and recorded in their rows;
-the chunk under way is settled at the next start by what its files hold (tagpup.services.file_changes), and running it
-again does the rest -- a photo that lists the person from a keyword is no longer in the plan. Two at once (the CLI and
+Interrupted part-way (a crash, a closed window): the files written are written, journaled and recorded in their rows;
+the file under way is settled at the next start by what it holds and the rest of the change is written then
+(tagpup.services.file_changes); running it again does whatever is left -- a photo that lists the person from a keyword is no longer in the plan. Two at once (the CLI and
 the server): the lock of changes of photo files is the process's, so a CLI run is not held by it; each file is
 read again just before it is written, and a file another process changed meanwhile is a conflict, reported, not
 overwritten -- run it again. A photo whose file cannot be read (a share that is away, a file gone) is an error counted
@@ -78,11 +78,11 @@ def plan(library, guesses=False, folder=None):
     return result
 
 
-def apply(library, planned, exiftool_path, on_chunk=None):
-    """Write what `plan` counted, CHUNK photos at a time (face_people.write_tags): a Result as add_people's -- `changed`
+def apply(library, planned, exiftool_path):
+    """Write what `plan` counted, as one change of photo files (face_people.write_tags): a Result as add_people's -- `changed`
     the photo files written, `errors` the photos that could not be (counted by the caller, never named), details `changes`
-    the journal's ids. `on_chunk(done, total)` hears the progress."""
-    writer = face_people.Writer(exiftool_path, on_chunk=on_chunk)
+    the journal's ids. Its progress is the batch's, on the Activity page (batches.listing reads another process's change)."""
+    writer = face_people.Writer(exiftool_path)
     result = face_people.add_people(library, planned.details["work"], writer, operation=OPERATION, stop_at_first_error=False)
     result.details["dry_run"] = False
     return result

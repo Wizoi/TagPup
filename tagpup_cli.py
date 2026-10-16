@@ -777,7 +777,7 @@ def tags_from_faces(ctx, apply_, guesses, folder):
     console.print("  %d photo file(s) would be written, for %d people."
                   % (counts["photos_to_write"], counts["people_to_write"]))
     if not apply_:
-        console.print("Nothing changed. --apply writes the keywords into those %d PHOTO FILE(S), 25 photos to a change "
+        console.print("Nothing changed. --apply writes the keywords into those %d PHOTO FILE(S), one change "
                       "of the journal that `undo` takes back." % counts["photos_to_write"], markup=False, soft_wrap=True)
         return
     if not counts["photos_to_write"]:
@@ -785,9 +785,7 @@ def tags_from_faces(ctx, apply_, guesses, folder):
         return
     exiftool = get_exiftool_path(library.path)
     console.print("Writing %d photo file(s)..." % counts["photos_to_write"])
-    result = tags_from_faces_service.apply(
-        library, planned, exiftool,
-        on_chunk=lambda done, total: console.print("  %d of %d photo(s) done" % (done, total), markup=False))
+    result = tags_from_faces_service.apply(library, planned, exiftool)
     console.print("Wrote %d photo file(s) in %d change(s) of the journal (`history` lists them)."
                   % (result.changed, len(result.details.get("changes", []))), markup=False)
     if result.refused:

@@ -19,7 +19,7 @@ from click.testing import CliRunner  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup.core import paths  # noqa: E402
-from tagpup.services import face_people, tags_from_faces  # noqa: E402
+from tagpup.services import batches, tags_from_faces  # noqa: E402
 from tagpup.store import checks, db  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
@@ -143,15 +143,16 @@ class TheApply(Mending):
         self.assertEqual([(WREN, "keyword")] * 3, self.look("SELECT name, source FROM photo_people ORDER BY photo_id"))
         self.assertEqual((0, 0), checks.people_on_faces_alone(self.conn()))
 
-    def test_a_chunk_is_one_change_of_the_journal(self):
-        for n in range(5):
+    def test_more_than_a_chunk_is_one_batch_and_one_change_of_the_journal(self):
+        """The repair writes through the one batch model (file_changes.write_fields, #1474): more than batches.CHUNK photos
+        claim a batch, written a chunk at a time, and are one change of the journal; it kept its own chunks, each a change."""
+        for n in range(batches.CHUNK + 1):
             self.drifted("drift_%d.jpg" % n)
-        with mock.patch.object(face_people, "CHUNK", 2):
+        with mock.patch.object(batches, "Batch", wraps=batches.Batch) as batch:
             said = self.run_cli("--apply")
-        self.assertIn("5 photo file(s) in 3 change(s)", said.output)
-        self.assertEqual([tags_from_faces.OPERATION] * 3, self.operations())
-        self.assertIn("2 of 5 photo(s) done", said.output)
-        self.assertIn("5 of 5 photo(s) done", said.output)
+        self.assertIn("%d photo file(s) in 1 change(s)" % (batches.CHUNK + 1), said.output)
+        self.assertEqual([tags_from_faces.OPERATION], self.operations())
+        self.assertEqual(1, batch.call_count, "one batch, its turn taken once")
 
     def test_it_can_be_run_again_and_finds_nothing_more(self):
         self.drifted("drift_a.jpg")
