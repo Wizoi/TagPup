@@ -10,14 +10,11 @@ sources rebuilds the photos it touched: a keyword write, a face named, unnamed,
 excluded, detected again or deleted, and a tree edit that changes who is a person
 (`tree_edit`).
 
-Also the names the pages offer while a person is typed, and renaming somebody. Both
-servers listed them with their own copy, asking the tag tree about each person with a
-query of its own.
+Also renaming and merging somebody.
 """
 import collections
 import contextlib
 import json
-import os
 
 from tagpup.core import vocabulary
 from tagpup.store import roots as store_roots
@@ -303,37 +300,3 @@ def tree_edit(conn):
     follow_tree(conn, before)
     derived.follow_tree(conn, nodes)
     person_ids.follow_tree(conn, ids)
-
-
-def names(db_path, keywords_too=False, include_hidden=False):
-    """The people the library knows, alphabetical (vocabulary.tag_sort_key): the names given to faces -- and, with
-    `keywords_too`, the people photos' keywords name.
-
-    A person whose every node in the tag tree is hidden from autocomplete, or sits in a
-    hidden branch, is left out, unless `include_hidden`: that answers "does this person
-    exist?", which a hidden person does -- asked of the shorter list, naming one of them
-    offered to create them as someone new.
-    """
-    if not os.path.exists(db_path):
-        return []
-    conn = db.connect(db_path, timeout=30.0)
-    try:
-        people = {name for (name,) in conn.execute("SELECT DISTINCT name FROM faces WHERE name IS NOT NULL")}
-        if keywords_too and conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'"
-                                         " AND name = 'photo_people'").fetchone():
-            people.update(name for (name,) in conn.execute(
-                "SELECT DISTINCT name FROM photo_people WHERE source = 'keyword'") if name)
-        has_tree = conn.execute("SELECT name FROM sqlite_master WHERE type='table'"
-                                " AND name='tag_taxonomy'").fetchone()
-        if not include_hidden and has_tree:
-            hidden = {tag for (tag,) in conn.execute(
-                "SELECT tag FROM tag_taxonomy WHERE hidden_from_autocomplete = 1")}
-            filed = {}
-            for tag, name in conn.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1"):
-                filed.setdefault(name, []).append(tag)
-            people = {person for person in people
-                      if not (filed.get(person) and all(vocabulary.hidden_by(tag, hidden)
-                                                        for tag in filed[person]))}
-    finally:
-        conn.close()
-    return sorted((person for person in people if person), key=vocabulary.tag_sort_key)

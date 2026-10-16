@@ -47,23 +47,8 @@ export function updateURLParams() {
     window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
 }
 
-// Fetch all unique known people for autocomplete
+// The people with a tag, by id: who a typed name is, the label of each (identity by id), and what is offered while typing.
 export function fetchKnownPeople() {
-    api.fetch('/api/people')
-        .then(res => {
-            if (!res.ok) throw new Error('Failed to fetch people list');
-            return res.json();
-        })
-        .then(data => {
-            state.allKnownPeople = data;
-            updatePeopleDatalist();
-        })
-        .catch(err => console.error('Error fetching people list:', err));
-    api.fetch('/api/people?include_hidden=1')
-        .then(res => res.ok ? res.json() : [])
-        .then(data => { state.everyKnownPerson = Array.isArray(data) ? data : []; })
-        .catch(err => console.error('Error fetching people list:', err));
-    // The people with a tag, by id: who a typed name is, and the label of each (identity by id).
     api.fetch('/api/people?records=1&include_hidden=1')
         .then(res => res.ok ? res.json() : [])
         .then(data => {
@@ -75,16 +60,14 @@ export function fetchKnownPeople() {
 
 /**
  * Who typed text means: the person (their id with them), after asking which when two people have the name, or a name no tag has.
- * Resolves to {person}, or {name, exists} -- `exists`: faces or photos already hold the name (hidden from autocomplete, or no tag
- * yet), so it is not a new person -- or null when nothing was typed or the question was declined.
+ * Resolves to {person}, or {name} -- a new person: every person has a tag, the hidden ones too -- or null when nothing was typed
+ * or the question was declined.
  */
 export function resolveTyped(text, title = 'Which person?') {
     const found = state.people.match(text);
     if (found.kind === 'person') return Promise.resolve({ person: found.person });
     if (found.kind === 'new') {
-        return Promise.resolve({
-            name: found.name, exists: state.everyKnownPerson.includes(found.name) || state.allKnownPeople.includes(found.name),
-        });
+        return Promise.resolve({ name: found.name });
     }
     if (found.kind === 'choose') {
         return choosePerson(found.people, {
@@ -135,12 +118,8 @@ function updatePeopleDatalist() {
     if (!datalist) return;
     datalist.innerHTML = '';
     const offered = new Map();
-    // A person with a tag is offered by their name; a name only faces hold (no tag) by the name too.
+    // A person is offered by their name, with their tag as the hover.
     for (const person of state.people.all()) offered.set(person.name, person);
-    const named = new Set(state.people.all().map(person => person.name.toLowerCase()));
-    for (const name of state.allKnownPeople) {
-        if (!named.has(String(name).toLowerCase())) offered.set(name, null);
-    }
     sortedTags(offered.keys()).forEach(text => {
         const option = document.createElement('option');
         option.value = text;

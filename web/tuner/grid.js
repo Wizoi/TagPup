@@ -310,7 +310,7 @@ export function renderPersonFaces(faces) {
                     if (!found) return;
                     const who = found.person || found.name;
                     const name = found.person ? found.person.name : found.name;
-                    if (!found.person && !found.exists) {
+                    if (!found.person) {
                         if (!confirm(`"${name}" is not currently in the database. Do you want to create a new person tag and assign this cluster to it?`)) {
                             return;
                         }

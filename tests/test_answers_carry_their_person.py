@@ -217,10 +217,6 @@ class OnTheWire(unittest.TestCase):
                 self.assertEqual([("Sam", SAM_I), ("Sam", SAM_T), ("Wren", WREN)], [(each["name"], each["tag"]) for each in found])
                 self.assertTrue(all(set(each) == {"id", "name", "tag"} for each in found))
 
-    def test_the_plain_list_of_names_is_as_it_was(self):
-        self.vl.photo("A", "a.jpg", tags=[SAM_T])
-        self.assertEqual(["Sam"], self.client.get("/library/api/people").get_json())
-
     def test_a_hidden_person_is_left_out_unless_asked_for(self):
         taxonomy.set_branch_flags(self.vl.conn, WREN, hidden=1)
         self.vl.conn.commit()

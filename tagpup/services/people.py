@@ -7,7 +7,7 @@ for a name two people are called (a name alone cannot say which; a typed one is 
 """
 from tagpup.core import vocabulary
 from tagpup.core.result import NotFound, Refused
-from tagpup.store import db, faces, people, person_ids, taxonomy
+from tagpup.store import db, faces, person_ids, taxonomy
 
 
 def translate(problem):
@@ -47,12 +47,6 @@ def tags_by_id(library):
     return {record["id"]: record["tag"] for record in records(library, include_hidden=True)}
 
 
-def names(library, keywords_too=False, include_hidden=False):
-    """The people the pages offer while a name is typed (tagpup.store.people.names):
-    TagPup's are the names given to faces; TagTuner's add the people keywords name."""
-    return people.names(library.path, keywords_too=keywords_too, include_hidden=include_hidden)
-
-
 def directory(library):
     """The library's people as the pages are told of them (person_ids.Directory), read now from its tree.
     A library with no tree has none."""
@@ -85,9 +79,10 @@ def annotate_suggestions(library, status):
 
 
 def records(library, include_hidden=False):
-    """Everyone with a person tag, as the pages are told of them, alphabetical (vocabulary.tag_sort_key) and by group
-    for those that share a leaf; a person every node the tree files them under is hidden from autocomplete leaves
-    out, unless `include_hidden` (names, above, does the same)."""
+    """Everyone with a person tag, as the pages are told of them (/api/people, both apps), alphabetical
+    (vocabulary.tag_sort_key) and by group for those that share a leaf; a person whose node is hidden from autocomplete, or
+    sits in a hidden branch, is left out unless `include_hidden`: that answers "does this person exist?", which a hidden
+    person does."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         found = person_ids.Directory.read(conn).records()

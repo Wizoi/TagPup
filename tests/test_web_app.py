@@ -113,8 +113,8 @@ class TheLibraryAUrlNames(unittest.TestCase):
             add_face(conn, "C:/photo.jpg", box="[]", embedding=b"", name=person)
             conn.commit()
             conn.close()
-        self.assertEqual(["Alice"], client.get("/created_db_1/api/people").get_json())
-        self.assertEqual(["Bob"], client.get("/created_db_2/api/people").get_json())
+        self.assertEqual(["Alice"], [each["name"] for each in client.get("/created_db_1/api/people").get_json()])
+        self.assertEqual(["Bob"], [each["name"] for each in client.get("/created_db_2/api/people").get_json()])
 
     def test_a_created_library_is_not_left_open(self):
         """Creating a library opened it for its schema and never closed it: on Windows it could not be moved or

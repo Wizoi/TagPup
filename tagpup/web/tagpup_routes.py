@@ -1144,12 +1144,10 @@ def tags():
 
 @routes.get("/api/people")
 def people():
-    """The people offered while a name is typed (tagpup.services.people.names). ?records=1 answers the people with a
-    person tag instead, each `{id, name, tag, group, shared}` (tagpup.services.people.records)."""
+    """The people with a person tag, each `{id, name, tag}` (tagpup.services.people.records); ?include_hidden=1 adds those
+    hidden from autocomplete. The pages send ?records=1, which changes nothing."""
     try:
         library = state.require()
-        if request.args.get("records") == "1":
-            return jsonify(people_service.records(library, include_hidden=request.args.get("include_hidden") == "1"))
-        return jsonify(people_service.names(library))
+        return jsonify(people_service.records(library, include_hidden=request.args.get("include_hidden") == "1"))
     except Exception as e:
         return responses.error(500, str(e))
