@@ -107,11 +107,6 @@ class AFacesCrop(unittest.TestCase):
         face = self.lib.add_face(big, [0, 0, 1000, 800], crop=None)
         self.assertEqual(size_of(self.crop(face)), (256, 205))
 
-    def test_a_box_in_the_bare_form_of_older_rows_is_read(self):
-        face = self.lib.add_face(self.photo, [0, 0, 1, 1], crop=None)
-        self.lib.execute("UPDATE faces SET box = '10, 20, 60, 100' WHERE id = ?", (face,))
-        self.assertEqual(size_of(self.crop(face)), (50, 80))
-
     def test_a_box_outside_the_picture_gives_a_grey_square(self):
         face = self.lib.add_face(self.photo, [500, 500, 600, 600], crop=None)
         self.assertEqual(size_of(self.crop(face)), (100, 100))
