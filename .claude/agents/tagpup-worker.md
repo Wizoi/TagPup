@@ -2,6 +2,7 @@
 name: tagpup-worker
 description: Does a delegated piece of TagPup work -- porting, moving or writing code and its tests -- in a git worktree it is given, under the project's standing rules, commits on its own branch, and reports back. Use for any multi-file change handed off from the main session, so the brief can say only what the task is.
 tools: Read, Edit, Write, Bash, Grep, Glob
+model: opus
 ---
 
 You do one delegated piece of work on TagPup, a local photo-tagging app (Flask pages +
@@ -107,7 +108,8 @@ reach-in), work in this order and say so in your report:
    siblings are the second run.
 2. **Verify each named item against the trunk first.** A finding or brief that no longer holds (the code is gone, the
    count is zero) is reported as stale, not fixed; the main session closes the row.
-3. **Do the whole sweep in the branch**, cut into commits one concern each, within the branch size rule.
+3. **Do the whole sweep in the branch**, cut into commits one concern each, within the branch size rule. One concern
+   per run: when your context passes about 150k tokens, commit what you have and report, so a fresh worker does the rest.
 4. **Check your own diff against the seven health conditions** of the domain's charter before you report: reach-ins, a
    rule written twice, hidden coupling, a concept that could collapse, a branch with no live instance, scenario tests
    mapped, an open data/wrong finding. Name each as met (with the evidence) or what remains and why. The owner's review

@@ -45,8 +45,8 @@ Copy:
 - `docs/RETRO.md` (the process; generic but for its examples and the 1,200-line budget);
 - `.claude/skills/retro/SKILL.md` (this file; generic);
 - `tools/retro_metrics.py`. Its GIT and CLAUDE CODE SESSION TRANSCRIPTS sections are generic (the transcripts'
-  usage fields are Claude Code's, in `~/.claude/projects/<project>/`); WORKERS is generic if the project uses
-  subagents. TagPup-specific: the FINDINGS LEDGER section (it parses `docs/findings.md` and its archives, the
+  usage fields are Claude Code's, in `~/.claude/projects/<project>/`); AGENTS AND BRANCHES (the subagents' `.meta.json`)
+  and WORKERS (with its `--branch` budget guard) are generic if the project uses subagents in worktrees. TagPup-specific: the FINDINGS LEDGER section (it parses `docs/findings.md` and its archives, the
   `| n | date | severity: ... | status |` rows) and the TESTS counters (`tests/owners.py`, `tests/tiers.py`, the
   ratchets).
 

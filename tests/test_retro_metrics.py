@@ -1,6 +1,10 @@
 """tools/retro_metrics.py counts a tiny git repository and a fake transcript folder made here, and keeps no text of a
-transcript: a canary in a message's text, a tool's input and a user's record is in none of its outputs."""
+transcript: a canary in a message's text, a tool's input, a user's record, a compaction's record and a subagent's meta
+file (its description, its request, a branch name that is not a worktree-agent one) is in none of its outputs. Before a
+merge the main session runs its --branch guard: a branch adding over the budget fails unless allowed."""
+import contextlib
 import datetime
+import io
 import json
 import os
 import shutil
@@ -65,19 +69,25 @@ def build_repository(folder):
     repo.commit("2026-10-01", "before the window", ("tagpup/a.py", "x = 1\n" * 10),
                 ("tests/test_a.py", "def test_one():\n    pass\ndef test_two():\n    pass\n"),
                 ("docs/findings.md", HEAD + "| 1 | 2026-10-01 | wrong: a thing | open |\n"))
+    repo.git("branch", "worktree-agent-cafe")   # a worker that committed nothing on its own branch
     repo.commit("2026-10-02", "code and a lifted test\n\nCo-Authored-By: Fable Model 9 <f@example.invalid>",
                 ("tagpup/a.py", "x = 1\n" * 15),
                 ("tests/test_b.py", '"""' + "Lift" + 'ed: test_one"""\ndef test_three():\n    pass\n'))
-    repo.git("checkout", "-q", "-b", "worktree-agent-x")
+    repo.git("checkout", "-q", "-b", "worktree-agent-abc1")
     repo.commit("2026-10-02", "a worker's change", ("web/x.js", "a;\nb;\nc;\n"))
     repo.git("checkout", "-q", "main")
-    repo.git("merge", "-q", "--no-ff", "worktree-agent-x", "-m", "Merge worktree-agent-x: a thing", when="2026-10-03")
+    repo.git("merge", "-q", "--no-ff", "worktree-agent-abc1", "-m", "Merge worktree-agent-abc1: a thing",
+             when="2026-10-03")
     repo.commit("2026-10-03", "findings only",
                 ("docs/findings.md", HEAD + "| 1 | 2026-10-01 | wrong: a thing | fixed: abc |\n"
                  "| 2 | 2026-10-03 | wrong: the reviewer saw it | open |\n"),
                 ("docs/history/findings_closed_0001-0250.md", HEAD + "| 3 | 2026-10-02 | low: x | obsolete: gone |\n"))
     repo.commit("2026-10-03", "Revert the first test", remove=["tests/test_a.py"])
     repo.commit("2026-10-05", "after the window", ("tagpup/b.py", "y = 2\n"))
+    repo.git("branch", "worktree-agent-f00d")   # its tip is the trunk's, committed after its run began
+    repo.git("checkout", "-q", "-b", "worktree-agent-dead")   # a worker's branch, never merged: +4 -10
+    repo.commit("2026-10-05", "a big change", ("tagpup/a.py", "x = 1\n" * 5), ("web/y.js", "a;\n" * 4))
+    repo.git("checkout", "-q", "main")
     return repo
 
 
@@ -96,12 +106,40 @@ def build_transcripts(folder):
     main = [record("assistant", "claude-opus-test", 5, "m1"), record("assistant", "claude-opus-test", 20, "m1"),
             {"type": "user", "timestamp": at_noon(DAY(2026, 10, 2)), "message": {"content": CANARY}},
             record("assistant", "claude-opus-test", 99, "m2", day=DAY(2026, 9, 30))]
-    agent = [record("assistant", "fable-test-1", 2, "a1", sidechain=True, input_tokens=1,
-                    cache_creation_input_tokens=0, cache_read_input_tokens=0)]
+    main.append(compaction("auto", 170000))
     os.makedirs(os.path.join(folder, "s-1", "subagents"))
-    for path, records in (("s-1.jsonl", main), ("s-1/subagents/agent-a1.jsonl", agent)):
+    files = [("s-1.jsonl", main)]
+    for agent, kind, branch, stopped, calls in SUBAGENTS:
+        records = [record("assistant", "fable-test-1", 2, "%s-%d" % (agent, n), sidechain=True, input_tokens=1,
+                          cache_creation_input_tokens=0, cache_read_input_tokens=0) for n in range(calls)]
+        if agent == "a1":
+            records.append(compaction("manual", 90000))
+        files.append(("s-1/subagents/agent-%s.jsonl" % agent, records))
+        meta = {"agentType": kind, "description": CANARY, "requestShape": CANARY, "toolUseId": "toolu_1",
+                "spawnDepth": 1, "requestNonInteractive": True}
+        if branch:
+            meta.update(worktreeBranch=branch, spawnedWithWorktree=True, worktreePath="C:/wt/" + CANARY)
+        if stopped:
+            meta["stoppedByUser"] = True
+        with open(os.path.join(folder, "s-1", "subagents", "agent-%s.meta.json" % agent), "w", encoding="utf-8") as h:
+            json.dump(meta, h)
+    for path, records in files:
         with open(os.path.join(folder, *path.split("/")), "w", encoding="utf-8") as handle:
             handle.write("\n".join(json.dumps(r) for r in records) + "\nnot json " + CANARY + "\n")
+
+
+def compaction(trigger, before):
+    return {"type": "system", "subtype": "compact_boundary", "timestamp": at_noon(IN_THE_WINDOW), "sessionId": "s-1",
+            "content": CANARY, "compactMetadata": {"trigger": trigger, "preTokens": before, "postTokens": 9,
+                                                   "preservedSegment": {"note": CANARY}}}
+
+
+#: (agent, agentType, worktreeBranch, stoppedByUser, calls): one subagent of the fake session each, 3 tokens a call.
+SUBAGENTS = (("a1", "tagpup-reviewer", None, False, 1), ("a2", "tagpup-worker", "worktree-agent-abc1", False, 2),
+             ("a3", "tagpup-worker", "worktree-agent-beef", True, 1), ("a4", "general-purpose", "f-" + CANARY, False, 1),
+             ("a5", "tagpup-worker-small", "worktree-agent-dead", False, 1),
+             ("a6", "tagpup-worker-small", "worktree-agent-cafe", False, 1),
+             ("a7", "tagpup-worker", "worktree-agent-f00d", False, 1))
 
 
 class TheCountersOfAKnownWindow(unittest.TestCase):
@@ -155,22 +193,60 @@ class TheCountersOfAKnownWindow(unittest.TestCase):
         self.assertEqual((1, 10, 20, 100, 1000), (opus["turns"], opus["input_tokens"], opus["output_tokens"],
                                                   opus["cache_creation_input_tokens"], opus["cache_read_input_tokens"]))
         self.assertEqual(0, opus["large_context"])
-        self.assertEqual((1, 1, 2, False), (fable["turns"], fable["input_tokens"], fable["output_tokens"],
+        self.assertEqual((8, 8, 16, False), (fable["turns"], fable["input_tokens"], fable["output_tokens"],
                                              fable["priced"]))
         self.assertAlmostEqual(10 * 5e-6 + 20 * 25e-6 + 100 * 5e-6 * 1.25 + 1000 * 5e-6 * 0.1, u["cost_low"])
         self.assertAlmostEqual(3 * (10 * 5e-6 + 20 * 25e-6 + 100 * 5e-6 * 1.25 + 1000 * 5e-6 * 0.1), u["cost_high"])
-        self.assertEqual(({"2026-10-02": 1}, {"2026-10-02": 1}, {"main": 1130, "subagent": 3}, ["fable-test-1"]),
+        self.assertEqual(({"2026-10-02": 1}, {"2026-10-02": 7}, {"main": 1130, "subagent": 24}, ["fable-test-1"]),
                          (u["sessions_per_day"], u["subagent_files_per_day"], u["tokens_main_vs_subagent"],
                           u["unpriced_models"]))
 
+    def test_agent_types_branches_and_the_runs_the_owner_stopped(self):
+        a = self.report["usage"]["agents"]
+        kinds = {t: (v["runs"], v["calls"], v["tokens"]) for t, v in a["by_agent_type"].items() if v["calls"]}
+        self.assertEqual({"main session": (1, 1, 1130), "worker": (3, 4, 12), "small worker": (2, 2, 6),
+                          "reviewer": (1, 1, 3), "general-purpose": (1, 1, 3)}, kinds)
+        self.assertEqual((3, 18), (a["review"]["tokens"], a["work"]["tokens"]))
+        self.assertEqual({"worktree-agent-abc1": ("merged", 6), "worktree-agent-beef": ("no merge found", 3),
+                          "worktree-agent-dead": ("open", 3), "worktree-agent-cafe": ("nothing to merge", 3),
+                          "worktree-agent-f00d": ("fast-forward", 3),
+                          retro_metrics.OTHER_BRANCH: ("not a worktree branch", 3)},
+                         {b: (v["state"], v["tokens"]) for b, v in a["by_branch"].items()})
+        self.assertEqual((1, 6), (a["branches_per_state"]["merged"]["branches"],
+                                  a["branches_per_state"]["merged"]["tokens"]))
+        self.assertEqual((1, 1, 3), tuple(a["stopped_by_the_owner"][k] for k in ("runs", "calls", "tokens")))
+
+    def test_main_sessions_and_their_compactions(self):
+        a = self.report["usage"]["agents"]
+        self.assertEqual({"s-1": {"calls": 1, "average_context": 1110, "max_context": 1110, "compactions": 1,
+                                  "compactions_auto": 1, "tokens_before_compaction": [170000]}}, a["main_sessions"])
+        self.assertEqual((1110, 1), (a["main_average_context"], a["subagent_compactions"]))
+
     def test_workers(self):
-        self.assertEqual({"count": 1, "median": 3, "p90": 3, "max": 3, "over_budget": 0},
-                         self.report["workers"]["worktree_branches"])
+        self.assertEqual({"count": 1, "median": 3, "p90": 3, "max": 3, "over_budget": 0, "removed": 0, "old_median": 3,
+                          "old_over_budget": 0}, self.report["workers"]["worktree_branches"])
+        self.assertEqual([{"day": "2026-10-03", "added": 3, "removed": 0, "subject": ""}],
+                         [{k: v for k, v in m.items() if k != "sha"} for m in self.report["workers"]["trunk_merges"]])
+
+    def test_before_a_merge_a_branch_adding_over_the_budget_fails_unless_allowed(self):
+        def run(*extra):
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                code = retro_metrics.main(["--repo", self.repo, "--rev", "main", "--branch", "worktree-agent-dead",
+                                           *extra])
+            return code, printed.getvalue()
+        code, said = run("--budget", "3")
+        self.assertEqual(1, code)
+        self.assertIn("+4 -10", said)
+        self.assertIn("OVER", said)
+        self.assertEqual(0, run("--budget", "3", "--allow-over")[0])
+        self.assertEqual(0, run("--budget", "4")[0], "the budget counts added lines: 10 removed are not over 4")
+        self.assertEqual(0, run()[0])
 
     def test_no_transcript_text_reaches_any_output(self):
-        records = retro_metrics.usage_records(self.transcripts)
-        self.assertEqual(3, len(records))
-        self.assertNotIn(CANARY, json.dumps(records))
+        records, compactions = retro_metrics.transcript_facts(self.transcripts)
+        self.assertEqual((10, 2), (len(records), len(compactions)))
+        self.assertNotIn(CANARY, json.dumps([records, compactions]))
         for path in (self.out, self.json):
             with open(path, encoding="utf-8") as handle:
                 self.assertNotIn(CANARY, handle.read())

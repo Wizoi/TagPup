@@ -55,22 +55,26 @@ says at the next retro whether it worked. The research behind it: `research_note
 
 ## The metrics
 
-`tools/retro_metrics.py` (`--since`, `--until`, `--json`) prints five sections. What each tells:
+`tools/retro_metrics.py` (`--since`, `--until`, `--json`) prints six sections. What each tells, and what it cannot
+count (gather that by hand, or say "not counted"):
 
-- **GIT**: merged outcomes in the window (merges into the trunk), not commits; reverts and fix-of-a-fix (rework);
-  branch size against the 1,200-line budget; lines added and removed outside `tests/` and `docs/` (net concepts).
-  Commit and line counts are context, never success.
-- **FINDINGS LEDGER**: rows found in the window; the share that a review found, and the `data` / `wrong` among them
-  (what tests passed and review caught); escapes to the owner; review rounds per branch; rows closed then reopened or
-  found stale on the trunk (`tools/stale_findings.py`); rows citing a rule, grouped by rule (a rule broken with a guard
-  means the guard has a gap; without one, it needs one).
-- **TESTS**: the test files and tests added and removed (the scenario rule: a branch removes as many as it adds);
-  files unmapped in `tests/owners.py` and the other ratchet counts, which may only go down.
-- **CLAUDE CODE SESSION TRANSCRIPTS** (usage fields only, never message text or a brief's description): tokens by
-  agent type and model; the context size of each call (the share above 150k); session length and compactions; cache
-  efficiency (a drop means context rebuilt: restarts, `/clear` mid-task); cost per merged branch.
-- **WORKERS**: runs per agent type; runs stopped by the owner; runs whose branch never merged (wasted); rounds per
-  branch from the reviewers' runs.
+- **GIT**: merged outcomes in the window (merges into the trunk), not commits; reverts; lines added and removed by
+  area. Commit and line counts are context, never success. Not counted: fix-of-a-fix.
+- **FINDINGS LEDGER**: rows opened (by day and severity) and closed (by kind); the rows naming review or an owner (a
+  proxy for review-found); rows closed obsolete or stale (ledger drift). Not counted: escapes to the owner, review
+  rounds per branch, rows citing a rule (`tools/stale_findings.py` finds stale rows on the trunk).
+- **TESTS**: test files and `def test_` at the start and end, files added and deleted, `Lifted:` lines. Not counted:
+  unmapped files in `tests/owners.py` and the other ratchet counts.
+- **CLAUDE CODE SESSION TRANSCRIPTS** (usage fields only, never message text): tokens, cache write and cache read by
+  model and day; the calls above 150k of context; cost low..high at list prices.
+- **AGENTS AND BRANCHES** (the subagent `.meta.json` files: agent type, worktree branch, stopped by the owner; never
+  the description): TOKENS BY AGENT TYPE (runs, calls, tokens, share, cost) and review work (reviewers, quick
+  reviewers, owners) against workers; TOKENS BY BRANCH (the top 15, and totals by state: merged, fast-forward,
+  nothing to merge, open, no merge found, an upper bound of never merged); RUNS STOPPED BY THE OWNER; MAIN SESSIONS
+  (count, average and largest context per call, compactions and the tokens before each).
+- **WORKERS**: lines ADDED per merge against the 1,200 budget (added plus removed beside it, the old measure), each
+  trunk merge's lines; `--branch <ref>` is the guard before a merge (exit 1 when it adds over the budget, unless
+  `--allow-over`). Not counted: review rounds per branch (a reviewer's meta file names no branch).
 
 Plus, by hand from the files: the lines and bytes of CLAUDE.md, each agent definition and MEMORY.md; rules with a
 named guard against rules without; numbers in CLAUDE.md that no longer hold.
