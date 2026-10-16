@@ -236,8 +236,9 @@ steps after it, from 33, in `tagpup.store.schema`; each runs in one transaction 
 person is the id of a node in the tag tree** (`tag_taxonomy.id`): `faces.tag_id` and `photo_people.tag_id`
 are the key and `name` a cache of the node's leaf. **Every tag has an id** (owner, 2026-10-10): a name or a keyword
 first seen with no node is given one by `taxonomy.ensure_node` -- a name a node directly under the tree's root marked as a
-person, a keyword its own path -- so no row holds a name and no id except a name two people have or a group has (the doctor
-counts them). A person is a face node with no node under it, wherever it sits (a top-level one is filed by its own tag until
+person, a keyword its own path; a name two people have, a group's and a new library's empty People are refused -- so no row
+holds a name and no id: a name alone is nobody (owner, 2026-10-15), and `person_ids.People.settle` makes one it meets nobody (the
+doctor counts it among the rows whose name is not their person's). A person is a face node with no node under it, wherever it sits (a top-level one is filed by its own tag until
 the owner merges it into a branch); a branch is a group, never a person. A batch of reads makes its nodes in one tree edit
 and none when it would make more than 500 (`derived.MAX_NEW_NODES_PER_BATCH`): a folder from another program with thousands
 of keywords would make thousands of tags to merge or delete by hand, each embedded by Suggest; the doctor counts them. The navigator files a top-level person under "Top level".

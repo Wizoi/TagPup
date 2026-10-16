@@ -92,10 +92,10 @@ class TheRules(Library):
             self.conn.execute(broken, (photo,))
             self.conn.commit()
         # The people are words of the word index, kept by people.rebuild: two of the three hand-made lists hold a name the
-        # index does not (the third holds the same names in another order); the first and third carry a name that is not
-        # their node's, since the hand-made rows hold a name and the id of another.
+        # index does not (the third holds the same names in another order); the first carries a name with no id (nobody) and the
+        # third two names that are not their node's, since the hand-made rows hold a name and the id of another.
         self.assertEqual({"photos whose people are out of date": 3, "photos whose word index rows are out of date": 2,
-                          "people listed whose name is not their person's": 2}, self.broken())
+                          "people listed whose name is not their person's": 3}, self.broken())
 
     def test_a_face_named_and_excluded(self):
         self.face(self.photo("a.jpg"), name="Wren Halloway", excluded=1)
@@ -118,7 +118,8 @@ class TheRules(Library):
                           (gone,))
         self.conn.execute("INSERT INTO suggestions (photo_id, tags) VALUES (?, '[]')", (gone,))
         self.assertEqual({"vectors whose photo is gone": 1, "people listed for a photo that is gone": 1,
-                          "suggestions for a photo that is gone": 1}, self.broken())
+                          "suggestions for a photo that is gone": 1,
+                          "people listed whose name is not their person's": 1}, self.broken(), "the row holds no id, too")
 
     def test_photos_without_a_vector_for_the_model_are_counted_not_broken(self):
         for name in ("a.jpg", "b.jpg"):

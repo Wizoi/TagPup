@@ -154,8 +154,8 @@ def _not_taken_off(conn, free, faces_here):
     nobody = [face_id for face_id, person, source, excluded, _box in faces_here if not person and not excluded and source == BY_HAND]
     if not nobody or not free:
         return free
-    taken = removals.removed_people(conn, nobody).values()
-    return [person for person in free if not any(removals.same_person(each, person) for each in taken)]
+    taken = {each.id for each in removals.removed_people(conn, nobody).values()}   # by id: two people called alike are two
+    return [person for person in free if person.id not in taken]
 
 
 def _small(box_json):

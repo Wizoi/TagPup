@@ -1076,9 +1076,6 @@ def _undo_rows(conn, change_id):
     if reasons:
         raise Refusal(reasons)
     try:
-        # A node the undo takes away leaves its faces with the name alone (they were linked to it by it, or by a guess).
-        person_ids.release(conn, [change.key[0] for change in inverse if change.table == "tag_taxonomy"
-                                  and change.action == "delete" and change.key is not None])
         _write(conn, inverse)
     except sqlite3.IntegrityError as e:
         raise _integrity(e) from e

@@ -466,21 +466,15 @@ def people_rows(tags, face_refs, known=None):
     of writer: naming a face in TagTuner adds the person without necessarily writing a keyword, while every keyword write
     rebuilt the column from the keywords alone -- so tagging a photo silently took off everyone identified only by their
     face. Every writer goes through here, so both sources always count. A person is listed once by id; two faces named
-    two people called alike list both; a face whose name no person is filed under (no id) is listed once by name, and is
-    not listed beside a person of that name."""
+    two people called alike list both. A named face holds its person's id (a name alone is nobody, owner 2026-10-15)."""
     rows = [[ref, "keyword"] for ref in extract_refs(tags, known)]
     for face in face_refs:
-        if not face.name:
+        if not face.name or any(row[0].id == face.id for row in rows):
             continue
-        if face.id is not None:
-            if any(row[0].id == face.id for row in rows):
-                continue
-            # The bare keyword of a leaf two people have, beside the face that says which of them.
-            same = [row for row in rows if row[0].id is None and key(row[0].name) == key(face.name)]
-            if same:
-                same[0][0] = face
-                continue
-        elif any(key(row[0].name) == key(face.name) for row in rows):
+        # The bare keyword of a leaf two people have, beside the face that says which of them.
+        same = [row for row in rows if row[0].id is None and key(row[0].name) == key(face.name)]
+        if same:
+            same[0][0] = face
             continue
         rows.append([face, "face"])
     return [(ref, source) for ref, source in rows]

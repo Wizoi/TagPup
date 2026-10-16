@@ -359,9 +359,7 @@ def _target(conn, person, known=None):
     from tagpup.store import taxonomy   # taxonomy imports this module's neighbours
     if vocabulary.SEPARATOR in name:
         raise ValueError("%r is a tag's path, not a person's name: a face is named by a person's id or a bare name" % name)
-    node_id = taxonomy.ensure_node(conn, name, person=True)[0]
-    if node_id is None:   # person_ids.target refuses a group's name and a name two people have before this
-        raise ValueError("no person can be made of %r: the face is not named" % name)
+    node_id = taxonomy.ensure_node(conn, name, person=True)[0]   # target refused a group's name and a shared one first
     return node_id, conn.execute("SELECT name FROM tag_taxonomy WHERE id = ?", (node_id,)).fetchone()[0]
 
 

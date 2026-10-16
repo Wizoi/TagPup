@@ -114,8 +114,9 @@ Tags and captions are written back using ExifTool:
   gets its own node), to be merged into the right branch in the tag view. Nothing is made for the
   name of a group at the top, or for a keyword that would go under a person that faces or photos
   use (a file never turns a person into a group; the doctor counts the keywords). A person is listed
-  for a photo by the id of a node and no other way (owner, 2026-10-11): a row from before names had
-  ids is not counted as a person, and the doctor's "names with no person node" line counts them.
+  for a photo by the id of a node and no other way (owner, 2026-10-11): a name alone is nobody
+  (owner, 2026-10-15), and the doctor counts a row with a name and no id among the rows whose name
+  is not their person's; `--rebuild-derived --apply` makes it nobody.
   **A folder from another program with thousands of distinct keywords makes thousands of
   nodes**, each a tag the owner must merge or delete by hand (there is no bulk delete) and
   that Suggest embeds. So a batch of reads that would make more than 500 new nodes
