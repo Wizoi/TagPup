@@ -94,27 +94,49 @@ def precision_curve(correct, likeness, margin):
     return {"likeness": curve(likeness, LIKENESS_CUTS), "margin": curve(margin, MARGIN_CUTS)}
 
 
+def hold_out(matrix, people, groups):
+    """The curve and its counts for faces matched only against faces of another group (a photo, a folder): `people`
+    and `groups` an integer a row."""
+    best, first, second, reachable = top_two(matrix, people, groups)
+    correct = best == people
+    return {"faces": len(people), "own_person_only_in_this_group": int((~reachable).sum()),
+            "evaluated": int(reachable.sum()), "top_right": int(correct[reachable].sum()),
+            "curve": precision_curve(correct[reachable], first[reachable], (first - second)[reachable])}
+
+
+def _numbered(keys):
+    """An integer for each key, equal keys equal."""
+    seen = {}
+    return np.array([seen.setdefault(key, len(seen)) for key in keys])
+
+
 def faces_check(library, report):
-    """(c), read-only: the precision of the top suggestion over the named faces, held out by photo."""
+    """(c), read-only: the precision of the top suggestion over the named faces, held out by photo and, stricter, by
+    folder (an event's other photos: bursts and copies of one moment are in one folder); over every named face, and
+    over the faces a person decided alone (services.identify.decided_faces: a name clustering gave at 0.80 or more
+    would grade the curve by its own cut)."""
     started = time.time()
     _stamp, (ids, refs, matrix) = identify.named_faces(library)
+    _stamp, (decided_ids, _refs, _matrix) = identify.decided_faces(library)
     people_ids = sorted({ref.id for ref in refs})
-    report("  %d named faces, %d people" % (len(ids), len(people_ids)))
+    report("  %d named faces (%d decided), %d people" % (len(ids), len(decided_ids), len(people_ids)))
     photo_of = {}
     for person in people_ids:
         for face in identify.person_faces(library, person, limit=-1)["faces"]:
-            photo_of[face["id"]] = paths.key(face["photo_path"])
-    numbered = {}
-    photos = np.array([numbered.setdefault(photo_of.get(face_id, "face %d" % face_id), len(numbered))
-                       for face_id in ids])
-    people = np.array([ref.id for ref in refs])
-    best, first, second, reachable = top_two(np.asarray(matrix, dtype=np.float32), people, photos)
-    correct = best == people
-    curve = precision_curve(correct[reachable], first[reachable], (first - second)[reachable])
-    return {"named_faces": len(ids), "people": len(people_ids), "photos": len(numbered),
-            "without_a_photo": sum(1 for face_id in ids if face_id not in photo_of),
-            "own_person_only_in_this_photo": int((~reachable).sum()), "evaluated": int(reachable.sum()),
-            "top_right": int(correct[reachable].sum()), "curve": curve, "seconds": time.time() - started}
+            photo_of[face["id"]] = face["photo_path"]
+    known = [i for i, face_id in enumerate(ids) if face_id in photo_of]
+    decided = set(decided_ids)
+    matrix = np.asarray(matrix, dtype=np.float32)
+    answer = {"named_faces": len(ids), "decided_faces": len(decided_ids), "people": len(people_ids),
+              "without_a_photo": len(ids) - len(known)}
+    for label, rows in (("named", known), ("decided", [i for i in known if ids[i] in decided])):
+        people = np.array([refs[i].id for i in rows])
+        photos = [photo_of[ids[i]] for i in rows]
+        answer[label] = {
+            "by_photo": hold_out(matrix[rows], people, _numbered(paths.key(p) for p in photos)),
+            "by_folder": hold_out(matrix[rows], people, _numbered(paths.key(os.path.dirname(p)) for p in photos))}
+    answer["seconds"] = time.time() - started
+    return answer
 
 
 # ---- (a) the vectors again ---------------------------------------------------------------------------------------
@@ -347,9 +369,14 @@ def main():
     output = {"check": args.check, "library": name, "at": time.strftime("%Y%m%dT%H%M%S")}
     if args.check == "faces":
         output["faces"] = faces_check(library, print)
-        for point in output["faces"]["curve"]["likeness"]:
-            print("  likeness >= %.2f: %6d suggested, precision %s" % (
-                point["cut"], point["suggested"], "%.4f" % point["precision"] if point["precision"] else "-"))
+        for label in ("named", "decided"):
+            for held in ("by_photo", "by_folder"):
+                found = output["faces"][label][held]
+                print("  %s, held out %s: %d evaluated, %d with no face elsewhere" % (
+                    label, held, found["evaluated"], found["own_person_only_in_this_group"]))
+                for point in found["curve"]["likeness"]:
+                    print("    likeness >= %.2f: %6d suggested, precision %s" % (
+                        point["cut"], point["suggested"], "%.4f" % point["precision"] if point["precision"] else "-"))
     else:
         print("census of %s (read-only)" % name)
         rows, counts = sandbox.census(library)

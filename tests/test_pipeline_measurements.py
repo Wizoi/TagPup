@@ -162,6 +162,18 @@ class TheNamedFaceHoldOut(unittest.TestCase):
         self.assertAlmostEqual(1.0, first[2], places=5)
         self.assertLess(second[2], first[2])
 
+    def test_a_face_held_out_by_folder_meets_none_of_its_events_faces(self):
+        # A burst: person 1 twice in one folder, once in another; person 2 in a third folder.
+        matrix = np.array([[1, 0], [1, 0], [0.8, 0.6], [0, 1]], dtype=np.float32)
+        people = np.array([1, 1, 1, 2])
+        by_photo = holdouts.hold_out(matrix, people, np.array([1, 2, 3, 4]))
+        by_folder = holdouts.hold_out(matrix, people, np.array([10, 10, 11, 12]))
+        self.assertEqual(3, by_photo["evaluated"])          # person 2 has one face only
+        top = {point["cut"]: point for point in by_photo["curve"]["likeness"]}
+        self.assertEqual(2, top[0.95]["suggested"])         # the burst twins reach 1.0; the third reaches 0.8
+        tight = {point["cut"]: point for point in by_folder["curve"]["likeness"]}
+        self.assertEqual(0, tight[0.95]["suggested"])       # across folders, 0.8 is the best there is
+
     def test_the_curve_counts_what_it_suggests_and_what_is_right(self):
         correct = np.array([True, True, False, True])
         likeness = np.array([0.95, 0.75, 0.72, 0.5])
