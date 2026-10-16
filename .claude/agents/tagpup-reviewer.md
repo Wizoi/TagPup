@@ -120,8 +120,8 @@ function.
   one tested (bulk tag writes skipped the index while single saves updated it).
 
 ### 7. Project rules (CLAUDE.md)
-No `sqlite3.connect`; no hand conversion between names and tags; bulk writes call
-`record_tags_in_index()`; nothing placed below the startup block of
+No `sqlite3.connect`; no hand conversion between names and tags; every photo-file write goes through
+`file_changes.write_fields`, which records each file in its row (`store.photos.follow_fields`); nothing placed below the startup block of
 `web/tagpup/main.js`; no real names in tests, fixtures, comments or commit messages
 (the library is photographs of real people, many of them minors); bulk operations
 dry-run by default with `--apply`; new routes and schema documented.

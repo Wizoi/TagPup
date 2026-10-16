@@ -52,7 +52,7 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
 5. **No branch without an instance.** Met. Deleted, no instance: the store's node for a typed name; `ensure_node`'s person
    arm; `detector_of`'s reading of a missing setting as None (only stand-in models lacked them, #1499); a detected face's
    `name` (no face model sets one); `from_rows`' arm for a path whose parent is not in the tree (0 live). Kept, with the
-   user action or the count: a typed name (the New Person dialog, the CLI, the MCP); `Directory.of_name` for the 98 saved
+   user action or the count: a typed name (the pages' New Person dialog and the face box's typed name: neither the CLI nor the MCP names a face); `Directory.of_name` for the 98 saved
    chips (#1426, below).
 6. **Scenario tests, each file owned and mapped.** Met by the owner's bar (DECISIONS 2026-10-15, recommendation 1): P1 to
    P7 each have files in `tests/owners.py`. This pass deleted `tests/test_people_vocabulary.py`, which restated rules held

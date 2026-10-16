@@ -16,13 +16,13 @@ machinery (Data; you call it), the indexer, or how a page lays out a grid.
 
 ## Scope
 Paths are checked by `tests/test_the_test_map.py`; a moved module is changed here in the same commit.
-- Store: `tagpup/store/person_ids.py`, `tagpup/store/people.py`, `tagpup/store/faces.py`, `tagpup/store/face_tags.py`, `tagpup/store/face_batches.py`, `tagpup/store/embeddings.py`, `tagpup/store/taxonomy.py` (its people half: filing roots, person paths, `ensure_node`, `refuse_child_of_person`)
+- Store: `tagpup/store/person_ids.py`, `tagpup/store/people.py`, `tagpup/store/faces.py`, `tagpup/store/face_tags.py`, `tagpup/store/face_batches.py`, `tagpup/store/taxonomy.py` (its people half: filing roots, person paths, `ensure_node`, `refuse_child_of_person`)
 - Core and models: `tagpup/core/vocabulary.py`, `tagpup/core/clustering.py`, `tagpup/ml/grouping.py`
 - Services: `tagpup/services/people.py`, `tagpup/services/faces.py`, `tagpup/services/face_people.py`, `tagpup/services/face_assignment.py`, `tagpup/services/face_batch.py`, `tagpup/services/faces_from_tags.py`, `tagpup/services/tags_from_faces.py`, `tagpup/services/person_tags.py`, `tagpup/services/identify.py`, `tagpup/services/identities.py`, `tagpup/services/duplicate_faces.py`, `tagpup/services/tags.py` (rename and merge of a person)
 - Jobs: `tagpup/jobs/identify.py`, `tagpup/jobs/naming_faces.py`
 - Routes: `tagpup/web/face_routes.py`, `tagpup/web/name_faces_routes.py`, `tagpup/web/photo_face_routes.py`, `tagpup/web/taxonomy_routes.py` (the people routes of `tagpup/web/tuner_routes.py` are shared with Integration)
 - Pages: `web/common/vocabulary.js`, `web/common/name-faces.js`, `web/common/person-choice.js`, `web/common/person-faces.js`, `web/tuner/people.js`, `web/tuner/new-person.js`, `web/tuner/assign.js`, `web/tuner/faces-strip.js`, `web/tuner/review.js`, `web/tuner/reexamine.js`, `web/tuner/name-faces.js`, `web/tagpup/face-boxes.js`, `web/tagpup/selection-panel.js`, `web/tagpup/name-faces.js`, `web/tagpup/tags.js` (who is a person, the people and tags lists), `web/tuner/shared.js` (the people a typed name is), `web/common/tag-editor.js`, `web/common/tag-tree.js` (the tag tree's editor), `web/tuner/grid.js`, `web/tuner/grid-parts.js`, `web/tuner/selection.js`, `web/tuner/sidebar.js`, `web/tuner/zoom.js` (TagTuner's Identify grid and its lists), `web/tuner/tags.js` (Review Tags), `web/tuner/rules.js` (the page's copies of the bucket names the server owns, `tagpup.core.vocabulary.BUCKETS`)
-- Tables: `faces`, `photo_people`, `tag_taxonomy` (the tree), `embeddings`/`face_crops` for faces. Their rebuild is Data's.
+- Tables: `faces`, `photo_people`, `tag_taxonomy` (the tree), `face_crops`. Their rebuild is Data's.
 
 ## The vocabulary (one definition each; use these words)
 - **Person**: a tag-tree node marked as a person with no node under it, wherever it sits (owner, 2026-10-10). A branch is a group, never a person; a tag used on photos gets no children.
@@ -34,7 +34,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 1. One door in: `person_ids.resolve / target` (through `services.people.resolve`) takes an id, a tag path or a typed name and returns a `Person` or raises (`StalePerson`, `AmbiguousPerson` naming the paths so the picker can ask, `GroupNotPerson`, `PersonInUse`, `PersonHasNoChildren`). Nobody else writes `faces.name / tag_id` or `photo_people`.
 2. One door out: a person goes over the wire as the id of their node; `/api/people-faces` and `/api/people-face-samples` are keyed `id:<id>` alone. Pages read people through `PeopleDirectory` in `web/common/vocabulary.js`.
 3. One door for text: `tagpup/core/vocabulary.py` and `web/common/vocabulary.js` (`leafOf`, `rootOf`, `samePerson`, `photoAlreadyHas`); in Python also `taxonomy.person_paths`. No hand split of a tag, no hand-built `People/<name>`.
-4. A face write that names someone settles the photo's keyword (`face_people`: tag first, then face) and a bulk write calls `record_tags_in_index()`; a tree edit refuses before it writes any file and takes the lock before it reads.
+4. A face write that names someone settles the photo's keyword (`face_people`: tag first, then face) and a bulk write goes through `file_changes.write_fields`, which records what each file holds in its row (`store.photos.follow_fields`) in the transaction that marks it done; a tree edit refuses before it writes any file and takes the lock before it reads.
 5. Who a face is, and whether its name looks right, is decided only in `core/clustering`. Face roots and the buckets (Unknown Faces, Ungrouped, Excluded) are named once, by the tree and `vocabulary`.
 6. Others must not: compare a photo's people by name, key a dict by a name where a row has an id, offer a group tag as a person, load the face model outside `Runtime.gpu_turn`, or run SQL on `faces` with `LIKE`, a function on the column or `SELECT *`.
 
@@ -45,7 +45,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 | `tag_id` and `photo_people` written only by `person_ids` and the rebuild | `tests/test_person_ids_single_owner.py` |
 | A person is written with the id of a node and no other way: no writer leaves a `photo_people` row, or a face with a name, without `tag_id`; nothing links a name to a person (owner, 2026-10-11) | `tests/test_no_person_row_without_an_id.py`, `tests/test_person_ids.py` |
 | Every name and keyword first seen gets a node, in the transaction that saw it (a name two people have or a group's leaf is another path: a node under the root); a batch makes at most 500 | `tests/test_every_tag_has_an_id.py` |
-| Who a face is is decided in `clustering` | `tests/test_face_values_have_one_owner.py` |
+| Who a face is is decided in `clustering` | `tests/test_rules_have_one_owner.py` (the values only clustering holds), `tests/test_face_values_have_one_owner.py` (a face is compared with the closest face) |
 | Face roots and bucket names have one owner | `tests/test_face_roots_are_the_trees.py`, `tests/test_rules_have_one_owner.py` |
 | A person goes over the wire as an id; answers carry their person | `tests/test_answers_carry_their_person.py`, `tests/test_people_representative_faces.py`, `tests/test_two_cousins_called_alike.py` |
 | Tag against leaf conversion has one owner on each side | `tests/test_vocabulary.py`, `tests/frontend/tag-vocabulary.test.mjs`, `tests/test_person_filing_table.py`, `tests/frontend/person-filing-table.test.mjs` |
