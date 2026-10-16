@@ -34,21 +34,25 @@ cd "$DEST"
 mkdir -p .claude/agents .claude/hooks .claude/skills/retro docs/retros docs/findings_pending tools
 cp "$SRC/docs/portable/CLAUDE.starter.md" CLAUDE.md            # or merge into an existing CLAUDE.md
 cp "$SRC/docs/portable/agents.example/"*.md .claude/agents/
-cp "$SRC/.claude/hooks/no-heredoc-escapes.mjs" .claude/hooks/
+cp "$SRC/.claude/hooks/no-heredoc-escapes.mjs" "$SRC/.claude/hooks/context-budget.mjs" .claude/hooks/
 cp "$SRC/.claude/skills/retro/SKILL.md" .claude/skills/retro/  # unless installed at user level
 cp "$SRC/docs/RETRO.md" docs/RETRO.md
 cp "$SRC/tools/patch.py" "$SRC/tools/add_findings.py" "$SRC/tools/stale_findings.py" tools/
 ```
 
 Then:
-1. Register the hook in `.claude/settings.json` (merge with any `hooks` already there):
+1. Register both hooks in `.claude/settings.json` (merge with any `hooks` already there), as the source project does:
    ```
-   { "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [
-       { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-heredoc-escapes.mjs\"", "timeout": 10 } ] } ] } }
+   { "hooks": {
+       "UserPromptSubmit": [ { "hooks": [
+         { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-budget.mjs\"", "timeout": 10 } ] } ],
+       "PreToolUse": [ { "matcher": "Bash", "hooks": [
+         { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-heredoc-escapes.mjs\"", "timeout": 10 } ] } ] } }
    ```
-   It needs `node` on the PATH; a hook that fails to run lets the call through.
-2. The context-budget hook: copy `.claude/hooks/context-budget.mjs` from the source project once it lands there (it is
-   being written now) and register it as its own header says (a `UserPromptSubmit` hook).
+   Both need `node` on the PATH; a hook that fails to run lets the call through. The context budget's limit is
+   `LIMIT` at the top of `context-budget.mjs` (300k tokens).
+2. At user level instead, the same two hooks go to `~/.claude/hooks/` and the same block to `~/.claude/settings.json`,
+   with `$HOME/.claude/hooks/` for `$CLAUDE_PROJECT_DIR/.claude/hooks/` (the owner's step, as above).
 3. Fill in `CLAUDE.md`: the project's name, its own rules (one line each, its owner and its guard), and `<project>` in
    the agent definitions. Give each agent the `model:` you want; the point is that each says one.
 4. Start `docs/findings.md` with the header table of `docs/portable/tools.example/README.md`, and an empty

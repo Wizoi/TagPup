@@ -11,8 +11,8 @@ How to install it, at user level or per project: [INSTALL.md](INSTALL.md).
 | `docs/RETRO.md` (not duplicated: take the project's own copy) | the retro: when, who, five phases, at most three actions each with a metric | `docs/RETRO.md` | practice: run once (2026-10-16) |
 | `.claude/skills/retro/SKILL.md` (the project's own copy) | the retro's checklist as a skill | `~/.claude/skills/retro/` or `.claude/skills/retro/` | practice |
 | [agents.example/](agents.example/) | worker, small worker, reviewer, quick reviewer, each with its own `model:` line | `.claude/agents/` | evidence: the worker had no `model:` and inherited the main session's, the model whose calls had the longest contexts (65% over 150k tokens) |
-| [hooks.example/no-heredoc-escapes.mjs](hooks.example/no-heredoc-escapes.mjs) | refuses a shell heredoc holding a backslash escape | `.claude/hooks/` | evidence: mangled escapes cost time five times in two days; the rule as prose did not hold |
-| the context-budget hook | tells the main session to hand over and `/clear` above about 300k tokens of context | copy `.claude/hooks/context-budget.mjs` once it lands in this project (being written now) | practice: proposed by the retro, its metric not yet measured |
+| `.claude/hooks/no-heredoc-escapes.mjs` (the project's own copy) | refuses a shell heredoc holding a backslash escape | `.claude/hooks/` | evidence: mangled escapes cost time five times in two days; the rule as prose did not hold |
+| `.claude/hooks/context-budget.mjs` (the project's own copy) | a `UserPromptSubmit` hook: when the main session's last call carried more than 300k tokens of context, tells it to write the handoff and suggest `/clear` | `.claude/hooks/` | practice: the retro's action 2, its metric (calls over 150k, main session under 200k) not yet measured |
 | [tools.example/README.md](tools.example/README.md) | which of `tools/patch.py`, `add_findings.py`, `stale_findings.py`, `retro_metrics.py` to copy, what to adapt, the ledger's format | `tools/` | evidence for the ledger and the stale check; practice for the rest |
 
 ## Which rules are evidence-backed, and which are practice
