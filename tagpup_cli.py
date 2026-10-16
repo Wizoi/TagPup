@@ -702,8 +702,9 @@ def sync(ctx, folder, apply_):
                       " TagTuner (gear, Folders to review), never indexed on their own."
                       % (counts["review_folders"], counts["review_photos"]))
     if counts["missing"]:
-        console.print("  %d folder(s) wholly gone, %d of them a whole root; their rows are kept."
-                      % (counts["folders_gone"], counts["roots_gone"]))
+        console.print("  %d folder(s) wholly gone, %d of them a folder the library holds, not there at all (an "
+                      "unplugged drive looks the same); their rows are kept."
+                      % (counts["folders_gone"], counts["roots_gone"]), markup=False, soft_wrap=True)
         if counts["folders_gone"]:
             console.print("  A folder renamed in Explorer looks the same: its rows are kept; rename it back "
                           "by hand.")
