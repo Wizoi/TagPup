@@ -34,7 +34,7 @@ import migration_names  # noqa: E402
 import tagpup_web  # noqa: E402
 from mcp.shared.memory import create_connected_server_and_client_session  # noqa: E402
 from tagpup import launcher, runtime  # noqa: E402
-from tagpup.core import processes  # noqa: E402
+from tagpup.core import paths, processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.mcp import server  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -48,15 +48,16 @@ NEW = "20261004-110000-bbbbbbb"
 WRITER = """
 import os, sys, time
 sys.path.insert(0, %(root)r)
+sys.path.insert(0, %(tests)r)
+import photo_rows
 from tagpup.store import db
 mid, go = %(mid)r, %(go)r
 def write(conn):
-    sql = "INSERT INTO photos (path, tags, captions, raw_metadata) VALUES (?, '[]', '[]', '{}')"
-    conn.execute(sql, ("C:/Cli Index/one.jpg",))
+    photo_rows.add_read(conn, "C:/Cli Index/one.jpg", {})
     open(mid, "w").close()
     while not os.path.exists(go):
         time.sleep(0.05)
-    conn.execute(sql, ("C:/Cli Index/two.jpg",))
+    photo_rows.add_read(conn, "C:/Cli Index/two.jpg", {})
 db.write_with_connection(%(path)r, write)
 """
 
@@ -90,7 +91,7 @@ class OneLibrary(unittest.TestCase):
         self.addCleanup(lambda: old.poll() is None and processes.kill_tree(old.pid))
         self.wait_until(lambda: self.serving(ports[0]), "the server never answered")
         mid, go = os.path.join(self.home.root, "mid"), os.path.join(self.home.root, "go")
-        writer = processes.start([sys.executable, "-c", WRITER % {"root": WORKSPACE_DIR, "mid": mid, "go": go, "path": self.path}],
+        writer = processes.start([sys.executable, "-c", WRITER % {"root": WORKSPACE_DIR, "tests": os.path.dirname(os.path.abspath(__file__)), "mid": mid, "go": go, "path": self.path}],
                                  env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: writer.poll() is None and processes.kill_tree(writer.pid))
         self.wait_until(lambda: os.path.exists(mid), "the CLI's write never began")
@@ -106,7 +107,7 @@ class OneLibrary(unittest.TestCase):
         open(go, "w").close()
         self.assertEqual(0, writer.wait(timeout=60))
         self.assertEqual([("ok",)], self.rows("PRAGMA integrity_check"))
-        self.assertEqual([("C:/Cli Index/one.jpg",), ("C:/Cli Index/two.jpg",)],
+        self.assertEqual([(paths.stored("C:/Cli Index/one.jpg"),), (paths.stored("C:/Cli Index/two.jpg"),)],
                          self.rows("SELECT path FROM photos ORDER BY path"), "the write is whole: both rows, once")
 
     @staticmethod

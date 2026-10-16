@@ -24,6 +24,7 @@ from tagpup.services import file_only, rotation
 from tagpup.services import photos as photo_actions
 from tagpup.services.rotation import ROTATED_ORIENTATION
 from tagpup.store import db
+from tests import photo_rows
 from tests.face_rows import add_face
 
 
@@ -195,11 +196,8 @@ class TestTheRotateRoute(unittest.TestCase):
         os.makedirs(sub)
         self.photo = make_picture(os.path.join(sub, "beach.jpg"))
         write_fields(self.photo)
-        stat = os.stat(self.photo)
-        self.lib.execute(
-            "INSERT INTO photos (path, mtime, size, tags, raw_metadata) VALUES (?,?,?,?,?)",
-            (os.path.abspath(self.photo), stat.st_mtime, stat.st_size,
-             json.dumps(["Beach"]), "{}"))
+        db.write_with_connection(self.lib.db_path, lambda conn: photo_rows.add_read(
+            conn, os.path.abspath(self.photo), {"XMP:Subject": ["Beach"]}))
         self.face = face_in(self.lib, os.path.abspath(self.photo), [0, 0, 10, 8], name="Rowan Thackeray")
         self.lib.execute("INSERT INTO face_crops (face_id, jpeg) VALUES (?, ?)", (self.face, b"crop"))
         status, _ = self.lib.get("/api/folder/scan", {"path": self.lib.photos})

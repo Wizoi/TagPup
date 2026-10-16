@@ -1112,12 +1112,8 @@ class TestTunerFolderRemoval(TunerAPITestBase):
         from PIL import Image
         Image.new("RGB", (16, 16)).save(photo, "JPEG")
 
+        db.write_with_connection(self.TEST_DB, lambda conn: photo_rows.add_read(conn, photo, {}))
         conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-            " VALUES (?, 1.0, 1, '[]', '[]', '{}')",
-            (photo,),
-        )
         conn.execute(
             "INSERT INTO faces (photo_id, box, embedding, name, name_source) VALUES ((SELECT id FROM photos WHERE path = ?), '[]', ?, ?, 'manual')",
             (photo, unit_vector(500).tobytes(), "Jane Doe"),
