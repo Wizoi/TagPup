@@ -42,6 +42,12 @@ RULES = (
     ("the apps' ports are tagpup_web's", "tagpup_web.py", r"def find_available_port|\b80[89]0\b", ()),
     ("a face decision's numbers are clustering's", CLUSTERING, r"\b(OFFER_A_NAME|NAME_WITHOUT_ASKING)\b", ()),
     ("the grouping radius is clustering's", CLUSTERING, r"eps\s*=\s*0\.\d|CLUSTER_EPS\s*=\s*0\.\d", ()),
+    # A photo file's fields are written by the journaled path (file_changes.write_fields), and by the just-look path
+    # (file_only, unjournaled by the owner's decision, #527) alone: a bulk write of its own once left rows describing
+    # what the photos used to hold (#1443).
+    ("a photo's fields are written by file_changes", os.path.join("tagpup", "services", "file_changes.py"),
+     r"field_values\.write\(|from\s+tagpup\.files\.field_values\s+import\s[^\n]*\bwrite\b",
+     (os.path.join("tagpup", "services", "file_only.py"),)),
 )
 
 
