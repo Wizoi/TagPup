@@ -2,13 +2,19 @@
 token use and the workers' branches. Read-only: it runs git's read commands and reads the session transcripts' usage.
 
     .venv/Scripts/python.exe tools/retro_metrics.py --since 2026-10-02 --until 2026-10-16 --out retro.md --json retro.json
+    .venv/Scripts/python.exe tools/retro_metrics.py --branch worktree-agent-<id>     (before a merge: the budget guard)
+
+`--branch REF` prints the lines REF adds and removes against its merge base with --rev, and exits 1 when it adds over
+the budget (1,200 lines, `--budget N`) unless `--allow-over` is given: a deletion is never over budget.
 
 The default window is the last 14 days, the default revision HEAD. Every number is counted by this run and printed with
 how it was counted; nothing is recalled (docs/RETRO.md, phase 2: the data file). Days are the machine's local
 dates, of the commit date (git) and of the record's timestamp (transcripts).
 
 The transcripts hold real names. Of each record only the usage numbers, the model, the timestamp, the session id and
-the sidechain flag are taken (`usage_records`); no message text, tool input or output is kept, printed or written.
+the sidechain flag are taken, of a compaction its trigger and token count, and of a subagent's meta file its agent type,
+its worktree branch (a `worktree-agent-<hex>` name, any other is masked) and whether the owner stopped it
+(`transcript_facts`); no message text, tool input or output, brief or description is kept, printed or written.
 """
 import argparse
 import datetime
@@ -46,8 +52,23 @@ REVIEW_WORDS = re.compile(r"\b(?:review|reviewer|owner)s?\b", re.I)
 SEVERITY = re.compile(r"^\s*(data|wrong|low):", re.I)
 #: A call whose context (input, cache write and cache read) is above this is counted as large.
 LARGE_CONTEXT = 150000
-#: A branch is about this many lines or fewer (CLAUDE.md, "Keeping the project small").
+#: A branch adds about this many lines or fewer (CLAUDE.md, "Keeping the project small"; DECISIONS 2026-10-16: added
+#: lines, a deletion is never over budget).
 BRANCH_BUDGET = 1200
+#: The agent types of the meta files (`agentType`), as the tables name them; any other is "other".
+AGENT_TYPES = {"tagpup-worker": "worker", "tagpup-worker-small": "small worker", "tagpup-reviewer": "reviewer",
+               "tagpup-quick-reviewer": "quick reviewer", "tagpup-owner-data": "owner: data",
+               "tagpup-owner-people": "owner: people", "tagpup-owner-files": "owner: files",
+               "tagpup-owner-views-ai": "owner: views-ai", "tagpup-owner-integration": "owner: integration",
+               "general-purpose": "general-purpose"}
+MAIN = "main session"
+AGENT_ORDER = (MAIN, *AGENT_TYPES.values(), "other")
+REVIEW_TYPES = ("reviewer", "quick reviewer") + tuple(v for v in AGENT_TYPES.values() if v.startswith("owner: "))
+WORK_TYPES = ("worker", "small worker")
+#: The only branch name a table prints; any other (a name could hold a person's) is counted as OTHER_BRANCH.
+WORKTREE_BRANCH = re.compile(r"^worktree-agent-[0-9a-f]+$")
+OTHER_BRANCH = "(not a worktree-agent branch)"
+MERGED_BRANCH = re.compile(r"^Merge (?:branch ')?(worktree-agent-[0-9a-f]+)")
 TOKENS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
 
 
@@ -236,34 +257,64 @@ def transcript_files(folder):
     return sorted(found)
 
 
-def usage_records(folder):
-    """One record per assistant message (its repeated content-block records folded, the largest output kept):
-    {model, day, session, agent_file, sidechain, tokens..., cache_1h}. Nothing else of the record is kept."""
-    messages = {}
+def agent_meta(path):
+    """Of the meta file beside a subagent's transcript (every one has one: 438 of 438 on 2026-10-16) only its facts:
+    {agent_type, branch, stopped}. Its text fields (the description, the request) are never taken."""
+    with open(path[:-len(".jsonl")] + ".meta.json", encoding="utf-8") as handle:
+        meta = json.load(handle)
+    branch = meta.get("worktreeBranch")
+    return {"agent_type": AGENT_TYPES.get(meta.get("agentType"), "other"),
+            "branch": (branch if WORKTREE_BRANCH.match(str(branch)) else OTHER_BRANCH) if branch else None,
+            "stopped": meta.get("stoppedByUser") is True}
+
+
+def moment(timestamp):
+    return datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone()
+
+
+def local_day(timestamp):
+    return moment(timestamp).date().isoformat()
+
+
+def transcript_facts(folder):
+    """(messages, compactions). One message per assistant message (its repeated content-block records folded, the
+    largest output kept): {model, day, at (epoch seconds), session, agent_file, sidechain, tokens..., cache_1h,
+    agent_type, branch, stopped}. One compaction per compact boundary: {session, day, main, trigger, pre_tokens}. Nothing else is kept."""
+    messages, compactions = {}, []
     for path, below in transcript_files(folder):
+        meta = agent_meta(path) if below else {"agent_type": MAIN, "branch": None, "stopped": False}
         with open(path, encoding="utf-8", errors="replace") as handle:
             for number, line in enumerate(handle):
-                if '"assistant"' not in line:
+                if '"assistant"' not in line and '"compact_boundary"' not in line:
                     continue
                 try:
                     record = json.loads(line)
                 except ValueError:
                     continue
+                if not record.get("timestamp"):
+                    continue
+                if record.get("type") == "system" and record.get("subtype") == "compact_boundary":
+                    facts = record.get("compactMetadata") if isinstance(record.get("compactMetadata"), dict) else {}
+                    compactions.append({"session": str(record.get("sessionId")), "day": local_day(record["timestamp"]),
+                                        "main": not below, "pre_tokens": int(facts.get("preTokens") or 0),
+                                        "trigger": facts.get("trigger") if facts.get("trigger") in ("auto", "manual")
+                                        else "other"})
+                    continue
                 message = record.get("message") if isinstance(record.get("message"), dict) else {}
                 usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
-                if record.get("type") != "assistant" or not usage or not record.get("timestamp"):
+                if record.get("type") != "assistant" or not usage:
                     continue
-                when = datetime.datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00")).astimezone()
                 cache = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
-                kept = {"model": str(message.get("model")), "day": when.date().isoformat(),
-                        "session": str(record.get("sessionId")), "agent_file": os.path.basename(path) if below else None,
-                        "sidechain": bool(record.get("isSidechain")) or below,
-                        "cache_1h": int(cache.get("ephemeral_1h_input_tokens") or 0)}
+                kept = dict(meta, model=str(message.get("model")), day=local_day(record["timestamp"]),
+                            at=int(moment(record["timestamp"]).timestamp()),
+                            session=str(record.get("sessionId")), agent_file=os.path.basename(path) if below else None,
+                            sidechain=bool(record.get("isSidechain")) or below,
+                            cache_1h=int(cache.get("ephemeral_1h_input_tokens") or 0))
                 kept.update({k: int(usage.get(k) or 0) for k in TOKENS})
                 key = message.get("id") or record.get("requestId") or (path, number)
                 if key not in messages or kept["output_tokens"] >= messages[key]["output_tokens"]:
                     messages[key] = kept
-    return list(messages.values())
+    return list(messages.values()), compactions
 
 
 def price_of(model):
@@ -283,8 +334,90 @@ def cost(record, which):
             + write_1h * per_in * CACHE_WRITE_1H + record["cache_read_input_tokens"] * per_in * CACHE_READ)
 
 
-def usage_section(folder, days):
-    records = [r for r in usage_records(folder) if r["day"] in days]
+def tally(records):
+    """{tokens, calls, runs, cost_low, cost_high, unpriced_calls} of some message records (a run is an agent's
+    transcript, or a main session)."""
+    row = {"tokens": 0, "calls": 0, "cost_low": 0.0, "cost_high": 0.0, "unpriced_calls": 0}
+    for r in records:
+        row["calls"] += 1
+        row["tokens"] += sum(r[k] for k in TOKENS)
+        if price_of(r["model"]) is None:
+            row["unpriced_calls"] += 1
+        else:
+            row["cost_low"] += cost(r, 0)
+            row["cost_high"] += cost(r, 1)
+    row["runs"] = len({r["agent_file"] or r["session"] for r in records})
+    return row
+
+
+def branch_states(repo, rev, started):
+    """{branch: state} at `rev` of each branch of `started` ({branch: when its run began, epoch seconds}). merged: a
+    merge on `rev` names it (`Merge worktree-agent-<id>`), or its ref is in `git branch --merged` off the first-parent
+    line. fast-forward: its tip is on the first-parent line and was committed after its run began. nothing to merge:
+    its tip is on the first-parent line, from before its run (it committed nothing on its own branch; a brief may
+    have named another worktree). open: its ref is kept, unmerged.
+    no merge found: no ref and no merge names it (never merged, or merged under another name: an upper bound)."""
+    named = {m.group(1) for m in map(MERGED_BRANCH.match, git(repo, "log", "--merges", "--format=%s", rev).splitlines())
+             if m}
+    tips = {name: (sha, int(when)) for name, sha, when in (line.split() for line in git(
+        repo, "for-each-ref", "--format=%(refname:short) %(objectname) %(committerdate:unix)",
+        "refs/heads/worktree-agent-*").splitlines())}
+    merged = set(git(repo, "branch", "--merged", rev, "--list", "worktree-agent-*",
+                     "--format=%(refname:short)").split())
+    line = set(git(repo, "rev-list", "--first-parent", rev).split())
+
+    def state(name):
+        if name in named:
+            return "merged"
+        if name not in tips:
+            return "no merge found"
+        if name not in merged:
+            return "open"
+        sha, when = tips[name]
+        if sha not in line:
+            return "merged"
+        return "fast-forward" if when > started[name] else "nothing to merge"
+    return {name: state(name) for name in started}
+
+
+def agents_section(records, compactions, repo, rev):
+    """Tokens by agent type, by branch and of the runs the owner stopped; the main sessions and their compactions."""
+    by_type = {t: tally([r for r in records if r["agent_type"] == t]) for t in AGENT_ORDER}
+    started = {}
+    for r in records:
+        if r["branch"] and r["branch"] != OTHER_BRANCH:
+            started[r["branch"]] = min(r["at"], started.get(r["branch"], r["at"]))
+    states = dict(branch_states(repo, rev, started), **{OTHER_BRANCH: "not a worktree branch"})
+    by_branch = {b: dict(tally([r for r in records if r["branch"] == b]), state=states[b])
+                 for b in {r["branch"] for r in records if r["branch"]}}
+    per_state = {s: dict(tally([r for r in records if r["branch"] and states[r["branch"]] == s]),
+                         branches=sum(1 for b in by_branch.values() if b["state"] == s))
+                 for s in sorted({b["state"] for b in by_branch.values()})}
+    main = [r for r in records if r["agent_type"] == MAIN]
+    sessions = {}
+    for s in sorted({r["session"] for r in main}):
+        context = [sum(r[k] for k in TOKENS) - r["output_tokens"] for r in main if r["session"] == s]
+        mine = [c for c in compactions if c["main"] and c["session"] == s]
+        sessions[s[:8]] = {"calls": len(context), "average_context": round(sum(context) / len(context)),
+                           "max_context": max(context), "compactions": len(mine),
+                           "compactions_auto": sum(1 for c in mine if c["trigger"] == "auto"),
+                           "tokens_before_compaction": [c["pre_tokens"] for c in mine]}
+    contexts = [sum(r[k] for k in TOKENS) - r["output_tokens"] for r in main]
+    return {
+        "by_agent_type": by_type,
+        "review": tally([r for r in records if r["agent_type"] in REVIEW_TYPES]),
+        "work": tally([r for r in records if r["agent_type"] in WORK_TYPES]),
+        "by_branch": dict(sorted(by_branch.items(), key=lambda kv: -kv[1]["tokens"])), "branches_per_state": per_state,
+        "stopped_by_the_owner": tally([r for r in records if r["stopped"]]),
+        "main_sessions": sessions,
+        "main_average_context": round(sum(contexts) / len(contexts)) if contexts else 0,
+        "subagent_compactions": sum(1 for c in compactions if not c["main"]),
+    }
+
+
+def usage_section(folder, days, repo, rev):
+    messages, compactions = transcript_facts(folder)
+    records = [r for r in messages if r["day"] in days]
     per_model, per_day, sessions, agents, split = {}, {}, {}, {}, {"main": 0, "subagent": 0}
     for r in records:
         total = sum(r[k] for k in TOKENS)
@@ -312,6 +445,7 @@ def usage_section(folder, days):
         "cost_low": sum(v["cost_low"] for v in per_model.values()),
         "cost_high": sum(v["cost_high"] for v in per_model.values()),
         "unpriced_models": sorted(m for m, v in per_model.items() if not v["priced"]),
+        "agents": agents_section(records, [c for c in compactions if c["day"] in days], repo, rev),
     }
 
 
@@ -321,28 +455,52 @@ def percentile(values, share):
     return ordered[max(0, math.ceil(len(ordered) * share) - 1)] if ordered else 0
 
 
+def lines_between(repo, base, tip):
+    """(added, removed) text lines of `tip` against `base` (`git diff --numstat`; a binary file counts 0)."""
+    out = git(repo, "diff", "--numstat", "--no-renames", base, tip)
+    pairs = [(int(a), int(r)) for a, r, _p in (line.split("\t", 2) for line in out.splitlines())
+             if a.isdigit() and r.isdigit()]
+    return sum(a for a, _r in pairs), sum(r for _a, r in pairs)
+
+
 def branch_sizes(repo, shas):
+    """[(added, removed)] of each merge's second parent against the merge base."""
     sizes = []
     for sha in shas:
         first, second = git(repo, "rev-parse", sha + "^1", sha + "^2").split()
-        out = git(repo, "diff", "--numstat", "--no-renames", "%s...%s" % (first, second))
-        sizes.append(sum(int(a) + int(r) for a, r, _p in (line.split("\t", 2) for line in out.splitlines())
-                         if a.isdigit() and r.isdigit()))
+        sizes.append(lines_between(repo, git(repo, "merge-base", first, second).strip(), second))
     return sizes
 
 
 def distribution(sizes):
-    return {"count": len(sizes), "median": statistics.median(sizes) if sizes else 0,
-            "p90": percentile(sizes, 0.9), "max": max(sizes) if sizes else 0,
-            "over_budget": sum(1 for s in sizes if s > BRANCH_BUDGET)}
+    """Over added lines (the budget's measure), and the old measure (added plus removed) beside it."""
+    added, both = [a for a, _r in sizes], [a + r for a, r in sizes]
+    return {"count": len(sizes), "median": statistics.median(added) if added else 0, "p90": percentile(added, 0.9),
+            "max": max(added) if added else 0, "over_budget": sum(1 for s in added if s > BRANCH_BUDGET),
+            "removed": sum(r for _a, r in sizes), "old_median": statistics.median(both) if both else 0,
+            "old_over_budget": sum(1 for s in both if s > BRANCH_BUDGET)}
 
 
 def workers_section(repo, start, end, found):
     worktree = [c["sha"] for c in found if WORKTREE_MERGE.match(c["subject"]) and len(c["parents"]) > 1]
     span = end if start == EMPTY_TREE else "%s..%s" % (start, end)
     trunk = git(repo, "rev-list", "--first-parent", "--merges", span).split()
+    trunk_sizes = branch_sizes(repo, trunk)
+    by_sha = {c["sha"]: c for c in found}
     return {"worktree_branches": distribution(branch_sizes(repo, worktree)),
-            "merges_into_the_trunk": distribution(branch_sizes(repo, trunk))}
+            "merges_into_the_trunk": distribution(trunk_sizes),
+            "trunk_merges_of_other_branches": sum(1 for sha in trunk if not MERGED_BRANCH.match(by_sha[sha]["subject"])),
+            "trunk_merges": [{"sha": sha[:10], "day": by_sha[sha]["day"], "added": a, "removed": r,
+                              "subject": by_sha[sha]["subject"][:90] if a > BRANCH_BUDGET else ""}
+                             for sha, (a, r) in zip(trunk, trunk_sizes)]}
+
+
+def branch_budget(repo, rev, ref, budget):
+    """{base, added, removed, over} of `ref` against its merge base with `rev`."""
+    base = git(repo, "merge-base", rev, ref).strip()
+    added, removed = lines_between(repo, base, ref)
+    return {"ref": ref, "base": base[:10], "added": added, "removed": removed, "budget": budget,
+            "over": added > budget}
 
 
 def report(repo, rev, transcripts, since, until):
@@ -354,7 +512,7 @@ def report(repo, rev, transcripts, since, until):
     return {"window": {"since": days[0], "until": days[-1], "rev": rev, "start": start, "end": end},
             "git": git_section(repo, start, end, found), "findings": findings_section(repo, start, end, days, day_revs),
             "tests": tests_section(repo, start, end),
-            "usage": usage_section(transcripts, days) if os.path.isdir(transcripts) else None,
+            "usage": usage_section(transcripts, days, repo, rev) if os.path.isdir(transcripts) else None,
             "workers": workers_section(repo, start, end, found)}
 
 
@@ -428,18 +586,71 @@ def markdown(r):
         out.append(table(["day model"] + head[1:], [[d] + cells(v) for d, v in u["per_day_model"].items()]))
         out.append("\n" + table(["day", "sessions", "subagent files"],
                                 [[d, n, u["subagent_files_per_day"].get(d, 0)] for d, n in u["sessions_per_day"].items()]))
-    out.append("\n## 5. Workers\n\nLines changed (+ and -) of each merge's second parent against the merge base "
-               "(`git diff --numstat ^1...^2`).\n\n")
-    out.append(table(["merges", "count", "median", "p90", "max", "over %d" % BRANCH_BUDGET],
-                     [[name] + [v[x] for x in ("count", "median", "p90", "max", "over_budget")]
-                      for name, v in k.items()]))
+        out.append(agents_markdown(u["agents"], u["tokens_main_vs_subagent"], k["trunk_merges_of_other_branches"]))
+    out.append("\n## 6. Workers\n\nLines added and removed by each merge's second parent against the merge base "
+               "(`git diff --numstat <base> ^2`). The budget counts lines ADDED (a deletion is never over budget); the "
+               "old measure, added plus removed, is beside it so two retros compare.\n\n")
+    out.append(table(["merges", "count", "median added", "p90 added", "max added", "over %d added" % BRANCH_BUDGET,
+                      "removed", "old: median +/-", "old: over %d +/-" % BRANCH_BUDGET],
+                     [[name] + [v[x] for x in ("count", "median", "p90", "max", "over_budget", "removed", "old_median",
+                                               "old_over_budget")]
+                      for name, v in k.items() if name in ("worktree_branches", "merges_into_the_trunk")]))
+    out.append("\nEach merge into the trunk (the subject only of one adding over %d):\n\n" % BRANCH_BUDGET
+               + table(["merge", "day", "added", "removed", "over %d added" % BRANCH_BUDGET, "subject"],
+                       [[m["sha"], m["day"], m["added"], m["removed"], "over" if m["added"] > BRANCH_BUDGET else "",
+                         m["subject"].replace("|", "/")] for m in k["trunk_merges"]]))
     if u is not None and k["merges_into_the_trunk"]["count"]:
         out.append("\nCost per merge into the trunk: %.0f..%.0f USD (the priced total over %d merges).\n"
                    % (u["cost_low"] / k["merges_into_the_trunk"]["count"],
                       u["cost_high"] / k["merges_into_the_trunk"]["count"], k["merges_into_the_trunk"]["count"]))
-    out.append("\nNot counted: how many branches were reviewed before their merge, review rounds per branch and runs "
-               "whose branch never merged (no record ties a run or a review to a branch), compactions, escapes to the "
-               "owner, the time a person spent, and the cost billed.\n")
+    out.append("\nNot counted: how many branches were reviewed before their merge and review rounds per branch (a "
+               "reviewer's or owner's meta file names no branch: only workers run in a worktree), escapes to the owner, "
+               "the time a person spent, and the cost billed.\n")
+    return "".join(out)
+
+
+def money(v):
+    return "%.0f..%.0f" % (v["cost_low"], v["cost_high"]) + (" (+%d unpriced calls)" % v["unpriced_calls"]
+                                                             if v["unpriced_calls"] else "")
+
+
+def agents_markdown(a, split, other_merges):
+    total = max(1, split["main"] + split["subagent"])
+    def row(name, v):
+        return [name, v["runs"], v["calls"], v["tokens"], "%.1f%%" % (100.0 * v["tokens"] / total), money(v)]
+    head = ["", "runs", "calls", "tokens", "share", "cost USD"]
+    out = ["\n## 5. Agents and branches (subagent meta files)\n\nEach subagent transcript's `.meta.json` gives its "
+           "agent type (`agentType`), its worktree branch (`worktreeBranch`) and whether the owner stopped it "
+           "(`stoppedByUser`); no other field is read. Tokens are all four kinds; share is of all tokens in the window; "
+           "cost as in the model table (low..high).\n\n### TOKENS BY AGENT TYPE\n\n",
+           table(head, [row(t, v) for t, v in a["by_agent_type"].items() if v["calls"]])]
+    review, work = a["review"], a["work"]
+    out.append("\nReview work (reviewer, quick reviewer, the five owners): %d calls, %d tokens, %s USD; workers (worker "
+               "and small worker): %d calls, %d tokens, %s USD; review is %.0f%% of the two.\n"
+               % (review["calls"], review["tokens"], money(review), work["calls"], work["tokens"], money(work),
+                  100.0 * review["tokens"] / max(1, review["tokens"] + work["tokens"])))
+    out.append("\n### TOKENS BY BRANCH\n\nA worker's run names its worktree branch; its state at --rev: merged (a merge "
+               "names it, or `git branch --merged` off the first-parent line), fast-forward (its tip is on the "
+               "first-parent line, committed after the run began), nothing to merge (its tip is on the first-parent "
+               "line, from before the run: nothing committed on its own branch, its work may be on a worktree its brief "
+               "named), open (its ref is kept, unmerged), no merge found (no ref and no merge names "
+               "it: never merged, or merged under another branch name, so an upper bound; %d trunk merges in the window "
+               "name another branch).\n\n" % other_merges)
+    out.append(table(["branch", "state"] + head[1:],
+                     [[b, v["state"]] + row(b, v)[1:] for b, v in list(a["by_branch"].items())[:15]]))
+    out.append("\n" + table(["state", "branches"] + head[1:],
+                             [[s, v["branches"]] + row(s, v)[1:] for s, v in a["branches_per_state"].items()]))
+    stopped = a["stopped_by_the_owner"]
+    out.append("\n### RUNS STOPPED BY THE OWNER\n\n%d runs (`stoppedByUser`), %d calls, %d tokens, %s USD.\n"
+               % (stopped["runs"], stopped["calls"], stopped["tokens"], money(stopped)))
+    out.append("\n### MAIN SESSIONS\n\n%d main sessions in the window (distinct session ids of the top-level "
+               "transcripts); average context per call %d tokens (input, cache write and cache read). Compactions are the "
+               "`compact_boundary` records (`compactMetadata.trigger`, `preTokens`); subagent compactions: %d.\n\n"
+               % (len(a["main_sessions"]), a["main_average_context"], a["subagent_compactions"]))
+    out.append(table(["session", "calls", "average context", "max context", "compactions", "of them auto",
+                      "tokens before each"],
+                     [[s, v["calls"], v["average_context"], v["max_context"], v["compactions"], v["compactions_auto"],
+                       ", ".join(str(n) for n in v["tokens_before_compaction"])] for s, v in a["main_sessions"].items()]))
     return "".join(out)
 
 
@@ -453,7 +664,16 @@ def main(argv=None):
     parser.add_argument("--transcripts", default=TRANSCRIPTS)
     parser.add_argument("--out", help="write the markdown here instead of printing it")
     parser.add_argument("--json", help="write the numbers as JSON here")
+    parser.add_argument("--branch", metavar="REF", help="only the budget guard: REF's lines against its merge base")
+    parser.add_argument("--budget", type=int, default=BRANCH_BUDGET, help="added lines a branch may hold (--branch)")
+    parser.add_argument("--allow-over", action="store_true", help="report a branch over budget but exit 0")
     args = parser.parse_args(argv)
+    if args.branch:
+        b = branch_budget(args.repo, args.rev, args.branch, args.budget)
+        print("%s: +%d -%d lines against %s (its merge base with %s); budget %d added: %s"
+              % (b["ref"], b["added"], b["removed"], b["base"], args.rev, b["budget"],
+                 ("OVER" + (", allowed" if args.allow_over else "")) if b["over"] else "within"))
+        return 1 if b["over"] and not args.allow_over else 0
     counted = report(args.repo, args.rev, args.transcripts, args.since, args.until)
     text = markdown(counted)
     if args.out:

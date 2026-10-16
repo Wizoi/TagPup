@@ -111,7 +111,7 @@ Closed since: a server starved of threads by a migrating library (`tests/test_se
 11. **Interrupted** (killed process, closed tab, drive asleep) and **two at once** (two apps, CLI beside the server, two libraries holding one folder)?
 12. The real shape of the data: how many live rows or cases does it touch, counted this session? Under about 20 is a one-off script.
 13. Does the CLI or MCP reach it only through a service, and does a look stay a look?
-14. Does it remove at least as many concepts, shims or tests as it adds? One concern, about 1,200 lines or fewer, two rounds at most?
+14. Does it remove at least as many concepts, shims or tests as it adds? One concern, about 1,200 lines added or fewer (`tools/retro_metrics.py --branch <ref>` before the merge), two rounds at most?
 
 ## Decision rights
 - **Tests answer scenarios, not code** (CLAUDE.md): you review every change in your domain for the scenario it must keep
