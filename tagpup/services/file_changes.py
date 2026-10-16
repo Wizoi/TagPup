@@ -456,16 +456,21 @@ def _followers(row, state):
     return [each for each in (rotation.follower(row, state), face_batch.follower(row, state)) if each is not None]
 
 
-def _record(library, row, values, state, stamp=None, wrote=True, after=None, whole=None):
+def _stat(path):
+    """The file's os.stat, or None when it cannot be taken."""
+    try:
+        return os.stat(path)
+    except OSError:
+        return None
+
+
+def _record(library, row, values, state, stamp=None, wrote=True, after=None, whole=None, stat=None):
     """Record what a file holds now in its row, and mark it `state`, in one transaction;
     with `after`, the journal's after too (file_journal.set_after); with `whole`, the file
-    as read back whole (store.photos.follow_fields). Returns the file's stat, as recorded."""
-    stat = None
-    if wrote:
-        try:
-            stat = os.stat(row.path)
-        except OSError:
-            stat = None
+    as read back whole (store.photos.follow_fields), and `stat`, its stat taken before that
+    read (_carry). Returns the file's stat, as recorded."""
+    if wrote and stat is None:
+        stat = _stat(row.path)
     follow = _followers(row, state)
 
     def work(conn):
@@ -589,7 +594,11 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     except Exception as e:
         return _after_failure(et, library, row, origin, target, finished, on_failure, e)
     _reached("file written")
-    stat = _record(library, row, target, finished, stamp, whole=_read_whole(et, row, whole) if whole is not None else None)
+    # The stat before the read back: a change another program makes after it leaves the row older than its file, which
+    # the next scan reads again; taken after, it stamped what was read before the change as the newer file.
+    stat = _stat(row.path)
+    stat = _record(library, row, target, finished, stamp, stat=stat,
+                   whole=_read_whole(et, row, whole) if whole is not None else None)
     if wrote is not None:
         wrote[row.id] = (row, stat)
     _reached("file recorded")

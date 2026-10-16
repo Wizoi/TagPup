@@ -92,13 +92,13 @@ class MetadataExtractor:
             # We initialize pyexiftool client
             # ExifToolSession manages the lifecycle, and cannot stall on stderr
             with ExifToolSession(executable=executable) as et:
-                # Read specific fields we care about
-                # Passing tag names directly
+                # Each file's stamp before the read (_stamp), then the fields we care about, by name
+                stamps = [self._stamp(path) for path in file_paths]
                 batch_meta = et.get_tags(file_paths, tags=METADATA_FIELDS)
 
                 # Check mapping to return formatted info
-                for path, meta in zip(file_paths, batch_meta):
-                    results.append(self._structure(path, meta, people))
+                for path, meta, stamp in zip(file_paths, batch_meta, stamps):
+                    results.append(self._structure(path, meta, people, stamp))
         except Exception as e:
             # ExifTool exits non-zero if *any* file in the batch is unreadable, and
             # pyexiftool raises on that status, so a single corrupt or unsupported
@@ -113,18 +113,24 @@ class MetadataExtractor:
 
         return results
 
-    def _structure(self, path, meta, people):
-        """Turn one ExifTool record into the shape the rest of the pipeline expects."""
+    @staticmethod
+    def _stamp(path):
+        """(mtime, size) of the file, for change detection: taken BEFORE ExifTool reads it, so that a change another
+        program makes during the read leaves the row older than its file, which the next scan reads again. Taken after,
+        it stamped what was read before the change as the newer file. (0.0, 0) when the stat fails."""
+        try:
+            stat = os.stat(path)
+            return stat.st_mtime, stat.st_size
+        except Exception:
+            return 0.0, 0
+
+    def _structure(self, path, meta, people, stamp=None):
+        """Turn one ExifTool record into the shape the rest of the pipeline expects; `stamp`, the file's from before
+        the read (_stamp), taken now when not given."""
         cleaned = structured(meta)
 
         tags = vocabulary.extract_tags(cleaned)
-
-        # Retrieve file stats for change detection
-        try:
-            stat = os.stat(path)
-            mtime, size = stat.st_mtime, stat.st_size
-        except Exception:
-            mtime, size = 0.0, 0
+        mtime, size = stamp if stamp is not None else self._stamp(path)
 
         record = {
             "path": path,
@@ -159,8 +165,9 @@ class MetadataExtractor:
         try:
             for path in file_paths:
                 try:
+                    stamp = self._stamp(path)
                     meta = et.get_tags([path], tags=METADATA_FIELDS)
-                    results.append(self._structure(path, meta[0], people))
+                    results.append(self._structure(path, meta[0], people, stamp))
                 except Exception as e:
                     logger.error(f"Unreadable metadata, indexing without it: {path} ({e})")
                     results.append(self._empty(path, e))
@@ -175,11 +182,7 @@ class MetadataExtractor:
     def _empty(path, error):
         """The record of a file ExifTool could not read: nothing read, and `read_error`,
         why -- so nothing is written into it (IdentityWriter)."""
-        try:
-            stat = os.stat(path)
-            mtime, size = stat.st_mtime, stat.st_size
-        except Exception:
-            mtime, size = 0.0, 0
+        mtime, size = MetadataExtractor._stamp(path)
         return {
             "path": path,
             "mtime": mtime,
