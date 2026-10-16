@@ -33,7 +33,7 @@ AGAIN = ("Naming faces from tags was applied to this library before, and not und
 
 
 def earlier_apply(library):
-    """Was faces-from-tags applied to this library, and not undone since? Read from the journal."""
+    """Was Name faces from tags applied to this library, and not undone since? Read from the journal."""
     return any(entry["operation"] == "faces_from_tags" and entry["status"] != "undone"
                for entry in journal.history(library.path, limit=1000))
 
