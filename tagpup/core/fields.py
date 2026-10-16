@@ -18,9 +18,8 @@ METADATA_FIELDS = [
     "IPTC:Keywords", "Keywords",
     "XMP:Subject", "Subject",
     "XMP:HierarchicalSubject", "HierarchicalSubject",
-    # People / faces
-    "XMP:PersonInImage", "PersonInImage",
-    "XMP:RegionName", "RegionName",
+    # Not XMP PersonInImage or RegionName: nothing reads a file's person fields (a bare name is nobody, owner
+    # 2026-10-15), and no photo of the three libraries holds either (counted 2026-10-15).
     # Caption
     "IPTC:Caption-Abstract", "Caption-Abstract",
     "XMP:Description", "Description",
@@ -246,8 +245,7 @@ def record_date_taken(raw_meta, date_taken):
 
 #: The fields whose value is a list: a keyword field holds several, and ExifTool answers
 #: one of them alone as a bare value.
-LIST_FIELDS = ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject",
-               "XMP:PersonInImage", "XMP:RegionName")
+LIST_FIELDS = ("XMP:Subject", "IPTC:Keywords", "XMP:HierarchicalSubject")
 
 
 def read_key(field):
