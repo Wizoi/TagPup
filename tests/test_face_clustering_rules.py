@@ -348,23 +348,7 @@ class TestBackgroundFaceFiltering(FaceClusteringTestBase):
 
 
 class TestProcessOfElimination(FaceClusteringTestBase):
-    def test_a_lone_unassigned_face_takes_the_lone_unused_name(self):
-        """Jane is identified; the one remaining face must be the one remaining name."""
-        jane, bob = identity_vector(1), identity_vector(2)
-
-        anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])
-        self.add_face(anchor_photo, jane)
-
-        pair_photo = self.add_photo("pair.jpg", people=["Jane Doe", "Bob Roe"])
-        jane_face = self.add_face(pair_photo, near(jane, 11), box=(0, 0, 200, 200))
-        bob_face = self.add_face(pair_photo, bob, box=(300, 0, 500, 200))
-
-        self.resolve()
-        self.assertEqual(self.name_of(jane_face), "Jane Doe")
-        self.assertEqual(
-            self.name_of(bob_face), "Bob Roe", "the leftover name was not deduced"
-        )
-
+    # The one face left taking the one person left: test_clustering_meets_naming (#1374).
     def test_elimination_does_not_invent_names_for_untagged_photos(self):
         jane, bob = identity_vector(1), identity_vector(2)
         anchor_photo = self.add_photo("anchor.jpg", people=["Jane Doe"])

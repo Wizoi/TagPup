@@ -1001,6 +1001,9 @@ def cluster_faces(ctx):
         def heard(stage, done=0, total=1):
             if stage == "left":
                 console.print(f"[bold yellow]{done} face(s) were left as they were: the library changed under them while this ran.[/bold yellow]")
+            if stage == "unpaired":
+                console.print(f"[yellow]{done} face(s) were left unnamed: their photo names as many people no face is known for, "
+                              "and nothing tells which is whose.[/yellow]")
         resolved_stats = identities.resolve(photo_index, on_step=heard)
         
         if not resolved_stats:

@@ -124,9 +124,10 @@ def resolve(photo_index, on_step=None):
     overwritten, and excluded faces take no part.
 
     `on_step(stage, done, total)`, if given, hears where it has got -- "reading", "grouping" (one call of
-    DBSCAN: no count inside it), "voting", "propagating", "matching" and "saving", then "left" (done: the faces not
-    written because the library changed under the run: a person named the face, or another face of its photo,
-    or merged the person away) -- and may raise to stop it. Every
+    DBSCAN: no count inside it), "voting", "propagating", "matching", "unpaired" (done: the faces left unnamed because
+    their photo names as many people no face is known for, and nothing tells which is whose; #1374) and "saving", then
+    "left" (done: the faces not written because the library changed under the run: a person named the face, or another
+    face of its photo, or merged the person away) -- and may raise to stop it. Every
     stage but the last only reads; the names are written in one commit after "saving" is announced, so a stop is
     nothing written or all of it, never part (the job behind the apps' button, tagpup.jobs.naming_faces).
     """
@@ -422,7 +423,10 @@ def resolve(photo_index, on_step=None):
     photo_years = {}
     for path, meta in meta_by_path.items():
         photo_years[path] = dates.record_year(meta)
-        
+
+    # photo -> its faces left unnamed in the last round because it names two or more people no face is known for (#1374).
+    unpaired = {}
+
     for iteration in range(MAX_ITERATIONS):
         step("propagating", iteration, MAX_ITERATIONS)
         # 2a. Group embeddings and their photo years by name
@@ -455,7 +459,8 @@ def resolve(photo_index, on_step=None):
             # Get photo metadata people tags
             meta = meta_by_path.get(p_path)
             photo_tags = set(meta.get("people", [])) if meta else set()
-            
+            unpaired.pop(p_path, None)
+
             # Map of face_id -> resolved_name in this photo
             face_resolved = {f["id"]: current_resolved_names.get(f["id"]) for f in photo_faces}
             
@@ -554,14 +559,15 @@ def resolve(photo_index, on_step=None):
                 unused_tags = photo_tags - assigned_names
                 unknown_unused = [t for t in unused_tags if t not in resolved_by_name]
                 
-                # 2. Match unknown tags by process of elimination
+                # 2. Match unknown tags by process of elimination: every other face of the photo is somebody, so the one
+                # face left is the one person left. Two faces and two such people are not paired: nothing tells which is
+                # whose, and pairing them by the order of their ids wrote a coin toss as a name (owner, 2026-10-15, #1374).
                 if len(unassigned_faces) == 1 and len(unknown_unused) == 1:
                     f = unassigned_faces[0]
                     tag = list(unknown_unused)[0]
                     face_resolved[f["id"]] = tag
-                elif len(unassigned_faces) == len(unknown_unused) and len(unassigned_faces) > 0:
-                    for f, tag in zip(unassigned_faces, sorted(list(unknown_unused))):
-                        face_resolved[f["id"]] = tag
+                elif len(unassigned_faces) == len(unknown_unused) > 1:
+                    unpaired[p_path] = {f["id"] for f in unassigned_faces}
 
             # Store refined assignments and update traces if resolved names changed
             for f in photo_faces:
@@ -630,6 +636,8 @@ def resolve(photo_index, on_step=None):
     face_updates = []
     resolved_stats = {}
     as_read = {f["id"]: f["person_id"] for f in all_faces}
+    unpaired_ids = set().union(*unpaired.values())
+    left_unpaired = 0
 
     # Names already spoken for in each photo. The iterative loop refuses to put one
     # person on two faces of the same photo; without tracking that here, this final
@@ -715,12 +723,19 @@ def resolve(photo_index, on_step=None):
                 "assignment_order": None,
                 "trigger_photos": []
             }
+        elif final_name is None and face["id"] in unpaired_ids:
+            left_unpaired += 1
+            traces[face["id"]]["resolution_method"] = "unpaired_people_with_no_known_face"
 
         # A face a person decided is not written; nor is one that already carries what was found: the person, or nobody.
         carried = face["person"]
         unchanged = carried is None if final_name is None else carried is not None and carried.id == final_name
         if face["id"] not in manual_names and not unchanged:
             face_updates.append((final_name, face["id"]))
+
+    if left_unpaired:
+        logger.info("%d face(s) left unnamed: their photo names as many people no face is known for.", left_unpaired)
+        step("unpaired", left_unpaired, len(all_faces))
 
     # Apply name updates to the SQLite database: the last place to stop
     step("saving", 0, 1)
