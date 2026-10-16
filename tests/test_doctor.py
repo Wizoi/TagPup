@@ -10,7 +10,7 @@ tag tree give, and `--rebuild-derived --apply` makes them so and writes nothing 
 Lifted: test_derived_checks and test_doctor_sees_the_derived_tables (each rule is one scenario here: a writer
 forgot, the doctor counts it, the repair settles it). Break that fails the kept test: checks.photo_tags_out_of_date
 returns [] -> test_a_writer_that_changed_a_photos_keywords_and_did_not_refresh fails. Deleted with no scenario, since
-no library below migration 4 exists (the three live ones are at 31 and the kept snapshots at 14 or later): the doctor
+no library below migration 4 exists (the three live ones are at 32, the baseline, and one below it is refused): the doctor
 reading a library "from before photo ids" (#78); the not-yet-migrated arm stays in the doctor's test that says it (a
 step ahead of the library, migration_names.ahead), not in one that deleted the version row, which no library has.
 """
@@ -162,16 +162,21 @@ class TheRules(Library):
 
 class TheRootedRowsAreReadOnce(Library):
     """The doctor's two rules of the rooted rows (rooted_rows_convert, native_rows_under_a_root) read one scan of every
-    path row, not one each (#1383); a write on the connection, or another's commit, reads them again."""
+    path row, not one each (#1383); a write on the connection, its rollback, or another's commit, reads them again."""
 
     def test_one_scan_for_both_and_another_after_each_write(self):
         self.photo("a.jpg")
+        rooted = "INSERT INTO photos (path, mtime, size, tags) VALUES ('@nowhere/b.jpg', 1, 1, '[]')"
         with mock.patch.object(roots_check, "broken", wraps=roots_check.broken) as scan:
             self.assertEqual({}, self.broken())
             self.assertEqual(1, scan.call_count, "the two rules scanned the rows each")
-            self.conn.execute("INSERT INTO photos (path, mtime, size, tags) VALUES ('@nowhere/b.jpg', 1, 1, '[]')")
+            self.conn.execute(rooted)
             self.assertEqual(1, checks.rooted_rows_convert(self.conn).count, "its own write was not read")
+            self.conn.rollback()
+            self.assertEqual(0, checks.rooted_rows_convert(self.conn).count, "a row rolled back was still counted")
+            self.conn.execute(rooted)
             self.conn.commit()
+            self.assertEqual(1, checks.rooted_rows_convert(self.conn).count)
             other = db.connect(self.db_path)
             try:
                 other.execute("INSERT INTO photos (path, mtime, size, tags) VALUES ('@nowhere/c.jpg', 1, 1, '[]')")
@@ -180,7 +185,7 @@ class TheRootedRowsAreReadOnce(Library):
                 other.close()
             self.assertEqual(2, checks.rooted_rows_convert(self.conn).count, "another connection's commit was not read")
             self.assertEqual(0, checks.native_rows_under_a_root(self.conn).count)
-            self.assertEqual(3, scan.call_count)
+            self.assertEqual(5, scan.call_count)
 
 
 class TheDoctor(Library):

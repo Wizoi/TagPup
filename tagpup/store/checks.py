@@ -253,6 +253,7 @@ def _roots_or_why(conn):
 #: The last scan of each connection's rooted rows (roots_check.broken): {conn: (what says nothing was written since -- the
 #: connection's own changes and other connections' commits, PRAGMA data_version --, the Roots it was read by, what it found)}.
 #: The two rules below read one scan, not one each (#1383: 0.34 s each on photo_index); a write or another Roots reads again.
+#: A scan taken inside a transaction is not kept: a rollback takes its rows away and moves neither number.
 _scanned = weakref.WeakKeyDictionary()
 
 
@@ -261,7 +262,11 @@ def _rooted(conn):
     stamp = (conn.total_changes, conn.execute("PRAGMA data_version").fetchone()[0])
     held = _scanned.get(conn)
     if held is None or held[0] != stamp or held[1] is not roots:
-        held = _scanned[conn] = (stamp, roots, roots_check.broken(conn, roots)[0])
+        held = (stamp, roots, roots_check.broken(conn, roots)[0])
+        if conn.in_transaction:
+            _scanned.pop(conn, None)
+        else:
+            _scanned[conn] = held
     return held[2]
 
 
