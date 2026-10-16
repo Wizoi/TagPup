@@ -349,14 +349,15 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     the first part renamed, and says so. `file_only` and `with_rows` count the photos
     renamed each way.
 
-    Refused, and nothing renamed, for a grouping that may not be used
-    (tagpup.core.validation). The grouping is used trimmed as the rules trim it
+    Refused, and nothing read or renamed, for more photos than a write may name (file_changes.too_many) and
+    for a grouping that may not be used (tagpup.core.validation). The grouping is used trimmed as the rules trim it
     (validation.trim): the rules allow blanks at its ends, and a trailing space -- from
     a caller that does not strip, or before a U+FEFF, which strip() leaves -- put a
     double space before every photo's number.
     """
     result = Result(attempted=len(photo_paths))
-    problem = validation.problem("grouping", grouping)
+    # The cap of a write of photo files, asked before a caption is read (file_changes.too_many).
+    problem = validation.problem("grouping", grouping) or file_changes.too_many(len(photo_paths))
     if problem:
         result.refuse(problem)
         return result

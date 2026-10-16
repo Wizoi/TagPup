@@ -157,10 +157,22 @@ def exclusively():
         _one_at_a_time.release()
 
 
+def too_many(count):
+    """The sentence refusing a write of photo files that names more than batches.MAX_BATCH photos, or None: the one cap
+    (write_fields, batch_exclusively, and Smart Rename before it reads a caption; the tag tree's rewrites are uncapped)."""
+    if count > batches.MAX_BATCH:
+        return "Select up to {:,} photos at a time ({:,} were named).".format(batches.MAX_BATCH, count)
+    return None
+
+
 @contextlib.contextmanager
 def batch_exclusively(library, operation, count):
     """exclusively() around a write of `count` photos by a caller that tells the pages' records in the order the files were written:
-    a batch takes its turn BEFORE the lock, or it would wait for the batch ahead while holding what that one needs."""
+    a batch takes its turn BEFORE the lock, or it would wait for the batch ahead while holding what that one needs. Refused, nothing
+    claimed or waited for, over the cap (too_many)."""
+    why = too_many(count)
+    if why:
+        raise Refused(why)
     with contextlib.ExitStack() as held:
         if count > batches.CHUNK:
             held.enter_context(batches.claim(library, operation, count))
@@ -273,13 +285,13 @@ def write_fields(library, operation, exiftool_path, photo_paths, read, plan_one,
     written in the one that marks each file `done` (a bulk assignment's faces); a photo it names is in the change even when its
     file holds what it is to hold already, and then only its rows are written.
 
-    More than batches.MAX_BATCH photos are refused, nothing read, unless `uncapped` (the tag tree's rewrites only); more than
+    More than batches.MAX_BATCH photos are refused (too_many), nothing read, unless `uncapped` (the tag tree's rewrites only); more than
     batches.CHUNK are a batch (the module's docstring): refused, nothing read, when batches.MOST_WAITING wait already, or when it
     is cancelled before its turn.
     """
-    if len(photo_paths) > batches.MAX_BATCH and not uncapped:
-        return _refused_whole(photo_paths, "Select up to {:,} photos at a time ({:,} were named)."
-                              .format(batches.MAX_BATCH, len(photo_paths)))
+    why = None if uncapped else too_many(len(photo_paths))
+    if why:
+        return _refused_whole(photo_paths, why)
     with contextlib.ExitStack() as turn:
         if len(photo_paths) > batches.CHUNK:
             try:
