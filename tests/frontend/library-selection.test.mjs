@@ -7,8 +7,13 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { closeAllApps, click } from "./harness.mjs";
 import { loadViewPage, pageErrors } from "./view-page.mjs";
+
+/** The server's caps of a bulk write and of a request's list: tests/fixtures/view_rules.json, held to the server by
+ * tests/test_view_rules_follow_the_server.py. */
+const VIEW_RULES = JSON.parse(readFileSync(new URL("../fixtures/view_rules.json", import.meta.url), "utf-8"));
 
 afterEach(() => {
   closeAllApps();
@@ -28,6 +33,12 @@ async function bigView(t, n = 68000, search = "?view=all") {
 }
 
 describe("Select all, and what is left out of it", () => {
+  test("the page refuses what the server refuses: tests/fixtures/view_rules.json", async (t) => {
+    const ctx = await bigView(t, 3);
+    assert.equal(ctx.selected.BULK_LIMIT, VIEW_RULES.max_batch);
+    assert.equal(ctx.selected.LIST_LIMIT, VIEW_RULES.max_listed);
+  });
+
   test("5,003 photos selected, 3 excluded by a click each: the source and 3 ids are what a request carries", async (t) => {
     const ctx = await bigView(t, 5003);
     const requests = ctx.server.calls.length;

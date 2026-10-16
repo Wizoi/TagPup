@@ -1,5 +1,5 @@
 /**
- * Owner scenario: the always-on process moves onto a new version while a photo write
+ * Owner scenario: the server moves onto a new version while a photo write
  * is in flight (docs/ARCHITECTURE.md phase 8; web/common/api.js's fetchThroughAnUpdate,
  * covered alone in server-update.test.mjs). Here the write is a real entry in the
  * page's write queue (web/tagpup/write-queue.js): the queued write must still complete,

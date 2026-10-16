@@ -133,7 +133,7 @@ class EveryEntryPointSaysItInWords(unittest.TestCase):
 
     def test_the_status_a_hand_over_waits_for_still_answers(self):
         status = self.app.test_client().get("/api/server")
-        self.assertEqual(200, status.status_code, "the supervisor asks it, and names no library")
+        self.assertEqual(200, status.status_code, "a launcher asks it, and names no library")
         self.assertIn("version", status.get_json())
 
     def test_the_pickers_create_refuses_a_name_that_is_a_newer_library(self):

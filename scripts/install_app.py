@@ -241,7 +241,7 @@ def _update(destination, home, python, say):
     installed = commit_of(current)
     if installed and not is_ancestor(installed):
         # A checkout moved back, or onto an unrelated branch: never installed on its own
-        # -- the always-on process installs unattended. By hand: install_app.py --apply.
+        # -- a launch installs unattended. By hand: install_app.py --apply.
         say("TagPup: the checkout's %s is not newer than the installed %s, so it was not installed; "
             "starting the installed version." % (commit, installed))
         return None

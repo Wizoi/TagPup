@@ -16,7 +16,7 @@ may be set, the library's settings, its history of changes, when its recurring j
 where each app is, which version answers, and the Activity page over every library
 (tagpup.web.activity_routes) -- is a blueprint each registers. Every
 request passes the process's gate (tagpup.web.lifecycle), which counts it while in
-flight and turns it away while the always-on process moves onto a new version.
+flight and turns it away while the server moves onto a new version.
 """
 import errno
 import gzip

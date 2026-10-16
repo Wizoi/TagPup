@@ -8,6 +8,11 @@ LET_THROUGH-style lists are written by hand, and tests/test_roots_ingress.py che
 routes that exist. So this reads the routes: the names a handler takes from `request.args` and from the request's
 JSON (directly, or through a variable it was assigned to, or the `int_arg` helpers), and fails on a name that is
 neither in KEYS nor in the list below, which says why each is no path. A new parameter is a decision made here.
+
+The two other hand lists are held to the routes both apps serve the same way (RoutesAreClassified): a route the gate
+lets through while the library's roots are not placed (roots_gate.LET_THROUGH) reads no path; and a route that reads a
+folder either opens or adds it (roots_ingress.ADDING: a previous place that is gone is refused by name) or is listed in
+NOT_ADDING with why not. A new route that reads a folder is a decision made here too.
 """
 import ast
 import glob
@@ -17,7 +22,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tagpup.web import roots_ingress  # noqa: E402
+from tagpup.web import app as web  # noqa: E402
+from tagpup.web import roots_gate, roots_ingress  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -52,6 +58,30 @@ URL_VARIABLES = frozenset({"name", "change_id"})
 
 #: Helpers that read a request parameter by a name their caller gives; the callers' literal names are read below.
 NAMED_BY_CALLER = {"_int_arg": 0, "int_arg": 0}
+
+#: The parameters that name a folder; on an /api/folder/ route, `path` does too.
+FOLDER_KEYS = frozenset({"folder", "folder_path", "folder_paths"})
+
+#: Routes that read a folder and are not roots_ingress.ADDING, each with why: a folder at a previous place that is gone is
+#: then answered as the route answers any folder that is not there.
+NOT_ADDING = {
+    "/api/folder/auto-apply": "writes what a run of the page's open folder offered",
+    "/api/folder/automatch": "reads the faces of photos the library holds",
+    "/api/folder/index-cancel": "names a folder queued, by its key",
+    "/api/folder/index-status": "names a folder queued, by its key",
+    "/api/folder/remove": "takes the library's rows away; the folder need not exist",
+    "/api/folder/rename-photos": "writes photos of the folder the page has open",
+    "/api/folder/suggest-cancel": "names a run, by its folder's key",
+    "/api/folder/suggest-start": "the folder the page has open, scanned first",
+    "/api/folder/suggest-status": "names a run, by its folder's key",
+    "/api/folder/time-shift": "writes photos of the folder the page has open",
+    "/api/library/ids": "a library view's folder source: the library's rows, not the disk",
+    "/api/name-faces/scope": "counts what the library holds under the folder",
+    "/api/name-faces/start": "names faces the library holds under the folder",
+    "/api/sync": "a folder the library holds; a gone one is what sync is for",
+    "/api/sync/review/ignore": "a folder sync found, recorded as ignored",
+    "/api/sync/review/include": "a folder sync found, queued as found",
+}
 
 
 def _is_request(node, names):
@@ -120,6 +150,75 @@ def parameters_read():
                 else:
                     unnamed.append((base, func.name))
     return found, unnamed, variables
+
+
+def calls():
+    """{(file, function): the names of the functions it calls by a bare name}, for the web layer's modules."""
+    found = {}
+    for file in sorted(glob.glob(os.path.join(ROOT, "tagpup", "web", "*.py"))):
+        with open(file, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+        for func in (n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))):
+            found[(os.path.basename(file), func.name)] = {
+                node.func.id for node in ast.walk(func) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    return found
+
+
+def reads_of_routes():
+    """{rule: the parameters its handler reads, with those of its own module's functions it calls, at any depth} of every
+    /api/ route the two apps serve, as the gate sees the path."""
+    found, _unnamed, _variables = parameters_read()
+    direct = {}
+    for key, wheres in found.items():
+        for where in wheres:
+            direct.setdefault(where, set()).add(key)
+    called = calls()
+
+    def reads(where, seen):
+        if where in seen:
+            return set()
+        seen.add(where)
+        names = set(direct.get(where, ()))
+        for name in called.get(where, ()):
+            names |= reads((where[0], name), seen)
+        return names
+
+    routes = {}
+    for kind in ("tagpup", "tuner"):
+        app = web.create_app(kind)
+        for rule in app.url_map.iter_rules():
+            if rule.rule.startswith("/api/"):
+                view = app.view_functions[rule.endpoint]
+                routes[rule.rule] = reads((os.path.basename(view.__code__.co_filename), view.__name__), set())
+    return routes
+
+
+class RoutesAreClassified(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.routes = reads_of_routes()
+
+    def test_the_scan_finds_the_routes(self):
+        self.assertGreater(len(self.routes), 80, "the scan found almost no route")
+        self.assertIn("path", self.routes["/api/folder/scan"], "a parameter read through a helper is not seen")
+
+    def test_a_route_let_through_without_placed_roots_reads_no_path(self):
+        let_through = {rule: sorted(reads & set(roots_ingress.KEYS)) for rule, reads in self.routes.items()
+                       if rule.startswith(roots_gate.LET_THROUGH)}
+        self.assertEqual({}, {rule: keys for rule, keys in let_through.items() if keys},
+                         "roots_gate.LET_THROUGH lets a route through that reads a photo's path: take it out")
+        self.assertEqual([], [prefix for prefix in roots_gate.LET_THROUGH
+                              if not any(rule.startswith(prefix) for rule in self.routes)], "a prefix no route has")
+
+    def test_a_route_that_reads_a_folder_adds_it_or_says_why_not(self):
+        reading = {rule for rule, reads in self.routes.items()
+                   if reads & FOLDER_KEYS or (rule.startswith("/api/folder/") and "path" in reads)}
+        self.assertEqual([], sorted(reading - set(roots_ingress.ADDING) - set(NOT_ADDING)),
+                         "a route reads a folder: add it to roots_ingress.ADDING if it opens or adds the folder, else to "
+                         "NOT_ADDING with why")
+        self.assertEqual([], sorted(set(roots_ingress.ADDING) - reading), "ADDING names a route that reads no folder")
+        self.assertEqual([], sorted(set(NOT_ADDING) - reading), "NOT_ADDING names a route that reads no folder")
+        self.assertEqual(set(), set(roots_ingress.ADDING) & set(NOT_ADDING))
 
 
 class EveryParameterIsClassified(unittest.TestCase):

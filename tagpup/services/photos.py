@@ -86,15 +86,16 @@ def taken_order(record):
 
 @roots_service.canonical_args("folder")
 def scan_stamp(library):
-    """What the library's photos were at this moment, to be taken BEFORE a scan and kept with it
-    (tagpup.web.tagpup_routes.FolderCache): the photos counter that the triggers move for a write from any process --
-    this server, a CLI `sync --apply`, an MCP undo, a snapshot restore -- so a scan kept past one is read again. None
-    when the library cannot be read just now: a scan is then kept as it was, and a scan of an unreadable library fails
-    by itself."""
+    """What the library's photos and tag tree were at this moment, to be taken BEFORE a scan and kept with it
+    (tagpup.web.tagpup_routes.FolderCache): the photos and taxonomy counters that the triggers move for a write from any
+    process -- this server, an index, a CLI `sync --apply`, an MCP undo, a snapshot restore, a tree edit (a file read
+    from disk is told the tree's people) -- and that a move of a root moves (generations' salt), so a scan kept past one
+    is read again. None when the library cannot be read just now: a scan is then kept as it was, and a scan of an
+    unreadable library fails by itself."""
     try:
         conn = db.connect(db.readonly_uri(library.path), uri=True)
         try:
-            return generations.values(conn, ("photos",))
+            return generations.values(conn, ("photos", "taxonomy"))
         finally:
             conn.close()
     except Exception as e:
@@ -360,8 +361,6 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
         result.refuse(problem)
         return result
     held, loose = libraries.split(library, photo_paths)
-    if held and libraries.refuse_writes(result, library, held):
-        return result
     held_keys = {paths.key(p) for p in held}
     grouping = validation.trim(grouping)
     width = len(str(len(photo_paths)))
@@ -478,8 +477,6 @@ def shift_date_taken(library, photo_paths, minutes, exiftool_path):
     refused = Result(attempted=len(photo_paths))
     # Photos of folders the library does not hold are shifted in their files only (tagpup.services.file_only).
     held, loose = libraries.split(library, photo_paths)
-    if held and libraries.refuse_writes(refused, library, held):
-        return refused
 
     plan_one = date_shift_plan(minutes)
 
@@ -535,8 +532,6 @@ def delete(library, photo_path):
         result = file_only.delete(photo_path)
         result.details.update({file_only.FILE_ONLY: result.changed, file_only.WITH_ROWS: 0})
         return result
-    if libraries.refuse_writes(result, library, [photo_path]):
-        return result
     try:
         went = recycle_bin.delete_file(photo_path)
     except Exception as e:
@@ -588,8 +583,6 @@ def rotate_photos(library, photo_paths, direction, exiftool_path):
         result.refuse(refused)
         return result
     held, loose = libraries.split(library, photo_paths)
-    if held and libraries.refuse_writes(result, library, held):
-        return result
     try:
         journaled = file_changes.write_fields(
             library, "rotate", exiftool_path, held, [rotation.FIELD], rotate_plan(direction),

@@ -620,7 +620,7 @@ _held_lock = threading.Lock()
 
 
 def watch_folders(library, roots=()):
-    """The folders the always-on process watches for `library` (tagpup.jobs.watching): its
+    """The folders the server watches for `library` (tagpup.jobs.watching): its
     root folders and every folder of the library's (tagpup.store.folders: with rows, or
     added), each the topmost of those under it -- the folders sync keeps in step. None for
     a library behind this version's schema: it is left alone until an app opens it and

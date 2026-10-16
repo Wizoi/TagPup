@@ -6,8 +6,8 @@ Each is thin: it reads the request, calls tagpup.services.tags, and shapes the r
 editor reads.
 
 A rename or a delete rewrites photos, so what TagPup's page was last shown of a folder
-no longer holds (tagpup.web.tagpup_routes.folders). That cache is the process's, not an
-app's: an edit made from TagTuner's page clears it as one made from TagPup's does.
+no longer holds: the rewrite moves the photos and taxonomy counters, by which that cache
+lets it go (tagpup.web.tagpup_routes.FolderCache), from either app's page.
 
 A rename or a delete also writes faces' names, which cluster-faces rewrites while it
 runs. TagTuner's own writes were refused meanwhile and these were not, on either port;
@@ -17,7 +17,7 @@ from flask import Blueprint, jsonify, request
 
 from tagpup.core.result import NotFound
 from tagpup.services import tags as tags_service
-from tagpup.web import responses, state, tagpup_routes, tuner_routes
+from tagpup.web import responses, state, tuner_routes
 
 routes = Blueprint("taxonomy", __name__)
 
@@ -40,8 +40,6 @@ def _tree_edit(edit):
         return None, responses.error(404, str(missing))
     except Exception as e:
         return None, responses.error(500, str(e))
-    # Files may have been written even when it was refused (a batch stopped half way): the cached scans say what they held before.
-    tagpup_routes.forget_scans(state.require())
     if result.refused:
         return None, responses.error(400, result.refused)
     return result, None

@@ -64,20 +64,22 @@ class FolderCache:
     page record}}. Written by a scan, kept true by every write the page makes through
     this server, and read by Suggest for the folder's photos.
 
-    A scan is kept with the library's photos counter as it was before the scan (`stamp`,
-    tagpup.services.photos.scan_stamp), and `get` hands it back only while the counter is
-    where it was: a CLI `sync --apply`, an MCP undo or a snapshot restore in another process
-    moves it, and the page's next open of the folder reads it again instead of showing what the
-    photos held before (docs/INVARIANTS.md, contract table row 11). A write through this server
-    moves the counter too: the scan after one is read again from the library's rows, which the
-    write recorded, at the cost of a stat of each file. `peek` is `get` without that check, for
-    a caller that wants the scan's spellings and not its content.
+    A scan is kept with the library's photos and taxonomy counters as they were before the scan
+    (`stamp`, tagpup.services.photos.scan_stamp), and `get` hands it back only while they are
+    where they were. That is the one way a scan goes stale (contract table row 11): every write
+    of a held photo's row moves the photos counter, whoever makes it -- this server's writes,
+    the tag tree's rewrites, an undo, a sync, the indexer, a CLI or MCP write, a snapshot restore
+    -- a move of a root moves it too (its salt), and an edit of the tree moves the taxonomy one.
+    The scan after one is read again from the library's rows, at the cost of a stat of each file.
+    `peek` is `get` without that check, for a caller that wants the scan's spellings and not its
+    content.
 
-    A scan stores its whole recursive walk under the scanned folder's key, so a photo in
-    a subfolder is filed under an ancestor, not under its own directory. The writers
-    looked it up under paths.key(dirname(photo)) and never found it: its record went on
-    showing what it held before the write. `entries_for` finds every map holding a
-    photo, since a folder and a subfolder of it may both have been scanned.
+    A write to a photo of a folder the library does not hold is its file's only and moves no
+    counter: its records are patched (`entries_for`), which is also what the reply of a time
+    shift sends. A scan stores its whole recursive walk under the scanned folder's key, so a
+    photo in a subfolder is filed under an ancestor, not under its own directory; `entries_for`
+    finds every map holding a photo, since a folder and a subfolder of it may both have been
+    scanned.
     """
 
     def __init__(self, library=None):
@@ -176,21 +178,14 @@ def idle_caches(idle):
     suggestion_jobs.on_looks_use = looks_used
 
 
-def forget_scans(library):
-    """Photos of `library` were rewritten: its cached scans describe them as they were.
-    The cache is the process's, so whichever app rewrote them calls this -- the tree's
-    routes, and TagTuner's tag merge and person rename."""
-    folders.of(library).clear()
-
-
-def _folder_photos(library, folder):
-    """The folder's photos as the page was shown them, scanned now if it has not been:
-    what a suggestion run works from. Called on the run's own thread, with the library
-    it was handed."""
+def _folder_photos(library, folder, force=False):
+    """The folder's photos as the page was shown them: the one filler of the cache. Scanned now when they have not
+    been, when the library moved since (FolderCache.get), or when `force` (the page's Refresh); an empty folder is
+    walked again each time, so photos copied in after it was first opened show. Opening a folder, Suggest (on the
+    run's own thread, with the library it was handed) and a time shift."""
     cache = folders.of(library)
-    found = cache.get(folder)
+    found = None if force else cache.get(folder)
     if not found:
-        logger.info("Folder cache empty for %s; scanning it.", folder)
         stamp = cache.stamp()
         found = photo_actions.scan_folder(library, folder, state.exiftool(library))
         cache.put(folder, found, stamp)
@@ -200,19 +195,9 @@ def _folder_photos(library, folder):
 def _folder_indexer(library):
     """How this server adds a folder to a library: through the CLI
     (tagpup.services.indexing.index_folder), as every folder of this process's index queue is (tagpup.runtime.
-    index_folder), which tells `_scan_is_stale` when the folder is done. Runs on the queue's thread, with the
-    library it was handed."""
+    index_folder). Runs on the queue's thread, with the library it was handed. The rows it writes move the photos
+    counter, which lets the folder's cached scan go (FolderCache; #341)."""
     return runtimes.index_folder(library)
-
-
-def _scan_is_stale(library, folder):
-    """The folder was indexed: its cached scan, kept since before its photos were read (or read again), describes it
-    as it was -- even when clustering failed afterwards, since rows were written. Dropped, whoever queued the folder:
-    this route, a sync (docs/findings.md, #341)."""
-    folders.of(library).pop(folder)
-
-
-runtimes.folder_indexed.append(_scan_is_stale)
 
 
 def _wanted_path():
@@ -280,16 +265,7 @@ def folder_scan():
     force = (request.args.get("force") or "false").lower() == "true"
     if not os.path.isdir(folder):
         return responses.error(400, "Path is not a valid directory: %s" % folder)
-    folder = paths.stored(folder)
-    cache = folders.of(library)
-    # An empty folder is walked again each time: photos copied in after it was first
-    # opened never showed until Refresh, since its empty scan was kept like any other.
-    photos = None if force else cache.get(folder)
-    if not photos:
-        stamp = cache.stamp()
-        photos = photo_actions.scan_folder(library, folder, state.exiftool(library))
-        cache.put(folder, photos, stamp)
-    return jsonify(_sorted(photos))
+    return jsonify(_sorted(_folder_photos(library, paths.stored(folder), force)))
 
 
 @routes.get("/api/folder/membership")
@@ -466,15 +442,11 @@ def folder_time_shift():
     # the page -- was lower case.
     folder = paths.stored(folder)
     cache = folders.of(library)
-    photos = cache.get(folder)
-    if not photos:
-        try:
-            stamp = cache.stamp()
-            photos = photo_actions.read_folder(library, folder, state.exiftool(library))
-            cache.put(folder, photos, stamp)
-        except Exception as e:
-            logger.error("Error scanning folder on the fly for time shift: %s", e)
-            return responses.error(500, "Folder must be scanned first, and scan fallback failed: %s" % e)
+    try:
+        photos = _folder_photos(library, folder)
+    except Exception as e:
+        logger.error("Error scanning folder on the fly for time shift: %s", e)
+        return responses.error(500, "Folder must be scanned first, and scan fallback failed: %s" % e)
     # The photos of the camera asked for (tagpup.core.fields).
     targets = [paths.stored(record["path"]) for record in photos.values()
                if fields.on_camera(record.get("raw_metadata"), camera_model)]
@@ -796,10 +768,7 @@ def library_bulk_edit():
         resolved = selection_service.resolve(library, selection_service.read(library, body.get("selection")))
         # A delete deletes exactly the photos its question named, or nothing (#691).
         bulk_edit.refuse_if_changed(edit, resolved.ids, selection_service.token_of)
-        try:
-            out = bulk_edit.run(library, edit, resolved.ids, state.exiftool(library))
-        finally:
-            forget_scans(library)       # the cached scans of folders say what the photos held before
+        out = bulk_edit.run(library, edit, resolved.ids, state.exiftool(library))
     except (Refused, NotFound, Conflict, paths.RootsError) as why:
         return _bulk_reply(why)
     except Exception as e:

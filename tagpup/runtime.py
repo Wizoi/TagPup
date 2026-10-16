@@ -33,7 +33,7 @@ slot in tagpup.jobs.suggestions with (docs/findings.md, #112), and the class att
 every ClipEmbedder shared its model through. `tests/test_gpu_single_owner.py` fails a
 module that builds a model anywhere else.
 
-`background(runtime)` is what the web server -- the always-on process -- runs beside its
+`background(runtime)` is what the web server runs beside its
 requests (docs/ARCHITECTURE.md, phase 8): the recurring jobs, the release of idle caches,
 and the folder watcher (tagpup.jobs.watching). Each is registered once, in BACKGROUND.
 """
@@ -90,7 +90,7 @@ NO_JOBS = "TAGPUP_NO_JOBS"
 
 def runs_recurring_jobs():
     """Does this web server run the recurring jobs (tagpup.jobs.recurring)? Only the web
-    server asks: the always-on process runs them, nothing else (owner, 2026-09-26). Not
+    server asks: the server runs them, nothing else (owner, 2026-09-26). Not
     when NO_JOBS is set, nor in a test run (tagpup.ml.under_test) unless RUN_JOBS is: a
     server a test starts would snapshot its library in the background."""
     if os.environ.get(NO_JOBS):
@@ -120,14 +120,14 @@ def recurring_jobs(runtime=None, libraries=None, clock=None):
 
 #: How long the models, the vectors and the other caches may go unused before the web
 #: server lets them go (minutes): a ViT-H-14 keeps a few GB of GPU memory, photo_index's
-#: vectors 270 MB, and the always-on process would hold them all day.
+#: vectors 270 MB, and the server would hold them all day.
 RELEASE_MODELS_AFTER_MINUTES = 5
 
 #: The runtime's own entries in its idle registry (Runtime.idle).
 MODELS, PHOTO_INDEXES = "models", "photo indexes"
 
 
-# ---- What the always-on process runs beside its requests ---------------------------------
+# ---- What the server runs beside its requests ---------------------------------------------
 
 class Every:
     """`call()` every `seconds` on a daemon thread of its own, until stop(): a background
@@ -174,6 +174,9 @@ class Every:
 #: version (tagpup.web.lifecycle). One place, so sync's watcher (phase 8c) is one entry.
 BACKGROUND = {}
 
+#: The names of the background tasks others ask for by name (Background.task): the Activity page, the drain.
+RECURRING_JOBS, FOLDER_WATCHER = "recurring jobs", "folder watcher"
+
 
 def background_task(name):
     """Register the function it decorates as the background task `name`: make(runtime)."""
@@ -185,7 +188,7 @@ def background_task(name):
     return register
 
 
-@background_task("recurring jobs")
+@background_task(RECURRING_JOBS)
 def _recurring_jobs_task(runtime):
     """The recurring jobs of every library in the data folder (tagpup.jobs.recurring), in
     the process that runs them (runs_recurring_jobs)."""
@@ -201,7 +204,7 @@ def _idle_caches_task(runtime):
     return Every("ReleaseIdleCachesThread", runtime.release_idle, max(1.0, min(60.0, runtime.idle_after / 4)))
 
 
-@background_task("folder watcher")
+@background_task(FOLDER_WATCHER)
 def _folder_watcher_task(runtime):
     """Each library's folders watched, and a folder synced when its notifications settle
     (tagpup.jobs.watching); the whole library at start. In the process that runs the
@@ -273,28 +276,13 @@ def exiftool(library, settings=None):
     return tagpup_config.exiftool_path((settings or library_settings(library)).exiftool)
 
 
-#: Called with (library, folder) when this process's index queue has finished a folder, indexed or not: rows were
-#: written even when clustering failed afterwards. The server puts here the dropping of its cached scan of the
-#: folder, which describes it as it was before (tagpup.web.tagpup_routes; docs/findings.md, #341). A process with
-#: no pages has none.
-folder_indexed = []
-
-
 def index_folder(library, subfolders=True):
     """How this process adds a folder to `library` from its index queue: the CLI's `index`
     in a process of its own, from this code (tagpup.services.indexing.index_folder); with
-    its subfolders unless not `subfolders`. Whoever queued it, the folder's cached scans are dropped
-    when it ends (folder_indexed)."""
+    its subfolders unless not `subfolders`."""
     def index(folder, cluster, report):
-        try:
-            return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report,
-                                         subfolders=subfolders)
-        finally:
-            for told in list(folder_indexed):
-                try:
-                    told(library, folder)
-                except Exception:
-                    logger.exception("Could not tell that %s was indexed", folder)
+        return indexing.index_folder(library, folder, tagpup_config.CODE_ROOT, cluster=cluster, report=report,
+                                     subfolders=subfolders)
     return index
 
 
@@ -714,7 +702,7 @@ class Runtime:
 
     def release_idle(self):
         """Let go of what has not been used for `idle_after` seconds and nothing holds (the
-        `idle` registry): the always-on process otherwise keeps a few GB of GPU memory and
+        `idle` registry): the server otherwise keeps a few GB of GPU memory and
         each opened library's vectors all day for a Suggest that may not come. The names
         let go."""
         released = self.idle.release_idle()

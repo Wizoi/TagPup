@@ -1,4 +1,4 @@
-// Logs: a tab for each log in data/logs (the web server's, the always-on process's, each
+// Logs: a tab for each log in data/logs (the web server's, each
 // library's indexer, the console's...), its newest records first as time, level, logger and
 // message; filtered by level (warnings and worse unless asked), by text and by run; Follow
 // asks for what was written since, every few seconds; Older reads further back; Raw and

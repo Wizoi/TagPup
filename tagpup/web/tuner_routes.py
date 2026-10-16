@@ -18,7 +18,7 @@ import os
 import threading
 from contextlib import contextmanager
 
-from flask import Blueprint, abort, current_app, jsonify, request
+from flask import Blueprint, abort, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup.core import paths
@@ -37,7 +37,8 @@ from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
 from tagpup.services import roots_location
 from tagpup.services import tags as tags_service
-from tagpup.web import desktop, face_routes, responses, roots_gate, roots_ingress, security, state, tagpup_routes
+from tagpup.web import desktop, face_routes, responses, roots_gate, roots_ingress, security, state
+from tagpup.web import lifecycle as lifecycles
 from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
@@ -138,15 +139,16 @@ def clustering_refusal(library, only_naming=False):
     of TagPup that name faces from tags must not be written over. `only_naming`: not for
     the flag clustering from an index run holds."""
     if library is not None and naming_faces.writing(library):
-        return jsonify({"success": False, "error": NAMING_REFUSAL}), 409
+        return responses.error(409, NAMING_REFUSAL)
     if not only_naming and library is not None and clustering.of(library).is_set():
-        return jsonify({"success": False,
-                        "error": "The server is clustering faces; this waits until it finishes."}), 409
+        return responses.error(409, "The server is clustering faces; this waits until it finishes.")
     return None
 
 
 @routes.before_request
 def refuse_writes_while_clustering():
+    """A blueprint's before_request: a POST is refused while the library's faces are clustered or named from tags
+    (clustering_refusal). TagTuner's routes, and TagPup's writes of the faces on the open photo (photo_face_routes)."""
     if request.method != "POST":
         return None
     return clustering_refusal(state.current())
@@ -261,8 +263,6 @@ def tags_merge():
     except Exception as e:
         logger.error("Error merging tag %r: %s", body.get("from"), e)
         _refuse(500, str(e))
-    if body.get("apply"):
-        tagpup_routes.forget_scans(library)     # also when refused: a batch stopped half way wrote files
     if result.refused:
         _refuse(400, result.refused)
     reply = dict(result.details)
@@ -297,7 +297,6 @@ def person_rename():
     except Exception as e:
         logger.error("Error renaming a person: %s", e)
         abort(500, description="Internal error: %s" % e)
-    tagpup_routes.forget_scans(library)
     if result.refused:
         _refuse(400, result.refused)
     if not result.ok and not result.changed:
@@ -686,9 +685,6 @@ def browse_folder():
 # a row (tagpup.services.roots_location; docs/ARCHITECTURE.md, "Roots and machines"). They answer this
 # PC only, as the Activity page does.
 
-#: The background task the folder watcher is (tagpup.runtime.BACKGROUND).
-WATCHER = "folder watcher"
-
 @routes.before_request
 def _roots_from_this_pc():
     if request.path.startswith("/api/roots") and not security.from_this_pc(request.remote_addr):
@@ -701,30 +697,13 @@ def _machine():
                                  tagpup_config.machine_roots_path, tagpup_config.set_location)
 
 
-def _busy_in(library):
-    """What is running or queued for `library` in this process, as sentences: the index queue,
-    Suggest and the folder watcher's sync. (The library's own job runs, any
-    process's, are read by the service.)"""
-    said = []
-    if indexing_jobs.queue_for(library).busy():
-        said.append("an index run is running or queued")
-    if any(run["library"].lower() == library.name.lower() for run in suggestion_jobs.under_way()):
-        said.append("Suggest is running")
-    background = getattr(current_app.config.get("LIFECYCLE"), "background", None)
-    watcher = background.task(WATCHER) if background is not None else None
-    syncing = watcher.status().get("syncing") if watcher is not None and hasattr(watcher, "status") else None
-    if syncing and syncing.get("library", "").lower() == library.name.lower():
-        said.append("a sync is running")
-    return said
-
-
 def _busy(library, name=None):
-    """_busy_in `library` and, for root `name`, in each other library of the home that holds it
-    too: the machine's map is one for them all."""
-    said = _busy_in(library)
+    """What runs for `library` in this process (tagpup.web.lifecycle.running_for) and, for root `name`, in each other
+    library of the home that holds it too: the machine's map is one for them all."""
+    said = lifecycles.running_for(library)
     if name:
         for other in roots_location.sharing(library, name, web_libraries.home_libraries()):
-            said += ["%s (in %s, which uses this root too)" % (each, other.name) for each in _busy_in(other)]
+            said += ["%s (in %s, which uses this root too)" % (each, other.name) for each in lifecycles.running_for(other)]
     return said
 
 
@@ -768,10 +747,9 @@ def _moved(library, name):
     if result.changed:
         # The map moved: what this process kept of the old places is let go -- the connections
         # find the new map by themselves within a second, and every cache keyed by the library's
-        # generations is built again (tagpup.store.generations).
+        # generations is built again (tagpup.store.generations), TagPup's folder scans among them.
         roots_gate.forget(library)
         roots_ingress.forget(library)
-        tagpup_routes.forget_scans(library)
     answer = {"success": result.refused is None, "dry_run": not apply, "changed": result.changed,
               "error": result.refused, **{key: value for key, value in result.details.items() if key != "dry_run"}}
     return jsonify(answer), (200 if result.refused is None else 409 if result.details.get("conflict") else 400)

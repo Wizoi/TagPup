@@ -12,7 +12,7 @@ a sync, an index (tagpup.core.runs) -- as `[run job:photo_index:12]` after the l
 name, so the Activity page can show one run's lines. A process started for a run writes
 a file of that run's own, <kind>-<library>-<run>.log (run_log): the indexer the index
 queue starts writes indexer-<library>-<started>-<pid>-<n>.log. Two processes may index
-one library at once -- the always-on server's queue and a sync run by hand -- and one
+one library at once -- the server's queue and a sync run by hand -- and one
 file written and rotated by two fails on Windows; so each run has its own, and the oldest
 beyond KEEP_RUN_LOGS of a kind are removed as a new one starts (prune_run_logs). Such a
 process writes its log quietly (to_file's `quiet`): its stdout and stderr are the pipe

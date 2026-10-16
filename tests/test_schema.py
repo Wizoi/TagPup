@@ -119,7 +119,7 @@ class ANewLibrary(SchemaTestCase):
         self.assertFalse(os.path.exists(os.path.join(self.dir, "backups")))
 
     def test_made_by_many_at_once_is_made_once(self):
-        # Two processes (the always-on server and a CLI run) opening a library that is not there yet.
+        # Two processes (the server and a CLI run) opening a library that is not there yet.
         errors = []
 
         def open_it():

@@ -338,21 +338,15 @@ def tag_usage(db_path):
 
     From `photo_tags`: one pass of an index rolled up the tree's parents (store.library_view.keyword_counts), 40 ms on
     photo_index's scale where reading and parsing every photo's tags JSON was 350 ms, which held the Python process at
-    page start and made every other first request wait behind it (docs/findings.md, #534).
+    page start and made every other first request wait behind it (docs/findings.md, #534). A library that cannot be read
+    raises: the tree is not shown with every count 0.
     """
-    counts = {}
-    if not os.path.exists(db_path):
-        return counts
+    from tagpup.store import library_view   # library_view imports this module's neighbours
+    conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        conn = db.connect(db.readonly_uri(db_path), uri=True)
-        try:
-            from tagpup.store import library_view   # library_view imports this module's neighbours
-            return {node["tag"]: node["count"] for node in library_view.keyword_counts(conn) if node["count"]}
-        finally:
-            conn.close()
-    except Exception:
-        pass
-    return counts
+        return {node["tag"]: node["count"] for node in library_view.keyword_counts(conn) if node["count"]}
+    finally:
+        conn.close()
 
 
 # ---- What PhotoIndex reads and writes ---------------------------------------------------

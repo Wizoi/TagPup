@@ -20,7 +20,7 @@
  * The library is read from the page's URL at each call, and `fetch` is looked up at
  * each call, so the page tests' stub answers (tests/frontend/harness.mjs).
  *
- * While the always-on process moves onto a new version (tagpup.web.lifecycle) the server
+ * While the server moves onto a new version (tagpup.web.lifecycle) it
  * answers a request 503 with X-TagPup-Updating, having done nothing with it, and then
  * answers nothing while it restarts. A request so turned away is sent again after the
  * Retry-After it was given, and again while nothing answers, for up to UPDATE_WAIT_MS:
@@ -38,8 +38,8 @@
  * (imagesAfterAnUpdate).
  *
  * Every response names the version answering (X-TagPup-Version). A page left open while
- * its server was replaced by another version -- a launch of a newer one, the always-on
- * process moving -- would run its old code against the new server: the first response
+ * its server was replaced by another version -- a launch or an install of a newer one --
+ * would run its old code against the new server: the first response
  * naming a version other than the one before is announced as a `tagpup:updated` event,
  * which web/common/roots-banner.js shows as a banner asking to reload. Not reloaded for
  * the owner: a caption half typed would go with it.

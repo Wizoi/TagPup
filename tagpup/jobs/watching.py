@@ -2,7 +2,7 @@
 it happens (docs/ARCHITECTURE.md, phase 8, "Event-driven first" and "Watching, with the
 schedule as the safety net").
 
-The always-on process runs one Watcher (a background task, tagpup.runtime.BACKGROUND). It
+The server runs one Watcher (a background task, tagpup.runtime.BACKGROUND). It
 watches each library's folders -- its root folders and the folders it holds photos in
 outside them, each the topmost of those under it -- with one recursive watch per folder
 (Windows' directory-change notifications, through watchdog), a folder two libraries

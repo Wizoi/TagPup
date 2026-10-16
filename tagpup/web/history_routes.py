@@ -11,9 +11,9 @@ sent -- a change's rows can name people -- and the summary holds counts only. PO
 rehearses the undo of one (`apply` false: nothing is written, and the answer says what
 would be put back and what refused) or makes it (`apply` true): a change of rows only
 where the rehearsal restores every row exactly, a change of photo files file by file,
-each file no longer holding what the change left refused and named by photo id. After
-an undo that changed something, the folder scans TagPup keeps are let go, as after any
-rewrite of photos (tagpup_routes.forget_scans).
+each file no longer holding what the change left refused and named by photo id. The
+folder scans TagPup keeps follow by themselves: an undo moves the photos counter
+(tagpup.web.tagpup_routes.FolderCache).
 """
 import logging
 
@@ -21,7 +21,7 @@ from flask import Blueprint, jsonify, request
 
 from tagpup.core.result import NotFound
 from tagpup.services import journal as journal_service
-from tagpup.web import responses, state, tagpup_routes
+from tagpup.web import responses, state
 
 logger = logging.getLogger(__name__)
 routes = Blueprint("history", __name__)
@@ -81,7 +81,5 @@ def undo_change(change_id):
     except Exception as e:
         logger.error("Could not undo change %d of %s: %s", change_id, library.name, e, exc_info=True)
         return responses.error(500, str(e))
-    if apply and result.changed:
-        tagpup_routes.forget_scans(library)
     # Refused, nothing was written: 400, as every route answers a refusal.
     return jsonify(_answer(result, change_id)), (400 if result.refused else 200)

@@ -4,7 +4,7 @@ Nothing at start called schema.ensure: the first request naming a library after 
 migration -- 21 is 17.5 s cold on photo_index -- and a write from the other app waited on the busy
 timeout meanwhile. Now tagpup_web starts a thread, before it serves, that brings each library it
 serves up to date (the startup library, or every library in the data folder). The server answers at
-once (the supervisor's hand-over asks /api/server, which names no library); a page's request for a
+once (a launcher's hand-over asks /api/server, which names no library); a page's request for a
 library being migrated is answered 503 at once (ALibraryBeingMigrated below).
 
 A request for a library that is being migrated is not parked on its write lock (docs/findings.md, Integration-and-apps
@@ -95,7 +95,7 @@ class TheServerMigratesAtStart(unittest.TestCase):
 
     def test_a_drain_while_it_runs_waits_for_it(self):
         """docs/findings.md, #664: the thread is work beside the requests. /api/server says so, and a
-        drain -- the supervisor's, before a new version -- is refused while it runs, rather than ending
+        drain -- a launcher's, before a new version -- is refused while it runs, rather than ending
         the server part-way through a migration that the next start would pay for again."""
         release, entered = threading.Event(), threading.Event()
         real = schema.ensure

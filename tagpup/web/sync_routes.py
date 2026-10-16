@@ -22,7 +22,7 @@ from flask import Blueprint, jsonify, request
 from tagpup import runtime as runtimes
 from tagpup.services import settings as settings_service
 from tagpup.services import sync as sync_service
-from tagpup.web import activity_routes, responses, state, tagpup_routes
+from tagpup.web import activity_routes, responses, state
 
 logger = logging.getLogger(__name__)
 routes = Blueprint("sync", __name__)
@@ -51,8 +51,6 @@ def sync_library():
     except Exception as e:
         logger.error("Could not sync %s: %s", library.name, e, exc_info=True)
         return responses.error(500, str(e))
-    if apply and result.changed:
-        tagpup_routes.forget_scans(library)
     answer = {"success": result.ok, "dry_run": not apply, "refused": result.refused,
               "attempted": result.attempted, "changed": result.changed,
               "changed_by_kind": result.details.get("changed", {}), "queued": result.details.get("queued", 0),

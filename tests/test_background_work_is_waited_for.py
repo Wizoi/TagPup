@@ -1,7 +1,7 @@
 """Every module that starts background work is waited for by the update's drain, or says why it need not be
 (docs/INVARIANTS.md; Integration-and-apps review 2026-10-09, C14).
 
-`tagpup.web.lifecycle.long_work` is the list a drain refuses to end the server beside: a Suggest run, an index, the
+`tagpup.web.lifecycle.under_way` is the list a drain refuses to end the server beside (long_work): a Suggest run, an index, the
 naming of faces, an assignment of faces, the startup migrations. It was a hand list, and a new job joined it only if somebody
 remembered. A module under tagpup/jobs or tagpup/services that starts a thread, or has a `running()` of its own, fails here until
 `long_work` asks it, or it is listed below with the reason a drain need not wait for it.
@@ -43,7 +43,8 @@ def starts_background_work(path):
 
 
 def asked_by_long_work():
-    """The modules `lifecycle.long_work` calls something of (`running`, `bringing_up_to_date`), by their full names."""
+    """The modules `lifecycle.under_way` calls something of (`every_queue`, `running`, `bringing_up_to_date`), by their full
+    names."""
     with open(lifecycle.__file__, encoding="utf-8") as handle:
         tree = ast.parse(handle.read())
     aliases = {}
@@ -51,7 +52,7 @@ def asked_by_long_work():
         if isinstance(node, ast.ImportFrom) and node.module:
             for each in node.names:
                 aliases[each.asname or each.name] = "%s.%s" % (node.module, each.name)
-    work = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "long_work")
+    work = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "under_way")
     return {aliases[call.func.value.id] for call in ast.walk(work)
             if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)
             and call.func.value.id in aliases}

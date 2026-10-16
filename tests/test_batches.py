@@ -111,7 +111,8 @@ class Line(T.Bulk):
         self.assertEqual([("running", 0), ("queued", 1)], [(each["state"], each["position"]) for each in listed])
         self.assertEqual([self.PHOTOS, self.PHOTOS], [each["photos"] for each in listed])
         self.assertEqual(["2 photo batches (120 photos in all, 1 waiting)"], batches.sentences())
-        self.assertIn("2 photo batches (120 photos in all, 1 waiting)", lifecycle.long_work())
+        self.assertIn(lifecycle.Work(lifecycle.BATCH, None, "2 photo batches (120 photos in all, 1 waiting)"),
+                      lifecycle.long_work())
         gate.release.set()
         first.join(60)
         second.join(60)
@@ -295,7 +296,7 @@ class HandOver(T.Bulk):
         holder = threading.Thread(target=hold)
         holder.start()
         self.assertTrue(started.wait(30))
-        with mock.patch("tagpup.jobs.suggestions.running", return_value=1):
+        with mock.patch("tagpup.jobs.suggestions.under_way", return_value=[{"library": self.library.name}]):
             answer = lifecycle.Lifecycle().drain(seconds=1, lease=60)
         self.assertEqual({"drained": False, "waiting_for": ["1 Suggest run(s)"]}, answer)
         release.set()

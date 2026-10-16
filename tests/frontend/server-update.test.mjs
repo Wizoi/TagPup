@@ -1,5 +1,5 @@
 /**
- * The always-on process moves onto a new version between requests (docs/ARCHITECTURE.md,
+ * The server moves onto a new version between requests (docs/ARCHITECTURE.md,
  * phase 8, "Updating itself"; tagpup.web.lifecycle). While it drains, a request is
  * answered 503 with X-TagPup-Updating and nothing done with it; then, while the server
  * restarts, nothing answers. A page waits that out and sends the request again

@@ -560,6 +560,8 @@ class TheOwnerMovesTheLocationInTheDialog(RootsDialogCase):
 
     def test_an_index_run_in_either_library_of_the_root_holds_the_move_up(self):
         mapped = self.map_file()
+        indexing_jobs.queue_for(self.side.library)      # a run queued here: its queue is this process's
+        self.addCleanup(indexing_jobs.forget, self.side.library)
         with mock.patch.object(indexing_jobs.IndexQueue, "busy", lambda queue: True):
             reply, listed = self.move(self.copy), self.get("/api/roots").get_json()
         self.assertEqual(409, reply.status_code)
@@ -602,7 +604,7 @@ class TheOwnerMovesTheLocationInTheDialog(RootsDialogCase):
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class TheMachineThatDoesNotPlaceTheRoot(RootsDialogCase):
-    """The always-on machine's map is gone or unreadable. The web pages and the MCP server say so in one sentence naming the
+    """This machine's map is gone or unreadable. The web pages and the MCP server say so in one sentence naming the
     file and the line to add, the pages that read no photo still open, and placing the root from the dialog opens the
     library again.
 
@@ -674,7 +676,7 @@ class AFolderTheLibraryDoesNotHold(unittest.TestCase):
     (Suggest in another library's folder made rows, so sync queued its photos and the indexer grew the tree from their tags).
     Breaks that fail the kept tests, each applied to a copy of the code: photos.ensure_row no longer raising NotHeld (Suggest
     makes the row) fails test_suggest_sync_and_the_watcher_leave_the_folder_alone_until_it_is_added; libraries.split putting every photo
-    among the held (so refuse_writes answers 409) fails test_a_write_there_touches_the_file_and_makes_no_row;
+    among the held (so the write is journaled, not the file's only) fails test_a_write_there_touches_the_file_and_makes_no_row;
     libraries._read answering `default` for a library it cannot read fails test_a_library_that_cannot_be_read_fails_a_write_it_does_not_refuse_it."""
 
     def setUp(self):
@@ -717,6 +719,7 @@ class AFolderTheLibraryDoesNotHold(unittest.TestCase):
                             ("/photo/rotate", {"path": self.photo, "direction": "left"})):
             reply = self.post(route, body)
             self.assertEqual(200, reply.status_code, (route, reply.data))
+            self.assertEqual((1, 0), (reply.get_json()["file_only"], reply.get_json()["with_rows"]), route)
             self.assertNotEqual(before, stamp(self.photo), route)
             self.assertEqual([self.lighthouse], self.not_held(), "%s made a row" % route)
             before = stamp(self.photo)

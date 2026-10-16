@@ -1,6 +1,6 @@
 """What a process keeps in memory only while it is used, let go after an idle period.
 
-The always-on process runs all day, and what it builds to answer quickly -- the models,
+The server runs all day, and what it builds to answer quickly -- the models,
 each library's vectors, New Person's pool of faces, the Identify Faces grids, the folder
 scans -- was held until it ended: on photo_index some 700 MB for a library opened once
 (owner, 2026-09-26: "can the in-memory cache be minimized when not in use?"). Each such

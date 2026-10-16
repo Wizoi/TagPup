@@ -179,15 +179,21 @@ def where_deleted(library, selection):
             "no_room": recycle_bin.can_copy_here(copy_bytes, largest, fresh=True) if through else None}
 
 
+def paths_of(library, photo_ids):
+    """{photo id: its path, as this machine places it} of the photos of `photo_ids` the library has (ids and paths only): what a
+    resolved selection's photos are written as (tagpup.services.bulk_edit)."""
+    conn = library_view.opened(library)
+    try:
+        return store.paths_of(conn, photo_ids)
+    finally:
+        conn.close()
+
+
 def _too_long(library, photo_ids, binless, named):
     """How many photos of `photo_ids` in the folders `binless` would have a copy's path too long for the Recycle Bin (#704): their
     paths read (ids and paths only), only when some go through this PC."""
     folders = {paths.key(named[folder_id][0]) for folder_id in binless}
-    conn = library_view.opened(library)
-    try:
-        found = store.paths_of(conn, photo_ids)
-    finally:
-        conn.close()
+    found = paths_of(library, photo_ids)
     root = recycle_bin.mirror_root()
     return sum(1 for path in found.values()
                if paths.key(os.path.dirname(path)) in folders and recycle_bin.too_long(recycle_bin.mirror_of(path, root)))

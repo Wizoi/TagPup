@@ -103,8 +103,6 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     result = Result(attempted=1)
     _held, loose = libraries.split(library, [photo_path])
     files_only = bool(loose)
-    if not files_only and libraries.refuse_writes(result, library, [photo_path]):
-        return result
     wanted = fields.caption_fields(title or "")
     if date_taken:
         wanted.update(fields.date_taken_fields(date_taken))
@@ -327,8 +325,6 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
         return _refused(len(changes), problem)
     refused = _refused(len(changes), None)
     held, loose = libraries.split(library, [path for path, (add, remove) in changes.items() if add or remove])
-    if held and libraries.refuse_writes(refused, library, held):
-        return refused
 
     def plan_of(chosen):
         return [(path, list(changes[path][0]), changes[path][1]) for path in chosen]

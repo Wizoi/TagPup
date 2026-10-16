@@ -1,6 +1,6 @@
 // Recent activity: one timeline of what was done -- each library's changes of the journal,
-// recurring job runs and syncs, this server's runs of the indexer, and the always-on
-// process's updates -- newest first, with their counts; More reads further back
+// recurring job runs and syncs, this server's runs of the indexer, and the server's
+// updates -- newest first, with their counts; More reads further back
 // (/api/activity/timeline).
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';

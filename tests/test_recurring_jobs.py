@@ -3,7 +3,7 @@ the library; a missed period run once; one run of a job for a library at a time,
 threads and processes, and a run a dead process left taken over; the web server's
 thread stopped cleanly; and what the apps are told, counts only.
 
-Only the web server -- the always-on process -- runs them (owner, 2026-09-26): the CLI ran what was due before every
+Only the web server runs them (owner, 2026-09-26): the CLI ran what was due before every
 command, so the first `stats` of a day waited 20 s for a snapshot and a look wrote to the library, and the MCP server
 ran them on a thread as it started. A server a test starts is told TAGPUP_NO_JOBS, whatever else it inherits (review
 of phase 8a, 7).

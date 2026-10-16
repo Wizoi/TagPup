@@ -2,7 +2,7 @@
 the next ask makes them again; a run in use keeps them; the Activity page's Unload button lets them go sooner.
 
 Owner, 2026-09-26 ("can the in-memory cache be minimized when not in use?") and 2026-10-05 (ViT-H-14 and the face models
-kept on the card for 30 minutes made Lightroom crawl): the always-on process lets go after five idle minutes, noticed
+kept on the card for 30 minutes made Lightroom crawl): the server lets go after five idle minutes, noticed
 within one, and the button at once, never under a running Suggest. On photo_index the vectors are about 270 MB and New
 Person's pool 185 MB. The models are stand-ins that take the card's turn as the real ones do; nothing loads
 (tests/test_no_test_loads_a_model.py). The clock is the test's. Names are fictional.
