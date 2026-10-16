@@ -49,8 +49,9 @@ def _held(row, wanted):
 def read(et, photo_paths, wanted, also=(), records=None, stop=None):
     """{paths.key(path): {field: its values}} of each photo in `photo_paths`, for the
     fields in `wanted`; an Unreadable in place of the fields of a photo that could not be
-    read (NotAnswered, of a batch ExifTool did not answer for). Read in batches; a batch ExifTool refuses is read again a
-    photo at a time, so one bad file does not cost the others. The one batch reader: the indexer's
+    read (NotAnswered, of a photo ExifTool did not answer for). Read in batches; a batch ExifTool refuses is read again a
+    photo at a time, so one bad file does not cost the others. A command ExifTool does not answer in its deadline (a share
+    gone away) ends the read: that photo, and every photo not read yet, is NotAnswered, so one read waits one deadline. The one batch reader: the indexer's
     (tagpup.files.metadata.MetadataExtractor) and sync's pairing (tagpup.services.relink_photos) read through it. `also` are fields asked as well, answered only
     in `records`, when given: {paths.key(path): ExifTool's record} of each photo read.
 
@@ -65,21 +66,26 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None):
         records = {}
     found = {}
     photo_paths = list(photo_paths)
+
+    def stalled(error, left):
+        # ExifTool did not answer (its process was killed): a share gone away, a disk that stopped. Each photo read again
+        # would wait its own deadline -- 25 photos of a bad share were two hours -- so nothing more is read; one bad path
+        # ExifTool refuses (below) is read again singly.
+        said = "ExifTool did not answer in %s s" % getattr(et, "timeout", "time")
+        left = [one for one in left if paths.key(one) not in found]
+        logger.warning("%s; %d photo(s) were not read: %s", said, len(left), error)
+        for one in left:
+            found[paths.key(one)] = NotAnswered(said)
+        return found
+
     for start in range(0, len(photo_paths), READ_BATCH):
         if stop is not None and stop.is_set():
             break
         batch = photo_paths[start:start + READ_BATCH]
         try:
             rows = et.get_tags(batch, tags=asked)
-        except (exiftool_session.ExifToolTimeout, ExifToolNotRunning) as stalled:
-            # ExifTool did not answer (its process was killed): a share gone away, a disk that stopped. Each photo read again
-            # singly would wait its own deadline -- 25 photos of a bad share were two hours -- so the whole batch is unreadable
-            # and nothing is retried; one bad path ExifTool refuses (below) is.
-            said = "ExifTool did not answer in %s s" % getattr(et, "timeout", "time")
-            logger.warning("%s; %d photo(s) of the batch were not read: %s", said, len(batch), stalled)
-            for one in batch:
-                found[paths.key(one)] = NotAnswered(said)
-            continue
+        except (exiftool_session.ExifToolTimeout, ExifToolNotRunning) as error:
+            return stalled(error, photo_paths[start:])
         except Exception:
             rows = None
         if rows is not None:
@@ -100,6 +106,9 @@ def read(et, photo_paths, wanted, also=(), records=None, stop=None):
                 rows = et.get_tags([one], tags=asked)
                 found[paths.key(one)] = _held(rows[0] if rows else {}, wanted)
                 records[paths.key(one)] = rows[0] if rows else {}
+            except (exiftool_session.ExifToolTimeout, ExifToolNotRunning) as error:
+                # A batch refused, then a photo of it read singly not answered (#1490): the share went away.
+                return stalled(error, missed + photo_paths[start + READ_BATCH:])
             except Exception as e:
                 found[paths.key(one)] = e if isinstance(e, Unreadable) else Unreadable(str(e))
     return found

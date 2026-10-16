@@ -13,7 +13,7 @@ from tagpup.core import fields, paths, renaming, vocabulary
 from tagpup.core.fields import METADATA_FIELDS
 from tagpup.core.renaming import sanitize_filename  # noqa: F401  (imported from here by older code)
 from tagpup.files import field_values
-from tagpup.files.exiftool_session import ExifToolSession
+from tagpup.files.exiftool_session import ExifToolSession, StaysDead
 
 logger = logging.getLogger("tagpup_cli.metadata")
 
@@ -60,6 +60,11 @@ def structured(meta):
     return cleaned
 
 
+#: Why a record is left unread (its `unread`): what the indexer says of the photos it did not record.
+NOT_ANSWERED = "ExifTool did not answer for them (a share gone away?)"
+NOT_STARTED = "ExifTool could not be started"
+NO_STAT = "their file could not be looked at (its modified time and size could not be read)"
+
 #: Where ExifTool puts an error about a file in what it answers.
 READ_ERROR_KEYS = ("ExifTool:Error", "Error")
 
@@ -79,8 +84,9 @@ class MetadataExtractor:
 
         A photo ExifTool refuses (or that is not a photo) is recorded holding nothing, with `read_error`, stamped: a
         file that cannot be read is not read again every run. A photo ExifTool did not answer for (a share gone away),
-        or whose stat failed, is left UNREAD: its record has no stamp (mtime and size None), so nothing records it as
-        read. `people` is what the library's tag tree says about people, read once for the batch; without it, only the
+        or whose stat failed, or that no ExifTool could be started to read, is left UNREAD: its record has no stamp (mtime
+        and size None) and says why in `unread` (NOT_ANSWERED, NO_STAT, NOT_STARTED), so nothing records it as read. The
+        session stays dead after a timeout (StaysDead): one deadline is waited for, not one a command. `people` is what the library's tag tree says about people, read once for the batch; without it, only the
         usual face roots name anybody.
         """
         if not file_paths:
@@ -92,18 +98,23 @@ class MetadataExtractor:
 
         # Each file's stamp before the read (_stamp).
         stamps = [self._stamp(path) for path in file_paths]
-        records = {}
+        records, not_started = {}, None
         try:
             with ExifToolSession(executable=executable) as et:
-                found = field_values.read(et, file_paths, [], METADATA_FIELDS, records)
+                found = field_values.read(StaysDead(et), file_paths, [], METADATA_FIELDS, records)
         except Exception as e:
             logger.error("Could not start ExifTool to read %d file(s): %s", len(file_paths), e)
-            found = {paths.key(path): field_values.NotAnswered(str(e) or type(e).__name__) for path in file_paths}
+            not_started = str(e) or type(e).__name__
+            found = {}
         results = []
         for path, stamp in zip(file_paths, stamps):
             held, record = found.get(paths.key(path)), records.get(paths.key(path))
-            if isinstance(held, field_values.NotAnswered):
-                results.append(self._empty(path, held, (None, None)))
+            if not_started is not None:
+                results.append(dict(self._empty(path, not_started, (None, None)), unread=NOT_STARTED))
+            elif isinstance(held, field_values.NotAnswered):
+                results.append(dict(self._empty(path, held, (None, None)), unread=NOT_ANSWERED))
+            elif stamp == (None, None):
+                results.append(dict(self._empty(path, held or "its stat failed", stamp), unread=NO_STAT))
             elif isinstance(held, Exception) or not record:
                 logger.error("Unreadable metadata, indexing without it: %s (%s)", path, held or "no answer")
                 results.append(self._empty(path, held or "ExifTool answered nothing for it", stamp))

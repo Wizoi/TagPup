@@ -57,6 +57,21 @@ class TheIndexAndSyncReadAShareThatStopsAnswering(unittest.TestCase):
         self.assertEqual([(None, None)] * 3, [(record["mtime"], record["size"]) for record in records])
         self.assertTrue(all(record["read_error"] for record in records))
 
+    def test_a_batch_refused_then_a_photo_of_it_not_answered_leaves_them_all_unread(self):
+        """#1490: a batch ExifTool refuses is read again a photo at a time; the first of those it does not answer ends the
+        read. It was a plain Unreadable, stamped holding nothing, and each next photo waited its own deadline."""
+        class RefusesThenStalls(StalledSession):
+            def get_tags(self, batch, tags=None, params=None):
+                StalledSession.calls.append(list(batch))
+                if len(batch) > 1:
+                    raise RuntimeError("Error: one of them is no file")
+                raise exiftool_session.ExifToolTimeout("ExifTool did not answer within 300s (a read); its process was killed.")
+        with mock.patch.object(metadata, "ExifToolSession", RefusesThenStalls):
+            records = metadata.MetadataExtractor().batch_read(self.photos)
+        self.assertEqual(2, len(StalledSession.calls), "the batch, then one photo: no deadline more")
+        self.assertEqual([(None, None, [], metadata.NOT_ANSWERED)] * 3,
+                         [(r["mtime"], r["size"], r["tags"], r["unread"]) for r in records])
+
     def test_syncs_pairing_read_waits_one_deadline_and_pairs_nothing(self):
         with mock.patch.object(exiftool_session, "ExifToolSession", StalledSession):
             by_original, by_identity = relink_photos.claims_of(self.photos)
