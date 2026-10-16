@@ -18,7 +18,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf } from "./harness.mjs";
 
 const TAXONOMY = [
   { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
@@ -48,7 +48,7 @@ function server(aTags) {
     .on("/api/folder/scan", photos(aTags))
     .on("/api/taxonomy/tree", TAXONOMY)
     .on("/api/taxonomy/create", { success: true })
-    .on("/api/people", ["Imogen Vale"])
+    .on("/api/people?records=1", peopleRecordsOf(TAXONOMY))
     .on("/api/tags", ["Cross Country", "Harbourside", "Kentridge"])
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })

@@ -231,10 +231,7 @@ export function scanFolder(forceRefresh = false, { keepTyped = false } = {}) {
 
     // Cache lookup if not forcing refresh
     if (!forceRefresh) {
-        // Falls back once to the key as typed, which is how entries were stored
-        // before pathKey; the next save moves it to the shared key.
-        const rawCache = localStorage.getItem(folderCacheKey(path))
-            || localStorage.getItem(`tagpup_cache_${path}`);
+        const rawCache = localStorage.getItem(folderCacheKey(path));
         if (rawCache) {
             try {
                 const cacheEntry = JSON.parse(rawCache);

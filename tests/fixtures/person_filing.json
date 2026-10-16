@@ -9,9 +9,10 @@
     {"why": "two people roots, the person absent", "roots": [["People", 1], ["Family", 1]], "paths": ["People/Rowan Thackeray", "Family/Ada Lovelace"], "file": [], "known": ["Rowan Thackeray", "Ada Lovelace", "Wren Okafor"], "expect": "ask"},
     {"why": "the person filed twice", "roots": [["People", 1], ["Family", 1]], "paths": ["People/Wren Okafor", "Family/Wren Okafor"], "file": [], "known": ["Wren Okafor"], "expect": "ask"},
     {"why": "a node of that name under a root that holds no people", "roots": [["People", 1], ["Trips", 0]], "paths": ["Trips/Wren Okafor"], "file": [], "known": ["Wren Okafor"], "expect": "People/Wren Okafor"},
-    {"why": "the file names her under another root; the tree files Rowan, not her", "roots": [["People", 1], ["Family", 0]], "paths": ["People/Rowan Thackeray"], "file": ["Family/Wren Okafor"], "known": ["Rowan Thackeray", "Wren Okafor"], "expect": "already"},
-    {"why": "the file holds her bare, and the people root files nobody", "roots": [["People", 1]], "paths": [], "file": ["Wren Okafor"], "known": ["Wren Okafor"], "expect": "already"},
+    {"why": "the file names her under another root; the tree files Rowan, not her", "roots": [["People", 1], ["Family", 0]], "paths": ["People/Rowan Thackeray"], "file": ["Family/Wren Okafor"], "known": ["Rowan Thackeray", "Wren Okafor"], "expect": "People/Wren Okafor"},
+    {"why": "the file holds her bare, and the people root files nobody", "roots": [["People", 1]], "paths": [], "file": ["Wren Okafor"], "known": ["Wren Okafor"], "expect": "People/Wren Okafor"},
     {"why": "the file holds her filed as the tree files her", "roots": [["People", 1]], "paths": ["People/Wren Okafor"], "file": ["People/Wren Okafor"], "known": ["Wren Okafor"], "expect": "already"},
+    {"why": "a person at the top of the tree, another of her name under People, and the suggestion her own top-level tag (#1408)", "roots": [["People", 1], ["Wren Okafor", 1]], "paths": ["People/Wren Okafor"], "file": [], "known": ["Wren Okafor"], "expect": "Wren Okafor"},
     {"why": "the file holds only other keywords", "roots": [["People", 1], ["Trips", 0]], "paths": [], "file": ["Trips/Regatta"], "known": ["Wren Okafor"], "expect": "People/Wren Okafor"}
   ]
 }

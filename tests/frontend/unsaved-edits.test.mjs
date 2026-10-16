@@ -14,7 +14,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf } from "./harness.mjs";
 
 const PHOTOS = [
   { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["People/Tamsin Ashgrove"], people: ["Tamsin Ashgrove"], captions: [], title: "" },
@@ -22,12 +22,18 @@ const PHOTOS = [
   { path: "D:\\p\\c.jpg", filename: "c.jpg", tags: [], people: [], captions: [], title: "" },
 ];
 
-function server({ save = { success: true }, people = [], tags = [] } = {}) {
+// The tree of a library whose photo holds People/Tamsin Ashgrove: the indexer gives the keyword a node.
+const TREE = [
+  { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
+  { id: 2, tag: "People/Tamsin Ashgrove", name: "Tamsin Ashgrove", parent_id: 1, has_face: 1 },
+];
+
+function server({ save = { success: true }, people = peopleRecordsOf(TREE), tags = [] } = {}) {
   return new FakeServer()
     .on("/api/folder/scan", PHOTOS.map((p) => ({ ...p, tags: [...p.tags], people: [...p.people] })))
-    .on("/api/taxonomy/tree", [])
+    .on("/api/taxonomy/tree", TREE)
     .on("/api/taxonomy/create", { success: true })
-    .on("/api/people", people)
+    .on("/api/people?records=1", people)
     .on("/api/tags", tags)
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", save)

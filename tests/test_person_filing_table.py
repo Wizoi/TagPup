@@ -82,13 +82,34 @@ class ApplyAllFilesAPersonAsTheChipDoes(unittest.TestCase):
                 self.tree_before = self.tree(library)
                 entry = {"tags": [], "people": [{"name": TABLE["name"], "score": 0.9}]}
                 result = tagging.apply_suggestions(library, {photo: entry}, EXIFTOOL)
-                self.assertFalse(result.refused, result.refused)
-                wanted = {"already": case["file"], "ask": case["file"] + [TABLE["name"]]}.get(
-                    case["expect"], case["file"] + [case["expect"]])
-                self.assertEqual(wanted, tags_in(photo))
+                if case["expect"] == "ask":
+                    # With nobody to ask, Apply All refuses before it writes: it wrote the bare name, which names nobody.
+                    self.assertTrue(result.refused, "written without asking")
+                    self.assertIn(TABLE["name"], result.refused)
+                    self.assertEqual(case["file"], tags_in(photo))
+                else:
+                    self.assertFalse(result.refused, result.refused)
+                    wanted = case["file"] if case["expect"] == "already" else case["file"] + [case["expect"]]
+                    self.assertEqual(wanted, tags_in(photo))
                 if not held:   # a held write has its journal and rows; the tree is the same either way
                     self.assertEqual(before, library_dump.dump(library.path), "the library was changed")
                 self.assertEqual(self.tree(library), self.tree_before)
+
+    def test_a_photo_that_already_has_one_of_two_people_called_alike_asks_nothing(self):
+        # #1409: the refusal of a name filed twice asked "add them on a photo, choosing which" of a photo that had, and
+        # refused again. A photo whose file names one of those people has them.
+        self.home = own_home.for_test(self)
+        case = {"roots": [["People", 1], ["Family", 1]], "paths": ["People/Wren Okafor", "Family/Wren Okafor"]}
+        library = self.library_with(0, case)
+        photo = os.path.join(self.home.root, "Share", "Held", "wren.jpg")
+        damaged_photos.whole_jpeg(photo, seed=7)
+        with ExifToolSession(executable=EXIFTOOL) as et:
+            et.set_tags([photo], tags={"XMP:Subject": ["Family/Wren Okafor"]}, params=["-overwrite_original"])
+        library_actions.record_added(library, [os.path.dirname(photo)])
+        entry = {"tags": [], "people": [{"name": TABLE["name"], "score": 0.9}]}
+        result = tagging.apply_suggestions(library, {photo: entry}, EXIFTOOL)
+        self.assertFalse(result.refused, result.refused)
+        self.assertEqual(["Family/Wren Okafor"], tags_in(photo))
 
 
 if __name__ == "__main__":

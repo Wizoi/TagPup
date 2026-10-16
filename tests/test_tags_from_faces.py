@@ -70,37 +70,31 @@ class TheDryRun(Mending):
         self.assertIn("Nothing to write", said.output)
 
 
-class OneRuleForThePersonAPhotoAlreadyNames(Mending):
+class AKeywordOfTheSameLeafIsNobody(Mending):
     def under_another_root(self, name="other_root.jpg"):
-        # The photo's keyword is the person's leaf under a root the tree does not file people under: the index lists the person
-        # from the face alone, and the keyword writer would drop the add (the file names them by their leaf).
+        # The photo's keyword is the person's leaf under a root the tree does not file people under: it names nobody (the person
+        # is the id of their node, DECISIONS 2026-10-11), so the person is written beside it. It was skipped as "already named"
+        # and counted as a tree question (docs/findings.md, #1394).
         photo = self.photo(name, ["Parkrunner/" + WREN])
         self.files.keep_tags(photo, ["Parkrunner/" + WREN])
         self.face(photo, name=WREN, name_source="manual")
         return photo
 
-    def test_the_dry_run_skips_and_counts_it_and_never_names_the_person(self):
-        self.under_another_root()
-        self.drifted("drift_a.jpg", who=ODA)
-        said = self.run_cli()
-        self.assertIn("2 photo(s) list a person from a face alone", said.output)
-        self.assertIn("1 of the people: the photo's keywords already name them under a root", said.output)
-        self.assertIn("tree question", said.output)
-        self.assertIn("1 photo file(s) would be written", said.output)
-        self.assertNotIn(WREN, said.output)
-        self.assertNotIn("Parkrunner", said.output)
-
-    def test_the_count_to_write_is_what_apply_writes_and_a_second_run_finds_none(self):
+    def test_the_person_is_written_beside_it_and_a_second_run_finds_none(self):
         photo = self.under_another_root()
         self.drifted("drift_b.jpg", who=ODA)
+        said = self.run_cli()
+        self.assertIn("2 photo(s) list a person from a face alone", said.output)
+        self.assertIn("2 photo file(s) would be written", said.output)
+        self.assertNotIn(WREN, said.output)
+        self.assertNotIn("Parkrunner", said.output)
         dry = tags_from_faces.plan(self.library)
         wrote = self.run_cli("--apply")
         self.assertEqual(0, wrote.exit_code, wrote.output)
         self.assertIn("Wrote %d photo file(s)" % dry.details["counts"]["photos_to_write"], wrote.output)
-        self.assertEqual(["Parkrunner/" + WREN], self.files.tags_of(photo), "the file that names the person was written")
+        self.assertEqual(["Parkrunner/" + WREN, PEOPLE + WREN], self.files.tags_of(photo))
         again = self.run_cli()
         self.assertIn("0 photo file(s) would be written", again.output)
-        self.assertEqual(1, tags_from_faces.plan(self.library).details["counts"]["people_the_file_names_under_another_root"])
 
 
 class GuessesAreLeftUnlessAsked(Mending):

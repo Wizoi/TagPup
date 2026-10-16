@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -244,5 +244,31 @@ describe("the add-person list", () => {
     assert.deepEqual(options.filter((value) => value.endsWith("/Sam")), ["Friends/Sam", "Pets/Sam"]);
     assert.equal(options.filter((value) => value === "Sam").length, 0, "a bare name two people have is no one of them");
     assert.ok(options.includes("Family/Ingersoll/Wren"));
+  });
+
+  test("offers only people: never a face root, a group, or a keyword whose leaf is a face's name", async (t) => {
+    // A tree as a library holds one: an empty People (where people are filed), a group with a person under it, and a
+    // keyword Trips/Wren whose leaf is the name a face was given (docs/findings.md, #1358).
+    const tree = [
+      { id: 1, tag: "Friends", name: "Friends", parent_id: null, has_face: 1 },
+      { id: 2, tag: "Friends/Sam", name: "Sam", parent_id: 1, has_face: 1 },
+      { id: 5, tag: "Family", name: "Family", parent_id: null, has_face: 1 },
+      { id: 6, tag: "Family/Ingersoll", name: "Ingersoll", parent_id: 5, has_face: 1 },
+      { id: 7, tag: "Family/Ingersoll/Wren", name: "Wren", parent_id: 6, has_face: 1 },
+      { id: 8, tag: "Trips", name: "Trips", parent_id: null, has_face: 0 },
+      { id: 9, tag: "People", name: "People", parent_id: null, has_face: 1 },
+      { id: 10, tag: "Trips/Wren", name: "Wren", parent_id: 8, has_face: 0 },
+    ];
+    // A group tag on a photo is ordinary tagging (owner, 2026-10-09, #986).
+    const photo = photoRecord({ filename: "a.jpg", tags: ["Trips/Wren", "Family/Ingersoll", "Friends/Sam"], people: ["Sam"] });
+    const ctx = await openPhoto(t, { photo, extra: (server) => server
+      .first("/api/taxonomy/tree", tree)
+      .first("/api/tags", tree.map((node) => node.tag))     // tags_service.autocomplete: the tree's tags and the photos'
+      .first("/api/people?records=1", peopleRecordsOf(tree)) });          // serverFor's /api/people: the names given to faces, Sam and Wren
+    const offered = (list) => [...ctx.document.querySelectorAll(`#${list} option`)].map((option) => option.value).sort();
+    assert.deepEqual(offered("people-datalist"), ["Family/Ingersoll/Wren", "Friends/Sam"]);
+    const tags = offered("tags-datalist");
+    for (const tag of ["Trips/Wren", "Family/Ingersoll", "Trips"]) assert.ok(tags.includes(tag), `${tag} is not offered as a tag`);
+    assert.ok(!tags.includes("Friends/Sam"), "a person is offered as a tag");
   });
 });

@@ -19,7 +19,7 @@
  * Fixing them one at a time is how a whole evening goes. These tests are the
  * structural fix, in the shape that already worked for the database: the conversions
  * live in a few named helpers -- web/common/vocabulary.js's, and TagPup's own
- * normalizeTag and ancestorsOf -- and a raw `.split('/')` anywhere else in a page's
+ * normalizeTag -- and a raw `.split('/')` anywhere else in a page's
  * modules fails here.
  */
 import { test, describe } from "node:test";
@@ -35,7 +35,7 @@ const VOCABULARY_JS = fs.readFileSync(path.join(REPO_ROOT, "web", "common", "voc
 
 /** The helpers that are allowed to split a tag, by the name they are declared with. */
 // "ordering" takes a tag apart to compare it level by level (the order tags are shown in).
-const VOCABULARY = ["leafOf", "rootOf", "ancestorsOf", "normalizeTag", "ordering"];
+const VOCABULARY = ["leafOf", "rootOf", "normalizeTag", "ordering"];
 
 /** Helpers that split something that is not a tag: api.js reading the library out of the URL. */
 const NOT_TAGS = ["libraryIn"];
@@ -78,7 +78,7 @@ describe("the tag vocabulary is used, not reinvented", () => {
       offenders,
       [],
       "these convert between a person's name and their tag by hand instead of " +
-        "using leafOf / rootOf / ancestorsOf / samePerson / photoAlreadyHas:\n" +
+        "using leafOf / rootOf / samePerson / photoAlreadyHas:\n" +
         offenders.join("\n")
     );
   });

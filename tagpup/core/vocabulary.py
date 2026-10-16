@@ -151,16 +151,12 @@ def person_ref_of_tag(tag, known):
 
 
 def names_same_person(known, a, b):
-    """Do the keywords `a` and `b` name the same person? Two people called alike under different groups do not: by the id of
-    their nodes (`known` is a PeopleVocabulary read with ids). A keyword whose person has no id here -- a bare name two people
-    have, a path the tree lacks -- is the person of its leaf, as same_person reads it; a keyword that names nobody falls back
-    to the leaves too."""
+    """Do the keywords `a` and `b` name the same person? By the id of their nodes alone (`known` is a PeopleVocabulary read
+    with ids): two people called alike are two, and a keyword that names nobody, or whose person has no id here -- a word
+    spelled like a person's leaf (Trips/Wren Okafor), a bare name -- is nobody (DECISIONS 2026-10-11; docs/findings.md,
+    #1394: it was the person of its leaf, and the person's own tag was never written)."""
     first, second = person_ref_of_tag(a, known), person_ref_of_tag(b, known)
-    if first is None or second is None:
-        return same_person(a, b)
-    if first.id is not None and second.id is not None:
-        return first.id == second.id
-    return key(first.name) == key(second.name)
+    return (first is not None and second is not None and first.id is not None and first.id == second.id)
 
 
 def person_tag(name, filed, roots):
@@ -170,8 +166,8 @@ def person_tag(name, filed, roots):
     fed (tests/test_person_filing_table.py, tests/frontend/person-filing-table.test.mjs).
 
     `filed` are the paths the tree files the name under, under its people roots; `roots` the
-    people roots' names as the tree spells them. A name the tree files once is that path; filed
-    twice, None (which folder?). Not filed: under the one people root, under People when the tree
+    people roots' names as the tree spells them. A name that is one of those paths (a person at the top
+    of the tree) is that path; a name the tree files once is that path; filed twice, None (which folder?). Not filed: under the one people root, under People when the tree
     has none, and None when it has several. A name that is already a path is as it is. The name is
     trimmed, as the page's resolveTagOrPerson trims it, and a name with nothing in it is None."""
     name = (name or "").strip()
@@ -179,6 +175,11 @@ def person_tag(name, filed, roots):
         return None
     if "/" in name:
         return name
+    # A person at the top of the tree is suggested by their own tag, which has no "/": that tag is that person, whoever
+    # else is called alike under a people root (#1408).
+    exact = [path for path in filed if key(path) == key(name)]
+    if len(exact) == 1:
+        return exact[0]
     if len(filed) == 1:
         return filed[0]
     if len(filed) > 1:

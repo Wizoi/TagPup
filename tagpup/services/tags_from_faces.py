@@ -10,8 +10,9 @@ ExifTool, as every other keyword write does (tagpup.services.tagging.change_each
 `apply` writes CHUNK photos at a time, each chunk one journaled change of photo files (operation `OPERATION`), which
 records every file's fields before and after: `undo` takes a chunk back, and a file that was changed outside since is
 a conflict and is never overwritten. That journal is the way back; no copy of the library is taken (a photo's keywords
-are not in the library alone, and the journal holds what a copy of the library could not). A photo whose keywords already name the person under a root the tree does not file people under (`Parkrunner/<name>`): counted,
-a tree question. And a person only a GUESS backs -- no face of that name named by hand -- is left unless `--guesses`: the
+are not in the library alone, and the journal holds what a copy of the library could not). A keyword that only shares the
+person's leaf (`Parkrunner/<name>` under a root that holds no people) is no person, so the person is written beside it (#1394).
+And a person only a GUESS backs -- no face of that name named by hand -- is left unless `--guesses`: the
 keyword would make the guess a decided reference (#640).
 
 Interrupted part-way (a crash, a closed window): the chunks written are written, journaled and recorded in their rows;
@@ -26,10 +27,9 @@ With `folder` (tagpup.services.folder_scope) the plan counts and `apply` writes 
 a folder the library holds no photo under is refused. The rule for each photo is the same, so the folder's plan is the
 whole-library plan restricted to the folder's photos.
 """
-from tagpup.core import paths
 from tagpup.core.result import Result
 from tagpup.services import face_people, folder_scope
-from tagpup.store import db, people, photos, taxonomy
+from tagpup.store import db, people
 from tagpup.store import roots as store_roots
 
 #: What the journal calls the changes made here (History's `operation`).
@@ -40,11 +40,11 @@ def plan(library, guesses=False, folder=None):
     """What `apply` would write, counted: a Result whose details are `counts` (safe to show anyone) and `work`, the
     (photo path, person) of each person to put on a photo -- a Ref, the node's id and the name (never reported). Reads only.
 
-    One rule for each row, in this order: the photo whose keywords
-    already name them (by the id of their node, under ANY root: face_people.already_names, the writer's own rule) is skipped -- a
-    people tag under a root the tree does not file people under; a person only a guess of clustering or automatch backs
-    (no face of that name named by hand) is skipped unless `guesses`, since the keyword would make the guess a decided
-    reference (#640). Each is counted, so the count to write is what `apply` writes and a second run finds none.
+    One rule for each row: a person only a guess of clustering or automatch backs (no face of that name named by hand) is
+    skipped unless `guesses`, since the keyword would make the guess a decided reference (#640), and counted, so the count to
+    write is what `apply` writes and a second run finds none. A photo whose keywords name the person already is not in
+    `on_faces_alone`: its keyword is the person by the id of their node, as the writer's own rule (face_people.already_names)
+    reads it; a keyword that only shares their leaf names nobody (#1394).
 
     With `folder`, only the photos under it: the Result is refused (`refused` says why) when the library holds none there."""
     spelled = None
@@ -61,17 +61,11 @@ def plan(library, guesses=False, folder=None):
         found = store_roots.natives(conn, people.on_faces_alone(conn, spelled), 0)
     finally:
         conn.close()
-    held = {paths.key(path): tags for path, tags, _raw in photos.read_tags(library.path, sorted({row[0] for row in found}))}
-    filer = face_people.Filer(library)
-    known = taxonomy.people_vocabulary(library.path)
     work, photo_set = [], set()
-    elsewhere = guessed = 0
+    guessed = 0
     for photo_path, person, decided in found:
         photo_set.add(photo_path)
-        tag = filer.tag(person)
-        if face_people.already_names(held.get(paths.key(photo_path), []), tag, known):
-            elsewhere += 1
-        elif not decided and not guesses:
+        if not decided and not guesses:
             guessed += 1
         else:
             work.append((photo_path, person))
@@ -80,7 +74,6 @@ def plan(library, guesses=False, folder=None):
         dry_run=True, work=work,
         counts={"photos_with_a_person_on_a_face_alone": len(photo_set), "people": len(found),
                 "photos_to_write": len({photo_path for photo_path, _person in work}), "people_to_write": len(work),
-                "people_the_file_names_under_another_root": elsewhere,
                 "people_from_a_guess_only": guessed, "guesses_included": bool(guesses)})
     return result
 

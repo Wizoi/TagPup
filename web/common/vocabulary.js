@@ -177,11 +177,14 @@ export class PeopleDirectory {
         return found && found.length === 1 ? found[0] : null;
     }
 
-    /** The person a text names: a tag path exactly, a bare name when it is one person's. Null for neither. */
+    /**
+     * The person a text names: a tag path exactly, a bare name when it is one person's. Null for neither. A bare text that is a
+     * person's own tag (a person at the top of the tree) is that person, whoever else is called alike (#1408).
+     */
     ofText(text) {
         const value = String(text ?? '').trim();
         if (!value) return null;
-        return value.includes('/') ? this.ofTag(value) : this.only(value);
+        return value.includes('/') ? this.ofTag(value) : (this.ofTag(value) || this.only(value));
     }
 
     /**
@@ -215,16 +218,12 @@ export function sameRecord(a, b) {
 }
 
 /**
- * Do these two tags -- a path or a bare name each -- name the same person? With the library's people (`directory`): by id, so two
- * people called Sam are two; a bare name two people have names neither of them for certain, so it is nobody's; a text no person has
- * is its leaf. Without a directory (a page that could not read the people): by leaf, as before.
+ * Do these two tags -- a path or a bare name each -- name the same person? By the id of the node each is, in the library's people
+ * (`directory`): two people called Sam are two, a bare name two people have is neither of them, and a text no person has is
+ * nobody (#1394).
  */
-export function sameTagPerson(a, b, directory = null) {
-    if (!directory || !directory.size) return samePerson(a, b);
-    const left = directory.ofText(a), right = directory.ofText(b);
-    if (left && right) return sameRecord(left, right);
-    if (left || right) return false;
-    return samePerson(a, b) && directory.called(leafOf(a)).length === 0;
+export function sameTagPerson(a, b, directory) {
+    return sameRecord(directory.ofText(a), directory.ofText(b));
 }
 
 /**
@@ -256,7 +255,7 @@ export function peopleListHas(names, text, directory = null) {
  * `isPersonTag` is the page's own answer to whether a tag names a person: which
  * roots hold people is the tag tree's, and only the page has the tree loaded.
  */
-export function photoAlreadyHas(photo, tag, isPersonTag, directory = null) {
+export function photoAlreadyHas(photo, tag, isPersonTag, directory) {
     const tags = (photo && photo.tags) || [];
     if (tags.includes(tag)) return true;
     if (!isPersonTag(tag)) return false;

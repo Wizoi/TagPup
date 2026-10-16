@@ -762,11 +762,6 @@ def tags_from_faces(ctx, apply_, guesses, folder):
         console.print("Only the photos under the folder given, and its subfolders.")
     console.print("%d photo(s) list a person from a face alone (%d people): their keywords do not name them."
                   % (counts["photos_with_a_person_on_a_face_alone"], counts["people"]))
-    if counts["people_the_file_names_under_another_root"]:
-        console.print("  %d of the people: the photo's keywords already name them under a root the tag tree does not file people "
-                      "under: skipped. They are people tags under a non-people root, a tree question: make that root a people "
-                      "root in the tag tree (TagTuner's tag editor), or retag them; the count then falls on its own."
-                      % counts["people_the_file_names_under_another_root"], markup=False, soft_wrap=True)
     if counts["people_from_a_guess_only"]:
         console.print("  %d of the people: from a guess only (clustering's or automatch's, no face of that name named by hand): "
                       "skipped. --guesses writes them." % counts["people_from_a_guess_only"], markup=False, soft_wrap=True)

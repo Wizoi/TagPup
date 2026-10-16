@@ -335,7 +335,7 @@ export function renderSuggestionsPanel(photoPath) {
 
     // A name two people have is offered as one chip for each (replacing the question "which folder?"), and what is already on
     // the photo is taken out after that, so the Sam the photo has is not offered and the other Sam is.
-    const people = outstanding(personChips(sugg.people), 'name');
+    const people = personChips(sugg.people).filter(item => !suggestedPersonOnPhoto(photo, item));
     const tags = outstanding(sugg.tags, 'tag');
 
     // Nothing left to act on: the box would be a heading over two empty lists.
@@ -377,10 +377,20 @@ export function renderSuggestionsPanel(photoPath) {
  * The people a run suggested, a name that two people have as one suggestion for each of them (the tag of each as its `name`, so a
  * click writes exactly that person). A suggestion that names one person, or whose people the page has not read, stays as it is.
  */
+/**
+ * Is a suggested person on the photo already? When one of its keywords is them, by the id of their node; a name two people have
+ * is on it when either is (Apply All asks nothing of that photo either). A keyword only spelled like them names nobody (#1394).
+ */
+function suggestedPersonOnPhoto(photo, item) {
+    const person = item.person || state.people.ofText(item.name);
+    const candidates = person ? [person] : state.people.called(item.name);
+    return candidates.some(each => photoAlreadyHas(photo, each.tag, namesAPerson, state.people));
+}
+
 export function personChips(list) {
     const chips = [];
     for (const item of list || []) {
-        const person = item.person;
+        const person = item.person || state.people.ofTag(item.name);
         const called = person ? [] : state.people.called(item.name);
         if (called.length > 1) called.forEach(each => chips.push({ ...item, name: each.tag, person: each }));
         else chips.push(item);
@@ -647,13 +657,12 @@ export function updateFolderAutoApplyState() {
         }
         if (hasSomethingToApply) break;
 
-        // Check people suggestions. A person the photo already names under their
-        // path is nothing to apply, so compare by leaf rather than by spelling --
-        // otherwise the button offers to add someone who is already there.
+        // Check people suggestions. A person the photo's keywords already are (by id,
+        // suggestedPersonOnPhoto) is nothing to apply, nor one the photo lists.
         if (sugg.people) {
             for (let p of sugg.people) {
                 const leaf = leafOf(p.name);
-                if (!photoAlreadyHas(photo, p.name, namesAPerson, state.people)
+                if (!suggestedPersonOnPhoto(photo, p)
                     && !peopleListHas(photoPeople, leaf, state.people)) {
                     hasSomethingToApply = true;
                     break;

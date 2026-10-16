@@ -62,6 +62,18 @@ class NamingAddsThePersonToThePhoto(InStep):
         self.assertEqual((WREN, "manual", 0), self.row(face)[:3])
         self.assertEqual([(WREN, "keyword")], self.indexed_people(), "the library records the person as the photo's keyword")
 
+    def test_a_keyword_that_only_shares_the_persons_leaf_is_not_the_person(self):
+        # A keyword under a root that holds no people, spelled with the person's leaf, names nobody: the person is the id of
+        # their node (DECISIONS 2026-10-11). It was taken for them, and the face was named with their tag missing from the
+        # file (docs/findings.md, #1394; 104 such photos in one library).
+        photo = self.held("strip_000.jpg", ["Trips/" + WREN])
+        face = self.face(photo)
+        reply = self.tuner_post("face/match", {"face_id": face, "person_name": WREN})
+        self.assertEqual(200, reply.status_code, reply.get_json())
+        self.assertEqual(1, reply.get_json()["tags_written"])
+        self.assertEqual(["Trips/" + WREN, PEOPLE + WREN], self.tags(photo), "the file does not hold the person")
+        self.assertEqual((WREN, "manual"), self.row(face)[:2])
+
     def test_tagpups_own_calls_find_the_tag_there_and_write_nothing_more(self):
         photo = self.held("strip_002.jpg", [PEOPLE + WREN])
         face = self.face(photo, box=(10, 10, 60, 60))

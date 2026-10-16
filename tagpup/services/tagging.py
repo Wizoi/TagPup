@@ -380,32 +380,74 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
     return file_only.combined(done, files)
 
 
-def person_filer(library):
+class PersonFiler:
     """name -> the tag a suggested person is written as, the rule a click on the suggestion's chip
     follows (the page's resolveTagOrPerson): a name the tree files once is that path; a name it does
-    not hold is filed under the library's one people root (People/<name>); a name it files twice,
-    or a tree with several people roots, is left as it is -- the page asks, and a bare name is the
-    form that a bare keyword is, a tag of its own. The tree is read once, here, and only
-    read: no node is made. The people the suggester names bare were written bare by Apply All."""
-    filed, roots = taxonomy.people_filing(library.path)
+    not hold is filed under the library's one people root (People/<name>). A name it files twice, or
+    one it files nowhere in a tree with several people roots, is None: the page asks, and Apply All,
+    with nobody to ask, refuses (`why_not`). It wrote the bare name, a keyword that names nobody. The
+    tree is read once, here, and only read: no node is made."""
 
-    def file_person(name):
+    def __init__(self, library):
+        self.filed, self.roots = taxonomy.people_filing(library.path)
+
+    def __call__(self, name):
         name = (name or "").strip()
-        return vocabulary.person_tag(name, filed.get(vocabulary.key(name), []), roots) or name
-    return file_person
+        return vocabulary.person_tag(name, self.filed.get(vocabulary.key(name), []), self.roots)
+
+    def names_already(self, tags, name, known):
+        """Do the keywords `tags` name one of the people `name` is filed as (by the id of their node)? Such a photo has
+        them, whichever: nothing is asked of it."""
+        return any(vocabulary.names_same_person(known, tag, path)
+                   for path in self.filed.get(vocabulary.key(name), []) for tag in tags)
+
+    def why_not(self, names):
+        """The sentence refusing a run that names `names`, people this cannot file."""
+        said = []
+        for name in names:
+            paths_ = self.filed.get(vocabulary.key(name), [])
+            if len(paths_) > 1:
+                said.append("%s is filed under %s" % (name, " and ".join(paths_)))
+            else:
+                said.append("%s is not filed, and the library has several people roots (%s)" % (name, ", ".join(self.roots)))
+        return ("Nothing was written: %s. Add them on a photo, choosing which, then Apply All again."
+                % "; ".join(said))
+
+
+def person_filer(library):
+    """The PersonFiler of `library`'s tree as it stands."""
+    return PersonFiler(library)
 
 
 def apply_suggestions(library, suggestions, exiftool_path):
     """Apply All: write each photo of `suggestions` ({path: its entry}, what Suggest offered) the tags and
-    people the panel showed (tagpup.core.suggesting.offered_tags), and nothing else. A person is filed as a click on their chip files them (person_filer) and is left out when the file
-    already names them by their leaf, whatever the spelling or the path -- the page's photoAlreadyHas -- read
-    from the file as it is under the write's lock. Held or not held (add_tags)."""
+    people the panel showed (tagpup.core.suggesting.offered_tags), and nothing else. A person is filed as a click on
+    their chip files them (person_filer) and is left out when the file already names them by the id of their node
+    (vocabulary.names_same_person; a keyword spelled like their leaf is nobody, #1394), read from the file as it is under
+    the write's lock. A person it cannot file (a name filed twice, or nowhere among several people roots) refuses the
+    run before anything is written, unless the photo's file already names one of the people filed as that name (read
+    here, of those photos alone): that photo has them. A file that cannot be read names nobody, and the run is refused.
+    Held or not held (add_tags)."""
     file_person = person_filer(library)
+    asked = {path: [name for name in ((person.get("name") or "").strip() for person in entry.get("people") or [])
+                    if name and file_person(name) is None]
+             for path, entry in suggestions.items()}
+    unfiled = set()
+    if any(asked.values()):
+        known = taxonomy.people_vocabulary(library.path)
+        with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
+            read = field_values.read(et, [path for path, names in asked.items() if names], KEYWORD_READ)
+        held = {key: ([] if isinstance(fields_, Exception) else list(_tags_held(fields_))) for key, fields_ in read.items()}
+        unfiled = {name for path, names in asked.items() for name in names
+                   if not file_person.names_already(held.get(paths.key(path), []), name, known)}
+    if unfiled:
+        return _refused(len(suggestions), file_person.why_not(sorted(unfiled, key=vocabulary.tag_sort_key)))
     additions, persons = {}, {}
     for path, entry in suggestions.items():
-        additions[path] = suggesting.offered_tags(entry, file_person)
+        # A person the photo already has, whom the tree files twice, is no tag to add (None).
+        additions[path] = [tag for tag in suggesting.offered_tags(entry, file_person) if tag is not None]
         offered = {file_person(person["name"]) for person in entry.get("people") or []
-                   if (person.get("name") or "").strip()}
+                   if (person.get("name") or "").strip()} - {None}
         persons[paths.key(path)] = offered
     return add_tags(library, additions, exiftool_path, persons=persons)
 

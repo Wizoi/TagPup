@@ -380,6 +380,19 @@ export class RealServer extends FakeServer {
   }
 }
 
+/**
+ * The people /api/people?records=1 answers for the tree `nodes` (as /api/taxonomy/tree sends it), as
+ * tagpup.store.person_ids.People.read makes them: each node marked as holding faces with no node under it, but an
+ * empty People (where a new library files people), as {id, name, tag}. A page told of a tree with people and of no
+ * records holds a shape no server sends (docs/findings.md, #1358).
+ */
+export function peopleRecordsOf(nodes) {
+  const parents = new Set(nodes.map((node) => node.parent_id));
+  return nodes
+    .filter((node) => node.has_face === 1 && !parents.has(node.id) && node.tag.toLowerCase() !== "people")
+    .map((node) => ({ id: node.id, name: node.name, tag: node.tag }));
+}
+
 /** A library of the test's own, made by the Python seed `seed`: `{library, server, url, ...what the seed says}` to load a page on. */
 export async function realLibrary(seed, appName = "tagpup") {
   const kind = appName === "tagtuner" ? "tuner" : "tagpup";

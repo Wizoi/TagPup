@@ -331,10 +331,11 @@ class Directory:
     def of_reference(self, value):
         """The person a suggester's `name` is: a TAG PATH when the suggestion came from a face match
         (`Family/Immediate/Clara Ingersoll`: the suggester's item['tag']), else a bare name. A path is looked up
-        by `of_tag` and so is exact even when the leaf is shared; a name by `of_name`."""
+        by `of_tag` and so is exact even when the leaf is shared; a name by `of_name`, after `of_tag`: a person at the top
+        of the tree is suggested by their own tag, which has no separator (#1408)."""
         if value and vocabulary.SEPARATOR in vocabulary.normalize(value):
             return self.of_tag(value)
-        return self.of_name(value)
+        return self.of_tag(value) or self.of_name(value)
 
     def annotate(self, items, into="person"):
         """Give each dict of `items` the `person` its `person_id` is (None when it holds none, or a node that is no person):
