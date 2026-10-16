@@ -22,7 +22,7 @@ from view_library import ViewLibrary  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.files import shares  # noqa: E402
-from tagpup.services import activity, batches, bulk_edit, file_changes, libraries  # noqa: E402
+from tagpup.services import activity, batches, bulk_edit, file_changes  # noqa: E402
 from tagpup.store import job_runs  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
@@ -333,14 +333,6 @@ class WhatGoesWrong(Bulk):
         self.files.on_write = fails
         done = self.tags_edit(add=["Trips/Coast"])
         self.assertEqual(200, len(done["errors"][0]["why"]))
-
-    def test_a_write_refused_as_a_whole_is_every_photo_an_error_and_nothing_is_written(self):
-        with mock.patch.object(libraries, "refuse_writes", lambda result, library, held: result.refuse(
-                "Can't check E:: try again. A photo there was found damaged, and whether it still is could not be told.") or True):
-            done = self.tags_edit(add=["Trips/Coast"])
-        self.assertEqual((self.PHOTOS, 0), (done["error_count"], done["changed"]))
-        self.assertIn("Can't check", done["errors"][0]["why"])
-        self.assertEqual(0, self.files.writes)
 
     def test_photos_on_a_share_that_does_not_answer_are_errors_not_sent_to_exiftool_and_the_others_are_written(self):
         away = {paths.key(self.path(photo_id)) for photo_id in self.ids[:6]}

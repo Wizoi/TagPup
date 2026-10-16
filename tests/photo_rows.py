@@ -43,6 +43,6 @@ def hold(conn, folder):
     """Make `folder` the library's (store.folders.holds), as indexing it did: the
     row of a photo indexed there before and deleted since, so that no photo on disk --
     nothing a scan, a rename or a count sees -- is added. A photo is written only
-    through a library that holds its folder (tagpup.services.libraries.refuse_writes).
+    through a library that holds its folder (tagpup.services.libraries.split).
     The caller commits."""
     return add_read(conn, os.path.join(folder, HELD_BY), {})

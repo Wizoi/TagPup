@@ -15,7 +15,7 @@ import time
 
 from tagpup.core import paths, validation
 from tagpup.core.library import Library, picker_name
-from tagpup.core.result import NOT_IN_LIBRARY, Result
+from tagpup.core.result import Result
 from tagpup.files import images, recycle_bin, shares
 from tagpup.services import settings
 from tagpup.services import roots as roots_service
@@ -178,7 +178,7 @@ def not_held(library, photo_paths, ignored=None, leave_out_ignored=True):
     `ignored` are the library's ignored folders, read from its settings unless given. An
     ignored folder is never the library's; unless not `leave_out_ignored` it is left out
     here too -- not to be offered, as sync passes it over (tagpup.services.sync). Writes
-    keep them (refuse_writes): a photo there is not the library's to write."""
+    keep them (split): a photo there is not the library's to write."""
     wanted = {}
     for photo_path in photo_paths:
         folder = os.path.dirname(paths.stored(photo_path))
@@ -386,28 +386,6 @@ def split(library, photo_paths):
     for photo_path in photo_paths:
         (loose if paths.key(os.path.dirname(paths.stored(photo_path))) in unheld else held).append(photo_path)
     return held, loose
-
-
-def refuse_writes(result, library, photo_paths):
-    """Refuse `result` -- a write of photo files, nothing written yet -- when the library
-    does not hold the folder of any photo of `photo_paths`: "<folder> is not in
-    <library>. Add it to <library> first." Returns True when refused. The one check every
-    write of a photo makes (tagging, rotating, renaming, a time shift, a delete): writing
-    kr-track's tags into the photos of a folder photo_index holds, through kr-track, was
-    the same mistake as Suggest making rows there. `details[NOT_IN_LIBRARY]` holds the
-    folders, which a web route answers with 409.
-
-    Whether a photo's file opens is not asked, here or anywhere before a write: ExifTool's own failure to read or
-    write a file fails that photo's write (DECISIONS 2026-10-15)."""
-    unheld = not_held(library, photo_paths, leave_out_ignored=False)
-    if not unheld:
-        return False
-    name = picker_name(os.path.basename(library.path))
-    more = "" if len(unheld) == 1 else " (and %d more folder(s))" % (len(unheld) - 1)
-    result.refuse("%s is not in %s%s. Add it to %s first." % (unheld[0], name, more, name))
-    result.details[NOT_IN_LIBRARY] = unheld
-    return True
-
 
 
 def record_added(library, folders, subfolders=True):

@@ -23,7 +23,7 @@ import logging
 from tagpup.core import paths, validation
 from tagpup.core.result import Conflict, Refused, Result
 from tagpup.core.vocabulary import Ref
-from tagpup.services import batches, face_people, file_changes, libraries, tagging
+from tagpup.services import batches, face_people, file_changes, tagging
 from tagpup.services import faces as faces_service
 from tagpup.services import people as people_service
 from tagpup.services.face_batch import DESCRIPTIONS, EXCLUDE, GUESS, NAME, UNNAME, Work  # noqa: F401  (the ops, for the routes)
@@ -202,7 +202,7 @@ def _write_plain(library, plan, outcome):
 def run(library, plan, exiftool_path, told=None):
     """Carry out `plan` and wait for the end: the Outcome. The photos are one batch of `file_changes.write_fields` (claimed, queued,
     capped, stopped by Cancel or a hand-over, listed in the strip); `told(result)` is heard with what it wrote, for the pages' records.
-    Refused (the cap, a folder the library does not hold) or Conflict (the queue is full), nothing written. Raises what the write raises;
+    Refused (the cap) or Conflict (the queue is full), nothing written. Raises what the write raises;
     the change then holds what was done, whole file by file."""
     outcome, work = Outcome(), plan.work
     photos = work.photos()
@@ -210,9 +210,6 @@ def run(library, plan, exiftool_path, told=None):
         if len(photos) > batches.MAX_BATCH:
             raise Refused("These faces are on {:,} photos whose files have to be changed, and {:,} is the most that is done at once. "
                           "Nothing was changed: do it in parts.".format(len(photos), batches.MAX_BATCH))
-        refusal = Result()
-        if libraries.refuse_writes(refusal, library, photos):
-            raise Refused(refusal.refused)
         known = taxonomy.people_vocabulary(library.path)
         change = None
         try:
