@@ -154,27 +154,45 @@ class TheApply(Mending):
         self.assertEqual([tags_from_faces.OPERATION], self.operations())
         self.assertEqual(1, batch.call_count, "one batch, its turn taken once")
 
-    def test_ctrl_c_part_way_keeps_what_was_written_and_takes_the_rest_out(self):
-        """#1493: the repair is one change now; stopped part-way it left up to 661 photos planned, which the next process
-        to open the library wrote. What is written stays (applied, undoable), the rest are taken out, and it says so."""
-        for n in range(batches.CHUNK + 1):
-            self.drifted("drift_%d.jpg" % n)
+    def stopped_by_ctrl_c_at(self, step, on_disk):
+        """#1493, #1507: the repair is one change; Ctrl+C on the third file, at `step` of its write, leaves `on_disk` files written.
+        What the journal holds done is exactly the files changed on disk, the CLI says that many, the change is applied and
+        `undo` takes it back at once; the files not reached are taken out, not written by whatever opens the library next."""
+        photos = [self.drifted("drift_%d.jpg" % n) for n in range(batches.CHUNK + 1)]
         seen = []
 
-        def reached(step):
-            if step == "file recorded":
-                seen.append(step)
+        def reached(at):
+            if at == step:
+                seen.append(at)
                 if len(seen) == 3:
                     raise KeyboardInterrupt
         with mock.patch.object(file_changes, "_reached", side_effect=reached):
             said = self.run_cli("--apply")
         self.assertEqual(1, said.exit_code, said.output)
-        self.assertIn("Stopped: 3 photo file(s) written", said.output)
-        self.assertEqual([("applied", 3)], self.look("SELECT c.status, COUNT(f.id) FROM changes c JOIN change_files f"
-                                                    " ON f.change_id = c.id WHERE c.operation = ? GROUP BY c.id",
-                                                    (tags_from_faces.OPERATION,)))
-        self.assertIn("%d photo file(s) would be written" % (batches.CHUNK + 1 - 3), self.run_cli().output,
+        on_disk_now = {paths.key(photo) for photo in photos if self.files.tags_of(photo)}
+        self.assertEqual(on_disk, len(on_disk_now))
+        self.assertIn("Stopped: %d photo file(s) written" % on_disk, said.output)
+        rows = self.look("SELECT c.id, c.status, f.path, f.state FROM changes c JOIN change_files f ON f.change_id = c.id"
+                         " WHERE c.operation = ?", (tags_from_faces.OPERATION,))
+        self.assertEqual({"applied"}, {status for _id, status, _path, _state in rows})
+        self.assertEqual(on_disk_now, {paths.key(path) for _id, _status, path, state in rows if state == "done"})
+        self.assertEqual({"done"}, {state for _id, _status, _path, state in rows}, "the files not written are taken out")
+        self.assertIn("%d photo file(s) would be written" % (batches.CHUNK + 1 - on_disk), self.run_cli().output,
                       "the photos not reached are still to do")
+        with mock.patch.object(tagpup_cli, "get_exiftool_path", return_value="exiftool"):
+            undone = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "undo", str(rows[0][0]), "--apply"])
+        self.assertEqual(0, undone.exit_code, undone.output)
+        self.assertIn("%d file(s) written back" % on_disk, undone.output)
+        self.assertEqual([], [photo for photo in photos if self.files.tags_of(photo)])
+
+    def test_ctrl_c_before_a_file_is_written_takes_it_out(self):
+        self.stopped_by_ctrl_c_at("file writing", on_disk=2)
+
+    def test_ctrl_c_after_a_file_is_written_before_it_is_recorded_keeps_it(self):
+        self.stopped_by_ctrl_c_at("file written", on_disk=3)
+
+    def test_ctrl_c_after_a_file_is_recorded_keeps_it(self):
+        self.stopped_by_ctrl_c_at("file recorded", on_disk=3)
 
     def test_it_can_be_run_again_and_finds_nothing_more(self):
         self.drifted("drift_a.jpg")

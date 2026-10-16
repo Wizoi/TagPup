@@ -195,15 +195,23 @@ def _exclusive(function):
 _running = threading.local()
 
 
-def _settle_stopped(library, change_id):
+def _settle_stopped(library, change_id, et=None):
     """A change a stop cut short is finished now, not at the next settle: the files never written are taken
     out of it and it is applied for the files that were, so that what was written can be undone at once.
-    The pin has been let go by now (the roots changed), so these writes see the roots as they are."""
+    The pin has been let go by now (the roots changed), so these writes see the roots as they are.
+
+    With `et`, the session the change wrote through (a Ctrl+C), the one file it left `writing` is read in it --
+    after the write it was given, if any -- and settled by what it holds, never written: done if it holds what it
+    was to hold, as a crash settle records it (_held_or_conflict); taken out if it holds what it held (#1507)."""
     if not change_id:
         return
     try:
-        left = [row.id for row in file_journal.files_of(library.path, change_id) if row.state == "planned"]
-        file_journal.withdraw(library.path, left)
+        rows = file_journal.files_of(library.path, change_id)
+        file_journal.withdraw(library.path, [row.id for row in rows if row.state == "planned"])
+        for row in rows:
+            if et is not None and row.state == "writing":
+                if _held_or_conflict(et, library, row, row.before, row.after, "done") is None:
+                    file_journal.withdraw(library.path, [row.id])
         file_journal.finish(library.path, change_id, also=face_batch.tidy)
     except Exception as problem:
         logger.warning("Could not finish change %s after it was stopped: %s", change_id, problem)
@@ -462,7 +470,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         if isinstance(stopped, KeyboardInterrupt):
             # Stopped by the person (Ctrl+C, Ctrl+Break in the CLI): what is written stays, applied and undoable; the files
             # not reached are taken out, not written by whatever opens the library next (#1493). A crash is settled forward.
-            _settle_stopped(library, change_id)
+            _settle_stopped(library, change_id, et)
             # What the journal holds done, not what this loop had counted: the file under way may be done already.
             try:
                 stopped.written = sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "done")
@@ -631,22 +639,9 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     holds when the caller has just read it in this session; otherwise it is read here.
     `whole`, a dict, asks for the file written to be read back whole and recorded so
     (_read_whole). Returns (outcome, why): `finished`, "conflict" or "failed"."""
-    seen = None
-    if now is None:
-        # The stat before the read: a file found holding `target` is recorded stamped as it was before what was read of it.
-        seen = _stat(row.path)
-        try:
-            now = field_values.read_one(et, row.path, list(target))
-        except field_values.Unreadable as e:
-            return _conflict(library, row, "could not be read: %s" % e)
-    if fields.reads_same(now, target):
-        # Written already: by a run a crash stopped before it recorded the row, whose
-        # stamp from before the write was recorded with it (#265).
-        _record_held(library, row, now, target, finished, row.stamp, seen)
-        return finished, None
-    if not fields.reads_same(now, origin):
-        return _conflict(library, row, "changed since it was read: it holds neither what the change found"
-                                       " nor what it was to leave, and is not overwritten")
+    settled = _held_or_conflict(et, library, row, origin, target, finished, now)
+    if settled is not None:
+        return settled
     stamp = row.stamp = embeddings.stamp_of(row.path)
     file_journal.writing(library.path, row.id, stamp)
     _reached("file writing")
@@ -664,6 +659,29 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
         wrote[row.id] = (row, stat)
     _reached("file recorded")
     return finished, None
+
+
+def _held_or_conflict(et, library, row, origin, target, finished, now=None):
+    """The one rule of a file settled by what it holds, before anything is written to it: holding `target`, it is recorded
+    `finished` as it holds it; holding neither, or unreadable, a conflict. Returns (outcome, why) so; or None when it holds
+    `origin`: still to be written (_carry writes it, a stop takes it out). `now`, as _carry's."""
+    seen = None
+    if now is None:
+        # The stat before the read: a file found holding `target` is recorded stamped as it was before what was read of it.
+        seen = _stat(row.path)
+        try:
+            now = field_values.read_one(et, row.path, list(target))
+        except field_values.Unreadable as e:
+            return _conflict(library, row, "could not be read: %s" % e)
+    if fields.reads_same(now, target):
+        # Written already: by a run a crash (or a stop) cut off before it recorded the row, whose
+        # stamp from before the write was recorded with it (#265).
+        _record_held(library, row, now, target, finished, row.stamp, seen)
+        return finished, None
+    if not fields.reads_same(now, origin):
+        return _conflict(library, row, "changed since it was read: it holds neither what the change found"
+                                       " nor what it was to leave, and is not overwritten")
+    return None
 
 
 def _read_whole(et, row, read):
