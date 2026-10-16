@@ -139,15 +139,16 @@ def clustering_refusal(library, only_naming=False):
     of TagPup that name faces from tags must not be written over. `only_naming`: not for
     the flag clustering from an index run holds."""
     if library is not None and naming_faces.writing(library):
-        return jsonify({"success": False, "error": NAMING_REFUSAL}), 409
+        return responses.error(409, NAMING_REFUSAL)
     if not only_naming and library is not None and clustering.of(library).is_set():
-        return jsonify({"success": False,
-                        "error": "The server is clustering faces; this waits until it finishes."}), 409
+        return responses.error(409, "The server is clustering faces; this waits until it finishes.")
     return None
 
 
 @routes.before_request
 def refuse_writes_while_clustering():
+    """A blueprint's before_request: a POST is refused while the library's faces are clustered or named from tags
+    (clustering_refusal). TagTuner's routes, and TagPup's writes of the faces on the open photo (photo_face_routes)."""
     if request.method != "POST":
         return None
     return clustering_refusal(state.current())

@@ -21,13 +21,7 @@ from tagpup.web import face_routes, responses, state, tuner_routes
 logger = logging.getLogger(__name__)
 
 routes = Blueprint("photo_faces", __name__)
-
-
-@routes.before_request
-def refuse_writes_while_clustering():
-    if request.method != "POST":
-        return None
-    return tuner_routes.clustering_refusal(state.current())
+routes.before_request(tuner_routes.refuse_writes_while_clustering)
 
 
 @routes.get("/api/photo-faces")
