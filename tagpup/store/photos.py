@@ -18,7 +18,7 @@ from tagpup.core import dates, fields, paths, vocabulary
 from tagpup.core.result import NotHeld
 from tagpup.store import added_folders, db, derived, embeddings, face_tags, faces, folders, people
 from tagpup.store import roots as store_roots
-from tagpup.store.people import PEOPLE_JSON
+from tagpup.store.people import PEOPLE_IDS_JSON, PEOPLE_JSON
 
 logger = logging.getLogger(__name__)
 
@@ -378,11 +378,14 @@ RECORD_COLUMNS = ("id", "path", "mtime", "size", "tags", "people", "captions", "
 CHUNK = 500
 
 
-def records(conn, model, photo_ids=None):
+def records(conn, model, photo_ids=None, people_ids=False):
     """RECORD_COLUMNS of the photos `photo_ids` (in no particular order; an id with no row
     is left out), or of every photo: what a search answers with, read for its results
-    alone. The vector is not read, only whether there is one."""
-    select = ("SELECT p.id, p.path, p.mtime, p.size, p.tags, " + PEOPLE_JSON + ", p.captions, p.raw_metadata,"
+    alone. The vector is not read, only whether there is one. With `people_ids` the people
+    column holds the ids of the nodes each photo lists (PEOPLE_IDS_JSON) instead of their
+    names, read in the same statement as the rest of the row."""
+    select = ("SELECT p.id, p.path, p.mtime, p.size, p.tags, " + (PEOPLE_IDS_JSON if people_ids else PEOPLE_JSON)
+              + ", p.captions, p.raw_metadata,"
               " p.year, EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?) FROM photos p")
     if photo_ids is None:
         return store_roots.natives(conn, conn.execute(select + " ORDER BY p.id", (model,)).fetchall(),

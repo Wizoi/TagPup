@@ -30,6 +30,11 @@ PEOPLE_JSON = ("(SELECT json_group_array(name) FROM (SELECT name FROM photo_peop
 PEOPLE_REFS_JSON = ("(SELECT json_group_array(json_array(tag_id, name)) FROM (SELECT tag_id, name FROM photo_people"
                     " WHERE photo_id = p.id ORDER BY position))")
 
+#: A photo's people as a JSON list of the ids of their nodes, in order, for a query whose photos are `p`: who a photo lists,
+#: by node and nothing else (clustering, through store.photos.records' `people_ids`: two people called alike are two).
+PEOPLE_IDS_JSON = ("(SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM photo_people"
+                   " WHERE photo_id = p.id AND tag_id IS NOT NULL ORDER BY position))")
+
 #: How many photos one pass of rebuild reads at a time.
 CHUNK = 500
 
@@ -100,16 +105,6 @@ def rebuild(conn, photo_ids=None, known=None, ids=None):
     # The people are words a search finds (tagpup.store.search_index): of the photos whose people changed.
     search_index.refresh(conn, written)
     return len(written)
-
-
-def listed_ids(conn):
-    """{photo id: [the id of each person it lists, in order]} of every photo that lists someone (photo_people, by its key):
-    who each photo names, by node, for clustering, which reads every photo once."""
-    found = {}
-    for photo_id, tag_id in conn.execute(
-            "SELECT photo_id, tag_id FROM photo_people WHERE tag_id IS NOT NULL ORDER BY photo_id, position"):
-        found.setdefault(photo_id, []).append(tag_id)
-    return found
 
 
 def stale(conn):

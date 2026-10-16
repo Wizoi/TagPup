@@ -121,17 +121,18 @@ class PhotoEmbeddings:
         return embedding
 
 
-def _record(row):
+def _record(row, people="people"):
     """A photo's record as the index answers it, from store.photos.records' row: the shape
     every caller reads -- "path", "mtime", "size", "tags", "people", "captions",
-    "raw_metadata", "year", "has_embedding" -- and its "id"."""
+    "raw_metadata", "year", "has_embedding" -- and its "id". The people are under `people`
+    ("people_ids" for the ids of their nodes: PhotoIndex.records)."""
     photo_id, path, mtime, size, tags_json, people_json, captions_json, raw_json, year, vectored = row
     try:
-        tags, people = json.loads(tags_json), json.loads(people_json)
+        tags, listed = json.loads(tags_json), json.loads(people_json)
         captions, raw_meta = json.loads(captions_json), json.loads(raw_json)
     except Exception:
-        tags, people, captions, raw_meta = [], [], [], {}
-    return {"id": photo_id, "path": path, "mtime": mtime, "size": size, "tags": tags, "people": people,
+        tags, listed, captions, raw_meta = [], [], [], {}
+    return {"id": photo_id, "path": path, "mtime": mtime, "size": size, "tags": tags, people: listed,
             "captions": captions, "raw_metadata": raw_meta, "year": year, "has_embedding": bool(vectored)}
 
 
@@ -243,14 +244,16 @@ class PhotoIndex:
             self.index = None
         return True
 
-    def records(self, photo_ids=None) -> List[Dict[str, Any]]:
+    def records(self, photo_ids=None, people_ids=False) -> List[Dict[str, Any]]:
         """What each photo holds (see _record), read from the library now: of `photo_ids`,
-        in their order and leaving out any with no row, or of every photo. Not kept."""
+        in their order and leaving out any with no row, or of every photo. Not kept. With
+        `people_ids`, each photo's people are the ids of their nodes, under "people_ids"
+        (no names are built), read in the one statement that reads the rest."""
         if self.conn is None:
             return []
         with self._read_lock:
-            rows = store_photos.records(self.conn, self.model, photo_ids)
-        found = [_record(row) for row in rows]
+            rows = store_photos.records(self.conn, self.model, photo_ids, people_ids=people_ids)
+        found = [_record(row, "people_ids" if people_ids else "people") for row in rows]
         if photo_ids is None:
             return found
         by_id = {record["id"]: record for record in found}
