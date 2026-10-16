@@ -50,15 +50,21 @@ class AutomatchNamesItsFacesInOneWrite(FacesCase):
             "SELECT name, tag_id FROM faces WHERE id IN (%s)" % ",".join("?" * 4), self.lookalikes)))
 
 
+#: A face another writer named: the name with its node's id, as every writer writes it.
+ODA_NAMED = ("UPDATE faces SET name = 'Oda Castellane',"
+             " tag_id = (SELECT id FROM tag_taxonomy WHERE tag = 'People/Oda Castellane') WHERE id = ?")
+
+
 class NamingUnnamedFacesTogether(FacesCase):
     def setUp(self):
         super().setUp()
         db.write_with_connection(self.lib.library.path, lambda conn: taxonomy.add_node(conn, "People/" + ROWAN, 1))
+        db.write_with_connection(self.lib.library.path, lambda conn: taxonomy.add_node(conn, "People/Oda Castellane", 1))
 
     def test_only_faces_still_unnamed_in_play_and_not_unmatched_by_hand_are_named(self):
         photo = self.photo("a.jpg")
         free, named, excluded, nobody = (self.face(photo) for _ in range(4))
-        self.lib.execute("UPDATE faces SET name = 'Oda Castellane' WHERE id = ?", (named,))
+        self.lib.execute(ODA_NAMED, (named,))
         self.lib.execute("UPDATE faces SET excluded = 1 WHERE id = ?", (excluded,))
         self.lib.execute("UPDATE faces SET name_source = 'manual' WHERE id = ?", (nobody,))
         done = db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name_unnamed(
@@ -88,7 +94,7 @@ class NamingUnnamedFacesTogether(FacesCase):
                     self.done = True
                     other = db.connect(path)
                     try:
-                        other.execute("UPDATE faces SET name = 'Oda Castellane' WHERE id = ?", (theirs,))
+                        other.execute(ODA_NAMED, (theirs,))
                         other.commit()
                     finally:
                         other.close()

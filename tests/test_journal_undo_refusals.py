@@ -167,8 +167,8 @@ class InsertsRehearsed(Checked):
             "a photo, keyed by SQLite": journal.insert("photos", photo),
             "a photo with its key": journal.insert("photos", dict(photo, id=500)),
             "a face, keyed by SQLite": journal.insert("faces", {"photo_id": prize, "box": "[1, 2, 3, 4]",
-                                                                "embedding": vector(9), "name": "Imogen Vale",
-                                                                "name_source": "manual", "excluded": 0}),
+                                                                "embedding": vector(9), "name_source": "manual",
+                                                                "excluded": 0}),
             "a node with its tag and name": journal.insert("tag_taxonomy", {
                 "tag": "Friends/Maren Oakhollow", "parent_id": self.ids["Friends"], "name": "Maren Oakhollow",
                 "has_face": 1}),

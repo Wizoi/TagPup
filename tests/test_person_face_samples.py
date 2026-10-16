@@ -150,10 +150,10 @@ class TheRoute(unittest.TestCase):
                         taxonomy.add_path(conn, "People/" + WREN)
                     node = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", ("People/" + WREN,)).fetchone()[0]
                     named = add_face(conn, "a.jpg", name=WREN, name_source="manual", embedding=at(0).tobytes())
-                    add_face(conn, "b.jpg", name="Loki", name_source="auto", embedding=at(5).tobytes(), tag_id=None)
+                    add_face(conn, "b.jpg", embedding=at(5).tobytes())
                     return node, named
                 node, face = db.write_with_connection(home.library("library.db"), seed)
-                # By the id of the node alone; a name with no node is under no key.
+                # By the id of the node alone; a face of nobody is under no key.
                 self.assertEqual({"id:%d" % node: [face]}, client.get("/library/api/people-face-samples").get_json())
 
     def test_the_crops_are_served_by_the_face_crop_route_of_each_app(self):

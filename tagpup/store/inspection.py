@@ -47,10 +47,8 @@ def tree_nodes(conn):
 
 
 def people_named(conn):
-    """How many distinct people the photos list (photo_people): the nodes, and the names no person is filed under, by exact
-    spelling."""
-    return conn.execute("SELECT COUNT(*) FROM (SELECT DISTINCT tag_id, CASE WHEN tag_id IS NULL THEN name END"
-                        " FROM photo_people)").fetchone()[0]
+    """How many distinct people the photos list (photo_people), by their node's id."""
+    return conn.execute("SELECT COUNT(DISTINCT tag_id) FROM photo_people").fetchone()[0]
 
 
 # ---- Photos -----------------------------------------------------------------------------
@@ -89,28 +87,21 @@ def tags_of(conn, photo_ids):
 
 def of_person(conn, name):
     """(id, path as stored) of each photo whose people (photo_people) list the person `name` is, by id: a tag path is the one
-    person filed there (a path no node holds names only the rows with no id that spell its leaf); a name is every person called it,
-    and the rows of that exact spelling that no person is filed under. idx_photo_people_tag and idx_photo_people_name serve it."""
+    person filed there, a name every person called it; a path or name no person has lists none. idx_photo_people_tag serves it."""
     from tagpup.core import vocabulary   # read-only helper; not at import
     known = person_ids.read(conn)
     text = str(name).strip()
     path = vocabulary.normalize(text)
     if vocabulary.SEPARATOR in path:
         found = known.by_tag.get(path.lower())
-        ids, spelled = ([found.id] if found else []), (None if found else vocabulary.leaf_of(path))
+        ids = [found.id] if found else []
     else:
-        ids, spelled = [person.id for person in known.called(text)], text
-    inner, params = [], []
-    if ids:
-        inner.append("SELECT photo_id FROM photo_people WHERE tag_id IN (%s)" % _marks(ids))
-        params += ids
-    if spelled is not None:
-        inner.append("SELECT photo_id FROM photo_people WHERE tag_id IS NULL AND name = ?")
-        params.append(spelled)
-    if not inner:
+        ids = [person.id for person in known.called(text)]
+    if not ids:
         return []
     return store_roots.natives(conn, conn.execute(
-        "SELECT p.id, p.path FROM photos p WHERE p.id IN (%s) ORDER BY p.id" % " UNION ".join(inner), params).fetchall(), 1)
+        "SELECT p.id, p.path FROM photos p WHERE p.id IN (SELECT photo_id FROM photo_people WHERE tag_id IN (%s)) ORDER BY p.id"
+        % _marks(ids), ids).fetchall(), 1)
 
 
 def row(conn, photo_id):

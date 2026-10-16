@@ -82,8 +82,10 @@ class TheRules(Library):
     def test_people_written_by_hand(self):
         # Rows the rule would not make: someone no keyword or face names, a person the
         # rule lists missing, and the right names in the wrong order.
-        for name, broken in (("a.jpg", "INSERT INTO photo_people (photo_id, position, name, source)"
-                                       " SELECT id, 9, 'Somebody Else', 'keyword' FROM photos WHERE path = ?"),
+        taxonomy.add_path(self.conn, "People/Somebody Else", root_has_face=1)
+        for name, broken in (("a.jpg", "INSERT INTO photo_people (photo_id, position, name, source, tag_id)"
+                                       " SELECT id, 9, 'Somebody Else', 'keyword',"
+                                       " (SELECT id FROM tag_taxonomy WHERE tag = 'People/Somebody Else') FROM photos WHERE path = ?"),
                              ("b.jpg", "DELETE FROM photo_people WHERE name = 'Wren Halloway'"
                                        " AND photo_id = (SELECT id FROM photos WHERE path = ?)"),
                              ("c.jpg", "UPDATE photo_people SET name = CASE name WHEN 'Wren Halloway'"
@@ -94,8 +96,8 @@ class TheRules(Library):
             self.conn.execute(broken, (photo,))
             self.conn.commit()
         # The people are words of the word index, kept by people.rebuild: two of the three hand-made lists hold a name the
-        # index does not (the third holds the same names in another order); the first and third carry a name that is not
-        # their node's, since the hand-made rows hold a name and the id of another.
+        # index does not (the third holds the same names in another order); the third carries two names that are not their
+        # node's, since the hand-made rows hold a name and the id of another.
         self.assertEqual({"photos whose people are out of date": 3, "photos whose word index rows are out of date": 2,
                           "people listed whose name is not their person's": 2}, self.broken())
 
@@ -116,8 +118,9 @@ class TheRules(Library):
         # Written past the store, or on a copy restored without its triggers.
         gone = 999
         self.conn.execute("INSERT INTO embeddings (photo_id, model, vector) VALUES (?, 'm', x'00')", (gone,))
-        self.conn.execute("INSERT INTO photo_people (photo_id, position, name, source) VALUES (?, 0, 'Oda Castellane', 'keyword')",
-                          (gone,))
+        oda = taxonomy.add_path(self.conn, "People/Oda Castellane", root_has_face=1)
+        self.conn.execute("INSERT INTO photo_people (photo_id, position, name, source, tag_id)"
+                          " VALUES (?, 0, 'Oda Castellane', 'keyword', ?)", (gone, oda))
         self.conn.execute("INSERT INTO suggestions (photo_id, tags) VALUES (?, '[]')", (gone,))
         self.assertEqual({"vectors whose photo is gone": 1, "people listed for a photo that is gone": 1,
                           "suggestions for a photo that is gone": 1}, self.broken())

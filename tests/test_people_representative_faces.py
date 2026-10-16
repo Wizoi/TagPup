@@ -163,8 +163,7 @@ class TheRoute(unittest.TestCase):
                 taxonomy.add_path(conn, "People/Wren Halloway")
             node = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = 'People/Wren Halloway'").fetchone()[0]
             named = add_face(conn, "a.jpg", name="Wren Halloway", name_source="manual", embedding=at(0).tobytes())
-            # An automatic guess from before ids: a name and no id. It is nobody's, under no key.
-            add_face(conn, "b.jpg", name="Loki", name_source="auto", embedding=at(5).tobytes(), tag_id=None)
+            add_face(conn, "b.jpg", embedding=at(5).tobytes())   # nobody's, under no key
             return node, named
         node, face = db.write_with_connection(home.library("library.db"), seed)
         self.assertEqual(client.get("/library/api/people-faces").get_json(), {"id:%d" % node: face})

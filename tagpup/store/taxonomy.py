@@ -81,7 +81,7 @@ def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
     tree = tree or derived.Tree.read(conn)
     bare = vocabulary.SEPARATOR not in path
     if bare and person:
-        # A name two people have, or a group's, raises: its one caller (faces._target) resolved it first and was refused.
+        # A name two people have, a group's or the empty People's raises (People.person): a name found here is no group.
         found = (known or person_ids.read(conn)).person(path)
         if found is not None:
             return found.id, False
@@ -89,12 +89,7 @@ def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
     parts = vocabulary.segments(path)
     if hit is not None:
         if person and bare:
-            has_face, grown = conn.execute(
-                "SELECT has_face, EXISTS (SELECT 1 FROM tag_taxonomy WHERE parent_id = ?) FROM tag_taxonomy WHERE id = ?",
-                (hit, hit)).fetchone()
-            if grown:
-                return None, False
-            if not has_face:
+            if not conn.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (hit,)).fetchone()[0]:
                 with contextlib.nullcontext() if edited else people.tree_edit(conn):
                     conn.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (hit,))
                 return hit, True

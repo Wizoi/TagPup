@@ -87,7 +87,6 @@ def report(db_path, show=0, out=print):
         unrooted = checks.unrooted_by_folder(conn)
         unnamed = checks.tags_without_a_node(conn)
         empty = checks.empty_folders(conn)
-        nameless = checks.names_without_a_person(conn)
         at_the_top = checks.people_at_the_top(conn)
         under_a_person = checks.keywords_under_a_person(conn)
     finally:
@@ -152,27 +151,6 @@ def report(db_path, show=0, out=print):
             "for the first time is made a node there; merge each into its branch in the library's tag view)" % len(at_the_top))
         for tag in sorted(at_the_top)[:show]:
             out("    %s" % tag)
-    if nameless.none:
-        out("names with no person node: %d, on %d row(s) of faces and photos' people (reported, not broken: rows from before "
-            "names had ids; they are not counted as a person and nothing links them: name the face again)"
-            % (len(nameless.none), sum(nameless.none.values())))
-        for name, count in sorted(nameless.none.items(), key=lambda pair: (-pair[1], pair[0]))[:show]:
-            out("    %6d  %s" % (count, name))
-    if nameless.one:
-        out("names one person is called whose rows are linked to nobody: %d, on %d face(s) decided by hand, %d other face(s) and %d "
-            "listed person(s) (reported, not broken: nothing links them by itself, so they are on no person's page)"
-            % (len(nameless.one), sum(each[1] for each in nameless.one.values()), sum(each[2] for each in nameless.one.values()),
-               sum(each[3] for each in nameless.one.values())))
-        for name, (_person, by_hand, by_guess, listed_people) in sorted(
-                nameless.one.items(), key=lambda pair: (-(pair[1][1] + pair[1][2] + pair[1][3]), pair[0]))[:show]:
-            out("    %6d  %s" % (by_hand + by_guess + listed_people, name))
-    if nameless.branch:
-        out("names on a branch: %d, on %d row(s) of faces and photos' people (reported, not broken: a tag with tags "
-            "under it is not a person, so they have no person id): node %s"
-            % (len(nameless.branch), sum(rows for _nodes, rows in nameless.branch.values()),
-               ", node ".join(str(node) for node in sorted({n for nodes, _rows in nameless.branch.values() for n in nodes}))))
-        for name, (nodes, count) in sorted(nameless.branch.items(), key=lambda pair: (-pair[1][1], pair[0]))[:show]:
-            out("    %6d  %s (node %s)" % (count, name, ", ".join(str(node) for node in nodes)))
     if unrooted:
         out("photos under no root of the library: %d, in %d place(s) (they keep their native paths)"
             % (sum(group["count"] for group in unrooted), len(unrooted)))
@@ -238,8 +216,7 @@ def rebuild_derived(db_path, apply=False, out=print):
 
 def _person_ids_wrong(conn):
     """A line for each table whose rows hold a name that is not their person's (tagpup.store.person_ids: the id is the person and
-    the name a cache of the node's leaf) or an id of a node that is gone. A name with no id is not this: it is reported by
-    names_without_a_person."""
+    the name a cache of the node's leaf), an id of a node that is gone, or a name with no id."""
     return ["%d row(s) of %s hold a name that is not their person's" % (found.rows, table)
             for table in person_ids.TABLES for found in [person_ids.out_of_step(conn, table)] if found.rows]
 

@@ -142,7 +142,7 @@ def tags_without_a_node(conn):
 def face_person_ids_out_of_step(conn):
     """Faces whose name is not their person's: the id (`faces.tag_id`) is the person and `name` the cache of the node's leaf, so a
     name written without the id (a version of the app from before migration 29 that renamed a face) or an id of a node that is
-    gone. (A name with no id is not this: `names_without_a_person` reports it.) The examples are face ids. `tools/doctor.py --rebuild-derived
+    gone, or a name with no id (a name alone is nobody, owner 2026-10-15). The examples are face ids. `tools/doctor.py --rebuild-derived
     --apply` puts them right, the id being the key."""
     found = person_ids.out_of_step(conn, "faces", EXAMPLES)
     return Check("faces whose name is not their person's", found.rows, found.examples)
@@ -153,15 +153,6 @@ def listed_person_ids_out_of_step(conn):
     faces. The examples are photo ids."""
     found = person_ids.out_of_step(conn, "photo_people", EXAMPLES)
     return Check("people listed whose name is not their person's", found.rows, found.examples)
-
-
-def names_without_a_person(conn):
-    """(names no person node is called: {name: rows}, names only a
-    branch is: {name: ([node ids], rows)}, names exactly one person is called whose rows are linked to nobody:
-    {name: (id, faces by hand, other faces, listed)}) of faces and photos' people (person_ids.unresolved). Reported, not
-    broken: none has an id, none is guessed, and the tree is the owner's to settle (the ambiguous person
-    path, docs/findings.md, #27; a branch is not a person, #660)."""
-    return person_ids.unresolved(conn)
 
 
 def keywords_under_a_person(conn):
