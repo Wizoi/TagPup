@@ -18,6 +18,7 @@ from view_library import ViewLibrary  # noqa: E402
 from tagpup.core import vocabulary  # noqa: E402
 from tagpup.services import tags as tags_service  # noqa: E402
 from tagpup.store import db, photos  # noqa: E402
+from tagpup.web import app as web  # noqa: E402
 
 
 def counted_from_the_json(db_path):
@@ -84,6 +85,18 @@ class TheCounts(unittest.TestCase):
         self.assertTrue(seen)
         for sql in seen:
             self.assertNotRegex(sql, r"(?i)select\s+tags\s+from\s+photos", sql)
+
+    def test_a_library_that_cannot_be_read_fails_the_tree_request(self):
+        """Charter row 38 (#1452): the tree is not shown with every count 0. photo_tags is gone, as a damaged library
+        has lost it; the request answers 500 and says why."""
+        app = web.create_app("tagpup", startup=self.vl.library)
+        app.testing = True
+        client = app.test_client()
+        self.assertEqual(200, client.get("/harbour/api/taxonomy/tree").status_code)
+        self.vl.conn.execute("DROP TABLE photo_tags")
+        self.vl.conn.commit()
+        reply = client.get("/harbour/api/taxonomy/tree")
+        self.assertEqual(500, reply.status_code, reply.data)
 
     def test_it_is_fast_enough_not_to_hold_a_page_start(self):
         started = time.perf_counter()

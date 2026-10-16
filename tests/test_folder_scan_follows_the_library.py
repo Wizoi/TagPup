@@ -9,10 +9,12 @@ library's photos counter as it was before the scan, which the triggers move for 
 import os
 import sys
 import unittest
+from unittest import mock
 
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fake_exiftool  # noqa: E402
 import photo_rows  # noqa: E402
 import web_client  # noqa: E402
 
@@ -59,6 +61,35 @@ class AScanKeptWhileTheLibraryMoves(unittest.TestCase):
     def cache(self):
         from tagpup.core.library import Library
         return tagpup_routes.folders.of(Library(self.db_path))
+
+
+class ALooseFolderWhenTheTreeChanges(unittest.TestCase):
+    """#1451: a folder the library does not hold is read from its files, told the tree's people. A tree edit that
+    rewrites no photo (a branch made a people branch) moves the taxonomy counter only; the next open reads the files
+    again and shows the person. Reverting services.photos.scan_stamp to the photos counter alone fails it."""
+
+    def test_the_next_open_shows_the_people_the_tree_now_names(self):
+        app, home = web_client.app_for(self, "tagpup")
+        client = app.test_client()
+        files = fake_exiftool.Files()       # the reader imports ExifToolSession by name: patched where it is used
+        patcher = mock.patch("tagpup.files.metadata.ExifToolSession", files.session)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        folder = os.path.join(home.root, "Loose")
+        os.makedirs(folder)
+        photo = os.path.join(folder, "one.jpg")
+        Image.new("RGB", (8, 8)).save(photo, "JPEG")
+        files.keep_tags(photo, ["Cousins/Rowan Thackeray"])
+        made = client.post("/library/api/taxonomy/create", json={"name": "Cousins"}).get_json()
+
+        def people():
+            reply = client.get("/library/api/folder/scan", query_string={"path": folder})
+            self.assertEqual(200, reply.status_code, reply.data)
+            return [record["people"] for record in reply.get_json()]
+        self.assertEqual([[]], people())
+        update = client.post("/library/api/taxonomy/update", json={"id": made["id"], "has_face": 1})
+        self.assertEqual(200, update.status_code, update.data)
+        self.assertEqual([["Rowan Thackeray"]], people(), "the open folder still showed the old people")
 
 
 if __name__ == "__main__":
