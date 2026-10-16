@@ -1,4 +1,4 @@
-"""One library, three programs: the always-on server, the CLI and the MCP server act on it at once (scenario I7).
+"""One library, three programs: the server, the CLI and the MCP server act on it at once (scenario I7).
 
 A drain sees only its own process's work, so these are the owner's days a test of one process cannot see: an update while a CLI
 index or `sync --apply` is writing; a look from Claude (MCP) at a library the server has not migrated yet; the CLI's sync and the

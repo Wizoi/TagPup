@@ -138,7 +138,7 @@ def runs_for(library):
 
 def running():
     """How many suggestion runs are under way in this process, in any library: what an
-    update of the always-on process waits for (tagpup.web.lifecycle)."""
+    update of the server waits for (tagpup.web.lifecycle)."""
     with _runs_lock:
         every = list(_runs.values())
     count = 0

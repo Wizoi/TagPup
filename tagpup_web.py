@@ -178,7 +178,7 @@ def main(argv=None):
                          ", ".join(str(port) for port in ports.values()), BIND_TRIES)
             return 1
     if sockets is None and (not args.reload or os.environ.get(RELOADER + "_CHILD")):
-        # No launcher makes way (the always-on process's child, a server an install starts, a
+        # No launcher makes way (a server an install starts, a
         # sandbox's, the reloader's child -- not its parent, which only restarts it): the ports are still bound first, before a migration, the folder watcher or
         # any model is started, so a start that loses them -- a launch took them while an
         # install waited out a job -- exits at once having begun nothing (docs/findings.md, #805).

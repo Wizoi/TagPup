@@ -71,7 +71,7 @@ SCENARIOS = {
     "I4": ("apps", "A library one migration behind is served at start, and a request for one being migrated gets 503 at once."),
     "I5": ("apps", "A page loaded against the real server, not a fake one."),
     "I6": ("apps", "The same flows with and without roots, end to end."),
-    "I7": ("apps", "The CLI, the MCP server and the always-on server act on one library at once."),
+    "I7": ("apps", "The CLI, the MCP server and the server act on one library at once."),
     "I8": ("apps", "A page save from a stale record is refused, not overwritten."),
     "I9": ("apps", "A page's saved scan of an older shape is read again, not trusted."),
 }

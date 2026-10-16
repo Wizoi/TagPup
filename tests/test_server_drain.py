@@ -1,4 +1,4 @@
-"""The server lets the work under way finish before the always-on process moves it onto a
+"""The server lets the work under way finish before a launch or an install moves it onto a
 new version (docs/ARCHITECTURE.md, phase 8, "Updating itself"; tagpup.web.lifecycle).
 
 Owner, 2026-09-26: it "auto updates at next available request, completing current calls
@@ -249,7 +249,7 @@ class OneDrainAtATime(Base):
 class AQuietMoment(Base):
     """The owner (2026-09-26): an update moves "at next available request" -- not in the
     middle of someone's session. A drain asked to wait for quiet is refused while a
-    request came within that many seconds; the supervisor stops asking for quiet once an
+    request came within that many seconds; the launcher stops asking for quiet once an
     update has waited an hour."""
 
     def drain_quietly(self, quiet):

@@ -18,7 +18,7 @@ then, and a thread it started late can make the library again after the home has
 So every home is also handed to a process of its own that waits for this one to end
 and deletes whatever is left (_reap).
 
-A test that starts servers or supervisors ends them with `end_processes(home.root)`,
+A test that starts servers ends them with `end_processes(home.root)`,
 registered before it starts any: each it started, and each they started, ending those
 too. A test that failed part-way left four running for hours (docs/findings.md, #727):
 its cleanup ended only the processes the records named at that moment, and a supervisor

@@ -1,5 +1,5 @@
-"""Replacing a running server with the version being launched, without the always-on
-process (docs/ARCHITECTURE.md, "The installed copy"; docs/findings.md, #726).
+"""Replacing a running server with the version being launched
+(docs/ARCHITECTURE.md, "The installed copy"; docs/findings.md, #726).
 
 TagPup.cmd and TagTuner.cmd install a newer commit, then start tagpup_web.py --open from
 it. A server already answering on the port used to be given the page whatever version
@@ -37,7 +37,7 @@ pages and bookmarks use, and two servers starting on one library run its migrati
 once -- so first the new version is checked to start at all (`starts`: its tagpup_web.py
 --help, every module the server imports); and when it does not answer once started, the
 old version is started again. A server run from a checkout, one of another installed
-folder, and the always-on process's are left alone.
+folder are left alone.
 Two installs at once take turns (HANDOVER_LOCK); the second leaves the server to the first,
 which starts the version current.txt names when it starts it.
 """
@@ -510,7 +510,7 @@ def start_server(python, code, home, ports):
     (tagpup.core.processes), its output in STARTED_LOG -- opening no page. The Popen."""
     log_path = started_log(home)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    try:   # rotated as each starts, as the always-on process's console log is
+    try:   # rotated as each starts
         if os.path.getsize(log_path) > CONSOLE_LOG_MAX:
             os.replace(log_path, log_path + ".1")
     except OSError:
@@ -533,8 +533,8 @@ class Failed(str):
 
 
 def wait_for(port, version, started, wait=START_WAIT, sleep=time.sleep, clock=time.monotonic, say=None):
-    """Wait for `version` to answer on `port`: the server `started` (a Popen; None for the
-    always-on process's), or one a launch started meanwhile. None once it answers, else why
+    """Wait for `version` to answer on `port`: the server `started` (a Popen, or None), or one a launch started
+    meanwhile. None once it answers, else why
     not -- a `Failed` naming what answers instead, when the server started has exited and
     another version answers: stop at once, nothing is wrong with it (#806). `say` tells the
     owner every SAY_WAITING seconds that it still waits."""

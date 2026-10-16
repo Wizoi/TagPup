@@ -33,7 +33,7 @@ slot in tagpup.jobs.suggestions with (docs/findings.md, #112), and the class att
 every ClipEmbedder shared its model through. `tests/test_gpu_single_owner.py` fails a
 module that builds a model anywhere else.
 
-`background(runtime)` is what the web server -- the always-on process -- runs beside its
+`background(runtime)` is what the web server runs beside its
 requests (docs/ARCHITECTURE.md, phase 8): the recurring jobs, the release of idle caches,
 and the folder watcher (tagpup.jobs.watching). Each is registered once, in BACKGROUND.
 """
@@ -89,7 +89,7 @@ NO_JOBS = "TAGPUP_NO_JOBS"
 
 def runs_recurring_jobs():
     """Does this web server run the recurring jobs (tagpup.jobs.recurring)? Only the web
-    server asks: the always-on process runs them, nothing else (owner, 2026-09-26). Not
+    server asks: the server runs them, nothing else (owner, 2026-09-26). Not
     when NO_JOBS is set, nor in a test run (tagpup.ml.under_test) unless RUN_JOBS is: a
     server a test starts would snapshot its library in the background."""
     if os.environ.get(NO_JOBS):
@@ -119,14 +119,14 @@ def recurring_jobs(runtime=None, libraries=None, clock=None):
 
 #: How long the models, the vectors and the other caches may go unused before the web
 #: server lets them go (minutes): a ViT-H-14 keeps a few GB of GPU memory, photo_index's
-#: vectors 270 MB, and the always-on process would hold them all day.
+#: vectors 270 MB, and the server would hold them all day.
 RELEASE_MODELS_AFTER_MINUTES = 5
 
 #: The runtime's own entries in its idle registry (Runtime.idle).
 MODELS, PHOTO_INDEXES = "models", "photo indexes"
 
 
-# ---- What the always-on process runs beside its requests ---------------------------------
+# ---- What the server runs beside its requests ---------------------------------------------
 
 class Every:
     """`call()` every `seconds` on a daemon thread of its own, until stop(): a background
@@ -674,7 +674,7 @@ class Runtime:
 
     def release_idle(self):
         """Let go of what has not been used for `idle_after` seconds and nothing holds (the
-        `idle` registry): the always-on process otherwise keeps a few GB of GPU memory and
+        `idle` registry): the server otherwise keeps a few GB of GPU memory and
         each opened library's vectors all day for a Suggest that may not come. The names
         let go."""
         released = self.idle.release_idle()

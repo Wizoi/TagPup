@@ -22,7 +22,7 @@ claim left by a process that has ended is taken over. A library behind this vers
 schema is left alone until an app opens it and migrates it: running a job never
 migrates a library.
 
-Only the web server -- the always-on process -- runs them: it looks every CHECK_EVERY on
+Only the web server runs them: it looks every CHECK_EVERY on
 a thread of its own (Runner.start), stopped at shutdown (owner, 2026-09-26). The Activity page
 lists them and runs one by hand; neither the CLI nor the MCP server
 runs what is due as it starts. No Windows Task Scheduler. A server the tests started

@@ -1,4 +1,4 @@
-"""People by id, stage 2, "Two at once": the always-on server and a CLI run are two real PROCESSES editing one library's tree.
+"""People by id, stage 2, "Two at once": the server and a CLI run are two real PROCESSES editing one library's tree.
 
 Every tree operation is one transaction under the library's write lock (tagpup.store.db), reading the tree inside it, so two
 processes renaming two people interleave but never half-edit: after both finish, every face names a node that exists, by that

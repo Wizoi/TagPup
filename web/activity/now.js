@@ -1,6 +1,6 @@
 // Now: what runs this moment -- each library's indexing (the folders being indexed and how
 // far, those waiting), its Suggest runs and a recurring job running, the folder watcher's
-// sync, and the always-on process (an update waiting, the server draining, an update
+// sync, and the server (an update waiting, the server draining, an update
 // refused). Asked every few seconds while the page is in view (/api/activity/now).
 import { api } from './common/api.js';
 import { buildElement } from './common/dom.js';

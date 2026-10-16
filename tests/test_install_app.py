@@ -125,7 +125,7 @@ class InstallingANewCommitAtStart(InstallCase):
 
     def test_an_older_or_unrelated_commit_is_never_installed(self):
         """A checkout moved back (a branch switched, a bisect) is not newer than what is
-        installed, and the always-on process installs unattended."""
+        installed, and a launch installs unattended."""
         first = self.install(name="20260925-115722-0dd8402")[0]
         self.assertIsNone(self.update("bfeb9b7", False, newer=False))
         self.assertEqual(first, install_app.read_current(self.dest))
@@ -292,7 +292,7 @@ class AServerOfAnotherVersionRunning(InstallCase):
         self.assertTrue(any(line.startswith("running") for line in self.said))
 
     def test_the_version_a_launched_server_runs_is_never_removed(self):
-        """Not only the always-on process's: a server started by TagPup.cmd runs from its
+        """A server started by TagPup.cmd runs from its
         version until the next launch replaces it."""
         from tagpup import launcher
         names = ["20260101-000000-a", "20260102-000000-b", "20260103-000000-c"]

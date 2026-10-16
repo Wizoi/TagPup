@@ -83,7 +83,7 @@ def bring_up_to_date_in_background(libraries_served):
     """Bring each library the server serves to the current schema on a thread of its own, started as the
     server starts (docs/findings.md, #661): a migration -- 21 takes 17.5 s on photo_index cold -- runs
     then, not in the first request that names the library. The server answers meanwhile: /api/server,
-    which the supervisor's hand-over asks, names no library, and says the thread is busy; a drain waits
+    which a launcher's hand-over asks, names no library, and says the thread is busy; a drain waits
     for it (bringing_up_to_date, #664), so a new version does not end the server part-way through a
     migration. A request for the library meanwhile is answered 503 "updating" at once (`updating`; the pages
     wait that out, #666), not parked on the write lock: sixteen parked threads left /api/server no thread. A library that cannot be brought up to date now -- held by another

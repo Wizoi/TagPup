@@ -1,4 +1,4 @@
-"""A launch of another version replaces the server running, without the always-on process
+"""A launch of another version replaces the server running
 (tagpup.launcher; docs/findings.md, #726).
 
 The owner installed a new version and still saw the old page: TagPup.cmd installed it, but

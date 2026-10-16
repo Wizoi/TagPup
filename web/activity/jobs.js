@@ -74,7 +74,7 @@ function runNowControls(job, library) {
         className: 'btn run-now', text: 'Run now',
         attrs: { type: 'button', disabled: !state.jobs.runs_jobs || job.running || !!state.asking[jobKey(job.name, library)] },
         title: state.jobs.runs_jobs ? `Run ${job.name} for ${library} now, whether or not it is due`
-            : 'This server runs no recurring jobs; Run now works in the always-on server',
+            : 'This server runs no recurring jobs (one a test started, or TAGPUP_NO_JOBS is set)',
         data: { job: job.name, library },
     });
     button.addEventListener('click', () => {
@@ -150,7 +150,7 @@ export function renderJobs() {
     }
     const blocks = [];
     if (!data.runs_jobs) {
-        blocks.push(none('This server runs no recurring jobs: the always-on process does. What is shown is what ran.'));
+        blocks.push(none('This server runs no recurring jobs (one a test started, or TAGPUP_NO_JOBS is set). What is shown is what ran.'));
     }
     for (const [name, { job, rows }] of byJob) {
         blocks.push(buildElement('div', { className: 'card job-card', data: { job: name } }, [

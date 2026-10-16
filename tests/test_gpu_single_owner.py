@@ -55,7 +55,7 @@ def offenders(relative, source):
 #: each model's own check before it loads.
 TAKERS = {OWNER, RUNTIME, os.path.join("tagpup", "ml", "clip.py"), os.path.join("tagpup", "ml", "faces.py")}
 #: The byte locks of the machine's shared files: the card's (named by its owner), and the one lock
-#: every such file uses (tagpup.core.byte_lock: the installer's, the hand-over's, the supervisor's, the card's).
+#: every such file uses (tagpup.core.byte_lock: the installer's, the hand-over's, the card's).
 BYTE_LOCK = os.path.join("tagpup", "core", "byte_lock.py")
 LOCKERS = {OWNER, BYTE_LOCK}
 CALLS_THE_SYSTEM_LOCK = re.compile(r"msvcrt\.locking|fcntl\.flock")

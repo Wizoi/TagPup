@@ -2,7 +2,7 @@
 // reassign it.
 export const state = {
     //: How often Now is asked again while the page is in view, and the rest of the page
-    //: (jobs, syncs, snapshots, the always-on process, the timeline), in milliseconds.
+    //: (jobs, syncs, snapshots, the server, the timeline), in milliseconds.
     //: `?every=<ms>` sets the first, for a test or a measurement; the rest follow it.
     every: 3000,
     slowEvery: 30000,

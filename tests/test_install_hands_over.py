@@ -9,10 +9,10 @@ is waited out, saying what for, and it is ended once drained or hung -- and star
 version on the same ports, with no window and no new tab, so a page left open says TagPup
 was updated.
 
-Here: what the hand-over does with each server it finds (the always-on process's, one run
+Here: what the hand-over does with each server it finds (one run
 from a checkout, one of another installed folder: left alone), a long job waited out, a
 version that does not start at all (the running server never asked), two installs at once,
-the owner's Ctrl+C, the always-on process chosen; and, for real, in a home of the test's
+the owner's Ctrl+C; and, for real, in a home of the test's
 own on ports of its own: an idle server replaced, a hung one ended, and a new version that
 does not start once the old has gone, the old started again.
 """

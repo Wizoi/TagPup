@@ -18,7 +18,7 @@ keyword would make the guess a decided reference (#640).
 Interrupted part-way (a crash, a closed window): the chunks written are written, journaled and recorded in their rows;
 the chunk under way is settled at the next start by what its files hold (tagpup.services.file_changes), and running it
 again does the rest -- a photo that lists the person from a keyword is no longer in the plan. Two at once (the CLI and
-the always-on server): the lock of changes of photo files is the process's, so a CLI run is not held by it; each file is
+the server): the lock of changes of photo files is the process's, so a CLI run is not held by it; each file is
 read again just before it is written, and a file another process changed meanwhile is a conflict, reported, not
 overwritten -- run it again. A photo whose file cannot be read (a share that is away, a file gone) is an error counted
 and the others are written.

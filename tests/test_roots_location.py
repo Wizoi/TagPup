@@ -346,7 +346,7 @@ class ChangingTheLocation(RootsCase):
         self.assertIsNone(self.move(apply=True).refused)
 
     def test_a_running_server_reads_the_new_place_without_a_restart(self):
-        """A connection held open -- as the always-on process's are -- converts by the map it holds;
+        """A connection held open -- as the server's are -- converts by the map it holds;
         a moved map is found within a second, and the same row then names the file at the new place."""
         from tagpup.store import photos as store_photos
         from tagpup.store import roots as store_roots

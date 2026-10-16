@@ -149,7 +149,7 @@ function open(t, fake = server(), every = 5000) {
 }
 
 describe("the Activity page draws each section from what the server says", () => {
-  test("Now: indexing, Suggest, a job, the watcher's sync and the always-on process", async (t) => {
+  test("Now: indexing, Suggest, a job, the watcher's sync and the server", async (t) => {
     const { document, window } = await open(t);
     await flush(window, 6);
     const now = document.getElementById("now-body");

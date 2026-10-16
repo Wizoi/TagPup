@@ -3,7 +3,7 @@
 The apps logged only to a console, which scrolled away and closed with its window, so
 "was that slow on the server or in the browser?" had nothing to answer it afterwards.
 
-No log file grows without bound (docs/ARCHITECTURE.md, "Runtime": logs). The always-on process runs for weeks, and
+No log file grows without bound (docs/ARCHITECTURE.md, "Runtime": logs). The server runs for weeks, and
 the Activity page reads the logs. Every log is written by a RotatingFileHandler made in one place, tagpup.logs.to_file
 -- 5 MB, five kept -- and the one file written otherwise, the server's console output (a handle a launch or an install
 hands the child), is rotated each time the server starts.

@@ -29,7 +29,7 @@
  * them would go on pointing at the usual port when the launcher had been told another.
  *
  * Below the items, not one of them, the menu says which version of TagPup answers
- * (/api/server, asked at each opening: the always-on process moves onto a new version
+ * (/api/server, asked at each opening: the server moves onto a new version
  * while a page stays open).
  */
 import { api } from './api.js';

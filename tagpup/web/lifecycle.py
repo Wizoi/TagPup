@@ -418,13 +418,11 @@ def server_status():
 
 @routes.post(DRAIN)
 def drain():
-    """Stop taking new work and let what is under way finish (Lifecycle.drain): the
-    supervisor's, before it moves the server onto a new version; or a launcher's on this
+    """Stop taking new work and let what is under way finish (Lifecycle.drain): a launcher's or an install's on this
     machine, before it serves another version in its place (tagpup.launcher)."""
     lifecycle = _lifecycle()
     if not lifecycle.authorizes(request.headers, request.remote_addr):
-        return responses.error(403, "Only the process that started this server, or a launch on this machine, "
-                                    "may drain it")
+        return responses.error(403, "Only a launch or an install on this machine may drain this server")
     body = request.get_json(silent=True) or {}
     seconds = body.get("seconds", DRAIN_SECONDS)
     quiet = body.get("quiet", 0)

@@ -20,7 +20,7 @@ raw, downloaded) show background work. What it asks:
 - POST /api/activity/models/unload: Unload models now (the server's section); /server says
   what is loaded.
 - GET /api/activity/sync, /snapshots, /server, /timeline: each library's syncs and
-  watched folders, its snapshots, the always-on process, and one timeline of what was done.
+  watched folders, its snapshots, the server, and one timeline of what was done.
 - GET /api/activity/logs and /api/activity/logs/<name>[/raw|/download]: the logs in
   data/logs, read from the end and never whole (tagpup.logs.read).
 
@@ -289,7 +289,7 @@ def run_job():
     runner = _task(runtimes.RECURRING_JOBS)
     if runner is None:
         return responses.error(409, "This server runs no recurring jobs (one a test started, or TAGPUP_NO_JOBS "
-                                    "is set); Run now works in the always-on server")
+                                    "is set)")
     job = runner.registry.get(body.get("job") or "")
     if job is None:
         return responses.error(404, "There is no recurring job called %s" % (body.get("job"),))
@@ -356,7 +356,7 @@ def snapshot_list():
     return jsonify({"libraries": listed, "bytes": sum(each["bytes"] for each in listed)})
 
 
-# ---- The always-on process ------------------------------------------------------------------
+# ---- The server ----------------------------------------------------------------------------
 
 def _models():
     """What the server has loaded, for the page: names, whether a run uses them, and since when."""

@@ -604,7 +604,7 @@ class TheOwnerMovesTheLocationInTheDialog(RootsDialogCase):
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
 class TheMachineThatDoesNotPlaceTheRoot(RootsDialogCase):
-    """The always-on machine's map is gone or unreadable. The web pages and the MCP server say so in one sentence naming the
+    """This machine's map is gone or unreadable. The web pages and the MCP server say so in one sentence naming the
     file and the line to add, the pages that read no photo still open, and placing the root from the dialog opens the
     library again.
 

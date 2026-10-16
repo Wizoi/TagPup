@@ -197,7 +197,7 @@ class TheIndexerWritesItsOwnLog(unittest.TestCase):
             return handle.read()
 
     def test_each_run_of_the_indexer_writes_a_file_of_its_own(self):
-        """Two processes indexing one library -- the always-on server's queue and a sync run
+        """Two processes indexing one library -- the server's queue and a sync run
         by hand -- each write their own file: one file rotated by two fails on Windows."""
         home = own_home.for_test(self)
         self.child(home, "index:harbour:20260926T101500-4242-1", "from the server's indexer")
