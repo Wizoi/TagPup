@@ -15,7 +15,7 @@ folder-wide command that used this on its own is gone (owner, 2026-10-10).
 """
 import os
 
-from tagpup.core import paths
+from tagpup.core import fields as core_fields, paths
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
 from tagpup.files import exiftool_session, identity, names
@@ -56,7 +56,7 @@ def _by_identity(rows):
     claim left out."""
     by_id = {}
     for row in rows:
-        key = identity.read_document_id(row)
+        key = core_fields.read_document_id(row)
         source = row.get("SourceFile")
         if not key or not source:
             continue
