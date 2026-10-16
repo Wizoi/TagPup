@@ -308,11 +308,15 @@ class ModelsKeptForGood(_Folder):
         self.assertFalse(card.holds())
 
     def test_the_cli_lets_go_as_its_run_ends(self):
+        from tagpup.core.library import Library
         from tagpup.runtime import Runtime
+        from tagpup.services import libraries as library_actions
+        home = own_home.for_test(self)
+        library_actions.create(home.library("harbour.db"))
         card = self.card()
         clip = TheRuntimesTurns.Model()
-        runtime = Runtime(clip=clip, card=card)
-        runtime.gpu_turn("indexing Regatta (harbour)", (clip,)).release()
+        runtime = Runtime(build_clip=lambda settings: clip, card=card)
+        runtime.gpu_turn("indexing Regatta (harbour)", (runtime.clip(Library(home.library("harbour.db"))),)).release()
         self.assertFalse(card.holds())
         self.assertEqual(1, clip.unloads)
 

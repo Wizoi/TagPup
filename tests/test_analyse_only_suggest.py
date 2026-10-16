@@ -171,11 +171,11 @@ class Base(unittest.TestCase):
     def app_home(self):
         self.clip = None
         self.faces = FakeFaces()
-        self.runtime = Runtime(clip=None, faces=self.faces)
+        # Built as the runtime builds a library's models, from its settings: every library here gets these two.
+        self.runtime = Runtime(build_clip=lambda settings: self.clip, build_faces=lambda settings: self.faces)
         self.app, self.home = web_client.app_for(self, "tagpup", runtime=self.runtime)
         self.library = Library(self.home.library("library.db"))
         self.clip = FakeClip(library_settings.of(self.library).embedder)
-        self.runtime._clip = self.clip
         self.client = self.app.test_client()
         self.addCleanup(self.runtime.forget, self.library)
         self.addCleanup(suggestion_jobs.forget, self.library)

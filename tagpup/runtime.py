@@ -506,10 +506,9 @@ class Runtime:
     """What lives as long as the process: the models, one per set of settings a library
     it serves names, and each library's photo index for Suggest.
 
-    `clip` and `faces` stand in for every library's models: a test's fakes, which are
-    then never built. `build_clip` and `build_faces` make a model from its settings
-    (tagpup.ml.clip.ClipModel's and tagpup.ml.faces.FaceModel's keyword arguments): a
-    test's, to see which settings each library's model was made from. `read_only` reads
+    `build_clip` and `build_faces` make a model from its settings (tagpup.ml.clip.ClipModel's
+    and tagpup.ml.faces.FaceModel's keyword arguments): a test's stand-ins are built so, one
+    way, and are then held, kept and let go as a real model is. `read_only` reads
     each library's settings without stamping one that holds none (peek_settings): for a
     command that only looks.
 
@@ -529,10 +528,8 @@ class Runtime:
     life (the CLI's, which is short). `clock` is time.monotonic, or a test's.
     """
 
-    def __init__(self, clip=None, faces=None, build_clip=None, build_faces=None, read_only=False,
+    def __init__(self, build_clip=None, build_faces=None, read_only=False,
                  idle_after=None, clock=None, card=None, keep_models=False):
-        self._clip = clip
-        self._faces = faces
         #: The process's turn on the graphics card (tagpup.ml.gpu), or a test's: each model
         #: built is handed it. With `keep_models` -- the web server, which keeps its models
         #: between runs, for `idle_after` or, without one, for good (--release-models-after
@@ -610,8 +607,6 @@ class Runtime:
     def clip(self, library, settings=None):
         """The CLIP model the library's settings name, built the first time any library
         on those settings asks for it. Its weights load on first use, or in warm_up."""
-        if self._clip is not None:
-            return self._clip
         settings = settings or self.settings(library)
         self.idle.used(MODELS)
         with self._lock:
@@ -623,8 +618,6 @@ class Runtime:
     def faces(self, library, settings=None):
         """The face models the library's settings name, built the first time any library
         on those settings asks for them. Their weights load on first use, or in warm_up."""
-        if self._faces is not None:
-            return self._faces
         settings = settings or self.settings(library)
         self.idle.used(MODELS)
         with self._lock:
@@ -646,9 +639,6 @@ class Runtime:
         this process has a turn again."""
         with self._lock:
             models = list(self._clips.values()) + list(self._face_models.values())
-        for given in (self._clip, self._faces):
-            if given is not None:
-                models.append(given)
         _unload(models)
 
     def gpu_turn(self, what, models, cancelled=None, report=None):
@@ -718,8 +708,8 @@ class Runtime:
         when none has been since they were let go, "release_after": the idle period in
         seconds, or None}. What the Activity page shows."""
         with self._lock:
-            clips = list(self._clips.values()) + ([self._clip] if self._clip is not None else [])
-            faces = list(self._face_models.values()) + ([self._faces] if self._faces is not None else [])
+            clips = list(self._clips.values())
+            faces = list(self._face_models.values())
             in_use = bool(self._leases)
 
         def loaded(models):
@@ -798,7 +788,7 @@ class Runtime:
         library, settings = first[counts.most_common(1)[0][0]]
         what = "warming Suggest's models (TagPup server)"
         with self._lock:
-            held = self._model_set(settings)
+            held = _set_of(settings)
             if any(other.models != held for other in self._leases):
                 logger.info("Not warming the models: a Suggest on other models is under way.")
                 return
@@ -926,7 +916,7 @@ class Runtime:
         model_key = self.model_key(library, settings)
         what = what or "Suggest in %s" % library.name
         with self._lock:
-            models = self._model_set(settings)
+            models = _set_of(settings)
             self._refuse_another_set(library, settings, models)
             photo_index = self._index(library, model_key)
             clip, faces = self.clip(library, settings), self.faces(library, settings)
@@ -943,21 +933,11 @@ class Runtime:
             self._end(lease)
         try:
             photo_index.reload_if_changed()
-            if remember:
-                model = suggester.model_for_run(photo_index, clip, faces, settings.candidate_words)
-            else:
-                model = suggester.model_for_run(photo_index, clip, faces, settings.candidate_words,
-                                                remember=False)
+            model = suggester.model_for_run(photo_index, clip, faces, settings.candidate_words, remember=remember)
         except BaseException:
             end()
             raise
         return RunModel(model, end)
-
-    def _model_set(self, settings):
-        """The models a run on `settings` would hold: its CLIP and face settings, None for a model the runtime was given
-        (a test's, one for every library)."""
-        clip, faces = _set_of(settings)
-        return (None if self._clip is not None else clip, None if self._faces is not None else faces)
 
     def _refuse_another_set(self, library, settings, models):
         """Raise gpu_turns.OtherModelsInUse when a run under way holds other models than `models`: this process holds

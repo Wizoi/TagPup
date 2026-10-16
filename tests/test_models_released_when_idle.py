@@ -39,7 +39,7 @@ from tagpup.web import tagpup_routes, tuner_routes  # noqa: E402
 IDLE = 5 * 60
 ELSEWHERE = {"REMOTE_ADDR": "192.168.1.20"}
 BOTH = ["CLIP", "faces"]
-A_RUN = mock.patch("tagpup.services.suggester.model_for_run", lambda *args: object())
+A_RUN = mock.patch("tagpup.services.suggester.model_for_run", lambda *args, **kwargs: object())
 
 
 class FakeModel:

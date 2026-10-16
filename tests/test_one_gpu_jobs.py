@@ -228,7 +228,8 @@ class SuggestWaitsForTheCard(_Library):
             self.addCleanup(patched.stop)
         self.clip = _CudaClip()
         self.card = gpu.Card(poll=0.05)
-        self.runtime = Runtime(clip=self.clip, faces=_CudaFaces(), card=self.card)
+        faces = _CudaFaces()
+        self.runtime = Runtime(build_clip=lambda settings: self.clip, build_faces=lambda settings: faces, card=self.card)
         other = gpu.Card(poll=0.05)
         # Every turn ends before the home is deleted: an open card.lock cannot be (#775).
         self.addCleanup(self.card.close)

@@ -788,9 +788,9 @@ def model_for_run(photo_index, clip, faces, configured_words, remember=True):
     taxonomy = TagTaxonomy(photo_index.db_path)
     taxonomy.load()
     candidates = suggesting.zero_shot_words(configured_words, taxonomy.paths, taxonomy.people_roots())
-    # Said only when it differs, so a stand-in for either class need not know of it.
-    given = {} if remember else {"remember": False}
-    own = {} if remember else dict(given, text_cache=looking_text_embeddings(photo_index.db_path))
-    suggester = TagSuggester(photo_index, taxonomy, embedder=clip, candidate_tags=candidates, faces=faces, **own)
+    text_cache = None if remember else looking_text_embeddings(photo_index.db_path)
+    suggester = TagSuggester(photo_index, taxonomy, embedder=clip, candidate_tags=candidates, faces=faces,
+                             remember=remember, text_cache=text_cache)
     suggester._precompute_candidates()
-    return SuggestionModel(suggester, search.PhotoEmbeddings(clip, photo_index, **given), taxonomy.people_roots())
+    return SuggestionModel(suggester, search.PhotoEmbeddings(clip, photo_index, remember=remember),
+                           taxonomy.people_roots())

@@ -93,7 +93,7 @@ class OneIndexPerLibrary(unittest.TestCase):
         add_photo(self.db_path, "a.jpg")
         self.library = Library(self.db_path)
         # No model is built: the index is all this asks for.
-        self.runtime = Runtime(clip=object(), faces=object())
+        self.runtime = Runtime()
 
     def tearDown(self):
         self.runtime.photo_index(self.library).close()
