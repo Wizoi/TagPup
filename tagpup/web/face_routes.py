@@ -177,7 +177,7 @@ def with_warning(reply, outcome):
     return jsonify(reply)
 
 
-def _read_face_ids(body):
+def read_face_ids(body):
     """Accept either face_ids (list) or a single face_id, as ints; None when neither."""
     face_ids = body.get("face_ids")
     if face_ids is None and body.get("face_id") is not None:
@@ -270,7 +270,7 @@ def faces_exclude():
     (tagpup.services.face_people.exclude)."""
     library = state.require()
     body = request.get_json(silent=True) or {}
-    face_ids = _read_face_ids(body)
+    face_ids = read_face_ids(body)
     if face_ids is None:
         abort(400, description="Missing or invalid face_ids")
     reason = body.get("reason")   # none: the service's default
