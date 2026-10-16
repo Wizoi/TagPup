@@ -209,6 +209,9 @@ class _Suggester:
     def _precompute_candidates(self):
         pass
 
+    def knows_named_faces(self):
+        return False
+
     def suggest_for_photo(self, path, emb, k=15, min_sim=0.35, target_metadata=None):
         return {"path": path, "suggested_tags": [{"tag": "Activity/Sailing", "score": 0.7}]}
 

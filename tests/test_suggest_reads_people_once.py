@@ -68,11 +68,11 @@ class ReadsPeopleOncePerRun(unittest.TestCase):
             known_reads.append(db_path)
             return clustering.KnownFaces.of([(7, unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg", Ref(7, "Rowan Thackeray"))])
 
-        run = stand_in_models.run_for(Index(), FakeFaceProcessor(), dim=3).suggester
         with mock.patch.object(face_records, "known_faces", side_effect=known_faces), \
                 mock.patch.object(TagSuggester, "_tags_by_id", return_value={7: "People/Rowan Thackeray"}), \
                 mock.patch.object(face_records, "record_detected", return_value=0), \
                 mock.patch.object(store_faces, "for_clustering", side_effect=AssertionError("read every face")):
+            run = stand_in_models.run_for(Index(), FakeFaceProcessor(), dim=3).suggester
             results = [run.suggest_for_photo(r"D:\Pictures\Run\%02d.jpg" % n, [1.0, 0.0, 0.0])
                        for n in range(3)]
         self.assertEqual(len(known_reads), 1)
