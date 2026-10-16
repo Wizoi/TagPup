@@ -39,11 +39,10 @@ from dataclasses import dataclass, field
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
 from tagpup.files import recycle_bin, shares
-from tagpup.services import batches, file_changes, library_view, tagging
+from tagpup.services import batches, file_changes, selection, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
 from tagpup.store import taxonomy
-from tagpup.store import library_view as store
 
 logger = logging.getLogger(__name__)
 
@@ -199,11 +198,7 @@ def run(library, edit, ids, exiftool_path):
 
 
 def _write(library, edit, ids, exiftool_path):
-    conn = library_view.opened(library)
-    try:
-        found = store.paths_of(conn, ids)
-    finally:
-        conn.close()
+    found = selection.paths_of(library, ids)
     present = [(photo_id, found[photo_id]) for photo_id in ids if photo_id in found]
     out = Outcome(skipped_missing=len(ids) - len(present))
     present = _reachable(present, out)
