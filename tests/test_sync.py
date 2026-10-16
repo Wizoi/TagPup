@@ -31,7 +31,7 @@ from tagpup.files import images  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import sync  # noqa: E402
-from tagpup.store import db, faces_detected  # noqa: E402
+from tagpup.store import db, faces_detected, taxonomy  # noqa: E402
 
 #: When every file was last written, before the test changes any.
 THEN = 1_700_000_000
@@ -491,8 +491,9 @@ class ASizeChange(SyncTestCase):
                 add_vector(conn, path, np.array([1.0, 0.0], dtype=np.float32).tobytes())
                 add_face(conn, path, [0, 0, 10, 10])
                 faces_detected.record(conn, path, faces_detected.detector({"min_face_size": 20}), None, 1)
-            conn.execute("UPDATE faces SET name = 'Rowan Thackeray', name_source = 'manual' WHERE photo_id ="
-                         " (SELECT id FROM photos WHERE path = ?)", (self.path,))
+            rowan = taxonomy.add_path(conn, "People/Rowan Thackeray", root_has_face=1)   # a face is named with its node's id
+            conn.execute("UPDATE faces SET name = 'Rowan Thackeray', tag_id = ?, name_source = 'manual' WHERE photo_id ="
+                         " (SELECT id FROM photos WHERE path = ?)", (rowan, self.path))
             conn.commit()
         finally:
             conn.close()

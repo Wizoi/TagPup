@@ -56,10 +56,6 @@ class TheRule(unittest.TestCase):
         self.assertEqual([], vocabulary.extract_people(["Marlowe", FAMILY], known), "a bare name is a path of its own")
         self.assertEqual(["Marlowe"], vocabulary.extract_people(["Friends/Marlowe", FAMILY], known))
 
-    def test_a_face_named_so_is_a_name_and_stays_listed(self):
-        # Faces carry names, not tags: a name no person node has is the owner's to settle (#985), not dropped here.
-        self.assertEqual(["Marlowe"], vocabulary.people_in_photo([FAMILY], [vocabulary.Ref(None, "Marlowe")], self.known()))
-
 
 class InTheLibrary(unittest.TestCase):
     def setUp(self):
@@ -176,10 +172,25 @@ class TopLevelPerson(unittest.TestCase, people_by_id.TwoSams):
             self.read(lambda conn: person_ids.resolve(conn, "Family"))
 
     def test_a_new_librarys_empty_people_root_is_where_people_are_filed_and_no_person(self):
+        """The owner types "People" as a face's name while the library's People is still empty: People is where people are
+        filed, so the name is refused with a sentence and the face is left as it was; once someone is filed under People a face
+        named so would sit on a group (#1470)."""
         def empty(conn):
             taxonomy.remove_node(conn, people_by_id.WREN)
         people_by_id.write(self.path, empty)
-        self.assertIsNone(self.read(lambda conn: person_ids.resolve(conn, "People")))
+        root = self.read(lambda conn: conn.execute("SELECT id FROM tag_taxonomy WHERE tag = 'People'").fetchone()[0])
+        for ref in ("People", "people", root):
+            with self.subTest(ref):
+                with self.assertRaises(person_ids.GroupNotPerson):
+                    people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], ref))
+                self.assertEqual((None, None, None), tuple(self.face(self.faces[0])), "nothing was written")
+        people_by_id.write(self.path, lambda conn: taxonomy.remove_node(conn, "People"))
+        for ref in ("People", "people"):
+            with self.subTest("no People root", ref=ref):
+                with self.assertRaises(person_ids.GroupNotPerson):
+                    people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], ref))
+                self.assertEqual((None, None, None), tuple(self.face(self.faces[0])), "nothing was written")
+                self.assertIsNone(self.node("People"), "no node is made of the filing root's name")
         self.assertNotIn("people", taxonomy.people_filing(self.path)[0])
         self.assertEqual([], vocabulary.extract_refs(["People"], self.read(taxonomy.read_people_vocabulary)))
 
