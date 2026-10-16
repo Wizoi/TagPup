@@ -110,8 +110,6 @@ def with_counts(library):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
         hidden_tags = taxonomy.hidden_tags(conn)
-        # Where the tree files everyone, in one read: it was a query per person (#50).
-        filed = taxonomy.filed_people(conn)
         counted = faces.counts_by_person(conn)
         everyone = person_ids.Directory.read(conn)
     finally:
@@ -120,8 +118,7 @@ def with_counts(library):
     for ref, count in counted:
         name = ref.name
         person = everyone.of_id(ref.id)
-        tag_paths = [person["tag"]] if person and person["id"] is not None else filed.get(name, [])
-        if tag_paths and all(vocabulary.hidden_by(path, hidden_tags) for path in tag_paths):
+        if person and vocabulary.hidden_by(person["tag"], hidden_tags):
             continue
         listed.append({"name": name, "count": count, "person": person, "person_id": person["id"] if person else None})
     # Most faces first, and the alphabet for those that tie: the order of the rows the query

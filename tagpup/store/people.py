@@ -36,8 +36,6 @@ PEOPLE_REFS_JSON = ("(SELECT json_group_array(json_array(tag_id, name)) FROM (SE
 #: How many photos one pass of rebuild reads at a time.
 CHUNK = 500
 
-#: A face `f` is the person a listed person `pp` is: by the node's id, else -- a name no person is filed under -- the name.
-SAME_PERSON = "(f.tag_id = pp.tag_id OR (pp.tag_id IS NULL AND f.tag_id IS NULL AND f.name = pp.name COLLATE NOCASE))"
 
 
 def _faces_named(conn, photo_ids):
@@ -202,7 +200,7 @@ def on_faces_alone(conn, folder=None):
         where = " AND " + where
     return [(path, vocabulary.Ref(tag_id, name), decided) for path, tag_id, name, decided in conn.execute(
         "SELECT p.path, pp.tag_id, pp.name, EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = pp.photo_id AND "
-        + SAME_PERSON + " AND f.name_source = 'manual' AND f.excluded = 0)"
+        "f.tag_id = pp.tag_id AND f.name_source = 'manual' AND f.excluded = 0)"
         " FROM photo_people pp JOIN photos p ON p.id = pp.photo_id"
         " WHERE pp.source = 'face'" + where + " ORDER BY pp.photo_id, pp.position", params).fetchall()]
 

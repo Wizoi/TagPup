@@ -425,14 +425,6 @@ def embedded_tags(conn):
     return {tag for (tag,) in conn.execute("SELECT DISTINCT tag FROM tag_embeddings") if tag}
 
 
-def filed_people(conn):
-    """{name: [tag]}: where the tree files each person, one read for all of them."""
-    filed = {}
-    for tag, name in conn.execute("SELECT tag, name FROM tag_taxonomy WHERE has_face = 1"):
-        filed.setdefault(name, []).append(tag)
-    return filed
-
-
 def tag_embedding(conn, tag, prompt, model_name, pretrained):
     """The CLIP embedding cached for `tag` under this prompt and model, as float32 bytes,
     or None."""
