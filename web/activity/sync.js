@@ -23,7 +23,7 @@ function notLookedAt(found) {
     const folders = found ? found.folders_not_looked_at : 0;
     if (!folders) return null;
     return buildElement('span', { className: 'detail',
-        text: `${folders} folder${folders === 1 ? '' : 's'} not looked at (share not answering)` });
+        text: `${folders} folder${folders === 1 ? '' : 's'} not looked at (not answering or not listable)` });
 }
 
 function syncLine(label, record) {
