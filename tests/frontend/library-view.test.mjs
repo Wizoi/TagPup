@@ -36,7 +36,7 @@ const wait = (window, ms) => new Promise((resolve) => window.setTimeout(resolve,
 const frame = (window) => new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 
 /** The page on a library, a view named by its address, a layout for the grid, and a server that holds what it is told. */
-async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards, onPhoto, scan, layout = true, rootsProblem } = {}) {
+async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards, onPhoto, scan, layout = true, rootsProblem, migrating } = {}) {
   const server = new FakeServer();
   const ctx = { held: [], idsAsked: [], cardsAsked: [], photosAsked: [], server };
   ctx.hold = false;
@@ -61,6 +61,16 @@ async function load(t, { search = "?view=all", ids = IDS, total, onIds, onCards,
   if (rootsProblem) {
     server.first("/api/library/", { error: "This computer does not know where this library keeps its photos." },
       { status: 409, headers: { "X-TagPup-Roots-Problem": "1" } });
+  }
+  if (migrating) {
+    // The library is being migrated: its first request is answered as tagpup/web/libraries.py answers it, then the
+    // migration is done.
+    const updating = { success: false, updating: true, error: "TagPup is updating; this page will continue in a moment." };
+    server.first("/api/library/ids", () => {
+      server.routes.splice(server.routes.findIndex((r) => r.status === 503), 1);
+      ctx.idsAsked.push("503");
+      return updating;
+    }, { status: 503, headers: { "X-TagPup-Updating": "1", "Retry-After": "0" } });
   }
   server.on("/api/library/ids", answer((url) => {
     ctx.idsAsked.push(url);
@@ -231,6 +241,17 @@ describe("an address, or a library, that gives no view", () => {
     const banner = ctx.document.getElementById("roots-banner");
     assert.ok(!banner.classList.contains("hidden"), "the existing banner is shown");
     assert.match(ctx.document.getElementById("thumbnails-grid").textContent, /does not know where this library keeps/);
+  });
+
+  test("a library being migrated as the view opens: the page waits it out and shows the view, no error", async (t) => {
+    const ctx = await load(t, { migrating: true });
+    assert.equal(ctx.idsAsked.length, 2, "the order was not asked for again after the 503");
+    assert.equal(ctx.idsAsked[0], "503");
+    assert.match(ctx.stripText(), /68,?000 photos/);
+    assert.equal(ctx.state.library.ids.length, N);
+    assert.ok(ctx.real().length > 0, "no card once the library answered");
+    assert.doesNotMatch(ctx.document.getElementById("thumbnails-grid").textContent, /updating|could not|error/i);
+    assert.deepEqual(ctx.consoleErrors, []);
   });
 
   test("a source of 0 photos and a source of 1", async (t) => {
