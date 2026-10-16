@@ -44,6 +44,7 @@ import threading
 import time
 
 from tagpup import config as tagpup_config
+from tagpup.core import gpu_turns
 from tagpup.core import library as libraries
 from tagpup.core.idle import IdleCaches
 from tagpup.core.library import Library
@@ -374,6 +375,16 @@ def _part(settings, part):
         return None
 
 
+#: The two parts of a library's settings that name a model, in the order of a model set.
+PARTS = ("embedder", "faces")
+
+
+def _set_of(settings):
+    """The models a library's settings name, as one key: (its CLIP model's, its face models'), each _part. What a
+    library uses, a run holds and a run is refused for are each this one key."""
+    return tuple(_part(settings, part) for part in PARTS)
+
+
 class RunModel:
     """What begin() hands a suggestion run: the run's model (tagpup.services.suggester.
     SuggestionModel), whatever it answers, and `end()`, which the run calls when it is
@@ -469,24 +480,26 @@ class _OnTheCard:
 
 
 class _Lease:
-    """One run's hold on a photo index and a pair of models: `what` the run is ("Suggest Regatta (harbour)"), `models`
-    the set it holds (Runtime._model_set) and `embedder` its CLIP settings, to name them to a run refused beside it."""
+    """One run's hold on a photo index and a set of models: `what` the run is ("Suggest Regatta (harbour)"), `models`
+    the set it holds (_set_of) and `settings` its {part: settings} (PARTS), to name them to a run refused beside it.
+    The runs under way are the runtime's leases, and nothing else: what is held is read from them."""
 
-    def __init__(self, index, clip_key, faces_key, what, models, embedder):
-        self.index, self.clip_key, self.faces_key = index, clip_key, faces_key
-        self.what, self.models, self.embedder = what, models, embedder
+    def __init__(self, index, what, models, settings):
+        self.index, self.what, self.models, self.settings = index, what, models, settings
         self.ended = False
-
-
-class OtherModelsInUse(RuntimeError):
-    """A Suggest run asked for while another run of this process holds another set of models: the two would be two
-    model sets in one process under one turn on the graphics card (#761). Nothing was begun."""
 
 
 def _clip_name(embedder):
     """A CLIP model as the owner chose it: "ViT-H-14 (laion2b_s32b_b79k)"."""
     embedder = embedder or {}
     return "%s (%s)" % (embedder.get("model_name"), embedder.get("pretrained"))
+
+
+def _differing(theirs, ours):
+    """The settings two parts differ in, each as the run under way has it: "force_image_size 224"."""
+    keys = sorted(set(theirs or {}) | set(ours or {}))
+    return ", ".join("%s %s" % (key, (theirs or {}).get(key)) for key in keys
+                     if (theirs or {}).get(key) != (ours or {}).get(key))
 
 
 def _unload(models):
@@ -548,22 +561,19 @@ class Runtime:
         self.idle_after = idle_after
         #: What the process keeps only while it is used, and the one timer's registry.
         self.idle = IdleCaches(idle_after, clock=clock or time.monotonic)
-        self.idle.register(MODELS, self._release_models, in_use=lambda: bool(self._held))
+        self.idle.register(MODELS, self._release_models, in_use=lambda: bool(self._leases))
         self.idle.register(PHOTO_INDEXES, self._release_indexes)
         self._clips = {}
         self._face_models = {}
         #: Guards the models, what each library uses, the indexes and the runs' leases.
         self._lock = threading.RLock()
-        #: library.key -> (its CLIP settings, its face settings), as last asked.
+        #: library.key -> the models it names (_set_of), as last asked.
         self._uses = {}
-        #: ("clip" or "faces", settings) -> how many runs hold that model.
-        self._held = collections.Counter()
         #: library.key -> its photo index now.
         self._indexes = {}
-        #: id(index) -> how many runs hold it; and the indexes replaced while one did.
-        self._index_runs = collections.Counter()
+        #: id(index) -> an index replaced while a run held it, closed when the last such run ends.
         self._retired = {}
-        #: The runs under way: each its _Lease, until it ends.
+        #: The runs under way: each its _Lease, until it ends. The models and the indexes held are theirs.
         self._leases = []
 
     # ---- A library's settings --------------------------------------------------------
@@ -666,7 +676,7 @@ class Runtime:
         """Record which models `library` uses now. True when that changed from before."""
         if library is None:
             return False
-        uses = (_part(settings, "embedder"), _part(settings, "faces"))
+        uses = _set_of(settings)
         before = self._uses.get(library.key)
         self._uses[library.key] = uses
         return before is not None and before != uses
@@ -675,14 +685,32 @@ class Runtime:
         """Drop each model no library uses and no run holds; returns them, to unload
         outside the lock. Under the lock."""
         dropped = []
-        for kind, built, position in (("clip", self._clips, 0), ("faces", self._face_models, 1)):
-            used = {uses[position] for uses in self._uses.values()}
+        for position, built in enumerate((self._clips, self._face_models)):
+            kept = {uses[position] for uses in self._uses.values()} | {lease.models[position] for lease in self._leases}
             for key in list(built):
-                if key not in used and not self._held[(kind, key)]:
+                if key not in kept:
                     dropped.append(built.pop(key))
         if dropped:
             logger.info("Letting go of %d model(s) no library uses any more.", len(dropped))
         return dropped
+
+    def _drop_other_sets(self, models):
+        """Drop each model built of another set than `models`, whichever library names it: what a run beginning on
+        `models` does once no run holds another set (_refuse_another_set), so the process never has two sets on the
+        graphics card, one after the other (#761). Those of `models` stay, kept for the next run. Returns them, to
+        unload outside the lock. Under the lock."""
+        dropped = []
+        for position, built in enumerate((self._clips, self._face_models)):
+            for key in list(built):
+                if key != models[position]:
+                    dropped.append(built.pop(key))
+        if dropped:
+            logger.info("Letting go of %d model(s) of another library's settings before a run on others.", len(dropped))
+        return dropped
+
+    def _holds(self, index):
+        """Does a run under way hold `index`? Under the lock."""
+        return any(lease.index is index for lease in self._leases)
 
     def release_idle(self):
         """Let go of what has not been used for `idle_after` seconds and nothing holds (the
@@ -703,7 +731,7 @@ class Runtime:
         with self._lock:
             clips = list(self._clips.values()) + ([self._clip] if self._clip is not None else [])
             faces = list(self._face_models.values()) + ([self._faces] if self._faces is not None else [])
-            in_use = bool(self._held)
+            in_use = bool(self._leases)
 
         def loaded(models):
             return any(callable(getattr(m, "loaded", None)) and m.loaded() for m in models)
@@ -723,7 +751,7 @@ class Runtime:
     def _release_models(self):
         """Every model, when no run holds one (the registry asks in_use first). How many."""
         with self._lock:
-            if self._held:
+            if self._leases:
                 return 0
             dropped = list(self._clips.values()) + list(self._face_models.values())
             self._clips.clear()
@@ -737,7 +765,7 @@ class Runtime:
         """Each library's photo index no run holds: closed, its vectors let go; the next
         ask makes and loads it again. How many."""
         with self._lock:
-            idle = [(key, index) for key, index in self._indexes.items() if not self._index_runs[id(index)]]
+            idle = [(key, index) for key, index in self._indexes.items() if not self._holds(index)]
             for key, _index in idle:
                 del self._indexes[key]
             for _key, index in idle:
@@ -769,7 +797,7 @@ class Runtime:
             for library in libraries:
                 try:
                     settings = peek_settings(library)
-                    key = (_frozen(settings.embedder), _frozen(settings.faces))
+                    key = _set_of(settings)
                 except Exception as e:
                     logger.error("Could not read the settings of %s to warm its models: %s", library.name, e)
                     continue
@@ -840,10 +868,9 @@ class Runtime:
     def _retire(self, index):
         """An index no longer the library's: closed now, or, while a run holds it, when
         the last such run ends. A run's connection was closed under it. Under the lock."""
-        if self._index_runs[id(index)]:
+        if self._holds(index):
             self._retired[id(index)] = index
         else:
-            self._index_runs.pop(id(index), None)
             index.close()
 
     def photo_index(self, library, settings=None):
@@ -888,22 +915,23 @@ class Runtime:
         hold it until the run ends: `report(line)` hears the waiting line meanwhile, and
         None once the turn is had; `cancelled()` true stops the wait (gpu_turns.Cancelled).
 
-        Refused, OtherModelsInUse and nothing begun, while another run holds models of other settings: a library naming
-        another CLIP model (or face settings) waits for the run before it to end (#761)."""
+        Refused, gpu_turns.OtherModelsInUse and nothing begun, while another run holds models of other settings: a
+        library naming another CLIP model (or face settings) waits for the run before it to end (#761). Begun, the models
+        of any other set, kept after the runs that used them, are let go before this run uses its own: one set on the
+        card, at once or one after the other; those of its own set are kept, for the idle period."""
         settings = self.settings(library)
         model_key = self.model_key(library, settings)
         what = what or "Suggest in %s" % library.name
         with self._lock:
             models = self._model_set(settings)
             self._refuse_another_set(library, settings, models)
+            dropped = self._drop_other_sets(models)
             photo_index = self._index(library, model_key)
             clip, faces = self.clip(library, settings), self.faces(library, settings)
-            lease = _Lease(photo_index, _frozen(settings.embedder), _frozen(settings.faces), what, models,
-                           settings.embedder)
+            lease = _Lease(photo_index, what, models, {part: getattr(settings, part) for part in PARTS})
             self._leases.append(lease)
-            self._index_runs[id(photo_index)] += 1
-            self._held[("clip", lease.clip_key)] += 1
-            self._held[("faces", lease.faces_key)] += 1
+        # Before the run's first use loads its own (a model built loads nothing until it is used).
+        _unload(dropped)
         turn = _RunTurn(self.card, what, (clip, faces), cancelled, report)
         clip, faces = _OnTheCard(clip, turn), _OnTheCard(faces, turn)
 
@@ -925,22 +953,29 @@ class Runtime:
     def _model_set(self, settings):
         """The models a run on `settings` would hold: its CLIP and face settings, None for a model the runtime was given
         (a test's, one for every library)."""
-        return (None if self._clip is not None else _part(settings, "embedder"),
-                None if self._faces is not None else _part(settings, "faces"))
+        clip, faces = _set_of(settings)
+        return (None if self._clip is not None else clip, None if self._faces is not None else faces)
 
     def _refuse_another_set(self, library, settings, models):
-        """Raise OtherModelsInUse when a run under way holds other models than `models`: this process holds one set at a
-        time, whichever libraries name them (#761). Under the lock."""
+        """Raise gpu_turns.OtherModelsInUse when a run under way holds other models than `models`: this process holds
+        one set at a time, whichever libraries name them (#761). The sentence names the setting that differs. Under
+        the lock."""
         for other in self._leases:
             if other.models == models:
                 continue
-            if other.models[0] != models[0]:
-                theirs = "the CLIP model %s; %s names %s" % (_clip_name(other.embedder), library.name,
-                                                              _clip_name(settings.embedder))
+            clip = other.settings["embedder"]
+            if other.models[0] == models[0]:
+                theirs = "face models with %s; %s names other face settings" % (
+                    _differing(other.settings["faces"], settings.faces), library.name)
+            elif _clip_name(clip) != _clip_name(settings.embedder):
+                theirs = "the CLIP model %s; %s names %s" % (_clip_name(clip), library.name, _clip_name(settings.embedder))
             else:
-                theirs = "face models of other settings than %s names" % library.name
-            raise OtherModelsInUse("%s is using %s, and TagPup holds one set of models at a time. Nothing was suggested: "
-                                   "Suggest again once it has ended." % (other.what, theirs))
+                theirs = "the CLIP model %s with %s; %s names it with %s" % (
+                    _clip_name(clip), _differing(clip, settings.embedder), library.name,
+                    _differing(settings.embedder, clip))
+            raise gpu_turns.OtherModelsInUse(
+                "%s is using %s, and TagPup holds one set of models at a time. Nothing was suggested: "
+                "Suggest again once it has ended." % (other.what, theirs))
 
     def _end(self, lease):
         """A run is done: what it held, and nothing else uses, is let go."""
@@ -951,15 +986,8 @@ class Runtime:
             self._leases.remove(lease)
             self.idle.used(MODELS)
             self.idle.used(PHOTO_INDEXES)
-            for kind, key in (("clip", lease.clip_key), ("faces", lease.faces_key)):
-                self._held[(kind, key)] -= 1
-                if self._held[(kind, key)] <= 0:
-                    del self._held[(kind, key)]
-            index_id = id(lease.index)
-            self._index_runs[index_id] -= 1
-            if self._index_runs[index_id] <= 0:
-                del self._index_runs[index_id]
-                retired = self._retired.pop(index_id, None)
+            if not self._holds(lease.index):
+                retired = self._retired.pop(id(lease.index), None)
                 if retired is not None:
                     retired.close()
             dropped = self._release()

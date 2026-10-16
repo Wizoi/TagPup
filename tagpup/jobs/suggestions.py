@@ -45,7 +45,7 @@ import threading
 import numpy as np
 
 from tagpup.core import paths
-from tagpup.core.gpu_turns import Cancelled
+from tagpup.core.gpu_turns import Cancelled, OtherModelsInUse
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.services import libraries, suggester
 
@@ -125,6 +125,15 @@ def _end(model):
             end()
         except Exception as e:
             logger.error("Could not end a suggestion run: %s", e)
+
+
+def _log_failure(line, folder, error):
+    """A run that failed, in the log: with its traceback, unless it was refused for another run's models
+    (OtherModelsInUse), which is expected and says all there is to say."""
+    if isinstance(error, OtherModelsInUse):
+        logger.info("Suggest of %s was refused: %s", folder, error)
+    else:
+        logger.exception(line, folder, error)
 
 
 def runs_for(library):
@@ -576,7 +585,7 @@ class SuggestionRuns:
                 logger.info("Suggest of %s was cancelled.", folder)
                 self._say_cancelled(key)
                 return
-            logger.exception("Error running suggestions for %s: %s", folder, e)
+            _log_failure("Error running suggestions for %s: %s", folder, e)
             # Always said, even with the entry gone, so the page stops polling instead of
             # spinning on "preparing" for ever.
             with self.lock:
@@ -621,7 +630,7 @@ class SuggestionRuns:
             try:
                 model = work.begin()
             except Exception as e:
-                if stop.is_set():
+                if stop.is_set() or isinstance(e, OtherModelsInUse):
                     raise
                 raise RuntimeError("The models could not be made ready, so no photo was analysed and nothing "
                                    "was changed: %s" % e) from e
@@ -654,7 +663,7 @@ class SuggestionRuns:
                 logger.info("Suggest of %s was cancelled.", folder)
                 self._say_cancelled(key)
                 return
-            logger.exception("Error analysing the photos of %s without saving: %s", folder, e)
+            _log_failure("Error analysing the photos of %s without saving: %s", folder, e)
             said = str(e).strip()
             # Whatever failed -- the scan, the models -- a run that only looks has written nothing to the library.
             if "nothing was changed" not in said.lower():

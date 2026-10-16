@@ -1,6 +1,7 @@
 """A turn on the graphics card, in the words every layer may use: the line a job waiting
 for one shows, how a page or a queue tells that line from another, and the exception a
-wait that was cancelled raises.
+wait that was cancelled raises, and the refusal of a run whose models are not those of
+the run under way.
 
 The turns themselves are taken by tagpup.ml.gpu, one process at a time on this machine
 (docs/findings.md, #750); the runtime takes them for a run (tagpup.runtime). A job that
@@ -19,6 +20,12 @@ SOMEONE = "another TagPup program"
 
 class Cancelled(Exception):
     """A wait for the graphics card was cancelled: nothing was run on it."""
+
+
+class OtherModelsInUse(RuntimeError):
+    """A Suggest run asked for while another run of this process holds another set of models: the two would be two
+    model sets in one process under one turn on the graphics card (#761). Nothing was begun; the job says why, as it
+    says a refusal, not a failure (tagpup.runtime.Runtime.begin)."""
 
 
 def waiting_line(holder=None):
