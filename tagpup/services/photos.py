@@ -178,8 +178,8 @@ def _read(library, files, exiftool_path):
         batch = files[start:start + READ_BATCH]
         for (file, mtime, size), meta in zip(batch, reader.batch_read([f for f, _, _ in batch], people=people)):
             found[paths.key(file)] = page_record(
-                file, meta, meta.get("mtime", 0.0) if mtime is None else mtime,
-                meta.get("size", 0) if size is None else size)
+                file, meta, meta["mtime"] if mtime is None else mtime,
+                meta["size"] if size is None else size)
     return found
 
 

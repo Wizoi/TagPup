@@ -15,11 +15,18 @@ from tagpup.files.metadata import MetadataExtractor
 from tagpup.store import added_folders, db, photos
 
 
+def stamp_of(photo_path):
+    """(mtime, size) of the file, as the indexer takes it before its read (MetadataExtractor._stamp); (0.0, 0) for a
+    path no file is at -- most fixtures name a photo and make no file -- so that its row is a row that was read."""
+    stamp = MetadataExtractor._stamp(photo_path)
+    return (0.0, 0) if stamp == (None, None) else stamp
+
+
 def as_read(photo_path, fields, people=None):
     """The record a read of `photo_path` gives when ExifTool answers `fields`
     ({"XMP:Subject": [...], "EXIF:DateTimeOriginal": "2024:07:04 10:00:00"}). The file's
-    mtime and size are read from disk when it exists."""
-    return MetadataExtractor()._structure(photo_path, {"SourceFile": photo_path, **fields}, people)
+    mtime and size are read from disk when it exists (stamp_of)."""
+    return MetadataExtractor()._structure(photo_path, {"SourceFile": photo_path, **fields}, people, stamp_of(photo_path))
 
 
 def add_read(conn, photo_path, fields, people=None):

@@ -319,7 +319,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # Untagged photos contribute no tags when they turn up as a suggestion neighbour,
     # and the scoring denominator counts only neighbours that do contribute, so they
     # cannot dilute a suggestion.
-    to_index_meta = all_metadata
+    # A photo ExifTool did not answer for (a share gone away) is left as it was, unread: its record has no stamp
+    # (MetadataExtractor.batch_read), and the next index reads it again.
+    not_answered = [m["path"] for m in all_metadata if m["mtime"] is None]
+    to_index_meta = [m for m in all_metadata if m["mtime"] is not None]
+    if not_answered:
+        console.print(f"[bold yellow]{len(not_answered)} photo(s) were not read: ExifTool did not answer for them "
+                      f"(a share gone away?).[/bold yellow] They are left as they were; the next index reads them.")
     tagged_count = sum(1 for m in to_index_meta if m["tags"] or m["people"] or m["captions"])
 
     console.print(

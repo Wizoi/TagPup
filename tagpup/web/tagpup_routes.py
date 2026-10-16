@@ -462,10 +462,8 @@ def folder_time_shift():
             path = paths.stored(meta["path"])
             # Every map holding the photo: this folder's, and an ancestor's scan that
             # walked into it.
-            for held, previous in cache.entries_for(path):
-                held[paths.key(path)] = photo_actions.page_record(
-                    path, meta, meta.get("mtime", previous.get("mtime", 0.0)),
-                    meta.get("size", previous.get("size", 0)))
+            for held, _previous in cache.entries_for(path):
+                held[paths.key(path)] = photo_actions.page_record(path, meta, meta["mtime"], meta["size"])
     except Exception as e:
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))

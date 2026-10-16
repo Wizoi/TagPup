@@ -1,16 +1,67 @@
-"""An edit of a selection when ExifTool stalls (tests/test_bulk_edits.py is the edit's own): a stalled ExifTool costs the edit one
-deadline and is never retried photo by photo, whatever the count. Fictional names only.
+"""ExifTool stalls (a share gone away): an edit of a selection (tests/test_bulk_edits.py is the edit's own), the indexer's read
+and sync's pairing read each cost one deadline and are never retried photo by photo, whatever the count; what the indexer did not
+hear about is left unread, never stamped (docs/findings.md, #1473). Fictional names only.
 """
 import os
+import shutil
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_bulk_edits as T  # noqa: E402
 
-from tagpup.files import exiftool_session, field_values  # noqa: E402
-from tagpup.services import file_changes  # noqa: E402
+from tagpup.files import exiftool_session, field_values, metadata  # noqa: E402
+from tagpup.services import file_changes, relink_photos  # noqa: E402
+
+
+class StalledSession:
+    """An ExifTool session whose every read waits out its deadline, as one on a share that went away does."""
+    calls = []
+    timeout = 300
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get_tags(self, batch, tags=None, params=None):
+        StalledSession.calls.append(list(batch))
+        raise exiftool_session.ExifToolTimeout("ExifTool did not answer within 300s (a read); its process was killed.")
+
+
+class TheIndexAndSyncReadAShareThatStopsAnswering(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.mkdtemp(prefix="stalled_read_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        self.photos = []
+        for name in ("Quay.jpg", "Slipway.jpg", "Beacon.jpg"):
+            path = os.path.join(folder, name)
+            with open(path, "wb") as handle:
+                handle.write(b"x")
+            self.photos.append(path)
+        StalledSession.calls = []
+
+    def test_the_indexers_read_waits_one_deadline_and_leaves_every_photo_unread(self):
+        with mock.patch.object(metadata, "ExifToolSession", StalledSession):
+            records = metadata.MetadataExtractor().batch_read(self.photos)
+        self.assertEqual(1, len(StalledSession.calls), "one command for the three photos, not one more for each")
+        self.assertEqual(self.photos, [record["path"] for record in records])
+        # A record with no stamp is one nobody read: the indexer leaves its row as it was and reads it next time.
+        self.assertEqual([(None, None)] * 3, [(record["mtime"], record["size"]) for record in records])
+        self.assertTrue(all(record["read_error"] for record in records))
+
+    def test_syncs_pairing_read_waits_one_deadline_and_pairs_nothing(self):
+        with mock.patch.object(exiftool_session, "ExifToolSession", StalledSession):
+            by_original, by_identity = relink_photos.claims_of(self.photos)
+        self.assertEqual(1, len(StalledSession.calls))
+        self.assertEqual(({}, {}), (by_original, by_identity))
 
 
 class AStalledExifTool(T.Bulk):

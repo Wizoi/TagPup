@@ -74,7 +74,7 @@ class RefreshFixture(unittest.TestCase):
     def fake_batch_read(self, extractor, paths, people=None):
         from tagpup.files.metadata import MetadataExtractor
         self.read.extend(paths)
-        return [MetadataExtractor._structure(extractor, p, dict(self.truth[p]), people)
+        return [MetadataExtractor._structure(extractor, p, dict(self.truth[p]), people, MetadataExtractor._stamp(p))
                 for p in paths]
 
     def refresh(self, exiftool="exiftool.exe", **kwargs):

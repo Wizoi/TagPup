@@ -105,7 +105,7 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
 
         extractor = MetadataExtractor()
         record = extractor._structure(
-            "D:/a.jpg", {"XMP:DocumentID": "xmp.did:abc", "XMP:Subject": ["Beach"]}, None)
+            "D:/a.jpg", {"XMP:DocumentID": "xmp.did:abc", "XMP:Subject": ["Beach"]}, None, (1.0, 1))
         self.assertEqual(record["document_id"], "xmp.did:abc")
 
     def test_the_indexer_mints_and_nothing_else_does(self):

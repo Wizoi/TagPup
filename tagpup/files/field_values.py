@@ -32,6 +32,11 @@ class Unreadable(Exception):
     """A photo whose fields could not be read: missing, locked, or not a photo."""
 
 
+class NotAnswered(Unreadable):
+    """A photo of a batch ExifTool did not answer for in its deadline (a share gone away, a disk that stopped): nothing is
+    known of the file, not even that it cannot be read, so a reader leaves it unread."""
+
+
 def _held(row, wanted):
     kind = row.get(MIME_TYPE)
     if kind is not None and not str(kind).startswith("image/"):
@@ -44,8 +49,9 @@ def _held(row, wanted):
 def read(et, photo_paths, wanted, also=(), records=None):
     """{paths.key(path): {field: its values}} of each photo in `photo_paths`, for the
     fields in `wanted`; an Unreadable in place of the fields of a photo that could not be
-    read. Read in batches; a batch ExifTool refuses is read again a photo at a time, so
-    one bad file does not cost the others. `also` are fields asked as well, answered only
+    read (NotAnswered, of a batch ExifTool did not answer for). Read in batches; a batch ExifTool refuses is read again a
+    photo at a time, so one bad file does not cost the others. The one batch reader: the indexer's
+    (tagpup.files.metadata.MetadataExtractor) and sync's pairing (tagpup.services.relink_photos) read through it. `also` are fields asked as well, answered only
     in `records`, when given: {paths.key(path): ExifTool's record} of each photo read.
 
     The file is not scanned to its end first: a JPEG whose picture stops short takes a write of its fields, and its
@@ -67,7 +73,7 @@ def read(et, photo_paths, wanted, also=(), records=None):
             said = "ExifTool did not answer in %s s" % getattr(et, "timeout", "time")
             logger.warning("%s; %d photo(s) of the batch were not read: %s", said, len(batch), stalled)
             for one in batch:
-                found[paths.key(one)] = Unreadable(said)
+                found[paths.key(one)] = NotAnswered(said)
             continue
         except Exception:
             rows = None

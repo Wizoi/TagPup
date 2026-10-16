@@ -462,7 +462,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """Record what indexing read of a photo: `row` has mtime, size, tags, captions,
     raw_metadata (as values), embedding (bytes) and document_id; the embedding is kept
     under `model`, stamped with the row's mtime and size, and the photo's people are
-    rebuilt. The caller commits.
+    rebuilt. A row with no stamp is recorded unread (mtime and size NULL). The caller commits.
 
     A photo indexed before is updated in place, under the spelling its row already has.
     faces.photo_id references photos.id ON DELETE CASCADE, so anything that deletes
@@ -488,7 +488,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         " mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
         " captions = excluded.captions, raw_metadata = excluded.raw_metadata,"
         " document_id = COALESCE(excluded.document_id, photos.document_id)",
-        (row_path, row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
+        (row_path, row.get("mtime"), row.get("size"), json.dumps(row.get("tags", [])),
          json.dumps(row.get("captions", [])),
          store_roots.raw_to_row(json.dumps(row.get("raw_metadata", {})), roots), row.get("document_id")))
     if not (batch is not None and batch.prepared) and derived.make_nodes(conn, [row.get("tags", [])], batch):
@@ -505,7 +505,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         if model is None:
             # Dropped without a word, it left a library without the vector (#85).
             raise ValueError("An embedding is kept under the model that made it; none was named.")
-        embeddings.put(conn, stored, model, row.get("mtime", 0.0), row.get("size", 0), row["embedding"])
+        embeddings.put(conn, stored, model, row.get("mtime"), row.get("size"), row["embedding"])
 
 
 def clear_embeddings(conn):

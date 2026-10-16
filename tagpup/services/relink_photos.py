@@ -18,7 +18,7 @@ import os
 from tagpup.core import fields as core_fields, paths
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, identity, names
+from tagpup.files import exiftool_session, field_values, identity, names
 from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
@@ -32,23 +32,14 @@ def stem_of(path):
 
 
 def _read_files(found, fields, exiftool_path):
-    """(SourceFile, row) of each photo in `found`, read for `fields`; a batch that fails
-    is read again a photo at a time. Only reads."""
+    """ExifTool's record of each photo in `found` it read, for `fields`, through the one batch reader
+    (field_values.read). A photo it could not read, or did not answer for, is not among them. Only reads."""
     if not found:
         return []
-    rows = []
+    records = {}
     with exiftool_session.ExifToolSession(executable=exiftool_path) as et:
-        for i in range(0, len(found), 100):
-            batch = found[i:i + 100]
-            try:
-                rows += et.get_tags(batch, tags=list(fields))
-            except Exception:
-                for one in batch:
-                    try:
-                        rows += et.get_tags([one], tags=list(fields))
-                    except Exception:
-                        continue
-    return rows
+        field_values.read(et, found, [], list(fields), records)
+    return list(records.values())
 
 
 def _by_identity(rows):

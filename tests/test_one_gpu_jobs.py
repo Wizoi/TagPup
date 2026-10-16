@@ -339,7 +339,7 @@ class TheIndexerWaitsBeforeItsFirstPhoto(_Library):
         runtime.gpu_turn.side_effect = gpu_turn
         extractor = mock.Mock()
         extractor.return_value.batch_read.side_effect = lambda batch, people=None: [
-            {"path": path, "tags": [], "people": [], "captions": []} for path in batch]
+            {"path": path, "mtime": 1.0, "size": 1, "tags": [], "people": [], "captions": []} for path in batch]
         writer = mock.Mock()
         with mock.patch.object(tagpup_cli, "get_runtime", return_value=runtime), \
                 mock.patch.object(tagpup_cli, "MetadataExtractor", extractor), \
