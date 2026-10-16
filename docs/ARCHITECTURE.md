@@ -189,7 +189,7 @@ tagpup/                config (where the libraries are), logs, runtime (composit
 web/                   the pages (ES modules, no build step): common/ (api, paths, vocabulary, validate, dom,
                        dialog, tag-editor, settings, history), tagpup/, tuner/, activity/
 scripts/               programs to run (install_app, startup, measure_*, maintenance scripts); nothing imports from it
-tools/                 development tools: run_tests, affected_tests, doctor, add_findings, stale_findings, patch, watch_processes
+tools/                 development tools: run_tests, affected_tests, doctor, add_findings, stale_findings, retro_metrics, patch, watch_processes
 tests/                 Python (unittest) and tests/frontend (node --test)
 ```
 

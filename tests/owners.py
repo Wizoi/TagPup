@@ -252,7 +252,7 @@ _FILES = {
             "folder-opening folder-picker gear history-dialog image-zoom images-after-an-update library-memory "
             "library-picker open-photo page-state progress-polling roots-dialog server-replaced server-update "
             "settings-dialog stale-record test_a_request_is_decoded_once "
-            "test_activity_routes test_add_findings test_stale_findings test_an_empty_folder_is_scanned_again test_background_tasks "
+            "test_activity_routes test_add_findings test_retro_metrics test_stale_findings test_an_empty_folder_is_scanned_again test_background_tasks "
             "test_background_work_is_waited_for test_batch_strip_replies test_browser_opens_once test_config "
             "test_dark_selects test_database_context_isolation test_folder_scan_follows_the_library test_gzip_json "
             "test_heavy_imports_stay_lazy test_history_routes test_indexing_names_a_real_control "
