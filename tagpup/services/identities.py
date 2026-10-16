@@ -297,8 +297,9 @@ def resolve(photo_index, on_step=None):
         trigger_photos = []
         
         if cluster_anchors:
-            # If there are direct anchors in the cluster, resolve to the one with the most anchor votes
-            resolved_name = max(cluster_anchors, key=cluster_anchors.get)
+            # The cluster is the person with the most anchors in it. Anchors that tie name nobody and leave its faces to
+            # likeness and elimination: the first anchor read was a coin toss (#1468; the vote below, #1454)
+            resolved_name = clustering.singled_out(cluster_anchors)
             method = "direct_anchor_propagation"
             # Gather photos that triggered this anchor vote
             for face in cluster_faces:

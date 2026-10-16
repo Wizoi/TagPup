@@ -3,7 +3,8 @@
 overwrite it, the photo's keyword and the face stay in step, and the run says how many faces it left (docs/findings.md, #832).
 A photo whose keywords name two people nobody's face is known for keeps its two faces unnamed, whether the two would be paired
 by elimination (#1374) or one face given the first of a tie of votes (#1454), and the run says how many earlier guesses it took
-back and how many faces it left so (#1455).
+back and how many faces it left so (#1455). A cluster holding as many anchors of two people names neither: its faces are named
+by likeness or elimination (#1468).
 """
 import json
 import os
@@ -263,6 +264,45 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
 
         self.assertEqual([("Mara Quill", None)] * 2, [self.row(face) for face in hers])
         self.assertEqual([("Tobin Ash", None), ("Pell Varga", None)], [self.row(tobin), self.row(pell)])
+        self.assertEqual([], self.unpaired)
+
+    def two_look_alike_siblings_and_their_photo_together(self, by_hand):
+        """Ivo and Ines Marsh look alike: a solo photo of each, tagged with them alone, and a photo tagged with both whose first
+        face is closer to Ines and whose second is like neither. The two solo faces and the first face of the pair group into
+        one cluster. `by_hand`: the owner also names each solo face in TagTuner."""
+        ivo = identity_vector(41)
+        ines = near(ivo, 2, distance=0.2)
+        solos = [self.add_face(self.photo_tagged("ivo.jpg", ["Ivo Marsh"]), ivo),
+                 self.add_face(self.photo_tagged("ines.jpg", ["Ines Marsh"]), ines)]
+        if by_hand:
+            db.write_with_connection(self.db_path, lambda conn: (store_faces.name(conn, [solos[0]], "Ivo Marsh"),
+                                                                  store_faces.name(conn, [solos[1]], "Ines Marsh")))
+        shared = self.photo_tagged("both.jpg", ["Ivo Marsh", "Ines Marsh"])
+        look_alike = self.add_face(shared, near(ines, 3), box=(0, 0, 200, 200))
+        other = self.add_face(shared, identity_vector(42), box=(300, 0, 500, 200))
+        self.run_while(lambda conn: None)
+        return solos, look_alike, other
+
+    def test_two_look_alike_siblings_named_once_each_do_not_toss_a_coin_for_their_photo_together(self):
+        """#1468: the cluster holding both siblings' solo faces has one anchor of each, a tie: no evidence of whose cluster it
+        is. It was named after the first anchor read, Ivo, so the pair photo's look-alike face was given Ivo whatever it looked
+        like. Now the cluster names nobody; the face is named by the likeness step (the known people's Hungarian match), which
+        gives it Ines, whose face it is closer to, and the other face, like neither sibling, stays unnamed."""
+        solos, look_alike, other = self.two_look_alike_siblings_and_their_photo_together(by_hand=True)
+
+        self.assertEqual(("Ines Marsh", None), self.row(look_alike), "the face was named by the first of a tie of anchors")
+        self.assertEqual((None, None), self.row(other), "the face like neither sibling was given one")
+        self.assertEqual([("Ivo Marsh", "manual"), ("Ines Marsh", "manual")], [self.row(face) for face in solos])
+        self.assertEqual([], self.unpaired)
+
+    def test_two_look_alike_siblings_only_tagged_keep_their_solo_faces_after_a_tie(self):
+        """The same with nothing named by hand: each solo face is its photo's one person by elimination, and the pair photo's
+        look-alike face is again Ines by likeness."""
+        solos, look_alike, other = self.two_look_alike_siblings_and_their_photo_together(by_hand=False)
+
+        self.assertEqual(("Ines Marsh", None), self.row(look_alike), "the face was named by the first of a tie of anchors")
+        self.assertEqual((None, None), self.row(other))
+        self.assertEqual([("Ivo Marsh", None), ("Ines Marsh", None)], [self.row(face) for face in solos])
         self.assertEqual([], self.unpaired)
 
 
