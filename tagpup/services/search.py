@@ -206,17 +206,17 @@ class PhotoIndex:
             return store_photos.vector_dim(self.conn, self.model)
 
     def stamps(self):
-        """(path, mtime, size, holds a vector) of every photo, read now (store.photos.stamps_with_vectors):
+        """(id, path, mtime, size, holds a vector) of every photo, read now (store.photos.stamps):
         what the indexer compares with the files. [] when not connected."""
         if self.conn is None:
             return []
         with self._read_lock:
-            return store_photos.stamps_with_vectors(self.conn, self.model)
+            return store_photos.stamps(self.conn, with_vectors=self.model)
 
     def current(self, on_disk):
         """The paths.key of each photo of `on_disk` ({key: (path, mtime, size)}: the files as they are) whose row
         holds a vector and describes its file (store.photos.describes: the one answer sync gives too)."""
-        return {key for path, mtime, size, vectored in self.stamps()
+        return {key for _id, path, mtime, size, vectored in self.stamps()
                 if vectored and (key := paths.key(path)) in on_disk
                 and store_photos.describes(mtime, size, on_disk[key][1:])}
 

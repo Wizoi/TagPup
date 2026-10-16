@@ -369,14 +369,6 @@ def vector_dim(conn, model):
     return row[0] if row else None
 
 
-def stamps_with_vectors(conn, model):
-    """(path, mtime, size, holds a vector under `model`) of every photo, native paths: all the
-    indexer needs to know whether a file is as it was. None of the JSON of the row is read."""
-    return store_roots.natives(conn, conn.execute(
-        "SELECT p.path, p.mtime, p.size, EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)"
-        " FROM photos p", (model,)).fetchall(), 0)
-
-
 def counts(conn, model):
     """(photos, photos holding a vector under `model`)."""
     return conn.execute("SELECT (SELECT COUNT(*) FROM photos),"
@@ -648,13 +640,20 @@ def rows_to_check(conn, folder=None):
     return store_roots.natives(conn, conn.execute(query, params).fetchall(), 0, raw=(5,))
 
 
-def stamps(conn, folder=None):
-    """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what
-    sync compares with the disk (tagpup.services.sync). Nothing else of the row is read."""
-    query, params = "SELECT id, path, mtime, size FROM photos", ()
+def stamps(conn, folder=None, with_vectors=None):
+    """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what sync
+    (tagpup.services.sync) and the indexer (services.search.PhotoIndex) compare with the disk. With
+    `with_vectors`, a model's name, each also says whether the photo holds a vector under it. Nothing else
+    of the row is read, none of its JSON."""
+    columns, params = "p.id, p.path, p.mtime, p.size", []
+    if with_vectors is not None:
+        columns += ", EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)"
+        params.append(with_vectors)
+    query = "SELECT " + columns + " FROM photos p"
     if folder:
-        where, params = store_roots.sql_under(conn, "path", folder)
+        where, under = store_roots.sql_under(conn, "p.path", folder)
         query += " WHERE " + where
+        params += list(under)
     return store_roots.natives(conn, conn.execute(query, params).fetchall(), 1)
 
 

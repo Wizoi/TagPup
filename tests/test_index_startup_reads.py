@@ -4,7 +4,7 @@ Every sync, watcher run and Add folder starts an index run, and a run that index
 lasted 14 to 18 s: it read and stacked all of photo_index's vectors (267 MB) to learn their length,
 parsed the JSON of every photo's row to learn its mtime and size, and, if it indexed anything, read the
 vectors a second time at the end for a search nothing made. Here: the vectors are not read
-(PhotoIndex.open, stored_dim), the stamps are (store.photos.stamps_with_vectors), and the same photos are indexed.
+(PhotoIndex.open, stored_dim), the stamps are (store.photos.stamps), and the same photos are indexed.
 """
 import os
 import sys
@@ -89,7 +89,8 @@ class TheStore(Harbour):
     def test_stamps_are_the_path_mtime_size_and_whether_there_is_a_vector(self):
         conn = db.connect(db.readonly_uri(self.db_path), uri=True)
         self.addCleanup(conn.close)
-        found = {path: (mtime, size, bool(vectored)) for path, mtime, size, vectored in store_photos.stamps_with_vectors(conn, MODEL)}
+        found = {path: (mtime, size, bool(vectored))
+                 for _id, path, mtime, size, vectored in store_photos.stamps(conn, with_vectors=MODEL)}
         stat = os.stat(self.path)
         self.assertEqual((stat.st_mtime, stat.st_size, True), found[self.path])
         self.assertEqual(False, found[self.bare][2])
