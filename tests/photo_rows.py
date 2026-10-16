@@ -8,7 +8,7 @@ makes of a photo it has never read (store.photos.ensure_row, in a folder added t
 what a write of the app's own leaves is what the journaled write records in the transaction that
 marks the file done (store.photos.follow_fields, move_rows_in).
 
-A bare `INSERT INTO photos` makes no folder row, so the folders reader finds the photo in no folder: a new test uses add_read.
+A bare INSERT into photos makes no folder row, so the folders reader finds the photo in no folder: a new test uses add_read.
 tests/test_fixtures_make_photo_rows_like_the_indexer.py lists the files that still do, and only lets that list shrink.
 """
 import os
