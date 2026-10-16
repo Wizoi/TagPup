@@ -155,6 +155,15 @@ def cosine_summary(values, floor=0.999):
     return found
 
 
+def turned_apart(values, kinds, floor=0.999):
+    """The cosines of the photos turned by their Orientation and of the rest, apart, and what each photo below
+    `floor` is (its stratum, turned, megapixels): a vector kept from before CLIP saw photos upright reads low."""
+    turned = [float(v) for v, kind in zip(values, kinds) if kind["turned"]]
+    upright = [float(v) for v, kind in zip(values, kinds) if not kind["turned"]]
+    return {"turned": cosine_summary(turned, floor), "not_turned": cosine_summary(upright, floor),
+            "below": [dict(kind, cosine=float(v)) for v, kind in zip(values, kinds) if v < floor]}
+
+
 def _model_sandbox(source, report):
     """A sandbox with the library's copy, its roots placed in it: (folder, the copy, {root: place})."""
     folder = tempfile.mkdtemp(prefix="tagpup_holdout_")
@@ -180,7 +189,7 @@ def vectors_check(source, rows, size, seed, report):
         index = search.PhotoIndex(target, runtime.model_key(library))
         index.open()
         embeddings = search.PhotoEmbeddings(clip, index, remember=False)
-        stored, single, pictures, skipped = [], [], [], {}
+        stored, single, pictures, skipped, kinds = [], [], [], {}, []
         with runtime.gpu_turn("measuring the vectors again (AI pipeline phase 0)", (clip,)):
             clip.load()
             seen = []
@@ -198,6 +207,7 @@ def vectors_check(source, rows, size, seed, report):
                     continue
                 stored.append(kept)
                 single.append(vector)
+                kinds.append({"stratum": row["stratum"], "turned": row["turned"], "megapixels": row["megapixels"]})
                 pictures.append(seen.pop())
                 seen.clear()
             hook.remove()
@@ -215,8 +225,9 @@ def vectors_check(source, rows, size, seed, report):
                 except torch.cuda.OutOfMemoryError:
                     batched[batch] = "out of memory on the card"
         index.close()
-        answer = {"photos": len(stored), "skipped": skipped,
-                  "stored_vs_one_at_a_time": cosine_summary(cosines(stored, single))}
+        again = cosines(stored, single)
+        answer = {"photos": len(stored), "skipped": skipped, "stored_vs_one_at_a_time": cosine_summary(again),
+                  "turned": turned_apart(again, kinds)}
         for batch, found in batched.items():
             answer["stored_vs_batch_%d" % batch] = (cosine_summary(cosines(stored, found)) if isinstance(found, list)
                                                     else found)

@@ -194,6 +194,14 @@ class TheOtherChecks(unittest.TestCase):
         self.assertEqual(1, found["below"])
         self.assertAlmostEqual(1.0, found["max"])
 
+    def test_turned_photos_are_counted_apart(self):
+        kinds = [{"stratum": "none", "turned": True, "megapixels": 12.0},
+                 {"stratum": "1-3", "turned": False, "megapixels": 3.0}]
+        found = holdouts.turned_apart([0.81, 1.0], kinds)
+        self.assertEqual((1, 1), (found["turned"]["n"], found["turned"]["below"]))
+        self.assertEqual(0, found["not_turned"]["below"])
+        self.assertEqual([0.81], [row["cosine"] for row in found["below"]])
+
     def test_suggest_never_sees_the_photo_it_scores(self):
         class Index:
             db_path = "x"
