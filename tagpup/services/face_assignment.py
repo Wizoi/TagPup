@@ -61,7 +61,7 @@ def _read(library, read):
 
 
 def plan_name(library, face_ids, person):
-    """The plan of naming `face_ids` as `person` (the id of their node, or a tag path or a name): Refused, nothing done, for a name two
+    """The plan of naming `face_ids` as `person` (the id of their node, or a typed name): Refused, nothing done, for a name two
     people have, a group, two faces of one photo, the person on another face of the photo. `skipped_excluded` are the faces left alone
     because they are ruled out; a face already under the person is no part of it."""
     check = faces_service.nameable(library, face_ids, person)
@@ -71,7 +71,7 @@ def plan_name(library, face_ids, person):
     ref = face_people.made(library, ref)   # a name no person is called is made first, with its node
     tag = face_people.Filer(library).tag(ref)
     if tag is None:
-        raise Refused(face_people.not_filed(person_name))
+        raise Refused(str(person_ids.StalePerson(ref)))   # `made` gave an id: its node went since
     wanted = check.details["matched_ids"]
     found, target = _read(library, lambda conn: (faces.planning(conn, wanted), person_ids.target(conn, ref)))
     work = Work(NAME)

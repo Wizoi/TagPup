@@ -248,8 +248,8 @@ def _finish_untag(library, result, items, writer):
 
 def name_face(library, face_id, person, writer):
     """Name one face AND put the person on its photo, the tag first (see the module's docstring). Everything
-    faces_service.name_face refuses is refused before a tag is written. `person` is the id of the person's node, or a tag path
-    or a name (faces_service.name_face). `changed` is the faces named; details
+    faces_service.name_face refuses is refused before a tag is written. `person` is the id of the person's node, or a typed
+    name (faces_service.name_face; a tag path is no name). `changed` is the faces named; details
     `tags_written` (0 when the photo named the person already) and `written`. A face that carried another person is renamed:
     that person's tags go from the photo unless another face is them, as unname_face's do. With no `writer`
     the page wrote the person's tag itself (TagPup's box and strip) and writes the old person's off itself too:

@@ -379,8 +379,7 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
     details: `dry_run`; `faces`, the faces named (or that would be); `photos`, the photos
     they are in; `people`, {name: faces} (two people called alike are counted under the one name, as it is shown);
     `renamed`, the faces left because their person had gone. The same keys whether rehearsed or applied, so the page can
-    say how the two differ. Applied, `named_ids` too, {face id: person} of the faces written (the person's id, or a
-    name no person is filed under)."""
+    say how the two differ. Applied, `named_ids` too, {face id: person} of the faces written (the person's id)."""
     _library_there(library)
     result = Result(details={"dry_run": bool(rehearse), "faces": 0, "photos": 0, "people": {}, "renamed": 0})
     looked_at, proposed = propose_guesses(library, named, photo_path=photo_path, folder=folder)
@@ -430,7 +429,7 @@ def written_report(library, face_ids, folder):
 def propose_guesses(library, named, photo_path=None, folder=None):
     """(the number of unnamed faces looked at, {photo path: [(face id, person)]}): each unnamed face in a photo, or under a
     folder at any depth, that may be named unasked after the named face it most resembles (clustering.names_unasked); the
-    person is their id, or a name no person is filed under. Reads only; the compare happens before any write lock is taken.
+    person is their id. Reads only; the compare happens before any write lock is taken.
     `named()` gives the decided faces (_automatch)."""
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
@@ -447,7 +446,7 @@ def propose_guesses(library, named, photo_path=None, folder=None):
 
 def decide_guesses(conn, proposed):
     """([(face_id, person, photo)] to name, how many were left for a person gone) of `proposed`, decided on `conn`. A person is
-    their id, or a name no person is filed under."""
+    their id."""
     given = faces.people_given(conn, {person for found in proposed.values() for _fid, person in found})
     chosen, gone = [], 0
     for face_photo, faces_proposed in proposed.items():

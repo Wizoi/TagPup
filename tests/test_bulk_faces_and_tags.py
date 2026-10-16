@@ -18,8 +18,8 @@ from test_file_journal import Crash, crash_at  # noqa: E402
 from test_organize_faces import ODA, WREN  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
-from tagpup.core.result import Conflict  # noqa: E402
-from tagpup.services import activity, batches, face_assignment, file_changes, identify, job_runs  # noqa: E402
+from tagpup.core.result import Conflict, Refused  # noqa: E402
+from tagpup.services import activity, batches, face_assignment, face_people, file_changes, identify, job_runs  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, people, taxonomy  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -416,6 +416,20 @@ class InterruptedAndAtOnce(Bulk):
             face_assignment.run(self.library, plan, "exiftool")
         self.assertIn("Nothing was changed", str(why.exception))
         self.assertEqual((0, [None, None], []), (self.files.writes, [self.row(f)[0] for _p, f in made], self.operations(ASSIGN)))
+
+    def test_a_person_gone_between_making_and_planning_is_a_stale_person_not_a_roots_question(self):
+        made = self.many(1)
+        real = face_people.made
+
+        def made_then_gone(library, ref):
+            person = real(library, ref)
+            self.merge_away()
+            return person
+
+        with mock.patch.object(face_people, "made", made_then_gone):
+            with self.assertRaises(Refused) as why:
+                face_assignment.plan_name(self.library, [made[0][1]], WREN)
+        self.assertNotIn("several people roots", str(why.exception))
 
     def test_a_person_merged_away_during_the_write_names_no_later_face_and_the_batch_goes_on(self):
         made = self.many(2)
