@@ -59,8 +59,6 @@ def find_duplicates(conn):
 def _plan(library):
     conn = db.connect(db.readonly_uri(library.path), uri=True)
     try:
-        if not store_taxonomy.tree_exists(conn):
-            return maintenance.Plan(refused="no tag_taxonomy table in the library %s" % library.name)
         duplicates = find_duplicates(conn)
         node_ids = store_taxonomy.node_ids(conn)
         # Reported for information only; these rows are not changed.

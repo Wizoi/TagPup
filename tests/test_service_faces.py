@@ -16,6 +16,7 @@ from service_fixture import TempLibrary  # noqa: E402
 from face_rows import add_face, people_of  # noqa: E402
 
 from tagpup.core.result import Conflict, NotFound  # noqa: E402
+from tagpup.core.vocabulary import Ref  # noqa: E402
 from tagpup.store import db, derived  # noqa: E402
 from tagpup.services import faces  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -75,6 +76,10 @@ class FacesCase(unittest.TestCase):
     def person(self, name):
         """The id of the node a face named `name` was given (every name has one)."""
         return self.lib.rows("SELECT id FROM tag_taxonomy WHERE name = ?", (name,))[0][0]
+
+    def ref(self, name):
+        """The person a face named `name` is, as a matrix of named faces holds them (identify.decided_faces): a Ref."""
+        return Ref(self.person(name), name)
 
 
 class NamingAFace(FacesCase):
@@ -151,7 +156,7 @@ class Automatching(FacesCase):
 
     def named(self):
         self.asked.append(True)
-        return [1, 2], [self.person("Wren Halloway"), self.person("Ada Pembrook")], np.stack([self.wren, self.ada])
+        return [1, 2], [self.ref("Wren Halloway"), self.ref("Ada Pembrook")], np.stack([self.wren, self.ada])
 
     def test_a_face_like_a_named_one_is_given_its_name(self):
         photo = self.photo("a.jpg")
@@ -222,7 +227,7 @@ class TheWriteLockIsNotHeldThroughAScan(FacesCase):
 
         with mock.patch.object(store_faces, "people_in_photo", side_effect=people_in_photo):
             faces.automatch_folder(self.lib.library, self.folder,
-                                   lambda: ([1], [self.person("Kit Morrow")], np.stack([vector(1)])))
+                                   lambda: ([1], [self.ref("Kit Morrow")], np.stack([vector(1)])))
         self.assertEqual(asked, [photo])
         self.assertEqual(self.face_row(self.lib.rows("SELECT id FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)",
                                                      (photo,))[0][0])[0], "Kit Morrow")

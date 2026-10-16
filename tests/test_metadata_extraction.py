@@ -5,10 +5,10 @@ persisted into the database and then written back into photo files by later edit
 They take plain dictionaries -- the shape ExifTool returns -- so no image, no ExifTool
 and no model is needed.
 
-People resolution is the subtle part: a name can arrive as an explicit PersonInImage
-tag, as the leaf of a hierarchical tag under a face-matching root, or as a flat tag
-that the taxonomy marks as a person. All three paths are covered, including the
-database-backed ones using a temporary taxonomy.
+People resolution is the subtle part: a name arrives as the leaf of a hierarchical tag
+under a face-matching root, or as a flat tag that the taxonomy marks as a person (a
+file's PersonInImage and RegionName are not read: owner, 2026-10-15). Both paths are
+covered, including the database-backed ones using a temporary taxonomy.
 """
 import os
 import sys
@@ -123,14 +123,6 @@ class TestExtractPeopleWithoutADatabase(unittest.TestCase):
     Family and Friends were assumed as well, whatever a library's tree said
     (docs/findings.md, #66)."""
 
-    def test_reads_person_in_image(self):
-        people = extract_people({"XMP:PersonInImage": ["Jane Doe"]}, [], people_vocabulary(""))
-        self.assertEqual(people, ["Jane Doe"])
-
-    def test_reads_region_names(self):
-        people = extract_people({"XMP:RegionName": ["Jane Doe"]}, [], people_vocabulary(""))
-        self.assertEqual(people, ["Jane Doe"])
-
     def test_takes_the_leaf_of_a_hierarchical_people_tag(self):
         people = extract_people({}, ["People/Immediate/Jane Doe"], people_vocabulary(""))
         self.assertEqual(people, ["Jane Doe"])
@@ -159,10 +151,6 @@ class TestExtractPeopleWithoutADatabase(unittest.TestCase):
         self.assertEqual(extract_people({}, ["Some Person"], people_vocabulary("")), [])
         self.assertEqual(extract_people({}, ["Some Person"]), [])
 
-    def test_deduplicates_names_from_different_sources(self):
-        people = extract_people(
-            {"XMP:PersonInImage": ["Jane Doe"]}, ["People/Jane Doe"], people_vocabulary(""))
-        self.assertEqual(people, ["Jane Doe"])
 
 
 class TestExtractPeopleWithATaxonomy(unittest.TestCase):

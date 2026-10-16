@@ -24,8 +24,6 @@ Nothing here names a person or a path: counts, ids and columns.
 """
 import json
 
-from tagpup.core import vocabulary
-from tagpup.core.vocabulary import Ref
 from tagpup.store import faces, journal, person_ids
 
 #: What the change calls a row it records.
@@ -91,12 +89,9 @@ def _holds(current, expected):
 
 
 def _same_person(face, new):
-    """Does the face carry the person `new` (a record's columns) names: by the node's id when both have one, else by the name?"""
-    if new.get("name") is None:
-        return False
-    if new.get("tag_id") is not None and face.get("tag_id") is not None:
-        return new["tag_id"] == face["tag_id"]
-    return face.get("name") is not None and vocabulary.key(face["name"]) == vocabulary.key(new["name"])
+    """Does the face carry the person `new` (a record's columns) names? By the node's id: a name alone is nobody (owner,
+    2026-10-11)."""
+    return new.get("name") is not None and new.get("tag_id") is not None and new["tag_id"] == face.get("tag_id")
 
 
 def _guess_of(current, old, new):
@@ -150,7 +145,7 @@ def follow(conn, change_id, photo_id, forward):
     if forward:
         _forget(conn, change_id, done.left)
         # The tag just written can have named ANOTHER face of the photo by the one-face rule: a person chose this one.
-        guessed = {face_id: person_ids.wire(Ref(current.get("tag_id"), current["name"])) for face_id, current in now.items()
+        guessed = {face_id: current.get("tag_id") for face_id, current in now.items()
                    if face_id not in wanted and current.get("name") is not None and current.get("name_source") is None
                    and any(_same_person(current, new) for _old, new in wanted.values())}
         if guessed:

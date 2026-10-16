@@ -34,7 +34,7 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
     def read_photo(self, subject=(), people=None, path=None):
         fields = {"XMP:Subject": list(subject)}
         if people:
-            fields["XMP:PersonInImage"] = list(people)
+            fields["XMP:PersonInImage"] = fields["XMP:RegionName"] = list(people)
         return people_by_id.write(self.path, lambda conn: photo_rows.add_read(conn, path or self.later, fields))
 
     def tags(self):
@@ -137,39 +137,20 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
         self.assertEqual(1, self.count(ZED))
         self.assertEqual({self.node(ZED)}, {self.face(each)[0] for each in self.faces})
 
-    def test_a_person_field_name_with_no_node_gets_a_node_and_the_listed_id(self):
-        photo_id = self.read_photo(people=[ZED])
-        node = self.node(ZED)
-        self.assertIsNotNone(node)
-        self.assertEqual([(node, ZED, "keyword")], self.listed(self.later))
-        self.assertEqual(photo_id, people_by_id.look(self.path, "SELECT id FROM photos WHERE id = ?", (photo_id,))[0][0])
+    def test_a_person_field_names_nobody_and_makes_no_node(self):
+        """A file that names people in XMP PersonInImage and RegionName (0 photos in the three libraries, 2026-10-15) gets no
+        node and lists nobody, whether a person is called the name or not: a bare name is never linked to a person by its leaf
+        (owner, DECISIONS 2026-10-15). Mutation: the old reader made Zed Quill a node and listed Wren Halloway by name."""
+        before = self.tags()
+        self.read_photo(people=[ZED, "Wren Halloway", "Sam", "Family"])
+        self.assertEqual(before, self.tags())
+        self.assertEqual([], self.listed(self.later))
 
     def test_a_name_an_existing_person_has_makes_no_duplicate(self):
         before = self.tags()
         people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], "wren halloway"))
         self.assertEqual(before, self.tags())
         self.assertEqual((self.node(people_by_id.WREN), "Wren Halloway"), self.face(self.faces[0])[:2])
-
-    def test_a_name_two_people_have_is_the_person_at_the_top_called_so_and_the_same_one_again(self):
-        self.read_photo(people=["Sam"])
-        node = self.node("Sam")
-        self.assertIsNotNone(node)
-        self.assertEqual([(node, "Sam", "keyword")], self.listed(self.later))
-        self.read_photo(people=["sam"], path=self.photo)
-        self.assertEqual(1, self.count("Sam"))
-        self.assertEqual([(node, "Sam", "keyword")], self.listed(self.photo)[-1:])
-
-    def test_a_name_equal_to_a_groups_leaf_is_another_path_and_gets_its_own_node(self):
-        self.read_photo(people=["Thackeray"])
-        node = self.node("Thackeray")
-        self.assertEqual([(node, "Thackeray", "keyword")], self.listed(self.later))
-        self.assertIsNone(self.node("Family/Thackeray/Thackeray"))
-
-    def test_a_name_that_is_a_group_at_the_top_is_given_no_node_and_is_not_listed(self):
-        before = self.tags()
-        self.read_photo(people=["Places", "Family"])
-        self.assertEqual(before, self.tags())
-        self.assertEqual([], self.listed(self.later))
 
     def test_a_childless_word_tag_of_the_name_at_the_top_becomes_the_person(self):
         self.read_photo(["Kentridge"])

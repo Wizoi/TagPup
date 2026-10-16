@@ -409,12 +409,6 @@ class TheTreeView(TreeCase):
         self.assertEqual(counts, {"Family": 1, "Family/Immediate": 1,
                                   "Family/Immediate/Ada Pembrook": 1, "Family/Immediate/Wren Halloway": 1})
 
-    def test_a_node_whose_parent_is_missing_is_put_right(self):
-        self.lib.execute("INSERT INTO tag_taxonomy (tag, name, parent_id, has_face)"
-                         " VALUES ('Trips/Boston MA', 'Boston MA', NULL, 0)")
-        nodes = {node["tag"]: node for node in tags.tree(self.lib.library)}
-        self.assertEqual(nodes["Trips/Boston MA"]["parent_id"], nodes["Trips"]["id"])
-
 
 if __name__ == "__main__":
     unittest.main()

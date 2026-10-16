@@ -97,7 +97,8 @@ describe("the tag list", () => {
 
 describe("the name picker", () => {
   test("offers people alphabetically", async (t) => {
-    const server = base().on("/api/people-with-counts", []).on("/api/people", ["Zoe Abbott", "émile Roy", "anh Tran", "Bao Le"])
+    const people = ["Zoe Abbott", "émile Roy", "anh Tran", "Bao Le"].map((name, i) => ({ id: i + 1, name, tag: `People/${name}` }));
+    const server = base().on("/api/people-with-counts", []).on("/api/people", people)
       .on("/api/tags/list", { tags: [], buckets: {} });
     const ctx = await open(t, { mode: "face-matching", server });
     const offered = [...ctx.document.querySelectorAll("#people-datalist option")].map((o) => o.value);

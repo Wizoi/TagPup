@@ -244,9 +244,6 @@ NOT_A_PERSON = frozenset(name.lower() for name in (*BUCKETS.values(), UNMATCHED)
 KEYWORD_FIELDS = ("XMP:Subject", "Subject", "IPTC:Keywords", "Keywords")
 HIERARCHY_FIELDS = ("XMP:HierarchicalSubject", "HierarchicalSubject")
 
-#: People named outright, rather than by a keyword under a people root.
-PERSON_FIELDS = ("XMP:PersonInImage", "PersonInImage", "XMP:RegionName", "RegionName")
-
 #: Captions and titles, most wanted first: the first is the one shown.
 CAPTION_FIELDS = ("IPTC:Caption-Abstract", "Caption-Abstract", "XMP:Description", "Description",
                   "XMP:Title", "Title", "IPTC:ObjectName", "ObjectName")
@@ -360,11 +357,6 @@ class PeopleVocabulary:
         self.ids = ids or {}
         self.names = names or {}
 
-    def resolve_name(self, name):
-        """The id of the one person called `name` (compared as `key` compares), or None for a name no person or two
-        people have, and for a vocabulary made without ids."""
-        return self.ids.get(str(name).strip().lower()) if name else None
-
     @classmethod
     def defaults(cls):
         """A new library's face root and nobody by name: a photo read without its library."""
@@ -419,7 +411,8 @@ Ref = collections.namedtuple("Ref", "id name")
 
 
 def extract_refs(meta, tags, known=None):
-    """The people a photo's metadata names, as Refs, in order: its person fields, and its keywords.
+    """The people a photo's keywords name, as Refs, in order. A file's person fields (XMP PersonInImage, RegionName) are not
+    read: a bare name is never linked to a person by its leaf (owner, DECISIONS 2026-10-15).
 
     A keyword names a person when it sits under one of the face roots in `known` (a
     PeopleVocabulary; without one, the usual roots), or when `known` has it as a face
@@ -429,7 +422,7 @@ def extract_refs(meta, tags, known=None):
     when exactly one is called it (PeopleVocabulary.ids). A Ref is listed once; a name with no id once
     as spelled."""
     known = known or PeopleVocabulary.defaults()
-    people = [Ref(known.resolve_name(name), name) for name in _values(meta, PERSON_FIELDS)]
+    people = []
     for tag in tags:
         parts = segments(tag)
         if len(parts) >= 2 and parts[0].lower() in known.roots and keyword_key(tag) not in known.groups:
@@ -460,8 +453,8 @@ def extract_refs(meta, tags, known=None):
 
 
 def extract_people(meta, tags, known=None):
-    """Whom a photo's metadata names, as names (extract_refs, without the ids): its person fields, and its keywords.
-    A name appears once for each person called it."""
+    """Whom a photo's keywords name, as names (extract_refs, without the ids). A name appears once for each person called
+    it."""
     return [ref.name for ref in extract_refs(meta, tags, known)]
 
 
@@ -493,12 +486,10 @@ def people_rows(meta, tags, face_refs, known=None):
     return [(ref, source) for ref, source in rows]
 
 
-def people_in_photo(meta, tags, face_names, known=None):
-    """Everyone in a photo, as names: whom its metadata names, and whom its faces were named as (people_rows). A face
-    is given as a name, or as a Ref. A name two people are called appears twice."""
-    known = known or PeopleVocabulary.defaults()
-    faces = [name if isinstance(name, Ref) else Ref(known.resolve_name(name), name) for name in face_names]
-    return [ref.name for ref, _source in people_rows(meta, tags, faces, known)]
+def people_in_photo(meta, tags, face_refs, known=None):
+    """Everyone in a photo, as names: whom its keywords name, and whom its faces were named as (people_rows; `face_refs`
+    are Refs). A name two people are called appears twice."""
+    return [ref.name for ref, _source in people_rows(meta, tags, face_refs, known or PeopleVocabulary.defaults())]
 
 
 def retag(tags, old, new=None):

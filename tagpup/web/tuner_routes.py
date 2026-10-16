@@ -206,15 +206,11 @@ def face_crop():
 
 @routes.get("/api/people")
 def people():
-    """Everyone the library knows, the people keywords name included
-    (tagpup.services.people.names). ?include_hidden=1 adds those hidden from
-    autocomplete: it answers "does this person exist?", which a hidden person does. ?records=1 answers
-    the people with a person tag instead, each `{id, name, tag, group, shared}` (tagpup.services.people.records)."""
+    """The people with a person tag, each `{id, name, tag}` (tagpup.services.people.records); ?include_hidden=1 adds those
+    hidden from autocomplete: it answers "does this person exist?", which a hidden person does. The pages send ?records=1,
+    which changes nothing."""
     library = state.require()
-    include_hidden = request.args.get("include_hidden", "0") == "1"
-    if request.args.get("records") == "1":
-        return jsonify(people_service.records(library, include_hidden=include_hidden))
-    return jsonify(people_service.names(library, keywords_too=True, include_hidden=include_hidden))
+    return jsonify(people_service.records(library, include_hidden=request.args.get("include_hidden", "0") == "1"))
 
 
 @routes.get("/api/people-with-counts")

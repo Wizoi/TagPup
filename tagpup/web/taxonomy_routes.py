@@ -33,7 +33,7 @@ def taxonomy_tree():
 def _tree_edit(edit):
     """Run an edit of the tag tree (tagpup.services.tags) on the request's library:
     (its Result, None) or (None, the error reply) -- 404 for a node that is not there,
-    400 for a request refused, 500 for anything else."""
+    400 for a request refused, 500 for anything else. The one place a tree edit forgets the cached scans."""
     try:
         result = edit(state.require())
     except NotFound as missing:
@@ -98,7 +98,6 @@ def taxonomy_delete_confirm():
         library, tag_id, action, body.get("target_tag"), state.exiftool(library), force=bool(body.get("force"))))
     if failed:
         return failed
-    tagpup_routes.forget_scans(state.require())
     reply = {"success": result.ok, "photos_affected": result.details["photos_affected"],
              "photos_rewritten": result.details["photos_rewritten"]}
     if not result.ok:
@@ -119,7 +118,6 @@ def taxonomy_rename():
         library, tag_id, new_name, state.exiftool(library)))
     if failed:
         return failed
-    tagpup_routes.forget_scans(state.require())
     # The tree has the new name once every photo is rewritten; one that could not be keeps the old, and so does the tree.
     if not result.ok and not result.changed:
         return tuner_routes.not_renamed(result)

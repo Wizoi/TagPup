@@ -104,8 +104,8 @@ class TestWorkerThreadDatabaseBinding(unittest.TestCase):
             conn.commit()
             conn.close()
 
-        startup_people = self.get(f"/{self.startup_name()}/api/people")
-        other_people = self.get(f"/{self.OTHER_URL_NAME}/api/people")
+        startup_people = [each["name"] for each in self.get(f"/{self.startup_name()}/api/people")]
+        other_people = [each["name"] for each in self.get(f"/{self.OTHER_URL_NAME}/api/people")]
         self.assertIn("StartupOnly", startup_people)
         self.assertIn("OtherOnly", other_people)
         self.assertNotIn("OtherOnly", startup_people)

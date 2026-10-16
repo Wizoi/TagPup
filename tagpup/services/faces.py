@@ -518,7 +518,7 @@ def _closest_named(unnamed, people, matrix):
             closest = int(best[row])
             # As alike as naming a face with no one looking allows (tagpup.core.clustering).
             if clustering.names_unasked(float(similarities[row, closest])):
-                proposed.setdefault(face_photo, []).append((face_id, person_ids.wire(people[closest])))
+                proposed.setdefault(face_photo, []).append((face_id, people[closest].id))
     return proposed
 
 
@@ -732,8 +732,8 @@ def named_counts(library, folder=None):
 
 def known_faces(db_path):
     """Every named face that is not excluded, as tagpup.core.clustering.KnownFaces: what a
-    face is compared with to say who it is, KEYED BY PERSON (person_ids.key_of: the node's id, or the name's key for a name no
-    person is filed under -- two people called alike are two), `labels` holding each one's Ref. It was each person's mean face,
+    face is compared with to say who it is, KEYED BY PERSON (the node's id: two people called alike are two), `labels` holding
+    each one's Ref. It was each person's mean face,
     with no years (docs/findings.md, #71).
 
     Reads only the named faces, and of each photo only its Date Taken fields. Reading
@@ -746,5 +746,5 @@ def known_faces(db_path):
     finally:
         conn.close()
     return clustering.KnownFaces.of(
-        (person_ids.key_of(person.id, person.name), np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path, person)
+        (person.id, np.frombuffer(emb_bytes, dtype=np.float32), year, photo_path, person)
         for person, emb_bytes, photo_path, year in rows)

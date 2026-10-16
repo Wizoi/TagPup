@@ -20,7 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from handler_harness import Library  # noqa: E402
 from test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool  # noqa: E402
 
+from face_rows import add_face  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
+from tagpup.store import db  # noqa: E402
 
 
 class TagPupAPITestBase(unittest.TestCase):
@@ -161,13 +163,15 @@ class TestAutocompleteEndpoints(TagPupAPITestBase):
         self.assertIn("Activity", tags)
         self.assertNotIn("Author", tags, "hidden tag leaked into autocomplete")
 
-    def test_people_endpoint_lists_resolved_face_names(self):
+    def test_people_endpoint_lists_the_people_faces_are_named(self):
         photo = self.make_photo("a.jpg", [])
-        self.lib.execute(
-            "INSERT INTO faces (photo_id, box, embedding, name) VALUES ((SELECT id FROM photos WHERE path = ?), ?, ?, ?)",
-            (photo, "[]", b"", "Jane Doe"),
-        )
-        self.assertIn("Jane Doe", self.get("/api/people"))
+        conn = db.connect(self.TEST_DB)
+        try:
+            add_face(conn, photo, name="Jane Doe")   # as a writer names a face: the name gets its node
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertIn("Jane Doe", [each["name"] for each in self.get("/api/people")])
 
 
 class TestPhotoRotate(TagPupAPITestBase):

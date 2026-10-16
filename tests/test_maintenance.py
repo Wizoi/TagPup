@@ -280,16 +280,6 @@ class MergeDuplicatePersonTags(LibraryCase):
             " GROUP BY table_name, action", (result.details["change"],)))
         self.assertEqual({"duplicates": 0}, result.details["remaining"])
 
-    def test_a_library_without_a_tree_is_refused(self):
-        bare = os.path.join(self.dir, "no_tree.db")
-        conn = db.connect(bare)
-        conn.execute("CREATE TABLE photos (id INTEGER PRIMARY KEY, path TEXT, tags TEXT)")
-        conn.commit()
-        conn.close()
-        result = person_tags.merge_duplicate_person_tags(Library(bare), apply=True)
-        self.assertIn("no tag_taxonomy table", result.refused)
-        self.assertIsNone(result.details["change"])
-
 
 
 if __name__ == "__main__":

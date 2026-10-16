@@ -58,10 +58,7 @@ class TheRule(unittest.TestCase):
 
     def test_a_face_named_so_is_a_name_and_stays_listed(self):
         # Faces carry names, not tags: a name no person node has is the owner's to settle (#985), not dropped here.
-        self.assertEqual(["Marlowe"], vocabulary.people_in_photo({}, [FAMILY], ["Marlowe"], self.known()))
-
-    def test_a_person_field_names_who_it_names(self):
-        self.assertEqual(["Marlowe"], vocabulary.extract_people({"XMP:PersonInImage": ["Marlowe"]}, [FAMILY], self.known()))
+        self.assertEqual(["Marlowe"], vocabulary.people_in_photo({}, [FAMILY], [vocabulary.Ref(None, "Marlowe")], self.known()))
 
 
 class InTheLibrary(unittest.TestCase):

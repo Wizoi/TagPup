@@ -26,10 +26,7 @@ drop the id of a node that is gone. A row gets its id from the writer that wrote
 The tree is read inside the writer's transaction, every time, and never kept: a rename committed by
 another process between two writes is what the second one reads. Ids are AUTOINCREMENT, never given
 again, so an id left behind by a node deleted by an older writer names nothing rather than someone else;
-a trigger (migration 29) refuses a delete of a node that a face names, for any connection.
-
-Every function does nothing, and says 0, on a library without the column (before migration 21): the
-migrations before it write faces and people too. The caller commits.
+a trigger (migration 29) refuses a delete of a node that a face names, for any connection. The caller commits.
 """
 import collections
 
@@ -107,17 +104,6 @@ def wire(ref):
     return ref
 
 
-def wire_key(ref):
-    """What `key_of` gives for a person in wire form: the id."""
-    return ref
-
-
-def key_of(tag_id, name):
-    """What a row's person is KEYED by wherever people are grouped, counted or compared in memory: the node's id. A row with
-    none -- a name from before names had ids -- is nobody: None (owner, 2026-10-11: only the id)."""
-    return tag_id
-
-
 class People:
     """The tree's people as names are matched to them: {name's key: the node's id}, or AMBIGUOUS
     when two nodes are called it; the people by id and by tag; and the groups -- has_face nodes with
@@ -161,8 +147,6 @@ class People:
 
     @classmethod
     def read(cls, conn):
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tag_taxonomy'").fetchone():
-            return cls([])
         parents = [parent for (parent,) in conn.execute(
             "SELECT DISTINCT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL")]
         every = conn.execute("SELECT id, name, has_face, tag FROM tag_taxonomy").fetchall()
@@ -236,11 +220,9 @@ class People:
 
     def settle(self, name, held):
         """(the id, the name) a row naming `name` and holding `held` should hold: a set id stays, with the cache
-        the node's leaf (a FACE whose node is gone gets (None, name), an unresolved name); a name that is None holds no id. **A row with a name and no id is NOT given one here**, however unique the name has become: this
-        function has no memory of what changed, and a name that became one person's because a same-named node left
-        (a rename, a merge, a force delete) says nothing about who the row meant. An unresolved name is linked only by
-        (a) the writer that wrote the row and knew the id, (b) `follow_tree`, when a node was ADDED under that name
-        (made, moved or renamed into it), (c) `fill`, the migration's one-time backfill. A keyword's row is resolved by its PATH when it is written (vocabulary.extract_refs)."""
+        the node's leaf (a FACE whose node is gone gets (None, name), an unresolved name); a name that is None holds no id.
+        **A row with a name and no id is NOT given one**: nothing links a name to a person (owner, 2026-10-11); only the writer
+        that wrote the row and knew the id gives it one, and a keyword's row is resolved by its PATH (vocabulary.extract_refs)."""
         if name is None:
             return None, None
         if held is not None:
@@ -516,7 +498,7 @@ def unresolved(conn):
     *(owner, 2026-10-04; docs/findings.md, #660)* -- (`branch`: {name: ([the branches' ids], rows)}); and those exactly ONE
     person is called but whose rows are not linked to them (`one`: {name: (the person's id, faces decided by hand, other
     faces, listed people)}) -- a name that became one person's because a same-named node left, or a rename into a person's
-    name by something that did not know the id: nothing links it by itself (follow_tree links only a node ADDED), so it is on no person's page
+    name by something that did not know the id: nothing links it (owner, 2026-10-11), so it is on no person's page
     until the owner renames the person or makes the rows' person by hand.
     A row that holds an id is a person already, whatever its name is. Reported, not broken: no id is guessed, the
     names are left as they are, and the tree is the owner's to settle. Reads only."""
@@ -546,8 +528,7 @@ def unresolved(conn):
 
 def repair(db_path):
     """Settle every id and cached name, in one write under the library's write lock: drop the id of a node that is gone, give a
-    row its node's name, take an id off a face with no name. A name with no id is NOT linked (People.settle: nothing links one
-    but `follow_tree`, for a name a person was ADDED under). Returns {table: rows changed}. Only the id and name columns of faces
+    row its node's name, take an id off a face with no name. A name with no id is NOT linked (People.settle). Returns {table: rows changed}. Only the id and name columns of faces
     and photo_people change: no photo, tag or file."""
     def write(conn):
         return sync(conn)

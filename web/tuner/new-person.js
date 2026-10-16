@@ -193,8 +193,7 @@ function validateNewPersonName() {
     // Another person called this: not a duplicate when the new person goes in a group of their own (identity by id; they are
     // then shown as `Sam · Group`), and the same person as that one when no group is chosen, which is not a new person.
     const called = state.people.called(val);
-    const known = called.length > 0
-        || [...state.everyKnownPerson, ...state.allKnownPeople].some(p => p.toLowerCase() === val.toLowerCase());
+    const known = called.length > 0;
     const group = chosenGroup();
     if (newPersonNote) {
         newPersonNote.classList.toggle('hidden', !(called.length && group));

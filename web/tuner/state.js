@@ -5,11 +5,6 @@ import { PeopleDirectory } from './common/vocabulary.js';
 export const state = {
     allPhotos: [],
     activePhotoPath: null,
-    allKnownPeople: [],
-    // Everyone, including people hidden from autocomplete. allKnownPeople is what is
-    // offered while typing; this answers whether a name already exists. Asking the
-    // filtered list offered to create a hidden person as somebody new.
-    everyKnownPerson: [],
     currentPhotoDetails: null,
 
     // Face Matching Mode State

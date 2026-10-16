@@ -784,7 +784,7 @@ def library_bulk_edit():
     "selection": SELECTION, "params": {...}}` answers when it is done, with what each photo came to: `changed`, `unchanged`,
     `skipped_missing`, `error_count` and the first 50 `errors`. At most 5,000 photos (a selection of more
     is refused, nothing read); about a twentieth of a second each, so a large one takes minutes and the page says so.
-    The edit is read and checked first (a tag the rules refuse, a person filed in two places), then the selection is resolved
+    The edit is read and checked first (a tag the rules refuse, a name two people have), then the selection is resolved
     on the server, then written as one journaled change; it goes on to its end if the page stops waiting."""
     if (refusal := _this_pc_only()) is not None:
         return refusal
@@ -1144,12 +1144,10 @@ def tags():
 
 @routes.get("/api/people")
 def people():
-    """The people offered while a name is typed (tagpup.services.people.names). ?records=1 answers the people with a
-    person tag instead, each `{id, name, tag, group, shared}` (tagpup.services.people.records)."""
+    """The people with a person tag, each `{id, name, tag}` (tagpup.services.people.records); ?include_hidden=1 adds those
+    hidden from autocomplete. The pages send ?records=1, which changes nothing."""
     try:
         library = state.require()
-        if request.args.get("records") == "1":
-            return jsonify(people_service.records(library, include_hidden=request.args.get("include_hidden") == "1"))
-        return jsonify(people_service.names(library))
+        return jsonify(people_service.records(library, include_hidden=request.args.get("include_hidden") == "1"))
     except Exception as e:
         return responses.error(500, str(e))

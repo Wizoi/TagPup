@@ -746,7 +746,7 @@ ${summary}${note}`)) {
             const ids = state.selectedFaceIds.slice();
             resolveTyped(name).then(found => {
                 if (!found) return;
-                if (!found.person && !found.exists) {
+                if (!found.person) {
                     if (!confirm(`"${found.name}" is not currently in the database. Do you want to create a new person tag and assign it to the selected face(s)?`)) {
                         return;
                     }

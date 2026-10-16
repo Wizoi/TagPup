@@ -3,7 +3,8 @@
  *
  * The page asked the autocomplete list whether a name exists, and that list leaves out
  * people hidden from autocomplete -- so naming one of them asked "not currently in the
- * database, create a new person?", and the New Person dialog let a duplicate through.
+ * database, create a new person?", and the New Person dialog let a duplicate through. The page
+ * reads the people with include_hidden=1, so a hidden person is a person it knows.
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -25,8 +26,7 @@ describe("a hidden person still exists", () => {
         faces, total_count: 1, unclustered_total: 1, unclustered_shown: 1, has_more: false,
       })
       .on("/api/people-with-counts", [])
-      .on("/api/people?include_hidden=1", ["Rowan Thackeray"])
-      .on("/api/people", [])
+      .on("/api/people?records=1&include_hidden=1", [{ id: 7, name: "Rowan Thackeray", tag: "People/Rowan Thackeray" }])
       .on("/api/faces/match-bulk", { success: true, matched_ids: [1] });
     const { window, document } = await loadApp("tagtuner", {
       t, server, url: "http://localhost:8080/kr-track/?mode=unmatched-faces&person=Unknown%20Faces",

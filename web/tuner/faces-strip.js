@@ -387,7 +387,7 @@ function renderPhotoDetails(details) {
             // Who the text is: a person (after asking which when two have the name), or a name nobody has.
             resolveTyped(nameVal).then(found => {
                 if (!found) return;
-                if (!found.person && !found.exists) {
+                if (!found.person) {
                     if (!confirm(`"${found.name}" is not currently in the database. Do you want to create a new person tag with this name?`)) {
                         return;
                     }

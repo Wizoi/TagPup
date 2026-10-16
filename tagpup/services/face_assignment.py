@@ -10,7 +10,7 @@ job of its own to resume or to undo as one: a batch stopped, or one that left so
 change it wrote.
 
 * **The plan** (`plan_name`, `plan_unname`, `plan_exclude`, `plan_guesses`) reads and refuses as a whole, before a file is touched: two faces
-  of one photo for one person, the person already on another face of it, a person the tree files in two places, a reason that is not
+  of one photo for one person, the person already on another face of it, a name two people have, a reason that is not
   one. It records each face as it is read (`old`) and as it is to be (`new`), by the journal's own rule: the face is written only
   if it is still what the plan read, and left as it is, and said, if somebody changed it since.
 * **The faces with nothing to write** -- Unmatch or Ignore on faces that carry no name -- touch no photo and are written by the faces'
@@ -101,9 +101,9 @@ def _removal(library, op, face_ids, **changes):
         work.face(path, face_id, old, _new(old, **changes))
         by_photo.setdefault(photo_id, (path, []))[1].append(Ref(old.get("tag_id"), old["name"]))
     for photo_id, (path, going) in by_photo.items():
-        staying = {person_ids.key_of(person.id, person.name) for face_id, person in carried.get(photo_id, ())
+        staying = {person.id for face_id, person in carried.get(photo_id, ())
                    if face_id not in named}
-        losing = {person_ids.key_of(person.id, person.name): person for person in going}
+        losing = {person.id: person for person in going}
         work.remove[paths.key(path)] = [person for key, person in losing.items() if key not in staying]
     return work, [face_id for face_id in face_ids if face_id in found and face_id not in named]
 
