@@ -231,6 +231,8 @@ def child(plan_path):
     with open(plan_path, encoding="utf-8") as handle:
         plan = json.load(handle)
     clock = time.time() - time.perf_counter()     # perf_counter -> epoch, for the sampler's window
+    with open(plan["pid_file"], "w", encoding="utf-8") as handle:   # the interpreter, not the venv's launcher
+        handle.write(str(os.getpid()))
     fixed = {"process start": STARTED - plan["spawned"], "script imports": MODULES_IMPORTED - STARTED}
     started = time.perf_counter()
     import tagpup_cli
@@ -338,6 +340,7 @@ def run_child(sandbox_dir, plan, sampler, timeout):
     """Start the snapshot's copy of this script as the child, sampled while it runs; its result."""
     plan_path = os.path.join(sandbox_dir, "plan.json")
     plan["result"] = os.path.join(sandbox_dir, "result.json")
+    plan["pid_file"] = os.path.join(sandbox_dir, "child.pid")
     plan["spawned"] = time.time()
     with open(plan_path, "w", encoding="utf-8") as handle:
         json.dump(plan, handle)
@@ -346,7 +349,7 @@ def run_child(sandbox_dir, plan, sampler, timeout):
         process = processes.start([sys.executable, os.path.join(sandbox_dir, "scripts", os.path.basename(__file__)),
                                    "--child", plan_path], cwd=sandbox_dir, stdout=log, stderr=subprocess.STDOUT,
                                   env=environment(sandbox_dir, TAGPUP_NO_JOBS="1"))
-        sampler.watch(process.pid)
+        sampler.watch(plan["pid_file"])
         try:
             process.wait(timeout=timeout)
         finally:
@@ -365,7 +368,7 @@ def run_cli(sandbox_dir, arguments, sampler, timeout):
         process = processes.start([sys.executable, os.path.join(sandbox_dir, "tagpup_cli.py")] + arguments,
                                   cwd=sandbox_dir, stdout=log, stderr=subprocess.STDOUT,
                                   env=environment(sandbox_dir, TAGPUP_NO_JOBS="1"))
-        sampler.watch(process.pid)
+        sampler.watch(None)   # the venv's launcher, not the interpreter: the machine's use alone is read
         try:
             code = process.wait(timeout=timeout)
         finally:

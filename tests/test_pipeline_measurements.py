@@ -90,6 +90,23 @@ class TheCounts(unittest.TestCase):
         self.assertEqual(6500, found["peak_memory_mib"])
         self.assertEqual({"samples": 0}, sandbox.window(samples, 10, 11))
 
+    def test_the_process_measured_is_the_one_that_wrote_its_id(self):
+        # The venv's python.exe is a launcher: the child's own id comes from a file it writes.
+        import tempfile
+        folder = tempfile.mkdtemp(prefix="tagpup_pid_test_")
+        try:
+            sampler = sandbox.Sampler()
+            sampler.watch(os.path.join(folder, "child.pid"))
+            self.assertIsNone(sampler.watched())
+            with open(os.path.join(folder, "child.pid"), "w", encoding="utf-8") as handle:
+                handle.write("4242")
+            self.assertEqual(4242, sampler.watched())
+            sampler.watch(17)
+            self.assertEqual(17, sampler.watched())
+        finally:
+            import shutil
+            shutil.rmtree(folder, True)
+
     def test_output_goes_outside_the_repository(self):
         with self.assertRaises(SystemExit):
             sandbox.outside_the_repository(os.path.join(ROOT, "measurements"))

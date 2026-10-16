@@ -357,7 +357,8 @@ class Sampler:
     `interval` milliseconds (`gpu`: [(epoch, util %, MiB)]; its utilisation is the share of its own sample period a
     kernel ran), and every interval the machine's processor use and the measured process's (`cpu`: [(epoch, machine
     %, process %)], both of all processors; the rest of the machine is the difference). `watch(pid)` names the
-    process. Nothing about any other process's use of the card is to be had from nvidia-smi on Windows: memory used
+    process, or `watch(file)` a file the process writes its own id into: the venv's python.exe is a launcher, and
+    the interpreter doing the work is its child (measured 2026-10-16: the launcher's own use read 0%). Nothing about any other process's use of the card is to be had from nvidia-smi on Windows: memory used
     before the measurement starts is theirs."""
 
     def __init__(self, interval=500):
@@ -370,6 +371,16 @@ class Sampler:
 
     def watch(self, pid):
         self.pid = pid
+
+    def watched(self):
+        """The id of the process measured: the one named, or the one in the file named once it is written."""
+        if isinstance(self.pid, str):
+            try:
+                with open(self.pid, encoding="utf-8") as handle:
+                    return int(handle.read().strip())
+            except (OSError, ValueError):
+                return None
+        return self.pid
 
     def start(self):
         try:
@@ -398,7 +409,8 @@ class Sampler:
             after, now = _system_times(), time.time()
             idle, busy = after[0] - before[0], after[1] - before[1]
             machine = 100.0 * busy / (idle + busy) if idle + busy else 0.0
-            ticks = _process_ticks(self.pid) if self.pid else None
+            pid = self.watched()
+            ticks = _process_ticks(pid) if pid else None
             process = None
             if ticks is not None and process_before is not None:
                 process = 100.0 * (ticks - process_before) / ((now - then) * 1e7 * processors)
