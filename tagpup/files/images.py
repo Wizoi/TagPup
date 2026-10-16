@@ -145,39 +145,16 @@ def is_damage(error):
 
 def tail_check(photo_path):
     """How many zero bytes the file at `photo_path` ends in (zero_tail_of), having read only the end of
-    it: for a write that wants to refuse a damaged photo without decoding it (#523). Raises Unreadable
-    for an empty file, and what the system raised for one that cannot be read. At PARITY with the held
-    path and the indexer (#528): a zero-filled tail is `zero_tail_of`'s rule, the caller's to refuse at
-    ZERO_TAIL, and nothing is judged of what follows the picture -- a Samsung trailer, an MP4 appended
-    to a motion photo, 0xFF or zero padding below ZERO_TAIL, bytes after a PNG's IEND all decode, and a
-    false refusal of a good photo is the worst thing a cheap check can do. It cannot see damage in the
-    middle of a picture, which the indexer's full decode (`opened`) does; ExifTool's own failure to read
-    the file is the other signal, and a write that needs the picture itself (a rotate) decodes it
-    (zero_tail_if_whole)."""
+    it: for the doctor's count of photos whose file fails to open (tagpup.services.inspect), without
+    decoding them. Raises Unreadable for an empty file, and what the system raised for one that cannot
+    be read. A zero-filled tail is `zero_tail_of`'s rule, at ZERO_TAIL, as the indexer's (#528), and
+    nothing is judged of what follows the picture -- a Samsung trailer, an MP4 appended to a motion
+    photo, 0xFF or zero padding below ZERO_TAIL, bytes after a PNG's IEND all decode. It cannot see
+    damage in the middle of a picture, which the indexer's full decode (`opened`) does. No write asks
+    it (DECISIONS 2026-10-15)."""
     if os.path.getsize(photo_path) == 0:
         raise Unreadable("empty", "the file is empty")
     return zero_tail_of(photo_path)
-
-
-def zero_tail_if_whole(photo_path):
-    """How many zero bytes the file at `photo_path` ends in, once its picture has been
-    decoded to the end; raises Unreadable when it does not decode (damage), or what the
-    system raised when it cannot be read. Nothing is kept: for a write that has no row to
-    record a photo found damaged in (a photo of a folder the library does not hold), which
-    must still not be written into one. A JPEG is decoded at a fraction of its size
-    (`draft`), which still reads every byte of the stream."""
-    with open(photo_path, "rb") as handle:
-        data = handle.read()
-    try:
-        with Image.open(io.BytesIO(data)) as img:
-            if img.format == "JPEG":
-                img.draft("RGB", (128, 128))
-            img.load()
-    except Exception as error:
-        if not _decoder_failed(error):
-            raise
-        raise damage(data, error) from error
-    return zero_tail(data)
 
 
 def shown_size(photo_path):

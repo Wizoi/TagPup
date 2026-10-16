@@ -103,10 +103,7 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
     result = Result(attempted=1)
     _held, loose = libraries.split(library, [photo_path])
     files_only = bool(loose)
-    if files_only:
-        if file_only.refuse_unwritable(result, [photo_path]):
-            return result
-    elif libraries.refuse_writes(result, library, [photo_path]):
+    if not files_only and libraries.refuse_writes(result, library, [photo_path]):
         return result
     wanted = fields.caption_fields(title or "")
     if date_taken:
@@ -263,7 +260,7 @@ SKIPPED_MISSING = "skipped_missing"
 
 def leave_out_missing(photo_paths):
     """(`photo_paths` but those whose file is gone, [(path, why)] of those left out). A bulk write skips them and writes
-    the rest, as it does a photo of a folder it does not hold that ends in zeros: the library still holds the row of a missing photo and a view shows it
+    the rest: the library still holds the row of a missing photo and a view shows it
     (phase 9c), so a selection can name one. A file that cannot be read, or on a share that does not answer, is NOT
     missing: the write meets it itself, and stops at it as for any read or write error of a present file."""
     present, gone = [], []
@@ -362,11 +359,8 @@ def change_each(library, changes, exiftool_path, operation, persons=None, et=Non
         for path in loose:
             done.skip(path, "not written: an earlier photo failed")
         return file_only.combined(done, None)
-    writable, skipped = file_only.leave_out_unwritable(loose)
-    files = libraries.with_skipped(
-        _change_each(library, plan_of(writable), exiftool_path, operation, files_only=True, persons=persons,
-                     et=et, stop_at_first_error=stop_at_first_error)
-        if writable else _refused(0, None), skipped)
+    files = _change_each(library, plan_of(loose), exiftool_path, operation, files_only=True, persons=persons,
+                         et=et, stop_at_first_error=stop_at_first_error)
     return file_only.combined(done, files)
 
 

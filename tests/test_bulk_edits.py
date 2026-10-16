@@ -102,8 +102,8 @@ class Tags(Bulk):
     def test_a_tags_edit_adds_and_removes_in_every_photo_and_counts_what_it_changed(self):
         done = self.tags_edit(add=["Trips/Coast"], remove=["Old/Stuff"])
         self.assertEqual((self.PHOTOS, self.PHOTOS, 0, 0), (done["total"], done["requested"], done["missing"], done["excluded"]))
-        self.assertEqual((self.PHOTOS, 0, 0, 0, 0), (done["changed"], done["unchanged"], done["skipped_missing"],
-                                                     done["skipped_damaged"], done["error_count"]))
+        self.assertEqual((self.PHOTOS, 0, 0, 0), (done["changed"], done["unchanged"], done["skipped_missing"],
+                                                  done["error_count"]))
         for photo_id in self.ids:
             self.assertEqual(["Trips/Coast"], self.tags(photo_id))
             self.assertEqual(["Trips/Coast"], self.row_tags(photo_id), "the index is told what was written")

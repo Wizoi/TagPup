@@ -15,7 +15,7 @@ import time
 
 from tagpup.core import paths, validation
 from tagpup.core.library import Library, picker_name
-from tagpup.core.result import NOT_IN_LIBRARY, SKIPPED_DAMAGED, Result
+from tagpup.core.result import NOT_IN_LIBRARY, Result
 from tagpup.files import images, recycle_bin, shares
 from tagpup.services import settings
 from tagpup.services import roots as roots_service
@@ -397,9 +397,8 @@ def refuse_writes(result, library, photo_paths):
     the same mistake as Suggest making rows there. `details[NOT_IN_LIBRARY]` holds the
     folders, which a web route answers with 409.
 
-    Whether a photo's file opens is not asked here: a photo the library holds is written whatever its picture holds
-    (DECISIONS 2026-10-15), and one of a folder it does not hold is asked of its file
-    (tagpup.services.file_only.refuse_unwritable)."""
+    Whether a photo's file opens is not asked, here or anywhere before a write: ExifTool's own failure to read or
+    write a file fails that photo's write (DECISIONS 2026-10-15)."""
     unheld = not_held(library, photo_paths, leave_out_ignored=False)
     if not unheld:
         return False
@@ -409,15 +408,6 @@ def refuse_writes(result, library, photo_paths):
     result.details[NOT_IN_LIBRARY] = unheld
     return True
 
-
-def with_skipped(result, left):
-    """`result`, with the photos `left` out as damaged (file_only.leave_out_unwritable) skipped and
-    added to the count in details[SKIPPED_DAMAGED]."""
-    result.attempted += len(left)
-    for what, why in left:
-        result.skip(what, why)
-    result.details[SKIPPED_DAMAGED] = result.details.get(SKIPPED_DAMAGED, 0) + len(left)
-    return result
 
 
 def record_added(library, folders, subfolders=True):

@@ -20,7 +20,7 @@ export function pageErrors() {
 /** What POST /api/library/bulk-edit answers when the edit is written: every field the page reads, as tagpup.web.tagpup_routes.library_bulk_edit makes it. */
 export const editReply = (extra = {}) => ({
   success: true, op: "tags", total: 0, requested: 0, missing: 0, excluded: 0, changed: 0, unchanged: 0, skipped_missing: 0,
-  skipped_damaged: 0, error_count: 0, errors: [], ...extra,
+  error_count: 0, errors: [], ...extra,
 });
 
 /**

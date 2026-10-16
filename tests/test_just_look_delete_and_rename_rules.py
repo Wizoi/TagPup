@@ -3,7 +3,8 @@
 #520  (Delete sends only an existing regular photo FILE to the Recycle Bin, and says the truth about a network share:
       tests/test_delete_a_photo.py, with the other delete tests of this file and test_just_look_bin_and_long_names.)
 #521  A folder with a row directly in it is held whatever the ignored list says.
-#523  The file-only path checks a file's tail, not its whole picture, except for a rotate.
+#523  (A photo of a folder not held that ExifTool cannot read or write refuses the whole Smart Rename:
+      tests/test_just_look_edits.py, ASmartRename.)
 #524  Smart Rename splits held from not-held once; a mixed one that fails part-way says what changed.
 #525  The failure says how to recover.
 """
@@ -64,42 +65,19 @@ class AFolderWithRowsIsHeldWhateverIsIgnored(jl.Base):
         self.assertEqual(1, self.rows("SELECT COUNT(*) FROM photos")[0][0], "the row outlived the file")
 
 
-class TheFileOnlyCheckIsCheap(jl.Base):
-    def test_a_save_a_tag_write_a_shift_and_a_rename_decode_nothing(self):
-        with mock.patch.object(images, "zero_tail_if_whole", side_effect=AssertionError("decoded in full")), \
-                mock.patch.object(images, "opened", side_effect=AssertionError("decoded in full")):
+class AFileOnlyWriteDecodesNothing(jl.Base):
+    def test_a_save_a_tag_write_a_shift_a_rename_and_a_rotate_decode_nothing(self):
+        with mock.patch.object(images, "opened", side_effect=AssertionError("decoded in full")):
             self.assertEqual(200, self.post("/photo/save-metadata", {"path": self.loose[0], "title": "x",
                                                                     "tags": ["A/B"]}).status_code)
             self.assertEqual(200, self.post("/photos/bulk-tags", {"paths": self.loose, "add_tags": ["C/D"],
                                                                  "remove_tags": []}).status_code)
+            self.assertEqual(200, self.post("/photo/rotate", {"path": self.loose[1], "direction": "left"}).status_code)
             self.assertEqual(200, self.post("/folder/time-shift", {"folder_path": self.lighthouse,
                                                                   "camera_model": "All Cameras",
                                                                   "shift_minutes": 5}).status_code)
             self.assertEqual(200, self.post("/folder/rename-photos", {
                 "folder_path": self.lighthouse, "grouping": "Lighthouse", "photo_paths": self.loose}).status_code)
-
-    def test_a_rotate_decodes_the_picture(self):
-        with mock.patch.object(images, "zero_tail_if_whole", wraps=images.zero_tail_if_whole) as decoded:
-            self.assertEqual(200, self.post("/photo/rotate", {"path": self.loose[0], "direction": "left"}).status_code)
-        self.assertEqual(1, decoded.call_count)
-
-    def test_a_zero_filled_png_and_an_empty_file_are_found_by_the_tail(self):
-        from PIL import Image
-        png = os.path.join(self.lighthouse, "zero filled.png")
-        Image.new("RGB", (64, 64), "red").save(png)
-        with open(png, "ab") as handle:
-            handle.write(bytes(images.ZERO_TAIL + 10))
-        empty = os.path.join(self.lighthouse, "empty.jpg")
-        open(empty, "wb").close()
-        for path in (png, empty):
-            reply = self.post("/photo/save-metadata", {"path": path, "title": "x", "tags": []})
-            self.assertEqual(409, reply.status_code, (path, reply.data))
-
-    def test_a_whole_jpeg_with_camera_padding_passes(self):
-        photo = self.loose[0]
-        with open(photo, "ab") as handle:
-            handle.write(bytes(16))
-        self.assertEqual(200, self.post("/photo/save-metadata", {"path": photo, "title": "x", "tags": []}).status_code)
 
 
 class ASmartRenameSplitsOnce(jl.Base):

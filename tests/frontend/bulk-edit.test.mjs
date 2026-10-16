@@ -183,11 +183,11 @@ describe("while it is written, and when it is done", () => {
 
   test("photos left out and photos already as asked are counted in the sentence", async (t) => {
     const ctx = await view(t, 400);
-    ctx.bulk.edit = { total: 100, changed: 90, unchanged: 4, skipped_missing: 3, skipped_damaged: 3 };
+    ctx.bulk.edit = { total: 100, changed: 90, unchanged: 4, skipped_missing: 3 };
     el(ctx, "btn-select-all-thumbnails").click();
     await addTag(ctx);
     assert.equal(sentence(ctx),
-      "Added Trips/Lighthouse to 90 photos; 3 missing on disk were skipped; 3 damaged were skipped; 4 already were as asked; 0 errors.");
+      "Added Trips/Lighthouse to 90 photos; 3 missing on disk were skipped; 4 already were as asked; 0 errors.");
   });
 
   test("more photos than were picked (they came into the view since it was read) is said after the fact", async (t) => {

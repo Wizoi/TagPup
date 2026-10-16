@@ -13,7 +13,7 @@ import {
     selectionSummaryCount, selectionSummaryScroll, selectionTagsList, statusDot, statusText
 } from './elements.js';
 import { saveToLocalStorageCache } from './cache.js';
-import { noteSkipped, whereWritten } from './write-queue.js';
+import { whereWritten } from './write-queue.js';
 import {
     formatFriendlyDateRange, formatFriendlyDateSingle, getFolderDateStats,
     parseExifDateToLocalDate, takenOf
@@ -397,7 +397,7 @@ function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], wr
                 }
                 throw new Error(data.error);
             }
-            // A photo found damaged was skipped, nothing written to it: its record stays.
+            // A photo whose file is gone was skipped, nothing written to it: its record stays.
             const skipped = (data.skipped || []).map(each => each.path);
             // Each photo written is of the file as it is now: the stamp its next save names.
             const stamps = new Map(Object.entries(data.stamps || {}).map(([path, stamp]) => [pathKey(path), stamp]));
@@ -409,7 +409,6 @@ function queueBulkTags({ label, busy, failed, targets, add = [], remove = [], wr
                     written(photo);
                 }
             });
-            noteSkipped(entry, data.skipped_damaged);
             updateSelectedThumbnailsCount();
             renderFileList();
             renderThumbnails();

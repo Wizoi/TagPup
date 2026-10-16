@@ -447,8 +447,7 @@ def folder_auto_apply():
     if not result.ok:
         logger.error("Error auto-applying suggestions: %s", result.message())
         return responses.error(500, result.message(), written=_written_tags(result))
-    return jsonify({"success": True, "written": _written_tags(result), **_skipped_damaged(result),
-                    **_where(result)})
+    return jsonify({"success": True, "written": _written_tags(result), **_where(result)})
 
 
 @routes.post("/api/folder/time-shift")
@@ -783,7 +782,7 @@ def _bulk_reply(why):
 def library_bulk_edit():
     """Edit a selection of photos by id, in this request (tagpup.services.bulk_edit): `{"op": "tags"|"people"|"delete",
     "selection": SELECTION, "params": {...}}` answers when it is done, with what each photo came to: `changed`, `unchanged`,
-    `skipped_missing`, `skipped_damaged`, `error_count` and the first 50 `errors`. At most 5,000 photos (a selection of more
+    `skipped_missing`, `error_count` and the first 50 `errors`. At most 5,000 photos (a selection of more
     is refused, nothing read); about a twentieth of a second each, so a large one takes minutes and the page says so.
     The edit is read and checked first (a tag the rules refuse, a person filed in two places), then the selection is resolved
     on the server, then written as one journaled change; it goes on to its end if the page stops waiting."""
@@ -1096,28 +1095,11 @@ def _where(result):
             file_only.WITH_ROWS: result.details.get(file_only.WITH_ROWS, 0)}
 
 
-def _skipped_damaged(result):
-    """What a bulk write's reply says of the photos it skipped as damaged
-    (tagpup.services.file_only.leave_out_unwritable): {"skipped_damaged": n, "skipped":
-    [{"path", "why"}]}, the photos the page shows."""
-    count = result.details.get(library_actions.SKIPPED_DAMAGED, 0)
-    # By what they say, not by position: a write of two parts (held photos and the others)
-    # skips in each.
-    damaged = [{"path": what, "why": why} for what, why in result.skipped if why.startswith("damaged, ")]
-    return {"skipped_damaged": count, "skipped": damaged if count else []}
-
-
 def _skipped_photos(result):
-    """_skipped_damaged, and the photos a bulk tag write left out because their files are gone
-    (tagpup.services.tagging.leave_out_missing): {"skipped_damaged": n, "skipped_missing": m,
-    "skipped": [{"path", "why"}]}."""
-    out = _skipped_damaged(result)
-    gone = result.details.get(tagging_actions.SKIPPED_MISSING, 0)
-    out["skipped_missing"] = gone
-    if gone:
-        out["skipped"] = out["skipped"] + [{"path": what, "why": why} for what, why in result.skipped
-                                           if why.startswith("missing, ")]
-    return out
+    """The photos a bulk tag write left out because their files are gone (tagpup.services.tagging.leave_out_missing):
+    {"skipped_missing": m, "skipped": [{"path", "why"}]}."""
+    return {"skipped_missing": result.details.get(tagging_actions.SKIPPED_MISSING, 0),
+            "skipped": [{"path": what, "why": why} for what, why in result.skipped if why.startswith("missing, ")]}
 
 
 def _written_tags(result):
