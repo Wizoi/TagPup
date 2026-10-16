@@ -18,7 +18,7 @@ import os
 
 import numpy as np
 
-from tagpup.core import clustering, paths, validation, vocabulary
+from tagpup.core import clustering, paths, validation
 from tagpup.core.result import Conflict, NotFound, Refused, Result
 from tagpup.services import identify
 from tagpup.services import people as people_service
@@ -446,11 +446,10 @@ def propose_guesses(library, named, photo_path=None, folder=None):
     return len(unnamed), _closest_named(unnamed, people, matrix)
 
 
-def decide_guesses(conn, proposed, known=None):
+def decide_guesses(conn, proposed):
     """([(face_id, person, photo)] to name, how many were left for a person gone) of `proposed`, decided on `conn`. A person is
     their id, or a name no person is filed under."""
     given = faces.people_given(conn, {person for found in proposed.values() for _fid, person in found})
-    known = known or person_ids.read(conn)
     chosen, gone = [], 0
     for face_photo, faces_proposed in proposed.items():
         # Only the photos a person is proposed for, each by an index. Reading every
@@ -458,11 +457,11 @@ def decide_guesses(conn, proposed, known=None):
         # and every other face action waited (docs/findings.md, #45).
         taken = {each.id for each in faces.people_in_photo(conn, face_photo)}
         # A person the owner took off this photo on purpose is not guessed onto another face of it (tagpup.store.removals).
-        taken_off = {vocabulary.key(each) for each in removals.removed_names(conn, faces.nobody_in_photo(conn, face_photo)).values()}
+        # By id, as face_tags._not_taken_off: two people called alike are two.
+        taken_off = {each.id for each in removals.removed_people(conn, faces.nobody_in_photo(conn, face_photo)).values()}
         proposed_people = [person for _fid, person in faces_proposed]
         for face_id, person in faces_proposed:
-            if (proposed_people.count(person) > 1 or person in taken
-                    or vocabulary.key(known.node_names.get(person, "")) in taken_off):
+            if proposed_people.count(person) > 1 or person in taken or person in taken_off:
                 continue
             if person not in given:
                 gone += 1
@@ -480,7 +479,7 @@ def _write_guesses(conn, proposed):
     # (docs/findings.md, #645).
     db.begin(conn, immediate=True)
     known = person_ids.read(conn)
-    chosen, gone = decide_guesses(conn, proposed, known)
+    chosen, gone = decide_guesses(conn, proposed)
     # A bulk guess, not a per-face human decision, so it is left as an automatic
     # assignment that re-clustering may revise. Only the faces still unnamed and in
     # play are named, name_if_unnamed's guard, and only those are counted: in one write

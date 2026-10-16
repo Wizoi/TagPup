@@ -120,11 +120,6 @@ class WhatAPhotosMetadataSays(unittest.TestCase):
         self.assertEqual(vocabulary.retag(["Beach", "Places/Harbour"], "Beach"), (["Places/Harbour"], True))
         self.assertEqual(vocabulary.retag(["Places/Harbour"], "Beach"), (["Places/Harbour"], False))
 
-    def test_a_named_face_counts_once_whatever_its_case(self):
-        people = vocabulary.people_in_photo(["People/Rowan Thackeray"],
-                                            [vocabulary.Ref(None, "rowan thackeray"), vocabulary.Ref(None, "Hazel Brookmire")])
-        self.assertEqual(people, ["Rowan Thackeray", "Hazel Brookmire"])
-
 
 class WhatMayBeSet(unittest.TestCase):
     """What may be set as a tag or a name is tagpup.core.validation's now, tested with

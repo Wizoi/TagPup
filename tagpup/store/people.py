@@ -48,8 +48,7 @@ def _faces_named(conn, photo_ids):
 
 def _differences(conn, photo_ids, known):
     """(photo id, its people by the rule as [(id, name, source)]) of each photo in `photo_ids` -- every photo, without --
-    whose rows say otherwise. A person the rule names with no id (a face named before names had ids, a keyword with no node) is
-    not listed."""
+    whose rows say otherwise. A person the rule names with no id (a keyword with no node) is not listed."""
     if known is None:
         from tagpup.store import taxonomy   # taxonomy imports this module
         known = taxonomy.read_people_vocabulary(conn)
@@ -86,8 +85,8 @@ def rebuild(conn, photo_ids=None, known=None, ids=None):
     (person_ids.follow_listed; every row, when every photo is rebuilt). `known` is the tree's
     PeopleVocabulary, and `ids` its person_ids.People, each read from `conn` when not given.
     A person is listed by the id of a node and no other way (owner, 2026-10-11): one the rule cannot give an id -- a keyword
-    no node is (the writer of a keyword makes its node), a group's name, a face named before names had ids -- is not listed, so no
-    row is written with a name and no id. Returns how many photos' people changed. The caller commits."""
+    no node is (the writer of a keyword makes its node), a group's name -- is not listed, so no row is written with a name and no
+    id. Returns how many photos' people changed. The caller commits."""
     written = []
     for photo_id, people in list(_differences(conn, photo_ids, known)):
         conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))

@@ -80,21 +80,13 @@ class Operations(TwoSams, unittest.TestCase):
         self.assertEqual(self.sam_i, self.node("Family/Ingersoll House/Sam"))
         self.assertEqual([(self.sam_i, "Sam")] * 2, [self.face(self.faces[1])[:2], self.face(self.faces[2])[:2]])
 
-    def unresolved_face(self, name="Zed Mercer"):
-        def add(conn):
-            face = faces.insert(conn, self.other, [40, 0, 50, 10], b"\x06" * 8)
-            conn.execute("UPDATE faces SET name = ?, tag_id = NULL, name_source = 'manual' WHERE id = ?", (name, face))
-            return face
-        return write(self.path, add)
-
     def test_renaming_a_name_no_tag_has_is_refused_whatever_the_new_name_is(self):
-        self.node("People/Wren Halloway")
-        face = self.unresolved_face()
+        tree = look(self.path, "SELECT id, tag FROM tag_taxonomy ORDER BY id")
         for new in ("Wren Halloway", "Sam", "Zed Marlowe"):
             with self.subTest(new):
                 result = self.rename("Zed Mercer", new)
                 self.assertIn("create the person first", result.refused)
-                self.assertEqual((None, "Zed Mercer", "manual"), self.face(face), "nothing was written")
+                self.assertEqual(tree, look(self.path, "SELECT id, tag FROM tag_taxonomy ORDER BY id"), "nothing was written")
 
     def test_rename_never_merges_into_a_person_who_is_there(self):
         result = self.rename(self.sam_i, "Wren Halloway")      # a free name: fine
