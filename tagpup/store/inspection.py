@@ -36,13 +36,6 @@ def _json(text, empty):
 
 # ---- What a library holds ---------------------------------------------------------------
 
-def schema_version(conn):
-    """The highest migration applied, or 0 before any was recorded."""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'").fetchone():
-        return 0
-    return conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
-
-
 def tree_nodes(conn):
     """How many nodes the tag tree has."""
     return conn.execute("SELECT COUNT(*) FROM tag_taxonomy").fetchone()[0]

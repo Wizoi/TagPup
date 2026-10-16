@@ -90,7 +90,7 @@ def logical(conn):
 
 def listing(db_path):
     """[{"name", "address", "added"}] of the roots of the library at `db_path`, read-only:
-    nothing is migrated, and a library behind migration 18 has none."""
+    nothing is migrated (a library below the baseline is refused before it is opened)."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
         return [{"name": name, "address": address, "added": added} for name, address, added in every(conn)]

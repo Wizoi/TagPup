@@ -268,21 +268,8 @@ def _now():
     return time.strftime(TIME)
 
 
-def _same(a, b):
-    """Equal as SQLite stores them: 1 is not 1.0, nor b'1' '1'."""
-    return type(a) is type(b) and a == b
-
-
-def _key_text(key):
-    return json.dumps(list(key))
-
-
 def _named(table, key):
     return "%s %s" % (table, "/".join(str(k) for k in key))
-
-
-def _columns(conn, table):
-    return [row[1] for row in conn.execute('PRAGMA table_info("%s")' % table)]
 
 
 def _where(table):
@@ -322,7 +309,7 @@ def _resolve(conn, edits):
 
     def cols(table):
         if table not in columns:
-            columns[table] = _columns(conn, table)
+            columns[table] = schema.table_columns(conn, table)
         return columns[table]
 
     refusals, top, seen, skipped = [], [], set(), []
@@ -367,7 +354,7 @@ def _resolve(conn, edits):
             continue
         cached = cache_columns(edit.table, edit.expect)
         differs = [column for column, value in edit.expect.items() if column not in cached
-                   and not _same(_canonical_value(roots, edit.table, key, column, row[column]),
+                   and not schema.same_stored(_canonical_value(roots, edit.table, key, column, row[column]),
                                  _canonical_value(roots, edit.table, key, column, value))]
         if differs:
             if edit.skippable:
@@ -379,7 +366,7 @@ def _resolve(conn, edits):
         if edit.action == "update":
             wanted_values = _canonical(roots, edit.table, key, edit.values)
             changed = {column: value for column, value in wanted_values.items()
-                       if not _same(_canonical_value(roots, edit.table, key, column, row[column]), value)}
+                       if not schema.same_stored(_canonical_value(roots, edit.table, key, column, row[column]), value)}
             if changed:
                 top.append(RowChange("update", edit.table, key, {c: row[c] for c in changed}, changed, edit.kind))
             continue
@@ -603,7 +590,7 @@ def _write(conn, changes):
                 [change.new[c] for c in columns])
             if change.key is None:
                 change.key = (cursor.lastrowid,)
-            change.new = _read(conn, table, change.key, _columns(conn, table))
+            change.new = _read(conn, table, change.key, schema.table_columns(conn, table))
         elif change.action == "update":
             columns = list(change.new)
             conn.execute('UPDATE "%s" SET %s WHERE %s' % (table, ", ".join('"%s" = ?' % c for c in columns),
@@ -616,7 +603,7 @@ def _write(conn, changes):
 def _record(conn, change_id, changes):
     rows = []
     for change in changes:
-        key = _key_text(change.key)
+        key = schema.row_key(change.key)
         if change.action == "update":
             rows += [(change_id, "update", change.table, key, c, change.old[c], change.new[c]) for c in change.new]
         elif change.action == "delete":
@@ -685,7 +672,7 @@ def _not_as_left(conn, change_id, changes):
             continue
         derived = DERIVED_COLUMNS.get(change.table, ()) + cache_columns(change.table, change.new)
         differs = [c for c in change.new if c not in derived
-                   and not _same(_canonical_value(roots, change.table, change.key, c, row[c]), change.new[c])]
+                   and not schema.same_stored(_canonical_value(roots, change.table, change.key, c, row[c]), change.new[c])]
         if differs:
             reasons.append("%s is not what change %d left: %s changed"
                            % (_named(change.table, change.key), change_id, ", ".join(differs)))
@@ -1114,7 +1101,7 @@ def _snapshot(conn, changes):
         if change.key is None:
             continue
         if change.table not in columns:
-            columns[change.table] = _columns(conn, change.table)
+            columns[change.table] = schema.table_columns(conn, change.table)
         rows[(change.table, change.key)] = _read(conn, change.table, change.key, columns[change.table])
     photo_ids, _dated, nodes, kept, node_ids = _touched(conn, changes)
     photo_ids = sorted(photo_ids | set(people.photos_named_by(conn, nodes) if nodes else ()))
@@ -1135,7 +1122,7 @@ def _differences(before, after):
         if was is None or now is None:
             found.append("%s: %s" % (_named(table, key), "still there" if was is None else "not put back"))
             continue
-        differs = [c for c in was if not _same(was[c], now.get(c))]
+        differs = [c for c in was if not schema.same_stored(was[c], now.get(c))]
         if differs:
             found.append("%s: %s" % (_named(table, key), ", ".join(differs)))
     return found
@@ -1259,7 +1246,7 @@ _settled_guard = threading.Lock()
 
 def settle_once(db_path):
     """settle, the first time this process opens the library at `db_path`: at start."""
-    key = db._key(db_path)
+    key = db.key(db_path)
     with _settled_guard:
         if key in _settled:
             return 0
