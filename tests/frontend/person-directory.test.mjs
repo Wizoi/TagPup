@@ -65,14 +65,9 @@ describe("the same person", () => {
     assert.equal(sameTagPerson("Pets/Sam", "Sam", directory), false);
   });
 
-  test("a text no person has is its leaf, as before, unless the leaf is somebody's", () => {
-    assert.equal(sameTagPerson("People/Fenn Ashdown", "Fenn Ashdown", directory), true);
-    assert.equal(sameTagPerson("People/Sam", "Friends/Sam", directory), false, "People/Sam is no person's tag; Sam is somebody's");
-  });
-
-  test("without the people the old rule holds: by leaf", () => {
-    assert.equal(sameTagPerson("Friends/Sam", "Pets/Sam", null), true);
-    assert.equal(sameTagPerson("Friends/Sam", "Pets/Sam", new PeopleDirectory([])), true);
+  test("a text no person has is nobody, whatever its leaf (#1394)", () => {
+    assert.equal(sameTagPerson("People/Fenn Ashdown", "Fenn Ashdown", directory), false);
+    assert.equal(sameTagPerson("People/Sam", "Friends/Sam", directory), false, "People/Sam is no person's tag");
   });
 
   test("two records are one person by id; a record with no id is nobody", () => {
@@ -91,10 +86,6 @@ describe("a photo that already has a person", () => {
     const photo = { tags: ["Friends/Sam", "Places/Coast"] };
     assert.equal(photoAlreadyHas(photo, "Pets/Sam", isPerson, directory), false);
     assert.equal(photoAlreadyHas(photo, "Friends/Sam", isPerson, directory), true);
-  });
-
-  test("the old rule, with no directory, still takes them for one (the leaf)", () => {
-    assert.equal(photoAlreadyHas({ tags: ["Friends/Sam"] }, "Pets/Sam", isPerson), true);
   });
 
   test("a bare name already on the photo is that person only when it is one person's", () => {

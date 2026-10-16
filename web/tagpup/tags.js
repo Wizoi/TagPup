@@ -167,12 +167,9 @@ export function updatePeopleDatalist() {
  */
 export function loadTaxonomy() {
     // The people with a tag, by id: a tag path names exactly one, and two called alike are two (identity by id). A failed
-    // read keeps the people the page had: taken as nobody, every person tag would be offered as a keyword.
+    // read is nobody, as in TagTuner (PeopleDirectory lets an error's answer go).
     const people = api.json('/api/people?records=1&include_hidden=1')
-        .then(data => {
-            if (Array.isArray(data)) state.people = new PeopleDirectory(data);
-            else console.error('Could not load the people records:', data);
-        })
+        .then(data => { state.people = new PeopleDirectory(data); })
         .catch(err => console.error('Could not load the people records:', err));
     const tree = api.json('/api/taxonomy/tree')
         .then(data => {

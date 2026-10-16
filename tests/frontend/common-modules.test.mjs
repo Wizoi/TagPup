@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT, APPS, COMMON_DIR, pageModules } from "./harness.mjs";
-import { leafOf, rootOf, samePerson, photoAlreadyHas } from "../../web/common/vocabulary.js";
+import { leafOf, rootOf, samePerson, photoAlreadyHas, PeopleDirectory } from "../../web/common/vocabulary.js";
 
 const COMMON = fs.readdirSync(COMMON_DIR).filter((name) => name.endsWith(".js"));
 
@@ -74,13 +74,13 @@ describe("web/common/vocabulary.js: a person's two shapes", () => {
     assert.ok(!samePerson("", ""));
   });
 
-  test("a photo already has a person under another spelling, by the page's rule", () => {
-    // Which tags are people is the page's to say (the tag tree's face roots).
-    const isPersonTag = (tag) => tag.startsWith("People/") || tag === "Rowan Thackeray";
+  test("a photo already has a person under another spelling, by the library's people", () => {
+    const people = new PeopleDirectory([{ id: 3, name: "Rowan Thackeray", tag: "People/Rowan Thackeray" }]);
+    const isPersonTag = (tag) => Boolean(people.ofText(tag));
     const photo = { tags: ["People/Rowan Thackeray", "Activity/Rowing"] };
-    assert.ok(photoAlreadyHas(photo, "Rowan Thackeray", isPersonTag));
-    assert.ok(photoAlreadyHas(photo, "Activity/Rowing", isPersonTag));
-    assert.ok(!photoAlreadyHas(photo, "Rowing", isPersonTag), "a keyword's leaf is not the keyword");
-    assert.ok(!photoAlreadyHas(null, "People/Rowan Thackeray", isPersonTag));
+    assert.ok(photoAlreadyHas(photo, "Rowan Thackeray", isPersonTag, people));
+    assert.ok(photoAlreadyHas(photo, "Activity/Rowing", isPersonTag, people));
+    assert.ok(!photoAlreadyHas(photo, "Rowing", isPersonTag, people), "a keyword's leaf is not the keyword");
+    assert.ok(!photoAlreadyHas(null, "People/Rowan Thackeray", isPersonTag, people));
   });
 });
