@@ -72,6 +72,9 @@ class StubEmbedder:
 class StubFaceProcessor:
     """The face model a suggester is handed: finds no face in any photo."""
 
+    def ready(self):
+        """The run's turn on the graphics card (tagpup.runtime._OnTheCard): nothing to wait for here."""
+
     def detect_and_embed_faces(self, path):
         return []
 
@@ -103,7 +106,8 @@ class SuggesterTestBase(unittest.TestCase):
         taxonomy = TagTaxonomy(library)
         taxonomy.paths = set(taxonomy_paths)
         index = StubIndex(neighbors=list(neighbors))
-        return TagSuggester(index, taxonomy, embedder=embedder, candidate_tags=candidates or [],
+        # A run is always given CLIP (model_for_run): with no candidate words, it is asked nothing.
+        return TagSuggester(index, taxonomy, embedder=embedder or StubEmbedder(), candidate_tags=candidates or [],
                             faces=StubFaceProcessor())
 
     def scores(self, result):

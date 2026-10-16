@@ -150,12 +150,12 @@ class TagSuggester:
     Given everything it uses. `index` is the library's (tagpup.services.search.PhotoIndex):
     its neighbours, its connection and its tag embeddings. `embedder` is the CLIP model
     (tagpup.ml.clip.ClipModel) the candidate words are embedded with, and `faces` the face
-    model (tagpup.ml.faces.FaceModel) a photo with no faces on file is detected with --
-    none, and such a photo is not detected. The face model was a module-level one the
+    model (tagpup.ml.faces.FaceModel) a photo with no faces on file is detected with: both
+    always, as a run is given them (model_for_run). The face model was a module-level one the
     suggester made for itself.
     """
 
-    def __init__(self, index, taxonomy, embedder=None, candidate_tags: List[str] = None, faces=None,
+    def __init__(self, index, taxonomy, *, embedder, faces, candidate_tags: List[str] = None,
                  remember=True, text_cache=None):
         self.index = index
         #: Where a prompt's embedding is kept when `remember` is False (TextEmbeddingCache).
@@ -229,7 +229,7 @@ class TagSuggester:
 
     def _precompute_candidates(self):
         """Precompute embeddings for candidate tags using a template."""
-        if not self.embedder or not self.candidate_tags or self.candidate_embeddings:
+        if not self.candidate_tags or self.candidate_embeddings:
             return
 
         model_name, pretrained = self.embedder.model_name, self.embedder.pretrained
@@ -263,8 +263,7 @@ class TagSuggester:
         """Get standard or year-specific candidate embeddings."""
         self._precompute_candidates()
 
-        # No CLIP model (a run that only matches faces) has no words to ask it about, of any year.
-        if year is None or not self.embedder:
+        if year is None:
             return self.candidate_embeddings
 
         if year in self.year_candidate_embeddings:
@@ -451,7 +450,7 @@ class TagSuggester:
                                 "prob": prob
                             })
                         # Detected before and none found: as good as faces on file (#773).
-                        if not has_rows and self.faces is not None:
+                        if not has_rows:
                             has_rows = store_faces_detected.detected(
                                 self.index.conn, photo_path, face_records.detector_of(self.faces))
                     except Exception as db_err:
@@ -464,12 +463,12 @@ class TagSuggester:
             # A face model that waits for its turn on the graphics card (a Suggest run's,
             # tagpup.runtime) is waited for first, and the library asked again: the turn
             # may have been the index's, recording this photo's faces (#750).
-            if not has_face_rows and self.faces is not None:
+            if not has_face_rows:
                 self.faces.ready()
                 has_face_rows, detected_faces = on_file()
 
             # If not in database, detect and embed on-the-fly
-            if not has_face_rows and self.faces is not None:
+            if not has_face_rows:
                 detected_faces = self.faces.detect_and_embed_faces(photo_path)
 
                 # Keep what we just computed. Detection and embedding are the expensive
@@ -479,7 +478,7 @@ class TagSuggester:
                 # tagging feeds TagTuner's identify queue, and a folder added but not yet
                 # indexed still accumulates face data. Strictly additive: photos that already have face
                 # rows are left untouched, so manual names and exclusions are safe.
-                if self.index is not None and self.remember:
+                if self.remember:
                     try:
                         saved = face_records.record_detected(self.index.db_path, photo_path, detected_faces,
                                                              detector=face_records.detector_of(self.faces))
