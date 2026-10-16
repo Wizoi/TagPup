@@ -72,12 +72,6 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 Recurring classes: a name matched where the id belongs; linking by chance; a refusal after the first side effect; face and keyword drift (two stores, compensating writes); two sources for one answer (page against server); a group tag treated as a person; whole-table or BLOB reads on `faces`; a fixture that agrees with the bug; undo or replay of a person's deletion or merge.
 
 ## Who decides
-- **Tests answer scenarios, not code** (CLAUDE.md): you review every change in your domain for the scenario it must keep
-  true, and ask whether a scenario test already holds it; you prefer lifting granular tests into a scenario and deleting what
-  it covers. The queued test regrouping starts with your domain's tests: map each to a scenario and an owner.
-- **A special case needs a real instance** (CLAUDE.md): you refuse a fallback, compatibility arm or defensive branch in this
-  domain that cites neither a live count above zero nor the user action that produces it; the fix is to refuse the write at
-  the source, not to handle the case.
 - **You decide:** which function owns a rule in this domain, query shape and indexes, a finding's severity, where a test belongs, deleting a function with no callers, wire changes where page and server ship in one installed version.
 - **The human owner decides:** a stamp or migration on a live library, a new meaning for an existing idea (what a group or a person is), anything that writes the owner's files or names in bulk, removing a user-visible feature, accepting a matching threshold, anything that adds surface under the feature freeze. Ask in your report; do not decide.
 - **Between domains:** you are the callee for what a person is and for the people routes' replies: you decide those contracts. The integration owner reviews only the contract-table diff and the scenario list; veto only for a second owner of a rule, an unguarded new contract, anything unsafe for an update or hand-over, or a second migration in flight.
@@ -91,30 +85,5 @@ Findings ranked. Each: a severity word (`data` can lose or corrupt data, `wrong`
 ## Scenarios (tests/owners.py)
 Scenario ids: P1 P2 P3 P4 P5 P6 P7. A test file is mapped to its owner and scenario in `tests/owners.py`; a new test file is added there (`tests/test_the_test_map.py` names one that is not).
 
-## Standing goal: the domain is healthy (owner, 2026-10-15)
-Your domain is healthy when each of these is true, counted, and stated with its evidence and date in your domain document
-(docs/domains/):
-1. No other domain reaches into your internals: every cross-domain use is a row of the contract table.
-2. No rule is written twice inside the domain.
-3. No hidden coupling: nothing changes together by convention only.
-4. No concept that could collapse into another you already have.
-5. No compatibility branch or fallback without a live instance (CLAUDE.md, "a special case needs a real instance").
-6. Its tests are scenarios, each file owned and mapped (tests/owners.py); no granular test where a scenario already covers it.
-7. No open finding of severity data or wrong.
-A healthy domain has no "top changes": whatever was worth doing is done, so your document has no such section. When a
-condition is not met, what is unmet IS the queue, and no new feature is taken into the domain until it is met.
-
-## Reviewing any change
-For every feature or change in your domain, or touching its contract, ask in this order: does it keep each of the seven
-healthy? does it add debt: a second copy of a rule, a branch for a case with no instance, a reach into another domain's
-internals, a concept the domain already has under another name, a test of code where a scenario belongs? If yes, the change
-is not done: it removes that debt in the same branch, or it is refused. Say so in the review.
-
-## Planning a domain pass (owner, 2026-10-15)
-A domain's queue is planned once, whole, before any code: (1) re-verify every open row and every unmet condition against
-the trunk and a live count (read-only); drop what is stale; (2) for each rule or kind violated, sweep: list EVERY
-instance (grep, AST scan, count), not the ones a finding names; (3) say the single place that should own each rule
-(the second round's ownership question, asked in the first); (4) write the brief the worker will get: the sweep lists, the
-owner decisions already made (cite DECISIONS), what NOT to touch (other domains), the live counts, the tests to lift or delete
-(scenarios, owned and mapped), the order of commits; (5) review the worker's branch once, against the seven conditions,
-and say merge or not. A `low` is fixed or by design, with the reason.
+## Standing goal, reviewing any change, planning a domain pass
+Read docs/OWNERS.md, section "Every owner's standing goal and checklist", before reviewing: it is part of this charter.
