@@ -24,7 +24,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 - Scenario tests (I1-I8, as tests/owners.py maps them; two libraries holding one folder is Files' F5, a library from a newer TagPup Data's D1): `tests/frontend/scenario-switching-library-mid-folder.test.mjs`, `tests/frontend/scenario-write-through-a-server-update.test.mjs`, `tests/test_server_drain.py`, `tests/test_install_app.py`, `tests/test_install_hands_over.py`, `tests/test_launcher_hands_over.py`, `tests/test_server_migrates_at_start.py`, `tests/test_pages_against_the_real_server.py` (with `tests/page_server.py`), `tests/test_roots_scenarios.py`, `tests/test_mcp_server.py`, `tests/test_one_library_three_programs.py`, `tests/test_stale_record_precondition.py`
 
 ## The cross-domain contract table
-Domains: **D** Data, **P** People, **F** Files, **V** Views and AI, **I** this one. Verified against the code on 2026-10-11 (rows for deleted code removed); rows 7, 9, 11, 13, 15, 26 and 30-48 on 2026-10-15. "none" means nothing fails if it breaks.
+Domains: **D** Data, **P** People, **F** Files, **V** Views and AI, **I** this one. Verified against the code on 2026-10-11 (rows for deleted code removed); rows 7, 9, 11, 13, 15, 26 and 30-49 on 2026-10-15. "none" means nothing fails if it breaks.
 | # | Caller -> callee | The contract | Guard |
 |---|---|---|---|
 | 1 | P (`face_people`, `tags`, naming jobs) -> D/F (`file_changes`, `journal`) | A photo file's fields are written through the journaled path (exceptions, docs/INVARIANTS.md: identity minting, Just look's file-only writes); a bulk write is one change, dry run first; `changed` counts what differs | `tests/test_file_journal.py`, `tests/test_a_file_holds_what_exiftool_kept.py`, `tests/test_bulk_edits.py` |

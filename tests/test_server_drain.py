@@ -338,6 +338,51 @@ class WhichVersionAnswers(Base):
         self.assertEqual(tagpup_config.code_version(), app.test_client().get("/api/server").get_json()["version"])
 
 
+class WhatARealDrainRefusesBeside(unittest.TestCase):
+    """#1450: each kind of work `lifecycle.under_way` lists refuses a real Lifecycle's drain naming it (the default `work`,
+    not a test's list); a batch alone does not, it is stopped at its chunk. Changing `busy(but=(BATCH,))` in Lifecycle.drain
+    to also leave out INDEX, NAMING, MIGRATING or SUGGEST fails it."""
+
+    def drain_beside(self, source, value):
+        self.addCleanup(self.lifecycle.resume)
+        with mock.patch.object(source[0], source[1], return_value=value):
+            return self.lifecycle.drain(5, 0, lease=LEASE)
+
+    def setUp(self):
+        self.home = own_home.for_test(self, prefix="drain_kinds_")
+        self.background = FakeBackground()
+        self.lifecycle = Lifecycle(version="v", launcher_token=TOKEN, background=self.background)
+
+    def test_an_index_a_naming_a_migration_and_a_suggest_run_each_refuse_it(self):
+        class Busy:
+            def busy(self):
+                return True
+        every = (lifecycles.indexing_jobs, "every_queue")
+        runs = (lifecycles.suggestion_jobs, "under_way")
+        naming = (lifecycles.naming_faces_jobs, "running")
+        migrating = (lifecycles.library_actions, "bringing_up_to_date")
+        for kind, source, value in ((lifecycles.INDEX, every, [("harbour", Busy())]),
+                                    (lifecycles.SUGGEST, runs, [{"library": "harbour"}]),
+                                    (lifecycles.NAMING, naming, 1), (lifecycles.MIGRATING, migrating, 1)):
+            with self.subTest(kind):
+                answer = self.drain_beside(source, value)
+                self.assertFalse(answer["drained"], kind)
+                self.assertTrue(answer["waiting_for"], kind)
+                self.assertTrue(self.lifecycle.status()["taking_work"], kind)
+                self.assertEqual([], self.background.calls, "%s: refused only after the server closed and stopped its jobs" % kind)
+
+    def test_a_running_batch_alone_does_not(self):
+        stopped = []
+
+        def sentences():
+            return [] if stopped else ["1 photo batch"]
+        with mock.patch.object(lifecycles.batches, "sentences", sentences), \
+                mock.patch.object(lifecycles.batches, "stop_all", lambda: stopped.append(1) or True):
+            self.assertTrue(self.lifecycle.drain(5, 0, lease=LEASE)["drained"], "asked to stop, not waited for")
+        self.assertEqual([1], stopped)
+        self.lifecycle.resume()
+
+
 class WhatALongRunIs(unittest.TestCase):
     """The drain's refusal reads the process's own runs: a Suggest run and an index."""
 

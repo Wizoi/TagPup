@@ -89,8 +89,8 @@ class FolderCache:
         self._lock = threading.Lock()
 
     def stamp(self):
-        """The library's photos counter now: taken before a scan, given to `put` with it, so a write that
-        lands during the scan costs one more scan later and is never missed."""
+        """The library's photos and taxonomy counters now (photos.scan_stamp): taken before a scan, given to `put` with
+        it, so a write that lands during the scan costs one more scan later and is never missed."""
         return photo_actions.scan_stamp(self._library) if self._library is not None else None
 
     def get(self, folder):
