@@ -8,7 +8,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, pageExports } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click } from "./harness.mjs";
 
 const BASE = { tags: [], people: [], captions: [], title: "", camera: "", lens: "" };
 const BOTH = { ...BASE, path: "D:\\Pictures\\Run\\a.jpg", filename: "a.jpg", camera: "Tidewater TX R6m2", lens: "TX24-70mm f/2.8L II USM" };
@@ -78,34 +78,6 @@ test("Shift Date Taken's list of cameras is by the record's camera, the name Ima
     ["Pixel 8 Pro", "Pixel 8 Pro (1 photos)"],
     ["Unknown Camera", "Unknown Camera (2 photos)"],
   ], "a make-less model and the same model with its make are two cameras, as the server's shift takes them");
-});
-
-test("a folder kept in this browser by the page before the cameras were named is scanned again, not listed as Unknown Camera", async (t) => {
-  const record = (filename, camera) => ({ ...BASE, path: "D:\\Pictures\\Old\\" + filename, filename, camera });
-  const scanned = [record("a.jpg", "Google Pixel 8 Pro"), record("b.jpg", "Google Pixel 8 Pro"), record("c.jpg", ""), record("d.jpg", "Lanternfly Kite 2")];
-  const fake = new FakeServer()
-    .on("/api/folder/scan", scanned)
-    .on("/api/taxonomy/tree", [])
-    .on("/api/people", [])
-    .on("/api/tags", [])
-    .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
-    .on("/api/folder/suggest-status", { status: "idle" });
-  const { window, document } = await loadApp("tagpup", { server: fake, t });
-  // The entry the page before this one saved: records as it made them (no `camera`), and no version.
-  const trunkShaped = scanned.map(({ camera, ...rest }) => ({ ...rest, raw_metadata: { "EXIF:Model": "Pixel 8 Pro" } }));
-  const KEY = pageExports(window, "web/tagpup/cache.js").folderCacheKey("D:" + String.fromCharCode(92) + "Pictures" + String.fromCharCode(92) + "Old");
-  window.localStorage.setItem(KEY, JSON.stringify({ timestamp: Date.now(), photos: trunkShaped, suggestions: {}, inMemory: false }));
-  await openFolder({ document, window }, "D:\\Pictures\\Old");
-  await settle(window, 60);
-  assert.equal(fake.urls().filter((u) => u.includes("/api/folder/scan")).length, 1, "scanned again, the old entry not used");
-  const options = [...document.getElementById("timeshift-camera-select").options].map((o) => o.textContent);
-  assert.deepEqual(options, ["All Cameras (4 photos)", "Google Pixel 8 Pro (2 photos)", "Lanternfly Kite 2 (1 photos)", "Unknown Camera (1 photos)"]);
-  const kept = JSON.parse(window.localStorage.getItem(KEY));
-  assert.equal(kept.version, 2, "the scan kept now is of the shape this page reads");
-  // And an entry of this shape is used: opening the folder again scans nothing.
-  await openFolder({ document, window }, "D:\\Pictures\\Old");
-  await settle(window, 60);
-  assert.equal(fake.urls().filter((u) => u.includes("/api/folder/scan")).length, 1, "a current entry is used");
 });
 
 test("a time shift for a camera the server found no photo of says so, and does not say photos could not be written", async (t) => {

@@ -13,7 +13,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, APPS, loadApp, FakeServer, photoRecord, flush, openFolder, click, closeAllApps } from "./harness.mjs";
+import { REPO_ROOT, APPS, loadApp, FakeServer, photoRecord, flush, openFolder, click, closeAllApps, peopleRecordsOf } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -48,7 +48,7 @@ async function tagpup(t, server = new FakeServer()) {
     .on("/api/apps", APP_URLS)
     .on("/api/taxonomy/tree", TREE)
     .on("/api/tags", ["Activity"])
-    .on("/api/people", ["Hazel Brookmire"])
+    .on("/api/people?records=1", peopleRecordsOf(TREE))
     .on("/api/databases", { databases: [LIBRARY] })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })

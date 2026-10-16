@@ -11,7 +11,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf } from "./harness.mjs";
 import { REPO_ROOT } from "./harness.mjs";
 
 const JANE = "Jane Doe";
@@ -22,11 +22,17 @@ const SAMPLES = { "id:5": [11, 12, 13, 14], "id:6": [21] };
 
 afterEach(() => closeAllApps());
 
+const TREE = [
+  { id: 1, tag: "People", name: "People", parent_id: null, has_face: 1 },
+  { id: 5, tag: JANE_P.tag, name: JANE, parent_id: 1, has_face: 1 },
+  { id: 6, tag: ROWAN_P.tag, name: ROWAN_P.name, parent_id: 1, has_face: 1 },
+];
+
 function serverWith(faces, samples) {
   return new FakeServer()
     .on("/api/tags", [])
-    .on("/api/people", [JANE])
-    .on("/api/taxonomy/tree", [])
+    .on("/api/people?records=1", peopleRecordsOf(TREE))
+    .on("/api/taxonomy/tree", TREE)
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })
