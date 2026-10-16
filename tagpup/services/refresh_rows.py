@@ -2,12 +2,12 @@
 
 A row goes stale when its file changed under it and the indexer did not notice: a bulk
 keyword write that left mtime and size as they were, a row Suggest made from a path alone
-(no mtime, no size), a people column short of someone the row's own data names. This
-finds the rows whose mtime or size differ from the file's, or whose people lack someone
-the row's own data names, reads those files the way the indexer does, and records what
-they hold: tags, people, captions, raw_metadata, mtime, size, and the DocumentID where the
+(no mtime, no size). This finds the rows whose mtime or size differ from the file's, reads
+those files the way the indexer does, and records what they hold: tags, people, captions, raw_metadata, mtime, size, and the DocumentID where the
 row has none. The files are only read, never written (no DocumentID is minted); embeddings
-and faces are untouched.
+and faces are untouched. A photo whose people are not what its keywords and faces make them
+is the doctor's (`people_out_of_date`, people.stale; --rebuild-derived rebuilds them): no file
+needs reading for it.
 
 Rows that show other signs -- text decoded as cp1252, tags that disagree with the keywords
 in raw_metadata, a row no read ever made, a caption listed twice -- are not looked for
@@ -22,8 +22,7 @@ import json
 import os
 from collections import Counter
 
-from tagpup.core import paths
-from tagpup.core.vocabulary import extract_people, people_in_photo
+from tagpup.core.vocabulary import people_in_photo
 from tagpup.files.metadata import MetadataExtractor
 from tagpup.services import maintenance
 from tagpup.store import db, journal
@@ -46,32 +45,6 @@ def why_stale(row):
     return [] if store_photos.describes(mtime, size, (stat.st_mtime, stat.st_size)) else ["mtime/size"]
 
 
-def people_checker(conn):
-    """A test for rows whose people lack someone their own data names.
-
-    A row's people are its keyword people and the names on its faces
-    (tagpup.core.vocabulary.people_in_photo). Rows written before either rule reached every writer
-    miss some: 741 names on 597 rows of one library -- mostly face names, then people
-    under Pets, Family and Friends. None of the other reasons notices, since the file
-    and the tags agree; only the people column is short. The taxonomy and the face
-    names are read once, not per row.
-    """
-    vocabulary = store_taxonomy.people_vocabulary(conn=conn)
-    named = store_faces.names_by_photo_key(conn)
-
-    def missing(path, raw_json, tags_json, people_json):
-        try:
-            stored = set(json.loads(people_json or "[]"))
-            wanted = set(extract_people(json.loads(raw_json or "{}"), json.loads(tags_json or "[]"),
-                                        vocabulary))
-        except Exception:
-            return False
-        wanted |= named.get(paths.key(path), set())
-        return bool(wanted - stored)
-
-    return missing
-
-
 def find_stale(conn, folder=None, seen=None, ids=None, found=None):
     """{path as stored: the reasons its row may not describe its file} of the rows whose file must
     be re-read, of the library open on `conn`.
@@ -83,11 +56,8 @@ def find_stale(conn, folder=None, seen=None, ids=None, found=None):
     names.
     """
     stale = {}
-    missing_people = people_checker(conn)
     for row in store_photos.rows_to_check(conn, folder):
         reasons = why_stale(row[:6])
-        if reasons is not None and missing_people(row[0], row[5], row[3], row[6]):
-            reasons.append("people incomplete")
         if reasons:
             stale[row[0]] = reasons   # re-reading the file fixes its captions too
             if seen is not None:

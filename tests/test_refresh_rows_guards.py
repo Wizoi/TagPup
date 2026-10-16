@@ -104,21 +104,6 @@ class RefreshGuards(base.RefreshFixture):
             conn.close()
         self.assertIn("Rowan Thackeray", people)
 
-    def test_a_row_missing_a_face_name_is_found_and_fixed(self):
-        # "fine" agrees with its file in every other way; only its people are short.
-        conn = db.connect(self.db)
-        add_face(conn, self.files["fine"], box="[]", name="Imogen Vale", name_source="manual")
-        conn.commit()
-        conn.close()
-        result = self.refresh(apply=True)
-        self.assertEqual(1, result.details["counts"]["reasons"]["people incomplete"])
-        conn = db.connect(db.readonly_uri(self.db), uri=True)
-        try:
-            people = people_of(conn, self.files["fine"])
-        finally:
-            conn.close()
-        self.assertIn("Imogen Vale", people)
-
     def test_a_file_that_cannot_be_read_is_left_alone_and_counted(self):
         self.truth[self.files["stale_keywords"]] = {}
         before = self.rows()[self.files["stale_keywords"]]

@@ -27,7 +27,7 @@ import logging
 import os
 import types
 
-from tagpup.core import paths, vocabulary
+from tagpup.core import vocabulary
 from tagpup.core.vocabulary import Ref
 from tagpup.store import db, faces_detected, generations, people, person_ids
 from tagpup.store import roots as store_roots
@@ -923,17 +923,6 @@ def in_photo_for_panel(conn, photo_path):
             for face_id, box, tag_id, name, prob, embedding, excluded, reason in conn.execute(
                 "SELECT id, box, tag_id, name, prob, embedding, excluded, excluded_reason"
                 " FROM faces WHERE " + where + " ORDER BY id", params).fetchall()]
-
-
-def names_by_photo_key(conn):
-    """{paths.key of a photo: the NAMES on its faces that are not excluded}: what a photo's list of people names
-    (photos.people holds names, however many people share one)."""
-    named = {}
-    for photo_path, name in store_roots.natives(conn, conn.execute(
-            "SELECT p.path, f.name FROM faces f" + PHOTO + " WHERE f.name IS NOT NULL AND f.excluded = 0").fetchall(),
-            0):
-        named.setdefault(paths.key(photo_path), set()).add(name)
-    return named
 
 
 def counts_on(conn, stored_path):
