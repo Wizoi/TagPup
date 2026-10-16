@@ -140,7 +140,7 @@ class RemovingAFolderCoveredByAnAdd(unittest.TestCase):
         self.assertEqual((1, True), (reply.get_json()["photos_removed"], reply.get_json()["ignored"]))
         self.assertIn(paths.stored(self.scans), settings_service.of(self.library).ignored)
         self.assertEqual([self.scans], library_actions.not_held(self.library, [self.photo], leave_out_ignored=False))
-        self.assertIsNotNone(library_actions.not_in(self.library, self.scans), "Suggest would start there")
+        self.assertIsNotNone(library_actions.suggest_how(self.library, self.scans)[0], "Suggest would start there")
         with self.assertRaises(NotHeld):
             db.write_with_connection(self.library.path, lambda conn: store_photos.ensure_row(conn, self.photo))
         # The rest of Pictures stays the library's.

@@ -350,28 +350,6 @@ def _ignored_message(library, folder):
             % (paths.stored(folder), name, name))
 
 
-def not_in(library, folder, ignored=None):
-    """Why nothing that makes rows -- Suggest, whose faces, vectors and suggestions each
-    need their photo's row -- may be done in `folder` for `library`, or None when the
-    library holds every folder of photos under it but its `ignored` folders (read from
-    its settings unless given), which the work leaves out; an ignored folder itself is
-    refused. "<folder> is not in <library>", for a person to read. One walk of the
-    folder, no file read."""
-    name = picker_name(os.path.basename(library.path))
-    if ignored is None:
-        ignored = _read(library.path, store_folders.ignored, [])
-    if ignored and store_folders.is_ignored(folder, ignored):
-        return _ignored_message(library, folder)
-    unheld = not_held(library, images.photos_under(folder), ignored)
-    if not unheld:
-        return None
-    folder = paths.stored(folder)
-    if len(unheld) == 1 and paths.same(unheld[0], folder):
-        return "%s is not in %s. Add it to %s first." % (folder, name, name)
-    return ("%d folder(s) under %s are not in %s, %s first. Add the folder to %s first."
-            % (len(unheld), folder, name, unheld[0], name))
-
-
 def split(library, photo_paths):
     """(the photos of `photo_paths` in a folder the library holds, those in one it does not),
     each in the order given: decided here, now, by the library's own answer (tagpup.store.

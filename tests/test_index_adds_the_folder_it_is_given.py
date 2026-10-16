@@ -43,7 +43,7 @@ class IndexAddsItsFolder(unittest.TestCase):
         finally:
             os.chdir(here)
         self.assertEqual(0, result.exit_code, result.output)
-        self.assertIsNone(library_actions.not_in(Library(db_path), folder), "the folder was not added")
+        self.assertEqual((None, False), library_actions.suggest_how(Library(db_path), folder), "the folder was not added")
 
 
 if __name__ == "__main__":
