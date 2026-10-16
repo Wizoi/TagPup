@@ -15,13 +15,11 @@ worker's rows go to its own file, `tools/add_findings.py --branch-file`, and the
 `--take` (see the header of findings.md). Findings that lived only in a conversation were lost, and decisions
 were made twice.
 
-New code imports from the package (`from tagpup.store import db`). `scripts/` holds
-programs to run, each with a `__main__` block, and the few helpers they share (`_root`,
-`code_snapshot`, `reloader`); nothing but a script's own tests imports from it. A module
-that moves takes every importer with it in the same commit and leaves nothing at its old
-name. `tests/test_layers.py` fails a module in `scripts/` that is
-neither, and also package code that imports from `scripts/` or
-goes up a layer.
+New code imports from the package (`from tagpup.store import db`). `scripts/` holds programs to run, each with a
+`__main__` block, and the few helpers they share (`_root`, `code_snapshot`, `reloader`); nothing but a script's own
+tests imports from it. A module that moves takes every importer with it in the same commit and leaves nothing at its
+old name. `tests/test_layers.py` fails a module in `scripts/` that is neither, and package code that imports from
+`scripts/` or goes up a layer.
 
 ## Running things
 
@@ -73,24 +71,18 @@ editing. Run long indexes through the CLI (`TagPup CLI.cmd`).
 **Never call `sqlite3.connect`.** Use `tagpup/store/db.py`. It owns journal mode, busy
 timeout, the per-file write lock and the retry. `tests/test_db_access.py` enforces it.
 
-**Never call `subprocess` yourself.** `tagpup/core/processes.py` owns `start`, `run`,
-`kill_tree` and `is_alive`, and gives every child a hidden console. A spawn that decided
-for itself put a terminal window on the desktop for every test process, 140 a run, and
-it took watching the process list to find which one. `tests/test_processes_single_owner.py`
-enforces it.
+**Never call `subprocess` yourself.** `tagpup/core/processes.py` owns `start`, `run`, `kill_tree` and `is_alive`
+and gives every child a hidden console (a spawn that decided for itself put a terminal window on the desktop for every
+test process, 140 a run). `tests/test_processes_single_owner.py` enforces it.
 
-**Never construct `ExifToolHelper` or `ExifTool` directly.** Use `ExifToolSession` from
-`tagpup/files/exiftool_session.py`. pyexiftool reads stdout to the end before stderr; a batch
-with ~4 KB of warnings fills the stderr pipe and both sides wait forever -- two scripts
-sat at 0% CPU for two days. The session drains both and gives each command a deadline.
-`tests/test_rules_have_one_owner.py` enforces it.
+**Never construct `ExifToolHelper` or `ExifTool` directly.** Use `ExifToolSession` (`tagpup/files/exiftool_session.py`):
+it drains stdout and stderr and gives each command a deadline. pyexiftool alone waits forever on a batch with ~4 KB of
+warnings (two scripts sat at 0% CPU for two days). `tests/test_rules_have_one_owner.py` enforces it.
 
-**Never load a model on the GPU yourself.** `tagpup/ml/gpu.py` owns the graphics card: one
-process at a time on the machine has a model on it, in turn, and a waiter says who has it
-and since when. Take a turn through `tagpup.runtime` (`begin` for a Suggest run, `gpu_turn`
-for the indexer). The server's Suggest and the indexer it had started each loaded a ViT-H-14
-onto one 10 GB card and both sat at 0 of 165 for 48 minutes (#750).
-`tests/test_gpu_single_owner.py` enforces it.
+**Never load a model on the GPU yourself.** `tagpup/ml/gpu.py` owns the graphics card: one process at a time on the
+machine has a model on it, and a waiter says who has it and since when. Take a turn through `tagpup.runtime` (`begin`
+for a Suggest run, `gpu_turn` for the indexer); Suggest and the indexer it had started each loaded a ViT-H-14 onto one
+10 GB card and both sat at 0 of 165 for 48 minutes (#750). `tests/test_gpu_single_owner.py` enforces it.
 
 **Never spell or compare a photo path by hand.** `tagpup/core/paths.py` owns it: `stored()`
 for anything written to the database, walked or sent to the browser; `key()` for
@@ -209,6 +201,7 @@ reported 60 done, and wrote nothing; the paths did not match and nothing said so
   (`tagpup-owner-data`, `-people`, `-files`, `-views-ai`; `-integration` for a change across
   two); the brief names the domain ([docs/OWNERS.md](docs/OWNERS.md)). A one-file fix is often cheapest done directly.
 - A number told to the owner about their libraries is one counted this session, not relayed.
+- A retro runs at each phase end and on its triggers, by [docs/RETRO.md](docs/RETRO.md) (the `retro` skill).
 - One session per phase: `/clear` at a phase boundary (the memory handoff carries the state),
   `/compact` inside a long one. Most of the cost was context re-read, not work.
 - Findings are numbered with `tools/add_findings.py`, from a file of `| ? |` rows.
@@ -251,13 +244,13 @@ The project grew 43k to 103k lines of code and 44k to 110k of tests in two weeks
   libraries it touches). Under about 20, it is a one-off script, not a feature.
 - **Each branch removes at least as many concepts, shims or tests as it adds**, or says why.
 - **Test files are named for what they test, never for a review round** (`..._followup`,
+  `..._third_review` are renamed or merged when touched).
 - **A special case needs a real instance** (owner, 2026-10-11: three imagined cases had grown into a whole name-keyed fallback).
   Every fallback, compatibility arm, defensive branch and 'what if' path must cite either a live count above zero (counted
   this session, read-only) or the user action, through the real writers, that produces it. A case with neither is not
   handled: the write that could make it is refused at the source with a plain sentence, and the branch is not written. An
   owner decision that rules a class out (a shared leaf, a group as a person, a keyword with a person's name) is cited, not
   re-argued. A fixture that holds a shape nothing real makes is not an instance.
-  `..._third_review` are renamed or merged when touched).
 - **Tests answer scenarios, not code** (owner, 2026-10-11). A test is a scenario a person lives through (rapid clicks, a
   crash half way, two libraries, an update while working), grouped by domain owner and named for it; a test that only
   restates what a function does is too granular and misses the scenario between functions. New work adds or lifts a
