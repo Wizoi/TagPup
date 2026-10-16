@@ -108,7 +108,12 @@ class PagesAgainstTheRealServer(unittest.TestCase):
         def migrating(library):
             facts = tagged_photos(files)(library)     # at the baseline, then the code is given a step it has not run
             self.enterContext(migration_names.ahead(step))
-            migrations.append((library, library_actions.bring_up_to_date_in_background([library])))
+            thread = library_actions.bring_up_to_date_in_background([library])
+            migrations.append((library, thread))
+            # Run first (cleanups run last-registered first): a node run that fails before any 503 must not leave the
+            # step blocked for 60 s holding libraries._bringing, nor the code's step patched away under it.
+            self.addCleanup(thread.join, 60)
+            self.addCleanup(release.set)
             return facts
 
         page_server.PageServers(self, {"migrating": migrating}).run_node("scenario-write-through-a-server-update.test.mjs")
