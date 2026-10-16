@@ -6,7 +6,7 @@ characters, ties by id; the photos with none come after the captioned ones in bo
 undated photos do in an order by Date Taken. The index is in the baseline (findings #464).
 
 Photos are rows as the indexer records a read (tests/view_library.py); a caption changed is what a save records
-(store.photos.record_saved). Fictional names only.
+(store.photos.follow_fields, tests/photo_rows.py). Fictional names only.
 """
 import os
 import sys
@@ -22,7 +22,6 @@ from view_library import ViewLibrary  # noqa: E402
 from tagpup.services import library_view, selection  # noqa: E402
 from tagpup.store import db, schema  # noqa: E402
 from tagpup.store import library_view as store  # noqa: E402
-from tagpup.store import photos as store_photos  # noqa: E402
 
 WREN = "Wren Halloway"
 PEOPLE = "People/"   # a person is named by the path of their node (owner, 2026-10-11)
@@ -90,7 +89,7 @@ class TheOrder(Captioned):
         before = self.ids()
         self.assertLess(before.index(self.harbour_twin), before.index(photo))
         path = self.vl.path_of(photo)
-        store_photos.record_saved(self.vl.path, path, [], ["Aaa first now"], {"XMP:Description": "Aaa first now"})
+        photo_rows.written(self.vl.path, path, {"XMP:Description": "Aaa first now"})
         self.assertEqual(photo, self.ids()[0], "Refresh view reads the order again")
 
     def test_a_selection_of_a_view_in_caption_order_is_its_source_whatever_the_order(self):

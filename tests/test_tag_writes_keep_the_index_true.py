@@ -31,7 +31,6 @@ from tagpup.core.fields import keyword_fields  # noqa: E402
 from tagpup.core.vocabulary import extract_tags  # noqa: E402
 from tagpup.services import tagging  # noqa: E402
 from tagpup.store import db as tagpup_db  # noqa: E402
-from tagpup.store.photos import record_tags  # noqa: E402
 
 KEYWORDS = ["Beach", "Cross Country", "People/Rowan Thackeray"]
 HIERARCHICAL = ["People/Rowan Thackeray"]
@@ -146,14 +145,6 @@ class IndexCase(unittest.TestCase):
 
 
 class TestARemovedTagStaysRemoved(IndexCase):
-    def test_re_deriving_from_raw_metadata_does_not_bring_it_back(self):
-        stored = self.photo()
-        kept = ["Beach", "People/Rowan Thackeray"]
-        record_tags(self.db_path, stored, kept, kept, HIERARCHICAL)
-
-        self.assertNotIn("Cross Country", extract_tags(self.row(stored)["raw"]),
-                         "raw_metadata still carries the removed tag")
-
     def test_a_bulk_remove_survives_renaming_another_tag(self):
         stored = self.photo()
         helper, _ = exiftool_that_writes()
@@ -169,11 +160,6 @@ class TestARemovedTagStaysRemoved(IndexCase):
         self.assertIn("Places/Beach", tags)
         self.assertNotIn("Cross Country", tags, "the renamed photo got its removed tag back")
         self.assertEqual(recorded, 1)
-
-    def test_clearing_every_tag_leaves_no_keyword_field_behind(self):
-        stored = self.photo()
-        record_tags(self.db_path, stored, [], [], [])
-        self.assertEqual(extract_tags(self.row(stored)["raw"]), [])
 
     def test_the_writer_and_the_recorder_name_the_same_fields(self):
         # One list, two consumers: whatever the journaled keyword write sets is what the index is

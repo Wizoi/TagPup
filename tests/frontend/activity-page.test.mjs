@@ -215,7 +215,7 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.match(asleep.textContent, /not answering/);
     assert.doesNotMatch(asleep.textContent, /missing/);
     // A sync that could not look at a folder on a share asleep says so, and is not in step.
-    assert.match(sync.textContent, /1 folder not looked at \(share not answering\)/);
+    assert.match(sync.textContent, /1 folder not looked at \(not answering or not listable\)/);
     assert.match(sync.textContent, /not in step/);
     const review = sync.querySelector('a[href="http://localhost:8080/harbour/?review=1"]');
     assert.ok(review, "the folders to review open TagTuner's dialog");

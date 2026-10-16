@@ -248,17 +248,6 @@ def without_a_vector(conn, model):
                         (model,)).fetchone()[0]
 
 
-def missing_files(conn):
-    """Rows whose file is not on disk, as (folder, rows, whether the folder is there).
-    Reported, not broken: a folder on an unplugged drive looks the same as a deleted one
-    (docs/ARCHITECTURE.md, phase 8)."""
-    by_folder = collections.Counter()
-    for (path,) in store_roots.natives(conn, conn.execute("SELECT path FROM photos").fetchall(), 0):
-        if not os.path.exists(path):
-            by_folder[os.path.dirname(path)] += 1
-    return [(folder, count, os.path.isdir(folder)) for folder, count in sorted(by_folder.items())]
-
-
 # ---- The library's roots (docs/ARCHITECTURE.md, "Roots and machines") -------------------------
 
 def _roots_or_why(conn):

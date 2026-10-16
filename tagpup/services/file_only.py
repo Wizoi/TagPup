@@ -26,13 +26,12 @@ The caller decides which photos these are (tagpup.services.libraries.split), per
 at the time of the write, from the library's own answer.
 """
 import logging
-import os
 
 from tagpup.core import fields, paths
 from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, lock_owners, metadata, names, recycle_bin
+from tagpup.files import exiftool_session, field_values, lock_owners, names, recycle_bin
 from tagpup.services import file_changes
 
 logger = logging.getLogger(__name__)
@@ -47,8 +46,7 @@ WITH_ROWS = "with_rows"
 def combined(held, loose):
     """One Result for a write made in two parts: `held`, the photos of folders the library
     holds, written as always, and `loose`, the others, written to files only. Counts add;
-    details keep `held`'s with the files each wrote under them -- `written` and `read_back`
-    joined -- and FILE_ONLY and WITH_ROWS say how many files each part wrote. Either may be
+    details keep `held`'s with the files each wrote under them -- `written` joined -- and FILE_ONLY and WITH_ROWS say how many files each part wrote. Either may be
     None."""
     if loose is None and held is None:
         return Result(details={WITH_ROWS: 0, FILE_ONLY: 0, "written": {}})
@@ -64,7 +62,7 @@ def combined(held, loose):
                  skipped=held.skipped + loose.skipped, errors=held.errors + loose.errors,
                  refused=held.refused or loose.refused)
     out.details = dict(held.details)
-    for name in ("written", "read_back"):
+    for name in ("written",):
         if name in held.details or name in loose.details:
             out.details[name] = {**held.details.get(name, {}), **loose.details.get(name, {})}
     if "conflicts" in held.details or "conflicts" in loose.details:
@@ -78,25 +76,24 @@ def combined(held, loose):
 
 @file_changes.exclusively()
 def write_fields(exiftool_path, photo_paths, read, plan_one, unreadable="fail", stop_at_first_error=False,
-                 et=None, held=None, read_back_also=()):
+                 et=None, held=None):
     """file_changes.write_fields for photos the library does not hold: the same planning
     (`read` the fields to read of each file, `plan_one(path, held)` a Plan from what it
     holds, `unreadable`, `stop_at_first_error`, an `et` session and what the caller `held`
-    of the files in it, `read_back_also`) and the same Result -- `changed` the files
-    written, errors the photos that failed, details `written` {path: detail} of each written
-    or already holding it, `conflicts`, `read_back` -- but only the files are written: no
+    of the files in it) and the same Result -- `changed` the files written, errors the photos
+    that failed, details `written` {path: detail} of each written or already holding it,
+    `conflicts` -- but only the files are written: no
     journal change (details["change"] is None), no row, nothing after."""
     if et is None:
         with exiftool_session.ExifToolSession(executable=exiftool_path) as session:
-            return _write_fields(session, photo_paths, read, plan_one, unreadable, stop_at_first_error, held,
-                                 read_back_also)
-    return _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_error, held, read_back_also)
+            return _write_fields(session, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
+    return _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_error, held)
 
 
-def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_error, fresh, read_back_also):
+def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_error, fresh):
     result = Result(attempted=len(photo_paths))
     written = result.details["written"] = {}
-    result.details.update(change=None, conflicts=[], read_back={})
+    result.details.update(change=None, conflicts=[])
     stored = [paths.stored(p) for p in photo_paths]
     held = fresh if fresh is not None else field_values.read(et, stored, read)
     planned = []
@@ -138,7 +135,7 @@ def _write_fields(et, photo_paths, read, plan_one, unreadable, stop_at_first_err
         result.changed += 1
         written[path] = detail
         wrote.append((path, before, after))
-    _read_back(et, wrote, read_back_also, result)
+    _read_back(et, wrote, result)
     logger.info("Wrote %d file(s) only, no row of any library (%d failed)", result.changed, len(result.errors))
     return result
 
@@ -173,7 +170,7 @@ def _write_one(et, path, before, after, just_read, result):
     return None
 
 
-def _read_back(et, wrote, also, result):
+def _read_back(et, wrote, result):
     """Read the files written back, once. One that holds what it held before, though ExifTool
     said it wrote it, changed nothing: not counted (the journaled write's #276). A value
     ExifTool keeps differently from how it was written is the file's: nothing is recorded
@@ -182,8 +179,7 @@ def _read_back(et, wrote, also, result):
         return
     try:
         held = field_values.read(et, [path for path, _b, _a in wrote],
-                                 sorted({field for _p, _b, after in wrote for field in after}), also,
-                                 result.details["read_back"])
+                                 sorted({field for _p, _b, after in wrote for field in after}))
     except Exception as e:
         logger.warning("Could not read back %d file(s) written: %s", len(wrote), e)
         return
@@ -210,23 +206,6 @@ def rename(renames, aside):
     Raises names.RenameFailed. Returns file_changes.Renamed: nothing moved in any index."""
     done, moved_aside = names.rename_all(renames, aside=aside)
     return file_changes.Renamed(done, moved_aside, 0, [], None)
-
-
-@file_changes.exclusively()
-def rotate(photo_path, direction, exiftool_path) -> Result:
-    """Turn a photo a quarter (tagpup.files.metadata.rotate_image_file): its Orientation
-    only. No row, no face boxes, no vectors, no thumbnail to clear. details: `orientation`,
-    `mtime` and `size` of the file now, as services.photos.rotate gives them."""
-    result = Result(attempted=1)
-    try:
-        orientation = metadata.rotate_image_file(photo_path, direction, exiftool_path)
-    except Exception as e:
-        result.fail(photo_path, e)
-        return result
-    result.changed = 1
-    stat = os.stat(photo_path)
-    result.details.update(orientation=orientation, faces_turned=0, mtime=stat.st_mtime, size=stat.st_size)
-    return result
 
 
 def delete(photo_path):

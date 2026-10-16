@@ -109,7 +109,7 @@ def differences(conn, path, record, stored=None):
         changed.append("captions")
     if json.loads(raw_json or "{}") != record["raw_metadata"]:
         changed.append("raw_metadata")
-    if (mtime, size) != (record["mtime"], record["size"]):
+    if not store_photos.describes(mtime, size, (record["mtime"], record["size"])):
         changed.append("mtime/size")
     if not doc_id and record.get("document_id"):
         changed.append("document_id")

@@ -177,11 +177,11 @@ class OtherWritersOfAPhoto(WithALibrary):
         self.photo = self.where("2024", "a.jpg")
 
     def test_a_tag_written_to_a_photo_follows(self):
-        photos.record_tags(self.path, self.photo, ["Trips/Coast", "Activity/Sailing"])
+        photo_rows.tag(self.path, self.photo, ["Trips/Coast", "Activity/Sailing"])
         self.assertEqual(["Activity/Sailing", "Trips/Coast"], self.tags_of(self.one))
-        photos.record_tags(self.path, self.photo, ["Trips/Lake"])
+        photo_rows.tag(self.path, self.photo, ["Trips/Lake"])
         self.assertEqual(["Trips/Lake"], self.tags_of(self.one))
-        photos.record_tags(self.path, self.photo, [])
+        photo_rows.tag(self.path, self.photo, [])
         self.assertEqual([], self.tags_of(self.one))
         self.agrees()
 
@@ -190,7 +190,8 @@ class OtherWritersOfAPhoto(WithALibrary):
         with open(self.photo, "wb") as handle:
             handle.write(b"not really a photo")   # a save stamps the row with its file's
         raw = photo_rows.as_read(self.photo, {"XMP:Subject": ["Trips/Lake"], "XMP:Rating": 3})["raw_metadata"]
-        photos.record_saved(self.path, self.photo, ["Trips/Lake"], [], raw)
+        db.write_with_connection(self.path, lambda conn: photos.follow_fields(
+            conn, self.photo, {"XMP:Subject": ["Trips/Lake"]}, os.stat(self.photo), whole=raw))
         self.assertEqual(["Trips/Lake"], self.tags_of(self.one))
         self.agrees()
 
@@ -226,20 +227,20 @@ class APhotoMoved(WithALibrary):
 
     def test_a_rename_in_its_folder_changes_nothing_in_the_tree(self):
         held = self.dump()
-        photos.move_rows(self.path, {self.where(os.path.join("2024", "Coast"), "a.jpg"):
+        photo_rows.move(self.path, {self.where(os.path.join("2024", "Coast"), "a.jpg"):
                                      self.where(os.path.join("2024", "Coast"), "renamed.jpg")})
         self.assertEqual(held, self.dump())
 
     def test_a_move_to_another_folder_changes_its_folder_and_leaves_the_old_one_while_it_holds_another(self):
         before = len(self.folders())
-        photos.move_rows(self.path, {self.where(os.path.join("2024", "Coast"), "a.jpg"):
+        photo_rows.move(self.path, {self.where(os.path.join("2024", "Coast"), "a.jpg"):
                                      self.where(os.path.join("2024", "Lake"), "a.jpg")})
         self.assertEqual(os.path.join(self.pictures, "2024", "Lake").lower(), self.folder_of(self.a).lower())
         self.assertEqual(before, len(self.folders()), "Coast still holds b.jpg")
         self.agrees()
 
     def test_the_last_photo_leaving_a_folder_takes_its_row_and_the_ancestors_it_alone_held(self):
-        photos.move_rows(self.path, {self.where(os.path.join("2024", "Lake"), "c.jpg"): self.where("2025", "c.jpg")})
+        photo_rows.move(self.path, {self.where(os.path.join("2024", "Lake"), "c.jpg"): self.where("2025", "c.jpg")})
         found = [path.lower() for path in self.folders()]
         self.assertNotIn(os.path.join(self.pictures, "2024", "Lake").lower(), found, "emptied: its row goes")
         self.assertIn(os.path.join(self.pictures, "2024", "Coast").lower(), found)
@@ -253,7 +254,7 @@ class APhotoMoved(WithALibrary):
 
     def test_names_shuffled_among_files_through_the_placeholders_leave_every_photo_in_its_folder(self):
         one, two = (self.where(os.path.join("2024", "Coast"), name) for name in ("a.jpg", "b.jpg"))
-        moved, skipped = photos.move_rows(self.path, {one: two, two: one})
+        moved, skipped = photo_rows.move(self.path, {one: two, two: one})
         self.assertEqual((2, []), (moved, skipped))
         self.agrees()
 
@@ -340,7 +341,7 @@ class TheTreeEdited(WithALibrary):
         self.assertEqual([], self.tags_of(self.b), "the photo's keyword text still says Trips/Coast, which is no node")
         self.agrees()
         for name, kept in (("a.jpg", ["Places/Coast", "Trips/Lake"]), ("b.jpg", ["Places/Coast"])):
-            photos.record_tags(self.path, self.where("2024", name), kept)
+            photo_rows.tag(self.path, self.where("2024", name), kept)
         self.assertEqual([ids["Trips/Coast"]], [row[0] for row in self.rows(
             "SELECT tag_id FROM photo_tags WHERE photo_id = ?", self.b)])
         self.assertEqual(3, self.rows("SELECT COUNT(*) FROM photo_tags")[0][0])
@@ -363,16 +364,19 @@ class TheTreeEdited(WithALibrary):
 
 class RenamingATagInTagTuner(TreeCase):
     """services.tags.rename: the tree first, then the photos' keywords, each its own transaction
-    (the rewrite of the files is stood in for, as TreeCase does, by the index's own record_tags)."""
+    (the rewrite of the files is stood in for, as TreeCase does, by what the journaled write records of it).
+    A photo holds a tag and its sibling: a tag beside its own parent is no tag a read or a write leaves
+    (vocabulary.extract_tags reads the parent as a level of the path)."""
 
     def test_the_photos_rows_are_the_same_nodes_when_it_is_done(self):
-        crew = self.node("Crew")
+        self.node("Crew")
         divers = self.node("Crew/Divers")
+        coxes = self.node("Crew/Coxes")
         one = self.id_of_photo(self.photo("one.jpg", ["Crew/Divers"]))
-        two = self.id_of_photo(self.photo("two.jpg", ["Crew/Divers", "Crew"]))
+        two = self.id_of_photo(self.photo("two.jpg", ["Crew/Divers", "Crew/Coxes"]))
         db.write_with_connection(self.lib.library.path, derived.rebuild_all)
         before = self.rows()
-        self.assertEqual([(one, divers), (two, crew), (two, divers)], before)
+        self.assertEqual(sorted([(one, divers), (two, coxes), (two, divers)]), before)
         result = tags.rename(self.lib.library, divers, "Frogmen", exiftool_path=None)
         self.assertTrue(result.ok, result.message())
         self.assertEqual(divers, taxonomy.find(self.lib.library.path, "Crew/Frogmen")["id"], "the node keeps its id")

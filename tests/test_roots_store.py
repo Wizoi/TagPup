@@ -116,11 +116,10 @@ class EveryReadAnswersNative(TwoLibraries):
         found = self.same(lambda conn, side: sorted(folders.of(conn).listed()))
         self.assertEqual(5, len(found))
 
-    def test_stamps_and_rows_to_check_and_the_index_rows(self):
+    def test_stamps_and_rows_to_check_and_the_records(self):
         self.same(lambda conn, side: sorted(store_photos.stamps(conn)))
         self.same(lambda conn, side: sorted(store_photos.stamps(conn, os.path.join(side.pictures, "2024 Harbour"))))
         self.same(lambda conn, side: sorted(store_photos.rows_to_check(conn)))
-        self.same(lambda conn, side: sorted(store_photos.index_rows(conn, "a model"), key=lambda r: r[0]))
         self.same(lambda conn, side: sorted(store_photos.records(conn, "a model")))
 
     def test_a_rows_raw_metadata_is_what_its_file_would_say(self):
@@ -248,16 +247,16 @@ class EveryWriteConverts(unittest.TestCase):
     def test_renaming_a_row_moves_it_by_its_converted_path(self):
         old = self.side.real[0]
         new = os.path.join(self.side.pictures, "2024 Regatta", "Renamed.jpg")
-        moved, skipped = store_photos.move_rows(self.side.db_path, {old: new})
+        moved, skipped = photo_rows.move(self.side.db_path, {old: new})
         self.assertEqual((1, []), (moved, skipped))
         self.assertIn("@pictures/2024 Regatta/Renamed.jpg", self.held())
         self.assertNotIn("@pictures/2024 Regatta/IMG_1001.jpg", self.held())
 
     def test_a_row_moved_out_of_the_root_becomes_native_and_back(self):
         old = self.side.real[0]
-        store_photos.move_rows(self.side.db_path, {old: self.elsewhere})
+        photo_rows.move(self.side.db_path, {old: self.elsewhere})
         self.assertIn(self.elsewhere, self.held())
-        store_photos.move_rows(self.side.db_path, {self.elsewhere: old})
+        photo_rows.move(self.side.db_path, {self.elsewhere: old})
         self.assertIn("@pictures/2024 Regatta/IMG_1001.jpg", self.held())
 
     def test_forgetting_a_photo_finds_its_row_and_its_faces(self):
@@ -294,7 +293,8 @@ class EveryWriteConverts(unittest.TestCase):
     def test_a_save_stamps_the_row_and_keeps_its_raw_metadata_source_file(self):
         path = self.side.real[0]
         raw = {"SourceFile": path.replace(os.sep, "/"), "XMP:Subject": ["A"], "Subject": ["A"]}
-        store_photos.record_saved(self.side.db_path, path, ["A"], [], raw)
+        db.write_with_connection(self.side.db_path, lambda conn: store_photos.follow_fields(
+            conn, path, {"XMP:Subject": ["A"]}, os.stat(path), whole=raw))
         held = json.loads(self.side.rows("SELECT raw_metadata FROM photos WHERE path = ?",
                                          ("@pictures/2024 Regatta/IMG_1001.jpg",))[0][0])
         self.assertEqual("@pictures/2024 Regatta/IMG_1001.jpg", held["SourceFile"])

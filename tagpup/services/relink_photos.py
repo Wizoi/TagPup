@@ -18,14 +18,13 @@ import os
 from tagpup.core import paths
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session
+from tagpup.files import exiftool_session, identity, names
 from tagpup.store import db, journal
 from tagpup.store import faces as store_faces
 from tagpup.store import photos as store_photos
 
-#: The two fields a dead row is matched to a file by.
-IDENTITY = "XMP-xmpMM:DocumentID"
-PRESERVED = "XMP-xmpMM:PreservedFileName"
+#: The two fields a dead row is matched to a file by, read by their owners (files.identity, files.names).
+MATCHED_BY = [identity.DOCUMENT_ID_FIELD, names.PRESERVED_NAME]
 
 
 def stem_of(path):
@@ -52,21 +51,15 @@ def _read_files(found, fields, exiftool_path):
     return rows
 
 
-def read_files(found, fields, exiftool_path=None):
-    """(SourceFile, row) of each photo in `found`, read for `fields` (_read_files, public)."""
-    return _read_files(list(found), list(fields), exiftool_path)
-
-
 def _by_identity(rows):
     """{DocumentID: the file claiming it} of what ExifTool answered, an identity two files
     claim left out."""
     by_id = {}
     for row in rows:
-        doc_id = row.get("XMP:DocumentID") or row.get("XMP-xmpMM:DocumentID")
+        key = identity.read_document_id(row)
         source = row.get("SourceFile")
-        if not doc_id or not source:
+        if not key or not source:
             continue
-        key = str(doc_id).strip()
         # Two files claiming one identity is a copy, not a rename; neither can be matched
         # to a row without guessing which. Stored form: this is what a row is re-pointed
         # at, and ExifTool answers with forward slashes.
@@ -79,7 +72,7 @@ def _by_original(rows):
     key two files claim left out."""
     by_original = {}
     for row in rows:
-        original = row.get("XMP:PreservedFileName")
+        original = names.preserved_name(row)
         source = row.get("SourceFile")
         if not original or not source:
             continue
@@ -93,7 +86,7 @@ def claims_of(files, exiftool_path=None):
     """(preserved names, identities) of `files`, as preserved_names and identities give
     them for a folder, read in one pass: what sync matches its missing rows against among
     the files it found new (tagpup.services.sync). Only reads."""
-    rows = _read_files(list(files), [IDENTITY, PRESERVED], exiftool_path)
+    rows = _read_files(list(files), MATCHED_BY, exiftool_path)
     return _by_original(rows), _by_identity(rows)
 
 

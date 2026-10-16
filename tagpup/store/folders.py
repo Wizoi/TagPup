@@ -23,10 +23,8 @@ IGNORED = "library.ignored"
 
 
 def ignored(conn):
-    """The library's ignored folders, as its settings hold them; none for a library that
-    holds no settings (yet)."""
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone() is None:
-        return []
+    """The library's ignored folders, as its settings hold them (the settings table is in every
+    library's schema)."""
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (IGNORED,)).fetchone()
     return validation.folder_list(store_roots.folders_to_native(row[0], store_roots.roots_for(conn))) if row and row[0] else []
 

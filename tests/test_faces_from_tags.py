@@ -108,7 +108,7 @@ class Case(unittest.TestCase):
 
     def tag(self, photo_path, *tags):
         """Save the photo with these keywords, as a keyword write records it."""
-        return photos.record_tags(self.path, photo_path, list(tags))
+        return photo_rows.tag(self.path, photo_path, list(tags))
 
     def node(self, tag):
         return look(self.path, "SELECT id FROM tag_taxonomy WHERE tag = ?", (tag,))[0][0]

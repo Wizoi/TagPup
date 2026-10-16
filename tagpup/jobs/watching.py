@@ -41,6 +41,7 @@ import time
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
 from tagpup.core import paths
+from tagpup.services import sync as sync_service
 
 logger = logging.getLogger(__name__)
 
@@ -443,9 +444,12 @@ class Watcher:
             self._unschedule(observer, watch)
 
         for key, root in roots:
-            there = os.path.isdir(root["path"])
+            # A drive or share that does not answer is neither there nor gone (sync.folder_state): a watch on it is
+            # kept while its emitter lives, and none is made until it answers.
+            state = sync_service.folder_state(root["path"])
+            there = state == "there"
             watch = root["watch"]
-            if watch is not None and (not there or not _emitter_alive(observer, watch)):
+            if watch is not None and (state == "gone" or not _emitter_alive(observer, watch)):
                 with self._lock:
                     dead = self._detach(root)
                 self._unschedule(observer, dead)
@@ -465,8 +469,9 @@ class Watcher:
                 if came_back:
                     logger.info("%s is back; syncing its libraries whole.", root["path"])
                     self._note_whole(list(root["libraries"].values()))
-            elif not there and not root["absent"]:
-                logger.info("%s is not there (a drive unplugged?); watching it when it is back.", root["path"])
+            elif root["watch"] is None and not there and not root["absent"]:
+                logger.info("%s is not there or does not answer (a drive unplugged?); watching it when it is back.",
+                            root["path"])
                 with self._lock:
                     root["absent"] = True
         self._watch_parents(observer)
@@ -497,7 +502,7 @@ class Watcher:
         for watch in dead_watches:
             self._unschedule(observer, watch)
         for key in died:
-            if os.path.isdir(wanted.get(key, "")):
+            if key in wanted and sync_service.folder_state(wanted[key]) == "there":
                 logger.warning("The watch on %s failed; watching it again and syncing its libraries whole.", wanted[key])
                 self._note_whole(children.get(key, []))
         for key, folder in missing:

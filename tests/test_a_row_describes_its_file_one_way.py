@@ -1,6 +1,6 @@
 """One answer to "does the row describe the file" (tagpup.store.photos.describes / same_mtime): the
-index command's skip of a photo it has, the embeddings cache and the thumbnail's version stamp go by
-it, as sync does, and not by an `==` or a tolerance of their own. A photo whose modified time differs
+index command's skip of a photo it has, the embeddings cache, the thumbnail's version stamp and the
+refresh's re-read go by it, as sync does, and not by an `==` or a tolerance of their own. A photo whose modified time differs
 by less than the tolerance -- a copy on a drive that rounds times, a share that keeps whole
 milliseconds -- is current for all three; one that differs by more is not.
 """
@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import configured_model  # noqa: E402
 from test_one_photo_whatever_its_spelling import CliDatabaseCase, expected_dim, make_jpeg  # noqa: E402
 
-from tagpup.services import settings, thumbnails  # noqa: E402
+from tagpup.services import refresh_rows, settings, thumbnails  # noqa: E402
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
@@ -61,6 +61,17 @@ class SubSecondRounding(CliDatabaseCase):
             self.assertIsNone(PhotoEmbeddings(clip, index).cached(self.photo))
         finally:
             index.close()
+
+
+class TheRefresh(unittest.TestCase):
+    def test_a_row_read_again_whose_time_differs_by_rounding_has_not_changed_its_stamp(self):
+        """#1368: refresh_rows compared the stamp with `!=`, so a re-read photo on a share that keeps whole milliseconds
+        was a change of mtime/size, written again, where sync and the index call it current."""
+        record = {"tags": [], "people": [], "captions": [], "raw_metadata": {}, "mtime": 1700000000.04, "size": 2048}
+        row = ("[]", "[]", "[]", "{}", 1700000000.0, 2048, None)
+        self.assertEqual([], refresh_rows.differences(None, "lanterns.jpg", record, row)[0])
+        moved_on = dict(record, mtime=1700000001.0)
+        self.assertEqual(["mtime/size"], refresh_rows.differences(None, "lanterns.jpg", moved_on, row)[0])
 
 
 class TheThumbnailsVersion(unittest.TestCase):

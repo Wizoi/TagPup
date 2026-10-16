@@ -197,7 +197,7 @@ _FILES = {
             "test_a_cut_keyword_is_not_planned_again "
             "test_a_row_describes_its_file_one_way "
             "test_batches_go_through_the_model "
-            "test_bulk_delete test_bulk_writes_update_the_index "
+            "test_bulk_delete "
             "test_dates test_derived_file_changes "
             "test_exiftool_encoding test_exiftool_says_why test_exiftool_session "
             "test_index_adds_the_folder_it_is_given "

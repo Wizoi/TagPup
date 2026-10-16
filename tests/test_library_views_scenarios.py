@@ -36,7 +36,6 @@ from view_library import ViewLibrary, make_jpeg  # noqa: E402
 
 from tagpup import runtime  # noqa: E402
 from tagpup.services import indexing, library_view  # noqa: E402
-from tagpup.store import photos  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
 REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
@@ -215,13 +214,13 @@ class AfterAWriteElsewhere(Views):
         old = self.vl.path_of(self.a)
         new = os.path.join(self.folder, "renamed.jpg")
         os.replace(old, new)
-        photos.move_rows(self.vl.path, {old: new})                                 # the rename's row follows the file
+        photo_rows.move(self.vl.path, {old: new})                                 # the rename's row follows the file
         card = self.cards([self.a])[0]
         self.assertEqual(("renamed.jpg", self.a), (card["name"], card["id"]), "the same photo under its new name")
         self.assertEqual((self.a, None), (self.get("/api/library/find", query_string={"path": new}).get_json()["id"],
                                           self.get("/api/library/find", query_string={"path": old}).get_json()["id"]))
         self.assertEqual([], self.ids(kind="keyword", value="Trips/Coast")["ids"])
-        photos.record_tags(self.vl.path, new, ["Trips/Coast"])                     # a bulk tag, or the CLI, in another connection
+        photo_rows.tag(self.vl.path, new, ["Trips/Coast"])                     # a bulk tag, or the CLI, in another connection
         self.assertEqual([self.a], self.ids(kind="keyword", value="Trips/Coast")["ids"])
         record = self.get("/api/library/photo", query_string={"id": self.a}).get_json()["photo"]   # the details panel
         self.assertEqual((new, ["Trips/Coast"]), (record["path"], record["tags"]))

@@ -64,20 +64,6 @@ def structured(meta):
 READ_ERROR_KEYS = ("ExifTool:Error", "Error")
 
 
-def exiftool_starts(exiftool_path):
-    """(True, None) if ExifTool starts at `exiftool_path` (None: on PATH), else (False, why): what a run that read none of its
-    files asks, to tell a program that is not there from files that are damaged."""
-    executable = exiftool_path
-    if executable and not os.path.isabs(executable):
-        executable = os.path.abspath(executable)
-    try:
-        with ExifToolSession(executable=executable) as et:
-            et.version   # noqa: B018 (asking starts it)
-        return True, None
-    except Exception as e:
-        return False, "%s: %s" % (type(e).__name__, e)
-
-
 class MetadataExtractor:
     """Reads photos' metadata; never writes into a photo. Giving a photo an identity is
     IdentityWriter's, after its picture has decoded."""
@@ -283,59 +269,6 @@ class IdentityWriter:
                 pass
 
 
-#: The EXIF Orientation a photo has after a quarter turn, by the one it had before.
-#: Worked out against ImageOps.exif_transpose -- what is shown for the new value is
-#: what was shown for the old one, turned -- and checked the same way in
-#: tests/test_rotate_keeps_the_photo.py. The mirrored values (2, 4, 5, 7) stay mirrored.
-ROTATED_ORIENTATION = {
-    "left": {1: 8, 2: 5, 3: 6, 4: 7, 5: 4, 6: 1, 7: 2, 8: 3},
-    "right": {1: 6, 2: 7, 3: 8, 4: 5, 5: 2, 6: 3, 7: 4, 8: 1},
-}
-
-
-def rotate_image_file(photo_path: str, direction: str, exiftool_path: Optional[str] = None) -> int:
-    """Turn a photo a quarter left or right. Returns the Orientation it now has.
-
-    Only the EXIF Orientation tag changes; the pixels are not touched. This used to
-    decode the photo with Pillow, turn it, and save it again passing only the EXIF
-    block, which dropped every XMP and IPTC field -- keywords, people, caption,
-    DocumentID -- and re-encoded the JPEG at quality 95 on every click. Browsers, and
-    the server's previews (ImageOps.exif_transpose), show a photo by its orientation,
-    so changing that turns what everybody sees and leaves everything else alone.
-
-    The new value is composed with the one already there, so turning a phone photo
-    stored sideways (Orientation 6) left makes it 1, not 8.
-
-    Raises if ExifTool is unavailable or the file does not end up with the value
-    written: a rotation that silently did nothing would be reported as done.
-    """
-    turns = ROTATED_ORIENTATION.get(direction)
-    if turns is None:
-        raise ValueError("Direction must be 'left' or 'right', not %r" % (direction,))
-    if not exiftool_path:
-        raise ValueError("Rotating a photo needs ExifTool, and no ExifTool path was given")
-
-    def orientation_of(et):
-        found = et.get_tags([photo_path], tags=["EXIF:Orientation"])
-        value = (found[0] if found else {}).get("EXIF:Orientation")
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            return None
-        return value if 1 <= value <= 8 else None
-
-    with ExifToolSession(executable=exiftool_path) as et:
-        new = turns[orientation_of(et) or 1]
-        # Written without a group, so an XMP tiff:Orientation already in the file is
-        # updated to match instead of being left to contradict the EXIF one.
-        et.set_tags([photo_path], tags={"Orientation": new}, params=["-overwrite_original"])
-        written = orientation_of(et)
-    if written != new:
-        raise RuntimeError("Rotated %s to orientation %s, but the file now says %s"
-                           % (os.path.basename(photo_path), new, written))
-    return new
-
-
 def title_filename(photo_path: str, new_title: str, rename_format: str, preserved: str) -> str:
     """Where a Smart-Renamed photo goes when its caption becomes `new_title`: the path whose name
     `rename_format` (the library's renaming.format setting, tagpup.services.settings) gives it, a free
@@ -367,20 +300,11 @@ def title_filename(photo_path: str, new_title: str, rename_format: str, preserve
         return photo_path
 
 
-def raw_metadata(et, photo_path, record=None):
-    """A photo's metadata as a save records it in the index: every field the reader
-    reads, in the shape the indexer records it in (structured). Read in the session
-    given -- or taken from `record`, an ExifTool record of the photo read with more
-    fields than the reader asks (tagpup.services.file_changes' read back), of which
-    only those the scan reads (fields.scan_reads) are kept."""
-    if record is None:
-        found = et.get_tags([photo_path], tags=METADATA_FIELDS)
-        cleaned = structured(found[0] if found else {})
-    else:
-        cleaned = structured({key: value for key, value in record.items()
-                              if key == "SourceFile" or fields.scan_reads(key)})
-        if any(record.get(key) for key in READ_ERROR_KEYS):
-            return cleaned   # the error is not among the fields kept, but the read it came from was no read of them
-    # Both are a read of every field in METADATA_FIELDS (the save asks its read back for them all), and
-    # replace the row's raw_metadata whole.
+def raw_metadata(record):
+    """A photo's metadata as a save records it in the index, from `record`, an ExifTool record
+    of the photo read with more fields than the reader asks (tagpup.services.file_changes'
+    whole read back): every field the scan reads (fields.scan_reads), in the shape the indexer
+    records it in (structured). It replaces the row's raw_metadata whole."""
+    cleaned = structured({key: value for key, value in record.items()
+                          if key == "SourceFile" or fields.scan_reads(key)})
     return cleaned

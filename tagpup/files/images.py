@@ -396,16 +396,10 @@ def pad_to_square(image, background_color=(0, 0, 0)):
 
 
 def parse_box(box):
-    """A face box as stored -- JSON, or the bare "[x1, y1, x2, y2]" of older rows -- as a
-    list of numbers, or [] if it cannot be read."""
-    try:
-        parsed = json.loads(box) if box else []
-    except Exception:
-        try:
-            parsed = [int(x) for x in str(box).replace("[", "").replace("]", "").split(",")]
-        except Exception:
-            parsed = []
-    return parsed if isinstance(parsed, list) else []
+    """A face box as stored, the JSON list [x1, y1, x2, y2], as a list of numbers; [] for none. Every box is
+    JSON (200,962 of 200,962 in the three libraries, 2026-10-15): the reading of a bare list for older rows had
+    no row to read."""
+    return json.loads(box) if box else []
 
 
 def face_crop(photo_path, box):

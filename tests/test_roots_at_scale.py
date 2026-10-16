@@ -104,7 +104,7 @@ class TheSizeOfPhotoIndex(unittest.TestCase):
         conn = db.connect(db.readonly_uri(self.library.path), uri=True)
         try:
             started = time.time()
-            rows = store_photos.index_rows(conn, "m")
+            rows = store_photos.records(conn, "m")
             return time.time() - started, len(rows)
         finally:
             conn.close()

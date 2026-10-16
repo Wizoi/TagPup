@@ -147,6 +147,13 @@ def _under_any(folder, folders):
     return key in folders or any(paths.is_under(folder, other) for other in folders.values())
 
 
+def folder_state(folder):
+    """"there", "gone" or "unanswered" of a root or a folder of the library (shares.folder_state, within its
+    SHARE_WAIT): what include() and the folder watcher ask before they look under it, a drive or share that does
+    not answer being neither there nor gone."""
+    return shares.folder_state(folder)
+
+
 def _scan(conn, folder, roots, library_folders):
     """What is on disk against the rows: (by_key {key: (id, path, mtime, size)} of the rows
     looked at, on_disk {key: (path, mtime, size)}, the folders walked, those not there,
@@ -170,28 +177,15 @@ def _scan(conn, folder, roots, library_folders):
     return by_key, on_disk, walked, gone, unanswered, unlisted
 
 
-def _under_one_of(path, keys):
-    """Is `path` in or under one of the folders `keys` (paths.key)?"""
-    current = os.path.dirname(path)
-    while keys:
-        if paths.key(current) in keys:
-            return True
-        parent = os.path.dirname(current)
-        if parent == current:
-            break
-        current = parent
-    return False
-
-
 def _unseen(by_key, on_disk, not_looked_at):
     """(missing [(photo_id, path, mtime, size)], not looked at [photo_id]) of the rows whose file the walk did not
     see: not looked at when under a folder the walk could not look at (`not_looked_at`, folders)."""
-    keys = {paths.key(f) for f in not_looked_at}
+    folders = {paths.key(f): f for f in not_looked_at}
     missing, unseen = [], []
     for key, (photo_id, path, mtime, size) in by_key.items():
         if key in on_disk:
             continue
-        if _under_one_of(path, keys):
+        if folders and _under_any(os.path.dirname(path), folders):
             unseen.append(photo_id)
         else:
             missing.append((photo_id, path, mtime, size))
@@ -388,7 +382,8 @@ def look(library, folder=None, exiftool_path=None, roots=(), ignored=()):
     return maintenance.Plan(
         size=len(edits) + len(moved_edits),
         counts={"rows": len(by_key), "files": len(on_disk),
-                "folders_walked": len(walked) - len(roots_gone) - len(unanswered),
+                "folders_walked": len(walked) - len(roots_gone) - len(unanswered)
+                - len({paths.key(f) for f in walked} & {paths.key(f) for f in unlisted}),
                 "new": sum(queued.values()), "new_folders": len(new_folders),
                 "review_folders": len(review), "review_photos": sum(review.values()),
                 "ignored_files": ignored_files, "outside_roots_files": outside,
@@ -454,8 +449,10 @@ def include(library, folder, roots, queue, ignored=()):
         result.refuse(problem)
         return result
     folder = paths.stored(folder)
-    if not os.path.isdir(folder):
-        result.refuse("That folder is not on disk.")
+    state = folder_state(folder)
+    if state != "there":
+        result.refuse("That folder is not on disk." if state == "gone" else
+                      "That folder's drive or share is not answering, or it cannot be listed: try again when it is.")
         return result
     if ignored and _under_any(folder, {paths.key(f): paths.stored(f) for f in ignored}):
         result.refuse("That folder is one the library ignores (or under one).")

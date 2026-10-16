@@ -231,10 +231,9 @@ class WritesKeepTheId(Library):
     def test_the_tree_edited_between_two_writes_of_a_bulk_edit(self):
         """A bulk tag write is chunks, each a transaction (phase 9d); TagTuner may rename a person
         between two. Each chunk reads the tree inside its own transaction: nothing is left behind."""
-        from tagpup.store import photos
-        photos.record_tags(self.path, self.photo, ["People/" + ODA])
+        photo_rows.tag(self.path, self.photo, ["People/" + ODA])
         write(self.path, lambda conn: taxonomy.move_branch(conn, "People/" + WREN, "People/Wren Ashby"))
-        photos.record_tags(self.path, self.other, ["People/Wren Ashby"])
+        photo_rows.tag(self.path, self.other, ["People/Wren Ashby"])
         self.assertEqual([0, 0], in_step(self.path))
         self.assertEqual({node_id(self.path, "People/Wren Ashby")}, ids_of(self.path, "photo_people")["Wren Ashby"])
 

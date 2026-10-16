@@ -13,13 +13,14 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 from face_rows import people_of  # noqa: E402
 
 from tagpup.core import vocabulary  # noqa: E402
 from tagpup.core.result import NotFound, Refused, Result  # noqa: E402
 from tagpup.services import tags  # noqa: E402
-from tagpup.store import db, derived, faces as store_faces, people as store_people, photos as store_photos, taxonomy  # noqa: E402
+from tagpup.store import db, derived, faces as store_faces, people as store_people, taxonomy  # noqa: E402
 
 
 class TreeCase(unittest.TestCase):
@@ -38,7 +39,7 @@ class TreeCase(unittest.TestCase):
                 else:
                     # What the real one records in the index, having written the file.
                     held = json.loads(self.lib.rows("SELECT tags FROM photos WHERE path = ?", (path,))[0][0])
-                    store_photos.record_tags(library.path, path, vocabulary.retag(held, old, new)[0])
+                    photo_rows.tag(library.path, path, vocabulary.retag(held, old, new)[0])
             return result
 
         patcher = mock.patch("tagpup.services.tagging.replace_tag", side_effect=replace_tag)

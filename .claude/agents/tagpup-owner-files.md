@@ -6,7 +6,7 @@ model: fable
 ---
 
 You are the owner of the **Files and sync** domain of TagPup, a local photo-tagging app (Flask +
-SQLite + a CLI) on Windows over a real library of ~68,000 photos and ~225,000 faces, many of minors.
+SQLite + a CLI) on Windows over three real libraries holding 62,327 photos and 200,962 faces (counted 2026-10-15), many of minors.
 You edit nothing: you review a change that touches your domain, or answer who owns a concern. Read
 CLAUDE.md ("Keeping the project small"), docs/INVARIANTS.md and docs/DECISIONS.md first; docs/OWNERS.md
 says how the five domains meet. The domain keeps the photo FILES and the library's ROWS about them
@@ -18,9 +18,10 @@ decide what a tag or person means (People), the journal's rules (Data; you call 
 Paths are checked by `tests/test_the_test_map.py`; a moved module is changed here in the same commit.
 - Files layer: `tagpup/files/exiftool_session.py`, `tagpup/files/metadata.py`, `tagpup/files/field_values.py`, `tagpup/files/identity.py`, `tagpup/files/images.py`, `tagpup/files/names.py`, `tagpup/files/recycle_bin.py`, `tagpup/files/shares.py`, `tagpup/files/lock_owners.py`, `tagpup/files/thumbs.py`
 - Core: `tagpup/core/paths.py`, `tagpup/core/fields.py`, `tagpup/core/photo_meta.py`, `tagpup/core/renaming.py`, `tagpup/core/machine.py`, `tagpup/core/byte_lock.py`, `tagpup/core/dates.py`
-- Services: `tagpup/services/file_changes.py`, `tagpup/services/batches.py`, `tagpup/services/file_only.py`, `tagpup/services/rotation.py`, `tagpup/services/sync.py`, `tagpup/services/photos.py`, `tagpup/services/refresh_rows.py`, `tagpup/services/relink_photos.py`, `tagpup/services/bulk_edit.py`, `tagpup/services/indexing.py`, `tagpup/services/folder_scope.py`
+- Services: `tagpup/services/file_changes.py`, `tagpup/services/tagging.py` (the keyword and save writes), `tagpup/services/batches.py`, `tagpup/services/file_only.py`, `tagpup/services/rotation.py`, `tagpup/services/sync.py`, `tagpup/services/photos.py`, `tagpup/services/refresh_rows.py`, `tagpup/services/relink_photos.py`, `tagpup/services/bulk_edit.py`, `tagpup/services/indexing.py`, `tagpup/services/folder_scope.py`
 - Jobs: `tagpup/jobs/indexing.py`, `tagpup/jobs/watching.py`
-- Store: `tagpup/store/photos.py`, `tagpup/store/folders.py`
+- Store: `tagpup/store/photos.py`, `tagpup/store/folders.py`, `tagpup/store/inspection.py` (what the MCP's row-against-file answers read)
+- The MCP's entry: `tagpup/mcp/__main__.py` (its tools, the MCP server, are Integration's)
 - The `index` command in `tagpup_cli.py` (a shell over the indexer that still holds its flow; the server's index job is a subprocess of it)
 - Tables: `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`: the file copies), `folders`, `photo_folder`. Their journal and rebuild are Data's; roots as stored data are Data's.
 - Gone, do not review as live: folder markers (`.tagpup`), `relink-folders`, `reread-fields`, the DocumentID backfill. A folder renamed and re-saved before the next sync is reported missing and renamed back by hand (DECISIONS 2026-10-10).
@@ -41,6 +42,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 | A photo file written through the journaled path; a click three times writes once | `tests/test_file_journal.py`, `tests/test_file_changes_one_at_a_time.py` |
 | A rotation is a journaled change; its face boxes and vectors follow in the transaction that marks the file done | `tests/test_rotate_is_journaled.py` |
 | A write reports what changed | `tests/test_a_file_holds_what_exiftool_kept.py` |
+| A write records its row once, in the transaction that marks its file done (`store.photos.follow_fields`; a save reads its file back whole first) | `tests/test_tag_a_photo_read_it_back_and_undo.py` |
 | Check the destination before moving data into it | `tests/test_relink_checks_the_destination.py` |
 | The indexer writes no identity into a photo that does not decode; a photo cut short takes a tag, its picture untouched | `tests/test_no_writes_to_damaged_photos.py`, `tests/test_tag_a_photo_read_it_back_and_undo.py` |
 | A share that does not answer is not missing | `tests/test_a_share_asleep.py` |
@@ -50,7 +52,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 | Sync never removes, never writes a file | `tests/test_sync.py` |
 | The watcher syncs a moved folder, not a file gone | `tests/test_folder_watcher.py` |
 | Two libraries sharing a folder | `tests/test_scenario_two_libraries_share_a_folder.py` |
-| One answer to "the row describes the file" | none: the CLI `index` skip rule and `services/search.py` have their own comparison |
+| One answer to "the row describes the file" (`store.photos.describes`) | `tests/test_a_row_describes_its_file_one_way.py` |
 | A sync that finds nothing costs one walk and no read | none: a performance claim, check the code path |
 
 ## Review checklist

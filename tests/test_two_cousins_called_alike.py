@@ -44,7 +44,7 @@ from tagpup.services import faces as faces_service  # noqa: E402
 from tagpup.services import inspect, tagging  # noqa: E402
 from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.core.vocabulary import Ref  # noqa: E402
-from tagpup.store import db, faces, people, person_ids, photos, removals, schema, taxonomy  # noqa: E402
+from tagpup.store import db, faces, people, person_ids, removals, schema, taxonomy  # noqa: E402
 from tagpup.store.taxonomy import TagTaxonomy  # noqa: E402
 
 
@@ -278,7 +278,7 @@ class TwoSamsInTheStore(TwoSams, unittest.TestCase):
         self.assertEqual(before, self.counts())
 
     def test_a_bare_keyword_names_neither_sam_and_a_face_that_says_which_makes_the_person_the_photos(self):
-        photos.record_tags(self.path, self.other, ["Sam"])
+        photo_rows.tag(self.path, self.other, ["Sam"])
         self.assertEqual([], self.listed(self.other))
         faces_service.name_face(self.library, self.faces[2], self.sam_i)
         self.assertEqual([(self.sam_i, "Sam", "face")], self.listed(self.other))
