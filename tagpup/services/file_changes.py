@@ -66,7 +66,7 @@ from tagpup.core import fields, paths
 from tagpup.core.result import Conflict, Refused, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, lock_owners, metadata, names
+from tagpup.files import exiftool_session, field_values, lock_owners, metadata, names, shares
 from tagpup.services import batches, face_batch, rotation
 from tagpup.services import roots as roots_service
 from tagpup.store import db, derived, embeddings, file_journal, journal, photos, schema
@@ -242,6 +242,26 @@ def _nothing_more(result):
     return result
 
 
+#: Where a photo's file is for a write (file_states).
+PRESENT, GONE, AWAY = "present", "gone", "away"
+
+#: What a write says of a photo on a network share that did not answer.
+AWAY_WHY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
+
+
+def file_states(photo_paths):
+    """[(path, PRESENT | GONE | AWAY)] of `photo_paths`, in the order given: the one answer to "is this photo's file there
+    to be written", by one bounded stat of each (shares.stamp_of: a share is asked within a second, and one found away is
+    answered at once for 30 seconds). GONE: the disk or share answered that it is not there. AWAY: on a share that did not
+    answer, neither there nor gone. A file that cannot be read is PRESENT: the write meets it. write_fields leaves an AWAY
+    photo out as its error, and a bulk delete (tagpup.services.bulk_edit) asks it too."""
+    states = []
+    for path in photo_paths:
+        stamp = shares.stamp_of(path)
+        states.append((path, GONE if stamp is None else AWAY if stamp is shares.UNANSWERED else PRESENT))
+    return states
+
+
 def between_chunks(batch):
     """False when the batch is asked to stop; else lets the writers that wait take the lock, and True."""
     if batch.stop.is_set():
@@ -339,8 +359,16 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         return result
     stored = [paths.stored(p) for p in photo_paths]
     batch = batches.current()
-    # A batch asked to stop while it reads the files it plans from stops at the next batch of reads (#1200).
-    held = fresh if fresh is not None else field_values.read(et, stored, read, stop=batch.stop if batch else None)
+    if fresh is None:
+        # A photo on a share that does not answer is its error at once: read, it would cost ExifTool's whole deadline
+        # (five minutes) and hold the lock and the request that long (#1492). What the caller read just now answered.
+        away = {paths.key(path) for path, state in file_states(stored) if state == AWAY}
+        # A batch asked to stop while it reads the files it plans from stops at the next batch of reads (#1200).
+        held = field_values.read(et, [path for path in stored if paths.key(path) not in away], read,
+                                 stop=batch.stop if batch else None)
+        held.update({key: field_values.Unreadable(AWAY_WHY) for key in away})
+    else:
+        held = fresh
     if batch is not None and batch.stop.is_set():
         return _stopped_before_writing(result)
     planned, followed = [], []
