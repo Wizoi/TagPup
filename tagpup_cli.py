@@ -739,6 +739,29 @@ def sync(ctx, folder, apply_):
         raise SystemExit(1)
 
 
+@contextlib.contextmanager
+def _break_is_an_interrupt():
+    """Ctrl+Break (SIGBREAK, Windows) stops a long write as Ctrl+C does, so that it ends as asked
+    (file_changes withdraws the files not reached) instead of being killed with them planned."""
+    import signal
+    if not hasattr(signal, "SIGBREAK"):
+        yield
+        return
+
+    def interrupt(_signum, _frame):
+        raise KeyboardInterrupt
+
+    try:
+        previous = signal.signal(signal.SIGBREAK, interrupt)
+    except ValueError:      # not the main thread: nothing to install
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGBREAK, previous)
+
+
 @cli.command("tags-from-faces")
 @click.option("--apply", "apply_", is_flag=True,
               help="Write the keywords into the photo files. Without it, only says how many photos it would write.")
@@ -753,7 +776,8 @@ def tags_from_faces(ctx, apply_, guesses, folder):
     saying "No people tags" (#861). A dry run unless --apply; counts only, never names.
 
     --apply CHANGES PHOTO FILES: it writes each person's keyword into the photo's file with
-    ExifTool, 25 photos to a change of the journal (`history` lists them, `undo` takes one back).
+    ExifTool, one change of the journal (`history` lists it, `undo` takes it back). Ctrl+C or Ctrl+Break
+    stops it: the files written stay written and undoable, the rest are not written.
     Run it on a small library first; TagPup and TagTuner may stay open (a file changed meanwhile
     is a conflict, reported and not overwritten: run it again). Left, and counted: a person the
     a photo whose keywords already name the person under a root the
@@ -787,7 +811,16 @@ def tags_from_faces(ctx, apply_, guesses, folder):
         return
     exiftool = get_exiftool_path(library.path)
     console.print("Writing %d photo file(s)..." % counts["photos_to_write"])
-    result = tags_from_faces_service.apply(library, planned, exiftool)
+    try:
+        with _break_is_an_interrupt():
+            result = tags_from_faces_service.apply(library, planned, exiftool)
+    except KeyboardInterrupt as stopped:
+        written = getattr(stopped, "written", None)
+        console.print("Stopped: %s photo file(s) written, recorded as change %s of the journal (`undo` takes it back); "
+                      "the rest were not written. Run it again for them."
+                      % ("?" if written is None else written, getattr(stopped, "change", None) or "none"), markup=False,
+                      soft_wrap=True)
+        raise SystemExit(1) from None
     console.print("Wrote %d photo file(s) in %d change(s) of the journal (`history` lists them)."
                   % (result.changed, len(result.details.get("changes", []))), markup=False)
     if result.refused:

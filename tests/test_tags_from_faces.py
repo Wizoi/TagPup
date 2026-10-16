@@ -19,7 +19,7 @@ from click.testing import CliRunner  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup.core import paths  # noqa: E402
-from tagpup.services import batches, tags_from_faces  # noqa: E402
+from tagpup.services import batches, file_changes, tags_from_faces  # noqa: E402
 from tagpup.store import checks, db  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
@@ -153,6 +153,28 @@ class TheApply(Mending):
         self.assertIn("%d photo file(s) in 1 change(s)" % (batches.CHUNK + 1), said.output)
         self.assertEqual([tags_from_faces.OPERATION], self.operations())
         self.assertEqual(1, batch.call_count, "one batch, its turn taken once")
+
+    def test_ctrl_c_part_way_keeps_what_was_written_and_takes_the_rest_out(self):
+        """#1493: the repair is one change now; stopped part-way it left up to 661 photos planned, which the next process
+        to open the library wrote. What is written stays (applied, undoable), the rest are taken out, and it says so."""
+        for n in range(batches.CHUNK + 1):
+            self.drifted("drift_%d.jpg" % n)
+        seen = []
+
+        def reached(step):
+            if step == "file recorded":
+                seen.append(step)
+                if len(seen) == 3:
+                    raise KeyboardInterrupt
+        with mock.patch.object(file_changes, "_reached", side_effect=reached):
+            said = self.run_cli("--apply")
+        self.assertEqual(1, said.exit_code, said.output)
+        self.assertIn("Stopped: 3 photo file(s) written", said.output)
+        self.assertEqual([("applied", 3)], self.look("SELECT c.status, COUNT(f.id) FROM changes c JOIN change_files f"
+                                                    " ON f.change_id = c.id WHERE c.operation = ? GROUP BY c.id",
+                                                    (tags_from_faces.OPERATION,)))
+        self.assertIn("%d photo file(s) would be written" % (batches.CHUNK + 1 - 3), self.run_cli().output,
+                      "the photos not reached are still to do")
 
     def test_it_can_be_run_again_and_finds_nothing_more(self):
         self.drifted("drift_a.jpg")

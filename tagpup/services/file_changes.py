@@ -453,10 +453,20 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
             result.refuse("Stopped as asked after %d of %d photos: %d file(s) were written, recorded as change %d in History, "
                           "which can be undone; the rest were not written."
                           % (stopped["after"], stopped["of"], result.changed, change_id))
-    except BaseException:
+    except BaseException as stopped:
         # The files recorded done so far are read back all the same: settling reads
         # back only the files it writes (docs/findings.md, #286).
         _read_back(et, library, wrote)
+        if isinstance(stopped, KeyboardInterrupt):
+            # Stopped by the person (Ctrl+C, Ctrl+Break in the CLI): what is written stays, applied and undoable; the files
+            # not reached are taken out, not written by whatever opens the library next (#1493). A crash is settled forward.
+            _settle_stopped(library, change_id)
+            # What the journal holds done, not what this loop had counted: the file under way may be done already.
+            try:
+                stopped.written = sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "done")
+            except Exception:
+                stopped.written = None
+            stopped.change = change_id
         file_journal.release(library.path, change_id)
         raise
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
