@@ -14,7 +14,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageSource, peopleRecordsOf } from "./harness.mjs";
+import { REPO_ROOT, loadApp, FakeServer, photoRecord, flush, openFolder, closeAllApps, pageSource, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 const RULES = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tests", "validation_cases.json"), "utf8"));
 
@@ -54,7 +54,7 @@ const TAXONOMY = [
 async function onAPhoto(t) {
   const server = new FakeServer()
     .on("/api/tags", ["People/Hazel Brookmire"])
-    .on("/api/people?records=1", peopleRecordsOf(TAXONOMY))
+    .on(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
     .on("/api/taxonomy/tree", TAXONOMY)
     .on("/api/taxonomy/create", { success: true })
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })

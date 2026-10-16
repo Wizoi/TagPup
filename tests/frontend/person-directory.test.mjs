@@ -1,6 +1,6 @@
 /**
  * People by id on the pages (docs/ARCHITECTURE.md, "People by id, stage 2", part C, phase 6): the library's people held as
- * /api/people?records=1 answers them, and every question about "the same person" asked of their ids -- never of a label or a leaf.
+ * /api/people answers them, and every question about "the same person" asked of their ids -- never of a label or a leaf.
  *
  * The answers here are the server's real shapes (tagpup.store.person_ids.Directory): the owner's real case is one leaf shared by
  * a pet and a friend, so the table has a Sam under Pets and a Sam under Friends, beside a cousin pair and people nobody shares a

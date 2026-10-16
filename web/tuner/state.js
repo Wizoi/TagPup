@@ -20,9 +20,11 @@ export const state = {
     //: The id of the person chosen, when the list gave one: two people called alike are two (identity by id). Null for a
     //: bucket, a name no tag has, or a person chosen by name alone (an address that names only a name).
     activePersonId: null,
-    //: Everyone with a person tag, as /api/people?records=1 answers (a PeopleDirectory): who a typed text is, and each
-    //: person's label. Filled by shared.js; empty until it answers.
+    //: Everyone with a person tag, as /api/people?include_hidden=1 answers (a PeopleDirectory): who a typed text is, and
+    //: each person's label. Filled by shared.js; empty until it answers.
     people: new PeopleDirectory([]),
+    //: The same people without those hidden from autocomplete (/api/people): what the name lists offer while typing.
+    offeredPeople: new PeopleDirectory([]),
     lastLoadedPersonName: null,
     //: The person whose grid is being fetched right now. Redrawing the sidebar asks
     //: for the active person's grid unless it is already loaded; one still on its way

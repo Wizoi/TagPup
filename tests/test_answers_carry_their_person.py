@@ -211,7 +211,7 @@ class OnTheWire(unittest.TestCase):
                 app, home = web_client.app_for(self, kind)
                 vl = ViewLibrary(self, "library", home=home)
                 vl.tree(SAM_T, SAM_I, WREN, face_root="Family")
-                answer = app.test_client().get("/library/api/people?records=1")
+                answer = app.test_client().get("/library/api/people")
                 self.assertEqual(200, answer.status_code)
                 found = answer.get_json()
                 self.assertEqual([("Sam", SAM_I), ("Sam", SAM_T), ("Wren", WREN)], [(each["name"], each["tag"]) for each in found])
@@ -221,8 +221,8 @@ class OnTheWire(unittest.TestCase):
         taxonomy.set_branch_flags(self.vl.conn, WREN, hidden=1)
         self.vl.conn.commit()
         listed = lambda query: [each["name"] for each in self.client.get("/library/api/people" + query).get_json()]  # noqa: E731
-        self.assertEqual(["Sam", "Sam"], listed("?records=1"))
-        self.assertEqual(["Sam", "Sam", "Wren"], listed("?records=1&include_hidden=1"))
+        self.assertEqual(["Sam", "Sam"], listed(""))
+        self.assertEqual(["Sam", "Sam", "Wren"], listed("?include_hidden=1"))
 
     def test_the_identify_queue_names_its_person_from_the_tree_as_it_is_now_not_as_it_was_cached(self):
         for number in (1, 2):

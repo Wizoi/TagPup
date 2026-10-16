@@ -104,7 +104,7 @@ export const state = {
     knownTags: [],
     // The same people without those hidden from autocomplete: what the add-person field offers while typing.
     offeredPeople: new PeopleDirectory([]),
-    // Everyone with a person tag, as /api/people?records=1 answers (a PeopleDirectory): who a tag or a typed name is, by id,
+    // Everyone with a person tag, as /api/people?include_hidden=1 answers (a PeopleDirectory): who a tag or a typed name is, by id,
     // and each person's label where a name is shared. Filled by tags.js; empty until it answers.
     people: new PeopleDirectory([]),
     taxonomyNodes: [],

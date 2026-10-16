@@ -5,7 +5,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, flush, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -98,7 +98,7 @@ describe("the tag list", () => {
 describe("the name picker", () => {
   test("offers people alphabetically", async (t) => {
     const people = ["Zoe Abbott", "émile Roy", "anh Tran", "Bao Le"].map((name, i) => ({ id: i + 1, name, tag: `People/${name}` }));
-    const server = base().on("/api/people-with-counts", []).on("/api/people", people)
+    const server = base().on("/api/people-with-counts", []).on(PEOPLE_ROUTE, people)
       .on("/api/tags/list", { tags: [], buckets: {} });
     const ctx = await open(t, { mode: "face-matching", server });
     const offered = [...ctx.document.querySelectorAll("#people-datalist option")].map((o) => o.value);

@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, REAL, realLibrary, until, peopleRecordsOf } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, REAL, realLibrary, until, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 import { boxInContainedImage } from "../../web/common/image-zoom.js";
 import { leafOf } from "../../web/common/vocabulary.js";
 
@@ -61,9 +61,8 @@ function serverFor({ photoFaces = THREE, tree = TAXONOMY, matches = MATCHES, pho
     : { [shown.path]: keywords.filter((tag) => tag.endsWith("/" + name)) });
   const server = new FakeServer()
     .on("/api/tags", ["Trips", "People/Hazel Brookmire", "People/Anh Tran"])
-    .on("/api/people", ["Hazel Brookmire", "Anh Tran"])
     .on("/api/taxonomy/tree", () => structuredClone(nodes))
-    .first("/api/people?records=1", () => peopleRecordsOf(nodes))
+    .first(PEOPLE_ROUTE, () => peopleRecordsOf(nodes))
     .on("/api/taxonomy/create", () => create(written(server)))
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100 })

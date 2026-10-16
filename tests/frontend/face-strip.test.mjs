@@ -7,14 +7,14 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 const PHOTO = photoRecord({ filename: "a.jpg" });
 
 function baseServer(faces) {
   return new FakeServer()
     .on("/api/tags", [])
-    .on("/api/people", ["Jane Doe"])
+    .on(PEOPLE_ROUTE, [])                   // an empty tree: nobody
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/suggest-status", { status: "idle" })
@@ -206,9 +206,8 @@ describe("acting on a face", () => {
     const photo = photoRecord({ filename: "a.jpg", tags, people });
     const server = new FakeServer()
       .on("/api/tags", ["People/Jane Doe"])
-      .on("/api/people", ["Jane Doe"])
       .on("/api/taxonomy/tree", TAXONOMY)
-      .first("/api/people?records=1", peopleRecordsOf(TAXONOMY))
+      .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
       .on("/api/taxonomy/create", { success: true })
       .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
       .on("/api/folder/suggest-status", { status: "idle" })

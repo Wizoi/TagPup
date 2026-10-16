@@ -14,7 +14,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps, peopleRecordsOf } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -63,8 +63,7 @@ async function openEditor(t, { tree = BASE(), app = "tagpup", routes = (server) 
     .on("/api/apps", { this: app === "tagpup" ? "tagpup" : "tuner", apps: {} })
     .on("/api/taxonomy/tree", () => JSON.parse(JSON.stringify(world.tree)))
     .on("/api/tags", [])
-    .on("/api/people?records=1", () => peopleRecordsOf(world.tree))
-    .on("/api/people", [])                // TagTuner's names
+    .on(PEOPLE_ROUTE, () => peopleRecordsOf(world.tree))
     .on("/api/databases", { databases: [LIBRARY] })
     .on("/api/folder/suggest-status", { status: "idle" })
     .on("/api/folder/index-status", { status: "completed", percent: 100, message: "Ready" })

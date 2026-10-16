@@ -1,7 +1,7 @@
 /**
  * TagPup with two people called alike (identity by id, stage 2, part C, phase 6): the owner's real case is one shared leaf, a pet and
  * a friend both called Sam. Their keywords are different paths (Friends/Sam, Pets/Sam), so a photo can carry both; the answers are
- * the server's shapes (/api/people?records=1, a face's `person` and `suggestion_person`, a match's `person`, a suggestion's
+ * the server's shapes (/api/people, a face's `person` and `suggestion_person`, a match's `person`, a suggestion's
  * `person`). Names are made up.
  *
  * What the page must do: show the name, with the tag in the title where the name is shared;
@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -52,9 +52,7 @@ function serverFor({ photo = null, faces = FACES, matches = MATCHES, extra = nul
   let keywords = [...shown.tags];
   const server = new FakeServer()
     .on("/api/tags", ["Trips", "Friends/Sam", "Pets/Sam", "Family/Ingersoll/Wren"])
-    .first("/api/people?records=1&include_hidden=1", RECORDS)
-    .first("/api/people?records=1", RECORDS)
-    .on("/api/people", ["Sam", "Wren"])
+    .first(PEOPLE_ROUTE, RECORDS)
     .on("/api/taxonomy/tree", TAXONOMY)
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100 })
@@ -191,7 +189,7 @@ describe("the panel of the second face", () => {
     const ctx = await openPhoto(t, { extra: (server) => server.first("/api/face/match",
       { success: false, error: "That person is no longer in the tag tree: reload the page." }, { status: 404 }) });
     await ctx.openFace(1);
-    const asked = () => ctx.server.urls().filter((url) => url.includes("/api/people?records=1")).length;
+    const asked = () => ctx.server.urls().filter((url) => url.includes("/api/people?include_hidden=1")).length;
     const before = asked();
     click(ctx.window, ctx.panel().querySelector(".face-panel-suggestion"));
     await ctx.wait(100);
@@ -264,7 +262,7 @@ describe("the add-person list", () => {
     const ctx = await openPhoto(t, { photo, extra: (server) => server
       .first("/api/taxonomy/tree", tree)
       .first("/api/tags", tree.map((node) => node.tag))     // tags_service.autocomplete: the tree's tags and the photos'
-      .first("/api/people?records=1", peopleRecordsOf(tree)) });          // serverFor's /api/people: the names given to faces, Sam and Wren
+      .first(PEOPLE_ROUTE, peopleRecordsOf(tree)) });
     const offered = (list) => [...ctx.document.querySelectorAll(`#${list} option`)].map((option) => option.value).sort();
     assert.deepEqual(offered("people-datalist"), ["Family/Ingersoll/Wren", "Friends/Sam"]);
     const tags = offered("tags-datalist");

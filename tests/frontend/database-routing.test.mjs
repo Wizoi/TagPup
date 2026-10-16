@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, openFolder, pageModules, APPS, REPO_ROOT } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, openFolder, pageModules, APPS, REPO_ROOT, PEOPLE_ROUTE } from "./harness.mjs";
 import path from "node:path";
 import { api, libraryIn } from "../../web/common/api.js";
 
@@ -30,7 +30,7 @@ afterEach(() => {
 const baseRoutes = (server) =>
   server
     .on("/api/tags", ["Activity", "Trips/Texas"])
-    .on("/api/people", ["Jane Doe"])
+    .on(PEOPLE_ROUTE, [])                   // an empty tree: nobody
     .on("/api/taxonomy/tree", [])
     .on("/api/databases", { databases: ["photo_index", "kr-track"], selected: "kr-track" })
     .on("/api/folder/suggest-status", { status: "idle" })

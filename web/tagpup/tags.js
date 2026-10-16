@@ -20,7 +20,7 @@ export function fetchKnownTagsAndPeople() {
             .catch(err => console.error("Error loading tags taxonomy:", err));
 
         // The ones offered while typing: those not hidden from autocomplete.
-        api.json('/api/people?records=1')
+        api.json('/api/people')
             .then(data => {
                 state.offeredPeople = new PeopleDirectory(data);
                 updatePeopleDatalist();
@@ -168,7 +168,7 @@ export function updatePeopleDatalist() {
 export function loadTaxonomy() {
     // The people with a tag, by id: a tag path names exactly one, and two called alike are two (identity by id). A failed
     // read is nobody, as in TagTuner (PeopleDirectory lets an error's answer go).
-    const people = api.json('/api/people?records=1&include_hidden=1')
+    const people = api.json('/api/people?include_hidden=1')
         .then(data => { state.people = new PeopleDirectory(data); })
         .catch(err => console.error('Could not load the people records:', err));
     const tree = api.json('/api/taxonomy/tree')

@@ -209,8 +209,8 @@ def face_crop():
 @routes.get("/api/people")
 def people():
     """The people with a person tag, each `{id, name, tag}` (tagpup.services.people.records); ?include_hidden=1 adds those
-    hidden from autocomplete: it answers "does this person exist?", which a hidden person does. The pages send ?records=1,
-    which changes nothing."""
+    hidden from autocomplete: it answers "does this person exist?", which a hidden person does; without it, what is offered
+    while typing."""
     library = state.require()
     return jsonify(people_service.records(library, include_hidden=request.args.get("include_hidden", "0") == "1"))
 

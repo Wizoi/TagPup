@@ -5,7 +5,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { closeAllApps, loadApp, FakeServer, photoRecord, flush, click, openFolder } from "./harness.mjs";
+import { closeAllApps, loadApp, FakeServer, photoRecord, flush, click, openFolder, PEOPLE_ROUTE } from "./harness.mjs";
 import { loadViewPage, pageErrors } from "./view-page.mjs";
 
 afterEach(() => {
@@ -36,9 +36,7 @@ async function openPhoto(t, { tags = [], people = [], suggestions = {} } = {}) {
   const photo = photoRecord({ filename: "a.jpg", tags, people });
   const server = new FakeServer()
     .on("/api/tags", ["Friends/Sam", "Pets/Sam", "Family/Ingersoll/Wren"])
-    .first("/api/people?records=1&include_hidden=1", RECORDS)
-    .first("/api/people?records=1", RECORDS)
-    .on("/api/people", ["Sam", "Wren"])
+    .first(PEOPLE_ROUTE, RECORDS)
     .on("/api/taxonomy/tree", TAXONOMY)
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100 })
@@ -86,7 +84,7 @@ describe("Suggest's chips", () => {
   test("the people not read yet leave a shared name as the one chip it was", async (t) => {
     const photo = photoRecord({ filename: "a.jpg" });
     const server = new FakeServer()
-      .on("/api/tags", []).on("/api/people", ["Sam"]).on("/api/taxonomy/tree", TAXONOMY)
+      .on("/api/tags", []).first(PEOPLE_ROUTE, () => new Promise(() => {})).on("/api/taxonomy/tree", TAXONOMY)
       .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
       .on("/api/folder/index-status", { status: "completed", percent: 100 })
       .on("/api/folder/scan", [photo]).on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
@@ -102,7 +100,7 @@ describe("Suggest's chips", () => {
 describe("the selection panel of a folder", () => {
   async function select(t, photos) {
     const server = new FakeServer()
-      .on("/api/tags", []).first("/api/people?records=1", RECORDS).on("/api/people", ["Sam", "Wren"]).on("/api/taxonomy/tree", TAXONOMY)
+      .on("/api/tags", []).first(PEOPLE_ROUTE, RECORDS).on("/api/taxonomy/tree", TAXONOMY)
       .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
       .on("/api/folder/suggest-status", { status: "idle" })
       .on("/api/folder/index-status", { status: "completed", percent: 100 })

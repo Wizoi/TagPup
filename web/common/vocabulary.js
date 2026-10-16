@@ -129,7 +129,7 @@ export function personFields(person) {
 
 // ---- The people of a library, by id --------------------------------------------------------
 //
-// /api/people?records=1 answers every person with a tag as {id, name, tag}. The pages hold them in a PeopleDirectory and ask it
+// /api/people answers every person with a tag as {id, name, tag}. The pages hold them in a PeopleDirectory and ask it
 // who a text is -- a tag path names exactly one person, a bare name names one only when nobody else is called it -- and compare
 // people by id, never by leaf. A name two people have is `shared`: a page asks which one, and never picks one for the owner. tests/frontend/person-directory.test.mjs holds it to the owner's real case: a pet
 // and a friend of one name.
@@ -137,7 +137,7 @@ export function personFields(person) {
 const textKey = (text) => String(text ?? '').trim().toLowerCase();
 
 export class PeopleDirectory {
-    /** `records`: the answer of /api/people?records=1 (anything else in the list -- a name, a failed lookup's object -- is let go). */
+    /** `records`: the answer of /api/people (anything else in the list -- a name, a failed lookup's object -- is let go). */
     constructor(records = []) {
         this.records = (Array.isArray(records) ? records : [])
             .filter(each => each && typeof each === 'object' && each.id !== undefined && each.id !== null && each.tag);

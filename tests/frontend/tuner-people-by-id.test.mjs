@@ -1,7 +1,7 @@
 /**
  * TagTuner with two people called alike (identity by id, stage 2, part C, phase 6): the owner's real case is one shared leaf, a pet
  * and a friend both called Sam, so the library here has a Sam under Friends and a Sam under Pets beside a Wren nobody shares a
- * name with. The answers are the server's shapes (/api/people?records=1, /api/people-with-counts with `person`, the Identify
+ * name with. The answers are the server's shapes (/api/people, /api/people-with-counts with `person`, the Identify
  * queue's `person_id`, a face's `suggested_person_id`); names are made up.
  *
  * What the pages must do: show the name, with the full tag as the hover; choose a person by the id of their node, so the second
@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -39,9 +39,7 @@ function reviewPeople(faces = [face(1), face(2)]) {
     .on("/api/folder/index-active", { active: [], queued: [], busy: false, remaining: 0 })
     .on("/api/photos", [])
     .on("/api/people-with-counts", COUNTS)
-    .first("/api/people?records=1", RECORDS)
-    .on("/api/people?include_hidden=1", ["Sam", "Wren"])
-    .on("/api/people", ["Sam", "Wren"])
+    .first(PEOPLE_ROUTE, RECORDS)
     .on("/api/person-faces", { faces, total: faces.length })
     .on("/api/faces/match-bulk", { success: true, matched_ids: faces.map((each) => each.id) })
     .on("/api/person/rename", { success: true, photos_affected: 1, photos_rewritten: 1 })
@@ -199,12 +197,12 @@ describe("naming faces as one of two people called alike", () => {
     ctx.window.alert = (text) => said.push(String(text));
     ctx.server.first("/api/faces/match-bulk", { success: false, error: "That person is no longer in the tag tree (they may have been merged or removed in another window): reload the page." }, { status: 404 });
     const asked = (what) => ctx.server.urls().filter((url) => url.includes(what)).length;
-    const before = [asked("/api/people?records=1"), asked("/api/people-with-counts")];
+    const before = [asked("/api/people?include_hidden=1"), asked("/api/people-with-counts")];
     type(ctx, "Pets/Sam");
     click(ctx.window, ctx.document.getElementById("btn-reassign-selected"));
     await wait(ctx.window, 120);
     assert.match(said[0], /no longer in the tag tree/);
-    assert.equal(asked("/api/people?records=1"), before[0] + 1, "the people are read again");
+    assert.equal(asked("/api/people?include_hidden=1"), before[0] + 1, "the people are read again");
     assert.equal(asked("/api/people-with-counts"), before[1] + 1, "so is the list");
   });
 
@@ -241,7 +239,7 @@ describe("one question at a time, about the people it was asked about", () => {
   const ALEX_I = { id: 61, name: "Alex", tag: "Family/Ingersoll/Cousins/Alex" };
 
   test("a second question about OTHER people replaces the first, which is answered none -- never answered by its choice", async (t) => {
-    const server = reviewPeople().first("/api/people?records=1", [...RECORDS, ALEX_T, ALEX_I]);
+    const server = reviewPeople().first(PEOPLE_ROUTE, [...RECORDS, ALEX_T, ALEX_I]);
     const ctx = await openReviewPeople(t, server);
     click(ctx.window, ctx.rows()[2]);
     await flush(ctx.window, 8);
@@ -285,8 +283,7 @@ describe("Identify Faces with the two Sams", () => {
       .on("/api/unmatched-faces/build-status", { active: false })
       .on("/api/faces/match-bulk", { success: true, matched_ids: faces.map((each) => each.id) })
       .on("/api/people-with-counts", [])
-      .first("/api/people?records=1", RECORDS)
-      .on("/api/people", ["Sam", "Wren"]);
+      .first(PEOPLE_ROUTE, RECORDS);
   }
 
   test("the queue's rows are told apart by id and each opens its own candidates", async (t) => {

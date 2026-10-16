@@ -15,7 +15,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, PUBLISHED_RULES } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, PUBLISHED_RULES, PEOPLE_ROUTE } from "./harness.mjs";
 
 const NAME = "Unknown Faces";
 
@@ -51,7 +51,7 @@ function build(people, faces) {
       limit: -1,
     })
     .on("/api/people-with-counts", [])
-    .on("/api/people", ["Rory Olwen", "Kira Bao"])
+    .on(PEOPLE_ROUTE, [{ id: 21, name: "Rory Olwen", tag: "People/Rory Olwen" }, { id: 22, name: "Kira Bao", tag: "People/Kira Bao" }])
     .on("/api/faces/match-bulk", { success: true, matched: 1 });
 }
 
@@ -141,10 +141,9 @@ describe("assigning a mixed selection", () => {
 
     const sent = ctx.server.calls
       .filter((c) => c.url.includes("/api/faces/match-bulk") && c.body)
-      .map((c) => [c.body.person_name, c.body.face_ids]);
-    const names = sent.map(([name]) => name).sort();
-    assert.deepEqual(names, ["Kira Bao", "Rory Olwen"],
-      `assigned: ${JSON.stringify(sent)}`);
+      .map((c) => [c.body.person_id, c.body.face_ids]);
+    const people = sent.map(([id]) => id).sort();
+    assert.deepEqual(people, [21, 22], `assigned: ${JSON.stringify(sent)}`);
   });
 
   test("declining sends nothing", async (t) => {
@@ -493,7 +492,7 @@ describe("a selection that agrees who it is", () => {
     const sent = ctx.server.calls
       .filter((c) => c.url.includes("/api/faces/match-bulk") && c.body);
     assert.equal(sent.length, 1, "an agreeing selection needs one call, not one each");
-    assert.equal(sent[0].body.person_name, "Rory Olwen");
+    assert.equal(sent[0].body.person_id, 21, "Rory Olwen, by id");
     assert.deepEqual(sent[0].body.face_ids.sort(), [1, 2, 3]);
   });
 
