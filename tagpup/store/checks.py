@@ -7,6 +7,7 @@ saying whose.
 """
 import collections
 import os
+import weakref
 
 from tagpup.core import paths, vocabulary
 from tagpup.store import derived, generations, people, person_ids, roots_check, schema, search_index, taxonomy
@@ -258,12 +259,27 @@ def _roots_or_why(conn):
         return None, str(problem)
 
 
+#: The last scan of each connection's rooted rows (roots_check.broken): {conn: (what says nothing was written since -- the
+#: connection's own changes and other connections' commits, PRAGMA data_version --, the Roots it was read by, what it found)}.
+#: The two rules below read one scan, not one each (#1383: 0.34 s each on photo_index); a write or another Roots reads again.
+_scanned = weakref.WeakKeyDictionary()
+
+
+def _rooted(conn):
+    roots = _roots_or_why(conn)[0]
+    stamp = (conn.total_changes, conn.execute("PRAGMA data_version").fetchone()[0])
+    held = _scanned.get(conn)
+    if held is None or held[0] != stamp or held[1] is not roots:
+        held = _scanned[conn] = (stamp, roots, roots_check.broken(conn, roots)[0])
+    return held[2]
+
+
 def rooted_rows_convert(conn):
     """Rooted rows -- `@name/...` in a path column -- that cannot be read: the root is not the
     library's, this machine does not place it (machine_roots.json), the row is not what
     paths.to_row writes, or the file lies under another root's place (roots_check.broken). A photo
     is named by its id, any other row by its table and key."""
-    found, _why = roots_check.broken(conn, _roots_or_why(conn)[0])
+    found = _rooted(conn)
     return _check("rooted rows that do not convert back", [row for kind in roots_check.DO_NOT_CONVERT for row in found[kind]])
 
 
@@ -272,8 +288,7 @@ def native_rows_under_a_root(conn):
     that converted by the roots the library had before another process added one
     (docs/ARCHITECTURE.md, "Roots and machines"; roots_check.broken). Nothing when this machine
     does not place the roots: rooted_rows_convert says so. A photo is named by its id."""
-    found, _why = roots_check.broken(conn, _roots_or_why(conn)[0])
-    return _check("native rows under a root", found[roots_check.NATIVE])
+    return _check("native rows under a root", _rooted(conn)[roots_check.NATIVE])
 
 
 def unrooted_by_folder(conn):

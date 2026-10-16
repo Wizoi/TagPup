@@ -11,7 +11,8 @@ Lifted: test_derived_checks and test_doctor_sees_the_derived_tables (each rule i
 forgot, the doctor counts it, the repair settles it). Break that fails the kept test: checks.photo_tags_out_of_date
 returns [] -> test_a_writer_that_changed_a_photos_keywords_and_did_not_refresh fails. Deleted with no scenario, since
 no library below migration 4 exists (the three live ones are at 31 and the kept snapshots at 14 or later): the doctor
-reading a library "from before photo ids" (#78); the not-yet-migrated arm stays in the two tests that say it.
+reading a library "from before photo ids" (#78); the not-yet-migrated arm stays in the doctor's test that says it (a
+step ahead of the library, migration_names.ahead), not in one that deleted the version row, which no library has.
 """
 import hashlib
 import json
@@ -20,8 +21,9 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
-from tagpup.store import checks, db, derived, people, schema, taxonomy
+from tagpup.store import checks, db, derived, people, roots_check, schema, taxonomy
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 import doctor  # noqa: E402
@@ -139,11 +141,6 @@ class TheRules(Library):
         self.conn.commit()
         self.assertEqual({"tree nodes whose parent is missing": 1}, self.broken())
 
-    def test_a_library_not_yet_migrated(self):
-        self.conn.execute("DELETE FROM schema_version WHERE version = ?", (schema.LATEST,))
-        self.conn.commit()
-        self.assertEqual({"migrations not applied": 1}, self.broken())
-
     def test_a_trigger_that_keeps_a_generation_gone(self):
         # Three rows in `generations` say nothing about whether anything moves them (#60).
         self.conn.execute("DROP TRIGGER generation_faces_update")
@@ -158,6 +155,29 @@ class TheRules(Library):
         self.assertIn("rows whose file is not on disk: 1, in 1 folder(s); 0 folder(s) are gone entirely; 0 row(s) not "
                       "looked at", " | ".join(said))
         self.assertIn("         1  %s" % self.dir, said)
+
+
+class TheRootedRowsAreReadOnce(Library):
+    """The doctor's two rules of the rooted rows (rooted_rows_convert, native_rows_under_a_root) read one scan of every
+    path row, not one each (#1383); a write on the connection, or another's commit, reads them again."""
+
+    def test_one_scan_for_both_and_another_after_each_write(self):
+        self.photo("a.jpg")
+        with mock.patch.object(roots_check, "broken", wraps=roots_check.broken) as scan:
+            self.assertEqual({}, self.broken())
+            self.assertEqual(1, scan.call_count, "the two rules scanned the rows each")
+            self.conn.execute("INSERT INTO photos (path, mtime, size, tags) VALUES ('@nowhere/b.jpg', 1, 1, '[]')")
+            self.assertEqual(1, checks.rooted_rows_convert(self.conn).count, "its own write was not read")
+            self.conn.commit()
+            other = db.connect(self.db_path)
+            try:
+                other.execute("INSERT INTO photos (path, mtime, size, tags) VALUES ('@nowhere/c.jpg', 1, 1, '[]')")
+                other.commit()
+            finally:
+                other.close()
+            self.assertEqual(2, checks.rooted_rows_convert(self.conn).count, "another connection's commit was not read")
+            self.assertEqual(0, checks.native_rows_under_a_root(self.conn).count)
+            self.assertEqual(3, scan.call_count)
 
 
 class TheDoctor(Library):

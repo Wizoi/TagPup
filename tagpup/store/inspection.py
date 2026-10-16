@@ -10,7 +10,7 @@ import json
 import re
 import sqlite3
 
-from tagpup.store import person_ids
+from tagpup.store import person_ids, schema
 from tagpup.store import roots as store_roots
 
 #: How many ids go in one IN (...): well under SQLite's limit on parameters.
@@ -37,10 +37,8 @@ def _json(text, empty):
 # ---- What a library holds ---------------------------------------------------------------
 
 def schema_version(conn):
-    """The highest migration applied, or 0 before any was recorded."""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'").fetchone():
-        return 0
-    return conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
+    """The highest migration applied, or 0 before any was recorded (schema.version)."""
+    return schema.version(conn)
 
 
 def tree_nodes(conn):
