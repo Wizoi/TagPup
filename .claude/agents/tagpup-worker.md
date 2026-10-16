@@ -35,7 +35,7 @@ Answer each of these in the design, not after a review asks. Most review rounds 
 of them, missed:
 - **Interrupted part-way**: a crash, a restart, the owner closing the tab. What is left, and
   what settles it?
-- **Two at once**: two requests, two threads, two processes (the always-on server and a CLI
+- **Two at once**: two requests, two threads, two processes (the server and a CLI
   run), two libraries sharing a folder. What serializes them?
 - **A read that fails**: a locked or missing library, an unreadable file, a network share
   gone. Does it fail loudly, or decide something wrong?
@@ -53,7 +53,7 @@ of them, missed:
   action that produces it (CLAUDE.md, 'A special case needs a real instance'). If it has neither, refuse the write that
   could make it and write no branch. Say in the report which cases you did not handle for that reason.
 Test the scenario the owner lives in, not only the unit: rapid clicks, switching library
-mid-folder, two libraries holding one folder, the always-on process updating.
+mid-folder, two libraries holding one folder, the server updating.
 
 ## Ask before a one-way choice
 Stop and put the question in your report, instead of building it, when a choice cannot be
