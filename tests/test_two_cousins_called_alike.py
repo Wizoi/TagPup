@@ -326,6 +326,9 @@ class NoIndex:
 
 
 class OneFace:
+    def ready(self):
+        """The run's turn on the graphics card (tagpup.runtime._OnTheCard): nothing to wait for here."""
+
     def detect_and_embed_faces(self, path):
         return [{"box": [0, 0, 100, 100], "embedding": unit([1, 0, 0]).tolist(), "prob": 0.99}]
 

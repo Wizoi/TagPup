@@ -232,8 +232,7 @@ class TagSuggester:
         if not self.embedder or not self.candidate_tags or self.candidate_embeddings:
             return
 
-        model_name = getattr(self.embedder, "model_name", "unknown")
-        pretrained = getattr(self.embedder, "pretrained", "unknown")
+        model_name, pretrained = self.embedder.model_name, self.embedder.pretrained
 
         needed_tags = []
         for tag in self.candidate_tags:
@@ -264,14 +263,14 @@ class TagSuggester:
         """Get standard or year-specific candidate embeddings."""
         self._precompute_candidates()
 
-        if year is None:
+        # No CLIP model (a run that only matches faces) has no words to ask it about, of any year.
+        if year is None or not self.embedder:
             return self.candidate_embeddings
 
         if year in self.year_candidate_embeddings:
             return self.year_candidate_embeddings[year]
 
-        model_name = getattr(self.embedder, "model_name", "unknown")
-        pretrained = getattr(self.embedder, "pretrained", "unknown")
+        model_name, pretrained = self.embedder.model_name, self.embedder.pretrained
 
         year_embeddings = {}
         needed_tags = []
@@ -465,9 +464,8 @@ class TagSuggester:
             # A face model that waits for its turn on the graphics card (a Suggest run's,
             # tagpup.runtime) is waited for first, and the library asked again: the turn
             # may have been the index's, recording this photo's faces (#750).
-            ready = getattr(self.faces, "ready", None)
-            if not has_face_rows and callable(ready):
-                ready()
+            if not has_face_rows and self.faces is not None:
+                self.faces.ready()
                 has_face_rows, detected_faces = on_file()
 
             # If not in database, detect and embed on-the-fly
@@ -769,7 +767,7 @@ class SuggestionModel:
         when it is done: [sentence]. A new library holds no vectors and no named faces, and
         its photos are then suggested nothing -- not an error, so the page is told why."""
         notes = []
-        if getattr(self.suggester.index, "indexed", None) == 0:
+        if self.suggester.index.indexed == 0:
             notes.append("The library has no photo vectors yet, so no tags are suggested from similar photos.")
         try:
             if not self.suggester.knows_named_faces():
