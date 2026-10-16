@@ -110,8 +110,8 @@ reach-in), work in this order and say so in your report:
    count is zero) is reported as stale, not fixed; the main session closes the row.
 3. **Do the whole sweep in the branch**, cut into commits one concern each, within the branch size rule. One concern
    per run: when your context passes about 150k tokens, commit what you have and report, so a fresh worker does the rest.
-4. **Check your own diff against the seven health conditions** of the domain's charter before you report: reach-ins, a
-   rule written twice, hidden coupling, a concept that could collapse, a branch with no live instance, scenario tests
-   mapped, an open data/wrong finding. Name each as met (with the evidence) or what remains and why. The owner's review
-   should find nothing a grep of your own diff would have found.
+4. **Check your own diff against the seven health conditions** (docs/OWNERS.md) before you report, for EVERY brief: a
+   feature, a domain pass, a removal: reach-ins, a rule written twice, hidden coupling, a concept that could collapse, a
+   branch with no live instance, scenario tests mapped, an open data/wrong finding. Name each as met (with the evidence)
+   or what remains and why. The owner's review should find nothing a grep of your own diff would have found.
 5. **Every `low` you leave is fixed or by design** (the reason cited): never 'left'.

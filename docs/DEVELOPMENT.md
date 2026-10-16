@@ -52,7 +52,7 @@ change and the result with it after ("Performance work", below).
 
 **The suite's tiers.** `tools/run_tests.py --fast` runs only the fast tier (`tests/tiers.py`): scenario tests, which run
 a whole job, a crash or two writers at once, and slow ones, the hand-over and the 68,000-photo library, are left out.
-The default is every tier, and that is the commit gate: about 4,300 tests, about 5 minutes (350-700 s under load). A
+The default is every tier, and that is the commit gate: about 3,600 tests, about 5 minutes (350-700 s under load). A
 file that fails is run once more alone: if it passes, the report says "flaky: passed alone" and keeps the first output;
 if it fails twice it fails. The main session runs the whole suite once on the merged trunk and never beside another
 suite run (two or three at once on one machine tripped load-sensitive tests); a break it finds goes back to the worker
@@ -118,10 +118,10 @@ affected.)
 
 | suite | command | count |
 | --- | --- | --- |
-| Python | `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"` | ~1,300 |
+| Python | `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"` | 3,603 (the loader's count, 2026-10-16) |
 | Python, across the cores | `.venv/Scripts/python.exe tools/run_tests.py` | the same |
 | Python, what a change affects | `.venv/Scripts/python.exe tools/affected_tests.py --run` | a subset |
-| Frontend | `node --test tests/frontend/*.test.mjs` | ~500 |
+| Frontend | `node --test tests/frontend/*.test.mjs` | 1,586 (2026-10-16) |
 | Lint | `.venv/Scripts/python.exe -m ruff check .` | runs inside the Python suite |
 
 `tools/affected_tests.py` picks the test files that import what changed since the last

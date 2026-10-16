@@ -18,13 +18,14 @@ were made twice.
 
 **Imports and `scripts/`**: new code imports from the package (`from tagpup.store import db`); `scripts/` holds programs
 with a `__main__` block and the few helpers they share (`_root`, `code_snapshot`, `reloader`), imported by nothing but
-their own tests; a module that moves takes every importer with it and leaves nothing at its old name (`tests/test_layers.py`).
+their own tests; a module that moves takes every importer with it in the same commit and leaves nothing at its old
+name (`tests/test_layers.py`).
 
 ## Running things
 
 ```
 .venv/Scripts/python.exe tools/run_tests.py --fast      # the fast tier, the loop while editing
-.venv/Scripts/python.exe tools/run_tests.py             # every tier: the commit gate (about 4,300 tests, about 5 minutes)
+.venv/Scripts/python.exe tools/run_tests.py             # every tier: the commit gate (about 3,600 tests, about 5 minutes)
 .venv/Scripts/python.exe tools/affected_tests.py        # the test files a change reaches
 .venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"
 node --test tests/frontend/*.test.mjs                   # the glob: `node --test tests/frontend/` fails on harness.mjs
@@ -32,7 +33,7 @@ node --test tests/frontend/*.test.mjs                   # the glob: `node --test
 ```
 
 No `pip.exe`, no `Activate.ps1`, no pytest: invoke the interpreter by path. `ruff.toml` selects rules that catch defects;
-one wrong for this codebase is turned off there with a comment saying why. **A worker does not run the whole suite**
+one wrong for this codebase is turned off there with a comment saying why, rather than working around it. **A worker does not run the whole suite**
 (owner, 2026-10-11): it runs the files it changes and `affected_tests.py` while it edits, and once at the end `--fast`
 plus every test file it added or changed; the main session runs the whole suite once on the merged trunk, never beside
 another run. The tiers, the flaky re-run and the logs: docs/DEVELOPMENT.md, "Running things".
@@ -51,7 +52,7 @@ Each names its one owner and the guard that fails the build when it is broken.
 - **Never call `sqlite3.connect`**: `tagpup/store/db.py` owns journal mode, busy timeout, the per-file write lock and the
   retry (`tests/test_db_access.py`).
 - **Never call `subprocess` yourself**: `tagpup/core/processes.py` (`start`, `run`, `kill_tree`, `is_alive`) gives every
-  child a hidden console (`tests/test_processes_single_owner.py`).
+  child a hidden console (`tests/test_rules_have_one_owner.py`; what the owner does: `tests/test_processes_single_owner.py`).
 - **Never construct `ExifToolHelper` or `ExifTool`**: `ExifToolSession` (`tagpup/files/exiftool_session.py`) drains both
   pipes and gives each command a deadline (`tests/test_rules_have_one_owner.py`).
 - **Never load a model on the GPU yourself**: `tagpup/ml/gpu.py`, one process at a time; take a turn through
@@ -60,7 +61,8 @@ Each names its one owner and the guard that fails the build when it is broken.
   `sql_under()`); in the pages `pathKey` / `samePath` (`web/common/paths.js`) (`tests/test_rules_have_one_owner.py`,
   `tests/frontend/path-helpers.test.mjs`).
 - **A library's settings live in the library**, read through `tagpup.services.settings` and changed only by a journaled
-  change; nothing reads `config.ini` (`tagpup/config.py` owns only where the libraries are) (`tests/test_config_single_owner.py`).
+  change; an entry point reads them from the library it was given (`tagpup.runtime.library_settings`); nothing reads
+  `config.ini` (`tagpup/config.py` owns only where the libraries are) (`tests/test_config_single_owner.py`).
 - **Never convert between a person's name and their tag by hand**: identity is a leaf (`Rowan Thackeray`), the tag a path
   (`People/Rowan Thackeray`): `leafOf`, `rootOf`, `samePerson`, `photoAlreadyHas` in `web/common/vocabulary.js`;
   `tagpup.core.vocabulary` and `taxonomy.person_paths()` in Python (`tests/test_vocabulary.py`, `tag-vocabulary.test.mjs`).
@@ -83,7 +85,8 @@ Each names its one owner and the guard that fails the build when it is broken.
 - `LIKE` is not equality. It ignores case and reads `_` and `%` as wildcards, so
   `IMG_0001.jpg` also matches `IMGX0001.jpg` -- in an `UPDATE`, other photos change.
 - A function on a column (`LOWER(path) = ?`) cannot use its index. Neither can a
-  comparison whose collation differs from the index's. (On a path column both fail `tests/test_rules_have_one_owner.py`.)
+  comparison whose collation differs from the index's. (`LOWER(path)` and `LIKE` on a path column fail
+  `tests/test_rules_have_one_owner.py`; a collation mismatch has no guard.)
 - Never select a BLOB you do not use. `SELECT *` on `faces` is ten seconds cold.
 - A query in a per-item loop that answers the same thing each time belongs outside it.
 - Check `EXPLAIN QUERY PLAN` against `data/photo_index.db` (read-only, via
@@ -148,9 +151,11 @@ domain and which files are its, plus what is particular to the task.
 
 The feature freeze (2026-10-09) is lifted (2026-10-16): the five domains meet the seven conditions of health, and each
 keeps them by its owner's review of every change ([docs/OWNERS.md](docs/OWNERS.md), "Every owner's standing goal and
-checklist"; DECISIONS 2026-10-15 and 2026-10-16). A feature is taken one at a time, its live count in the brief, planned
-by the owners of the domains it touches, built by one worker, reviewed once by each owner: it adds no debt, or it is
-refused. No schema work while the owner's note of DECISIONS 2026-10-15 stands.
+checklist"; DECISIONS 2026-10-15 and 2026-10-16). The seven: no reach-ins, no rule written twice, no hidden coupling, no
+concept that could collapse, no branch without an instance, scenario tests owned and mapped, no open `data`/`wrong` finding.
+A feature is taken one at a time, its live count in the brief, planned by the owners of the domains it touches (a sweep
+first, the single place that owns each rule named), built by one worker who checks its diff against the seven conditions,
+reviewed once by each owner: it adds no debt, or it is refused. No schema work while DECISIONS 2026-10-15's note stands.
 - **A branch adds about 1,200 lines or fewer, one concern.** A larger piece is cut into merges that each leave the trunk
   whole; a deletion is never over budget (DECISIONS 2026-10-16).
 - **At most two review rounds**, the ownership question ("which single place should own this?") in the second; a round
