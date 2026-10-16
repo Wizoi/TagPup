@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 from test_faces_and_tags_in_step import PEOPLE, InStep  # noqa: E402
 from test_file_journal import Crash, crash_at  # noqa: E402
 from test_organize_faces import ODA, WREN  # noqa: E402
@@ -21,6 +22,7 @@ from tagpup.core.result import Conflict  # noqa: E402
 from tagpup.services import activity, batches, face_assignment, file_changes, identify, job_runs  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.store import db, people, taxonomy  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.web import face_routes  # noqa: E402
 
 ASSIGN = "assign faces to a person"
@@ -268,9 +270,11 @@ class TakingNamesOffMany(Bulk):
     def test_a_face_named_since_is_left_by_the_undo_and_the_rest_is_put_back(self):
         made = self.many(3, [PEOPLE + WREN], name=WREN, name_source="manual")
         change = self.tuner_post("faces/exclude", {"face_ids": [f for _p, f in made], "bulk": True}).get_json()["change"]
-        db.write_with_connection(self.path, lambda conn: conn.execute(
-            "UPDATE faces SET excluded = 0, excluded_reason = NULL, name = ?, tag_id = NULL, name_source = 'manual' WHERE id = ?",
-            (ODA, made[1][1])))
+        def restored_and_named(conn):
+            """The owner brings the face back and names it Oda by hand (the store's writers: restore, then name by the id)."""
+            store_faces.restore(conn, [made[1][1]])
+            store_faces.name(conn, [made[1][1]], face_rows.person_of(conn, ODA))
+        db.write_with_connection(self.path, restored_and_named)
         self.assertEqual(1, self.undo(change)["faces_left"], "the undo did not count the face it left")
         self.assertEqual([WREN, ODA, WREN], [self.row(f)[0] for _p, f in made], "somebody's newer decision was overwritten")
         self.assertEqual([[PEOPLE + WREN]] * 3, [self.tags(p) for p, _f in made], "the tags go back with the files")
