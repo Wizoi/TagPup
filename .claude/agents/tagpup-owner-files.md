@@ -21,6 +21,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 - Services: `tagpup/services/file_changes.py`, `tagpup/services/tagging.py` (the keyword and save writes), `tagpup/services/batches.py`, `tagpup/services/file_only.py`, `tagpup/services/rotation.py`, `tagpup/services/sync.py`, `tagpup/services/photos.py`, `tagpup/services/refresh_rows.py`, `tagpup/services/relink_photos.py`, `tagpup/services/bulk_edit.py`, `tagpup/services/indexing.py`, `tagpup/services/folder_scope.py`
 - Jobs: `tagpup/jobs/indexing.py`, `tagpup/jobs/watching.py`
 - Store: `tagpup/store/photos.py`, `tagpup/store/folders.py`, `tagpup/store/inspection.py` (what the MCP's row-against-file answers read)
+- Pages (the Files page tests: path-helpers, bulk-edit, unsaved-edits, retried-save, write-queue-status, smart-rename-count, tuner-picker-and-queue): `web/common/paths.js`, `web/tagpup/edits.js`, `web/tagpup/write-queue.js`, `web/tagpup/bulk-edit.js`, `web/tagpup/bulk-run.js`, `web/tagpup/bulk-words.js`, `web/tagpup/rename.js`, `web/tuner/indexing.js`
 - The MCP's entry: `tagpup/mcp/__main__.py` (its tools, the MCP server, are Integration's)
 - The `index` command in `tagpup_cli.py` (a shell over the indexer that still holds its flow; the server's index job is a subprocess of it)
 - Tables: `photos` (`tags`, `captions`, `raw_metadata`, `taken`, `year`, `document_id`, `mtime`, `size`: the file copies), `folders`, `photo_folder`. Their journal and rebuild are Data's; roots as stored data are Data's.
