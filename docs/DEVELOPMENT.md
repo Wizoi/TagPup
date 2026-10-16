@@ -48,7 +48,71 @@ on it as its own process with the sandbox as `TAGPUP_HOME` on a free port, drive
 Identify grid in headless Chromium, and deletes the sandbox afterwards, saying so if it
 cannot. It times Ignore Cluster by default and New Person with `--action new-person`,
 each from the click until the page is usable again. Take the baseline with it before a
-change and the result with it after (CLAUDE.md, "Performance work").
+change and the result with it after ("Performance work", below).
+
+**The suite's tiers.** `tools/run_tests.py --fast` runs only the fast tier (`tests/tiers.py`): scenario tests, which run
+a whole job, a crash or two writers at once, and slow ones, the hand-over and the 68,000-photo library, are left out.
+The default is every tier, and that is the commit gate: about 4,300 tests, about 5 minutes (350-700 s under load). A
+file that fails is run once more alone: if it passes, the report says "flaky: passed alone" and keeps the first output;
+if it fails twice it fails. The main session runs the whole suite once on the merged trunk and never beside another
+suite run (two or three at once on one machine tripped load-sensitive tests); a break it finds goes back to the worker
+with the file names, and a change made after a review runs only the files it touched.
+
+**An install hands over to the running server.** Each launcher installs a newer clean commit, then replaces a server
+of another version still running once it has finished its work; `scripts/install_app.py --apply` does the same itself:
+it waits for the running server's work, ends it and starts the new version on the same ports with no window, so an
+open page shows the "updated" banner (`tagpup.launcher.hand_over`). `--no-restart` only installs; it refuses a `--home`
+with no library.
+
+## Performance work
+
+Read this before claiming anything got faster. Every line of it was paid for by
+shipping a "43s → 0.19s" result for a screen that was exactly as slow as before.
+
+**A performance claim is a claim about a user action.** The unit is the thing the
+person described — "ignoring a cluster is slow" means click Ignore Cluster, wait until
+the app is usable. Not an endpoint, not a query, not a function. If the report names a
+click, the result names the same click or there is no result.
+
+**Measure the scenario, not your hypothesis.** The failure was measuring
+`POST /exclude` then `GET /person-matches` — a pair of calls the app never makes,
+invented because the suspect was the server. It made the hypothesis look right while
+the real cost, a full DOM rebuild in the browser, was never in the number at all. Ask
+what the app actually does on that click, in order, and time exactly that.
+
+**Baseline first, with the harness that will report the result.** Reproduce the
+reported slowness before changing a line. A harness that cannot reproduce it is not
+measuring the reported thing, and every conclusion drawn from it afterwards is about
+something else. If the baseline comes out fast, the harness is wrong — not the report.
+
+**The browser is half the system.** Server timings are a diagnosis, never a result.
+Rendering tens of thousands of cards, clearing tens of thousands of `img.src`, and
+rebuilding the DOM cost seconds, and no server timing can see any of it.
+`scripts/measure_identify_faces.py` drives the real app in a real browser; use it, or
+write its equivalent for the screen in question.
+
+**Usable, not merely returned.** A page that removes the cards and *then* blocks for
+ten seconds rebuilding passes a "are the cards gone" check. Wait for the main thread
+as well.
+
+**Validate in a sandbox; never in the app somebody is using.** Copy the library, copy
+the code, give it its own `TAGPUP_HOME` and a free port, and run it as a separate
+process. All four, not some of them — a copy on a different port that still lives in
+`data/` shows up in the database picker of the app they have open, and code run from
+the repo shares the reloader with their server. `scripts/measure_identify_faces.py`
+builds that sandbox and deletes it afterwards; measurement runs should leave nothing
+behind and nothing changed.
+
+**Delete what you created, and say so if you cannot.** The first version of that script
+used `rmtree(..., ignore_errors=True)` and quietly left 2.7 GB in the temp directory on
+every run, because Windows had not released the server's file handles yet. Retry, then
+report.
+
+**Don't edit `.py` while somebody is testing from the repository.** The reloader
+restarts the server and wipes every in-memory cache, so their run and yours are both
+measuring a cold start. Say when you are about to, or wait. (The installed apps are not
+affected.)
+
 
 ## Tests
 
@@ -267,3 +331,21 @@ Retired on 2026-09-24 with nothing left to do on either library, and in git's hi
   everybody who meets it, including the person who built it.
 - **Unknown Faces is mostly photos with no people keywords at all.** Of 6,393 unnamed
   faces with no name to file them under, 5,464 were in photos naming nobody.
+
+## The incidents behind CLAUDE.md's working rules
+
+CLAUDE.md keeps each rule as a line; the story of a rule whose incident is not told elsewhere (docs/INVARIANTS.md, the
+closed findings in docs/history/, docs/retros/) is here.
+
+- **Find the existing owner before briefing a new tool.** A worker asked for a new repair script had half of it built
+  before `refresh_rows` turned out to own the job.
+- **Test the scenario the owner works in.** Both bugs that reached the owner on 2026-09-28 lived between features each
+  tested alone.
+- **A one-way choice is asked first.** Two were built, reviewed and thrown away in one day (automatic roots; a row for
+  every photo of an added folder).
+- **The review loop ends at the second round.** The 9d-1 resume ran six rounds, each finding a deeper way to shift a
+  photo twice; the fix that ended it (the journal keeps every change a job may still need) was the owner-of-the-rule fix
+  nobody asked for until round six. Wording and polish are batched, not re-reviewed.
+- **Commit before launching background agents.** Two restarts on 2026-10-03/04 killed five agents; the uncommitted work
+  survived only because it sat in a worktree.
+- **One session per phase.** Most of the cost was context re-read, not work (docs/retros/2026-10-16-freeze.md).
