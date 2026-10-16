@@ -71,6 +71,7 @@ def lines_spelling(page, pattern, *exempt):
 PATHS = os.path.join("tagpup", "core", "paths.py")
 PROCESSES = os.path.join("tagpup", "core", "processes.py")
 EXIFTOOL = os.path.join("tagpup", "files", "exiftool_session.py")
+FIELD_VALUES = os.path.join("tagpup", "files", "field_values.py")
 #: A line that is genuinely not about a photo path -- a tag hierarchy, a database file's URI -- says so, which keeps
 #: each exception visible where it is made.
 NOT_A_PATH = "# not a path:"
@@ -95,6 +96,10 @@ LINE_RULES = (
     # stderr, a batch drawing a warning per file fills the 4 KB stderr pipe, and two scripts sat at 0% CPU for two days.
     ("pyexiftool constructed directly", EXIFTOOL, r"\b(?:exiftool\.)?(ExifToolHelper|ExifToolAlpha|ExifTool)\s*\(",
      "with exiftool.ExifTool(executable=path) as et:", "class ExifToolSession(exiftool.ExifToolHelper", ""),
+    # A photo's fields are written by one writer, field_values.write: the indexer's identity mint built its own set_tags,
+    # outside the writer's clears, its minor-error rule and its guard (#1473, #1418).
+    ("an ExifTool write outside field_values", FIELD_VALUES, r"\.set_tags\(|-overwrite_original",
+     'et.set_tags([path], tags=tags, params=["-overwrite_original"])', "-overwrite_original", ""),
     # Other processes are started, run and stopped through tagpup.core.processes: every spawn decided for itself
     # whether the child got a console window, and a test run put a terminal window on the desktop for every server it
     # started and every reaper (#124).

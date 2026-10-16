@@ -20,9 +20,9 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup.core.fields import read_document_id
+from tagpup.files.field_values import ensure_document_id
 from tagpup.files.identity import (
     DOCUMENT_ID_FIELD,
-    ensure_document_id,
     mint_document_id,
 )
 

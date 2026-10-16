@@ -14,7 +14,6 @@ from tagpup.core.fields import METADATA_FIELDS
 from tagpup.core.renaming import sanitize_filename  # noqa: F401  (imported from here by older code)
 from tagpup.files import field_values
 from tagpup.files.exiftool_session import ExifToolSession
-from tagpup.files.identity import ensure_document_id
 
 logger = logging.getLogger("tagpup_cli.metadata")
 
@@ -209,7 +208,7 @@ class IdentityWriter:
         et = self._session()
         if et is None:
             return None
-        minted = ensure_document_id(et, record["path"], record.get("raw_metadata"))
+        minted = field_values.ensure_document_id(et, record["path"], record.get("raw_metadata"))
         if not minted:
             return None
         self.minted += 1

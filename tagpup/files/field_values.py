@@ -141,3 +141,31 @@ def write(et, photo_path, values):
         identity.tolerating_minor_errors(et, photo_path, command, written=[fields.read_key(f) for f in values])
     else:
         command([], {})
+
+
+def ensure_document_id(et, path, metadata=None):
+    """Return this photo's identity, writing one into the file if it has none (tagpup.files.identity).
+
+    `metadata` is the dict already read for the photo, so the common case -- a photo
+    that has an identity -- costs nothing beyond a dictionary lookup. Only a photo
+    without one is written to, through write(): the one writer of a photo's fields.
+
+    The write is one command, made again with `-m` only when ExifTool refuses it for an
+    error it calls minor -- a photo with two XMP blocks -- carrying the keywords as they
+    hold (identity.tolerating_minor_errors); a lock or a timeout leaves the photo as it was.
+    A failure to write is logged and swallowed: an identity is an improvement on
+    knowing the path, and a photo that cannot take one is still perfectly indexable.
+    Returns None in that case, which every caller must treat as "no identity", not as
+    an error.
+    """
+    existing = fields.read_document_id(metadata)
+    if existing:
+        return existing
+    minted = identity.mint_document_id()
+    try:
+        write(et, path, {identity.DOCUMENT_ID_FIELD: minted})
+    except Exception as e:
+        logger.warning("Could not give %s an identity: %s", path, e)
+        return None
+    logger.debug("Minted %s for %s", minted, path)
+    return minted
