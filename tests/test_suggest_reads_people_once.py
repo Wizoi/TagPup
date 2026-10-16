@@ -135,25 +135,18 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
 
 
 class FaceModelsLoadOnce(unittest.TestCase):
-    def test_warm_up_actually_loads_the_models(self):
-        loaded = []
-
-        class Faces:
-            def load(self):
-                loaded.append(True)
-
-        Runtime(clip=mock.Mock(), faces=Faces()).warm_up()
-        self.assertEqual(loaded, [True])
-
-    def test_warm_up_builds_each_model_once_from_the_settings(self):
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    def library(self):
         import own_home
         from tagpup.core.library import Library
         from tagpup.services import libraries as library_actions
-        from tagpup.services import settings as library_settings
         home = own_home.for_test(self)
         library_actions.create(home.library("harbour.db"))
-        library = Library(home.library("harbour.db"))
+        return Library(home.library("harbour.db"))
+
+    def test_warm_up_builds_each_model_once_from_the_settings_and_loads_them(self):
+        """The warm-up that was meant to load the face models only built them; each load is counted here."""
+        from tagpup.services import settings as library_settings
+        library = self.library()
         with mock.patch.object(clip_model, "ClipModel") as clip, \
                 mock.patch.object(face_model, "FaceModel") as faces:
             runtime = Runtime()
@@ -169,10 +162,11 @@ class FaceModelsLoadOnce(unittest.TestCase):
         """The warm-up made a PhotoIndex on the startup library and kept it open until
         the process ended; a thread starting after the file had gone made an empty
         library in its place (docs/findings.md, #99). The models are the process's."""
+        library = self.library()
         opened = []
         with mock.patch.object(search, "PhotoIndex", side_effect=lambda *a, **k: opened.append(a)), \
                 self.assertNoLogs("tagpup.runtime", level="ERROR"):
-            Runtime(clip=mock.Mock(), faces=mock.Mock()).warm_up()
+            Runtime(build_clip=lambda settings: mock.Mock(), build_faces=lambda settings: mock.Mock()).warm_up([library])
         # The warm-up catches what a model raises, and logs it: a patch that raised was
         # swallowed there, so the library it opened is counted instead.
         self.assertEqual([], opened)

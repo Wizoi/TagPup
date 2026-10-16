@@ -470,6 +470,7 @@ class _OnTheCard:
 class _Lease:
     """One run's hold on a photo index and a set of models: `what` the run is ("Suggest Regatta (harbour)"), `models`
     the set it holds (_set_of) and `settings` its {part: settings} (PARTS), to name them to a run refused beside it.
+    The startup warm-up holds one with no index (Runtime.warm_up).
     The runs under way are the runtime's leases, and nothing else: what is held is read from them."""
 
     def __init__(self, index, what, models, settings):
@@ -776,27 +777,40 @@ class Runtime:
         Only when no one has to wait for the graphics card (tagpup.ml.gpu.Card.try_hold):
         with an index or a Suggest holding it or waiting for it, the warm-up is skipped and
         the first Suggest loads the models (#750).
+
+        While it loads it is a run under way, holding its set (a _Lease, ended in a finally): a Suggest in a library naming
+        another set is refused until it ends, as beside any run (#1423); with a run of another set under way, it warms
+        nothing.
         """
-        wanted = None
-        if self._clip is not None or self._faces is not None:
-            wanted = (None, None)
-        else:
-            counts, first = collections.Counter(), {}
-            for library in libraries:
-                try:
-                    settings = peek_settings(library)
-                    key = _set_of(settings)
-                except Exception as e:
-                    logger.error("Could not read the settings of %s to warm its models: %s", library.name, e)
-                    continue
-                counts[key] += 1
-                first.setdefault(key, (library, settings))
-            if counts:
-                # most_common keeps the first seen of equal counts first.
-                wanted = first[counts.most_common(1)[0][0]]
-        if wanted is None:
+        counts, first = collections.Counter(), {}
+        for library in libraries:
+            try:
+                settings = peek_settings(library)
+                key = _set_of(settings)
+            except Exception as e:
+                logger.error("Could not read the settings of %s to warm its models: %s", library.name, e)
+                continue
+            counts[key] += 1
+            first.setdefault(key, (library, settings))
+        if not counts:
             return
-        library, settings = wanted
+        # most_common keeps the first seen of equal counts first.
+        library, settings = first[counts.most_common(1)[0][0]]
+        what = "warming Suggest's models (TagPup server)"
+        with self._lock:
+            held = self._model_set(settings)
+            if any(other.models != held for other in self._leases):
+                logger.info("Not warming the models: a Suggest on other models is under way.")
+                return
+            lease = _Lease(None, what, held, {part: getattr(settings, part) for part in PARTS})
+            self._leases.append(lease)
+        try:
+            self._warm(library, settings, what)
+        finally:
+            self._end(lease)
+
+    def _warm(self, library, settings, what):
+        """warm_up's loading, under its lease."""
         try:
             models = (self.clip(library, settings), self.faces(library, settings))
         except Exception as e:
@@ -804,7 +818,7 @@ class Runtime:
             return
         hold = gpu.NoHold()
         if any(gpu.on_the_card(getattr(model, "device", None)) for model in models):
-            hold = self.card.try_hold("warming Suggest's models (TagPup server)")
+            hold = self.card.try_hold(what)
             if hold is None:
                 holder = gpu.read_holder(self.card.where)
                 logger.info("Not warming the models: the graphics card is in use by %s, or a process waits "
@@ -906,18 +920,19 @@ class Runtime:
         Refused, gpu_turns.OtherModelsInUse and nothing begun, while another run holds models of other settings: a
         library naming another CLIP model (or face settings) waits for the run before it to end (#761). Begun, the models
         of any other set, kept after the runs that used them, are let go before this run uses its own: one set on the
-        card, at once or one after the other; those of its own set are kept, for the idle period."""
+        card, at once or one after the other; those of its own set are kept, for the idle period. They are let go only
+        once this run's are made and its lease held: a run whose models cannot be made lets go of nothing (#1424)."""
         settings = self.settings(library)
         model_key = self.model_key(library, settings)
         what = what or "Suggest in %s" % library.name
         with self._lock:
             models = self._model_set(settings)
             self._refuse_another_set(library, settings, models)
-            dropped = self._drop_other_sets(models)
             photo_index = self._index(library, model_key)
             clip, faces = self.clip(library, settings), self.faces(library, settings)
             lease = _Lease(photo_index, what, models, {part: getattr(settings, part) for part in PARTS})
             self._leases.append(lease)
+            dropped = self._drop_other_sets(models)
         # Before the run's first use loads its own (a model built loads nothing until it is used).
         _unload(dropped)
         turn = _RunTurn(self.card, what, (clip, faces), cancelled, report)
