@@ -5,6 +5,8 @@ lasted 14 to 18 s: it read and stacked all of photo_index's vectors (267 MB) to 
 parsed the JSON of every photo's row to learn its mtime and size, and, if it indexed anything, read the
 vectors a second time at the end for a search nothing made. Here: the vectors are not read
 (PhotoIndex.open, stored_dim), the stamps are (store.photos.stamps_with_vectors), and the same photos are indexed.
+A run that finds nothing to index imports no model's library either (#1089): open_clip and torch, 2 of a 3.3 s run in a
+sandbox (6 to 8 s under load), were imported to compare a vector length and make a CLIP model nothing used.
 """
 import os
 import sys
@@ -21,6 +23,7 @@ from click.testing import CliRunner  # noqa: E402
 from PIL import Image  # noqa: E402
 
 import tagpup_cli  # noqa: E402
+from tagpup.core import processes  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import search  # noqa: E402
@@ -184,6 +187,42 @@ class TheIndexCommand(Harbour):
         self.assertEqual(0, result.exit_code, result.output)
         self.assertIn("All images are up to date", result.output)
         self.assertFalse(read)
+
+
+#: The CLI's index, run as the server's queue runs it, then the model libraries it imported.
+PROBE = (
+    "import sys\n"
+    "import tagpup_cli\n"
+    "try:\n"
+    "    tagpup_cli.cli(sys.argv[1:], standalone_mode=False)\n"
+    "finally:\n"
+    "    print('LOADED=' + ','.join(m for m in ('open_clip', 'torch') if m in sys.modules))\n")
+
+
+class AnIndexWithNothingToDo(Harbour):
+    """Every sync, watcher run and Add folder starts an index run; most find every photo current."""
+
+    def test_imports_no_models_library(self):
+        path = os.path.join(self.folder, "start.jpg")
+        Image.new("RGB", (8, 8)).save(path, "JPEG")
+        from tagpup.ml.clip import output_dim
+        embedder = library_settings.of(Library(self.db_path)).embedder
+        conn = db.connect(self.db_path)
+        try:
+            photo_rows.add_read(conn, path, {"XMP:Subject": ["Boats/Dinghy"]})
+            stat = os.stat(path)
+            # Its vector as the library's model makes it: under its key, of its length.
+            store_embeddings.put(conn, path, store_embeddings.model_key(**embedder), stat.st_mtime, stat.st_size,
+                                 np.ones(output_dim(embedder["model_name"]), dtype=np.float32).tobytes())
+            conn.commit()
+        finally:
+            conn.close()
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        done = processes.run([sys.executable, "-c", PROBE, "--db", self.db_path, "index", self.folder], cwd=root,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        self.assertIn("All images are up to date", done.stdout)
+        self.assertEqual("LOADED=", [line for line in done.stdout.splitlines() if line.startswith("LOADED=")][-1])
 
 
 if __name__ == "__main__":

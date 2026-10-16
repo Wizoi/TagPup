@@ -227,23 +227,12 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     model_name = settings.embedder["model_name"]
 
     # Setup / Load components
-    # Connected, its vectors not read: the index needs their length alone (stored_dim).
+    # Connected, its vectors not read: the index needs their stamps and their length alone (stored_dim).
     photo_index = library_index(runtime, db_path)
     photo_index.open()
 
-    # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
-    mismatch = stored_mismatch(photo_index, model_name)
-    if mismatch:
-        console.print(f"[yellow]Warning: Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Clearing cached photo embeddings to reindex with the new model...[/yellow]")
-        try:
-            photo_index.clear_clip_embeddings()
-        except Exception as e:
-            console.print(f"[bold red]Failed to clear CLIP embeddings: {e}[/bold red]")
-
     taxonomy = TagTaxonomy(db_path)
     taxonomy.load()
-
-    embeddings = runtime.embeddings(Library(db_path), photo_index)
 
     # Each photo with the stamp its folder's listing gave (images.stamps_under / stamps_in), by paths.key.
     on_disk = {}
@@ -291,6 +280,20 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 console.print(f"  • {root}: {count} path(s)")
         photo_index.close()
         return
+
+    # Only now that a photo is to be embedded: the CLIP model's library (open_clip, torch) takes seconds to import,
+    # and a run that finds nothing to index -- every sync, every watcher run -- needs none of it (docs/findings.md, #1089).
+    # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
+    mismatch = stored_mismatch(photo_index, model_name)
+    if mismatch:
+        console.print(f"[yellow]Warning: Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Clearing cached photo embeddings to reindex with the new model...[/yellow]")
+        try:
+            photo_index.clear_clip_embeddings()
+            # The photos found current held the vectors just cleared: every one is embedded again.
+            images_to_process, skipped_count = all_images, 0
+        except Exception as e:
+            console.print(f"[bold red]Failed to clear CLIP embeddings: {e}[/bold red]")
+    embeddings = runtime.embeddings(Library(db_path), photo_index)
 
     # Extract metadata in batches of 500
     console.print(f"[bold cyan]Reading metadata in batches for {len(images_to_process)} image(s)...[/bold cyan]")
