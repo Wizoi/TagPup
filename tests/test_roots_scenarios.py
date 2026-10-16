@@ -560,6 +560,8 @@ class TheOwnerMovesTheLocationInTheDialog(RootsDialogCase):
 
     def test_an_index_run_in_either_library_of_the_root_holds_the_move_up(self):
         mapped = self.map_file()
+        indexing_jobs.queue_for(self.side.library)      # a run queued here: its queue is this process's
+        self.addCleanup(indexing_jobs.forget, self.side.library)
         with mock.patch.object(indexing_jobs.IndexQueue, "busy", lambda queue: True):
             reply, listed = self.move(self.copy), self.get("/api/roots").get_json()
         self.assertEqual(409, reply.status_code)
