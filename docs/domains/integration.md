@@ -15,7 +15,11 @@ condition not met is the domain's queue.
    `app.create_app` and in TagTuner's `_used`, by `getattr(runtime, "idle", None)`, for one test fake; both now ask only
    for a runtime, and the fake has one.
 3. **No hidden coupling.** Met: no row of the contract table has the guard "none" (row 23, the page's kept scan, has
-   `tests/frontend/scenario-a-scan-kept-by-an-older-page.test.mjs`; row 45 is gone).
+   `tests/frontend/scenario-a-scan-kept-by-an-older-page.test.mjs`; row 45 is gone), and row 6's guard is the test that
+   fails when what the row says is broken: with `services/settings` asking `sync.review` nothing on a change of roots,
+   `tests/test_library_roots.py` (`FoldersNotAddedAreExcluded`, two tests) fails and nothing else does
+   (`tests/test_settings.py`, the guard named before, and `tests/test_one_answer_to_the_librarys_folders.py` pass;
+   mutation of 2026-10-15, #1303).
 4. **No concept that could collapse.** No candidate found in this pass.
 5. **No branch without an instance.** Met for the launcher: `wait_for`'s callers always pass the Popen `start_server`
    returns, so three `started is not None` arms went (#1447); the one in the KeyboardInterrupt arm stays, where nothing
@@ -26,15 +30,16 @@ condition not met is the domain's queue.
 6. **Scenario tests, each file owned and mapped.** Met: I1 to I9 each have a file in tests/owners.py (I9, a scan kept by
    an older page, since 2026-10-15); `tests/test_the_test_map.py` holds every test file to one owner, and every module of
    the package and of the pages (`web/**/*.js`, 99 today) to one charter's Scope.
-7. **No open data or wrong finding.** Met: the open Integration rows (#847, #1225, #1275, #1303, #1447, #1448, #1449) are
-   low; this pass fixed #1225, #1447, #1448, #1449 and the I9 part of #1275; #1303 is the Data charter's row 6.
+7. **No open data or wrong finding, and every low fixed or by design.** Met: this pass fixed #1225, #1303 (row 6's
+   guard), #1447, #1448 and #1449; #1275 is closed (every scenario id of tests/owners.py has a file, 0 without, counted
+   2026-10-15; I9 by this pass, the rest by the other owners' regroups); #847 is decided by design (below).
 
 ## By design
 
 - **#847**, a one-pixel light row at the bottom of the library picker's popup: not reproduced in Chromium, Chrome or
   Edge at 100% to 300% display scale; what remains is drawn by the browser's popup window at fractional scales, where no
-  CSS reaches. The owner is asked for a screenshot with the browser, display scale and zoom; if it is not seen again the
-  row closes as by design. The next step, an own listbox for the picker, is a one-way UI change and is not built.
+  CSS reaches. Decided by design: the owner is asked for a screenshot with the browser, display scale and zoom, and a
+  screenshot reopens it as a new fact; no fix is guessed. The next step, an own listbox for the picker, is a one-way UI change and is not built.
 - **The page's kept scan of a folder** lives 30 minutes with no server check, and `forgetCachedPhoto` cleans only the
   open library's scan: a save from a scan kept too long is refused by the stamp precondition (I8,
   `tests/test_stale_record_precondition.py`), and a scan of an older shape is scanned again (I9).
