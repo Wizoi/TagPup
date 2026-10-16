@@ -407,7 +407,7 @@ def apply_suggestions(library, suggestions, exiftool_path):
     here, of those photos alone): that photo has them. A file that cannot be read names nobody, and the run is refused.
     Held or not held (add_tags)."""
     file_person = person_filer(library)
-    asked = {path: [name for name in ((person.get("name") or "").strip() for person in entry.get("people") or [])
+    asked = {path: [name for name in ((person.get("name") or "").strip() for person in entry["people"])
                     if name and file_person(name) is None]
              for path, entry in suggestions.items()}
     unfiled = set()
@@ -424,7 +424,7 @@ def apply_suggestions(library, suggestions, exiftool_path):
     for path, entry in suggestions.items():
         # A person the photo already has, whom the tree files twice, is no tag to add (None).
         additions[path] = [tag for tag in suggesting.offered_tags(entry, file_person) if tag is not None]
-        offered = {file_person(person["name"]) for person in entry.get("people") or []
+        offered = {file_person(person["name"]) for person in entry["people"]
                    if (person.get("name") or "").strip()} - {None}
         persons[paths.key(path)] = offered
     return add_tags(library, additions, exiftool_path, persons=persons)
