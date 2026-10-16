@@ -5,8 +5,9 @@
  * has -- says so on its progress bar, from the status's `message`, and its Cancel stops it
  * (/api/folder/suggest-cancel). The button is disabled while a cancel is on its way and
  * enabled again when the server says there was nothing to cancel; a "cancelled" status
- * hides the bar, stops the polling and says so. Driven through the real page against a
- * scripted server; the status poll is the page's own (every 1.5 s).
+ * hides the bar, stops the polling and says so; an "error" status says the server's sentence
+ * in the status line. Driven through the real page against a scripted server; the status poll is
+ * the page's own (every 1.5 s).
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -52,6 +53,23 @@ describe("a Suggest that waits", () => {
     const line = "Waiting for this folder to be indexed first: Generating embeddings: 33% (1/3)";
     const ctx = await pageWithStatus(t, [{ status: "preparing", completed: 0, total: 3, message: line }]);
     assert.equal(el(ctx, "suggest-progress-text").textContent, line);
+  });
+});
+
+describe("a Suggest that is refused", () => {
+  test("says the server's sentence in the status line, and stops polling", async (t) => {
+    const refused = "Suggest Regatta (harbour) is using the CLIP model ViT-H-14 (laion2b_s32b_b79k); cove names "
+      + "ViT-L-14 (laion2b_s32b_b79k), and TagPup holds one set of models at a time. Nothing was suggested: "
+      + "Suggest again once it has ended.";
+    const ctx = await pageWithStatus(t, [{ status: "error", completed: 0, total: 3, message: refused }]);
+    assert.equal(el(ctx, "status-text").textContent, refused);
+    assert.ok(el(ctx, "suggest-progress-container").classList.contains("hidden"));
+    const polled = ctx.server.calls.filter((c) => c.url.includes("suggest-status")).length;
+    await wait(POLL_MS);
+    await flush(ctx.window, 4);
+    assert.equal(ctx.server.calls.filter((c) => c.url.includes("suggest-status")).length, polled,
+      "the page kept polling a run that failed");
+    assert.equal(el(ctx, "status-text").textContent, refused, "the sentence did not stay");
   });
 });
 

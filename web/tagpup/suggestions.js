@@ -262,11 +262,8 @@ export function checkSuggestionsStatus(folderPath) {
                         setStatus('ready', 'Suggest was cancelled; what it suggested before is kept.', { transient: false });
                     }
                     if (data.status === 'error') {
-                        statusDot.className = 'status-indicator-dot';
-                        statusText.textContent = 'Error';
-                        if (data.message) {
-                            console.error("Suggestions failed:", data.message);
-                        }
+                        // The server's sentence: another library's run holding other models, a folder with no photo.
+                        setStatus('error', data.message || 'Suggest failed', { transient: false });
                     }
                 }
             })
