@@ -26,13 +26,12 @@ The caller decides which photos these are (tagpup.services.libraries.split), per
 at the time of the write, from the library's own answer.
 """
 import logging
-import os
 
 from tagpup.core import fields, paths
 from tagpup.core.result import Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, lock_owners, metadata, names, recycle_bin
+from tagpup.files import exiftool_session, field_values, lock_owners, names, recycle_bin
 from tagpup.services import file_changes
 
 logger = logging.getLogger(__name__)
@@ -207,23 +206,6 @@ def rename(renames, aside):
     Raises names.RenameFailed. Returns file_changes.Renamed: nothing moved in any index."""
     done, moved_aside = names.rename_all(renames, aside=aside)
     return file_changes.Renamed(done, moved_aside, 0, [], None)
-
-
-@file_changes.exclusively()
-def rotate(photo_path, direction, exiftool_path) -> Result:
-    """Turn a photo a quarter (tagpup.files.metadata.rotate_image_file): its Orientation
-    only. No row, no face boxes, no vectors, no thumbnail to clear. details: `orientation`,
-    `mtime` and `size` of the file now, as services.photos.rotate gives them."""
-    result = Result(attempted=1)
-    try:
-        orientation = metadata.rotate_image_file(photo_path, direction, exiftool_path)
-    except Exception as e:
-        result.fail(photo_path, e)
-        return result
-    result.changed = 1
-    stat = os.stat(photo_path)
-    result.details.update(orientation=orientation, faces_turned=0, mtime=stat.st_mtime, size=stat.st_size)
-    return result
 
 
 def delete(photo_path):

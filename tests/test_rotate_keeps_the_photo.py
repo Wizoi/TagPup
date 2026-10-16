@@ -20,7 +20,9 @@ from tests.handler_harness import Library
 from tests.test_taxonomy_lifecycle import EXIFTOOL, requires_exiftool
 
 from tagpup.files.exiftool_session import ExifToolSession
-from tagpup.files.metadata import ROTATED_ORIENTATION, rotate_image_file
+from tagpup.services import file_only, rotation
+from tagpup.services import photos as photo_actions
+from tagpup.services.rotation import ROTATED_ORIENTATION
 from tagpup.store import db
 from tests.face_rows import add_face
 
@@ -73,6 +75,15 @@ def read_fields(path):
     return found
 
 
+def turn(path, direction, exiftool):
+    """A quarter turn of a photo of a folder no library holds (Just look): file_only.write_fields with the turn's plan
+    (services.photos.rotate_plan), the one writer of a turn. Returns the Orientation the photo now has."""
+    done = file_only.write_fields(exiftool, [path], [rotation.FIELD], photo_actions.rotate_plan(direction))
+    if not done.ok:
+        raise AssertionError(done.message())
+    return next(iter(done.details["written"].values()))["orientation"]
+
+
 def stored_pixels(path):
     from PIL import Image
 
@@ -115,7 +126,7 @@ class TestTheOrientationTable(unittest.TestCase):
 
 
 @requires_exiftool
-class TestRotateImageFile(unittest.TestCase):
+class ATurnOfAPhotoNoLibraryHolds(unittest.TestCase):
     def setUp(self):
         self.lib = Library(self)
         self.photo = make_picture(os.path.join(self.lib.photos, "beach.jpg"))
@@ -124,7 +135,7 @@ class TestRotateImageFile(unittest.TestCase):
     def test_every_keyword_and_caption_field_survives_both_turns(self):
         before = read_fields(self.photo)
         for direction in ("left", "right", "right", "left"):
-            rotate_image_file(self.photo, direction, EXIFTOOL)
+            turn(self.photo, direction, EXIFTOOL)
             after = read_fields(self.photo)
             for field in READ_BACK:
                 if field == "EXIF:Orientation":
@@ -134,53 +145,45 @@ class TestRotateImageFile(unittest.TestCase):
 
     def test_the_pixels_are_not_re_encoded(self):
         before = stored_pixels(self.photo)
-        rotate_image_file(self.photo, "left", EXIFTOOL)
+        turn(self.photo, "left", EXIFTOOL)
         self.assertEqual(stored_pixels(self.photo), before)
-        rotate_image_file(self.photo, "right", EXIFTOOL)
+        turn(self.photo, "right", EXIFTOOL)
         self.assertEqual(stored_pixels(self.photo), before)
 
     def test_left_turns_what_is_shown_a_quarter_counter_clockwise(self):
         before = shown(self.photo)
-        self.assertEqual(rotate_image_file(self.photo, "left", EXIFTOOL), 8)
+        self.assertEqual(turn(self.photo, "left", EXIFTOOL), 8)
         after = shown(self.photo)
         want = before.rotate(90, expand=True)
         self.assertEqual((after.size, after.tobytes()), (want.size, want.tobytes()))
 
     def test_right_turns_what_is_shown_a_quarter_clockwise(self):
         before = shown(self.photo)
-        self.assertEqual(rotate_image_file(self.photo, "right", EXIFTOOL), 6)
+        self.assertEqual(turn(self.photo, "right", EXIFTOOL), 6)
         after = shown(self.photo)
         want = before.rotate(270, expand=True)
         self.assertEqual((after.size, after.tobytes()), (want.size, want.tobytes()))
 
     def test_left_then_right_is_where_it_started(self):
-        rotate_image_file(self.photo, "left", EXIFTOOL)
-        self.assertEqual(rotate_image_file(self.photo, "right", EXIFTOOL), 1)
+        turn(self.photo, "left", EXIFTOOL)
+        self.assertEqual(turn(self.photo, "right", EXIFTOOL), 1)
 
     def test_a_turn_starts_from_the_orientation_already_there(self):
         # A phone photo stored sideways and shown upright: one turn left from there
         # is the stored pixels as they are, not a quarter turn from them.
         write_fields(self.photo, {"EXIF:Orientation": 6})
-        self.assertEqual(rotate_image_file(self.photo, "left", EXIFTOOL), 1)
+        self.assertEqual(turn(self.photo, "left", EXIFTOOL), 1)
 
     def test_png_and_webp_keep_their_fields_too(self):
         for name in ("still.png", "still.webp"):
             path = make_picture(os.path.join(self.lib.photos, name))
             write_fields(path, {"XMP:Subject": ["Beach"], "XMP:Description": "A still"})
             pixels = stored_pixels(path)
-            self.assertEqual(rotate_image_file(path, "right", EXIFTOOL), 6)
+            self.assertEqual(turn(path, "right", EXIFTOOL), 6)
             found = read_fields(path)
             self.assertEqual(found.get("XMP:Subject"), "Beach", name)
             self.assertEqual(found.get("XMP:Description"), "A still", name)
             self.assertEqual(stored_pixels(path), pixels, name)
-
-    def test_refuses_without_exiftool_rather_than_re_encoding(self):
-        with self.assertRaises(ValueError):
-            rotate_image_file(self.photo, "left", None)
-
-    def test_refuses_an_unknown_direction(self):
-        with self.assertRaises(ValueError):
-            rotate_image_file(self.photo, "sideways", EXIFTOOL)
 
 
 @requires_exiftool

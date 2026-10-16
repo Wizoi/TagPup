@@ -563,20 +563,6 @@ def rotate_plan(direction):
     return plan_one
 
 
-@file_changes.exclusively()
-def _turn_loose(photo_paths, direction, exiftool_path):
-    """The photos of folders the library does not hold, turned in their files only (file_only.rotate), one Result."""
-    out = Result(attempted=len(photo_paths))
-    out.details["written"] = {}
-    for photo_path in photo_paths:
-        turned = file_only.rotate(photo_path, direction, exiftool_path)
-        out.changed += turned.changed
-        out.errors += turned.errors
-        if turned.changed:
-            out.details["written"][photo_path] = {"orientation": turned.details["orientation"], "faces_turned": 0}
-    return out
-
-
 @roots_service.canonical_args("photo_paths")
 def rotate_photos(library, photo_paths, direction, exiftool_path):
     """Turn photos a quarter left or right, as ONE journaled change "rotate" (tagpup.services.file_changes.write_fields):
@@ -585,12 +571,13 @@ def rotate_photos(library, photo_paths, direction, exiftool_path):
     between the file and its rows is settled forward at the next start; History's Undo turns the files and the boxes back.
     More than batches.CHUNK photos are a batch like any other (claim, chunks, Cancel, progress), over batches.MAX_BATCH refused.
 
-    Only the file's Orientation changes; its pixels do not (tagpup.files.metadata.rotate_image_file's note). Face boxes are in
+    Only the file's Orientation changes; its pixels do not (tagpup.services.rotation.FIELD). Face boxes are in
     the coordinates Pillow shows the photo in: for most formats the stored pixels, which do not move, so the boxes stay where
     they are. Pillow applies a TIFF's Orientation as it loads it, so a TIFF's boxes turn with the photo. The index row gets
     the file's new mtime and size (only when it described the file just before, #249), or the folder scan would distrust it.
 
-    A photo of a folder the library does not hold (Just look) is turned in its file only, unjournaled (file_only). A file
+    A photo of a folder the library does not hold (Just look) is turned by the same plan in its file only, unjournaled
+    (file_only.write_fields). A file
     ExifTool cannot write is that photo's error (DECISIONS 2026-10-15). details: `written`
     {path: {"orientation", "faces_turned"}} and `change`, as write_fields gives them, `file_only` and `with_rows`. Refused,
     touching nothing, for a direction that is not a "rotate direction".
@@ -607,7 +594,7 @@ def rotate_photos(library, photo_paths, direction, exiftool_path):
         journaled = file_changes.write_fields(
             library, "rotate", exiftool_path, held, [rotation.FIELD], rotate_plan(direction),
             summary={"photos": len(held), "direction": direction}) if held else None
-        files = _turn_loose(loose, direction, exiftool_path) if loose else None
+        files = file_only.write_fields(exiftool_path, loose, [rotation.FIELD], rotate_plan(direction)) if loose else None
         return file_only.combined(journaled, files)
     except Exception as e:
         result = Result(attempted=len(photo_paths))
