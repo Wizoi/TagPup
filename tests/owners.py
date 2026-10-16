@@ -171,7 +171,7 @@ _FILES = {
             "test_excluded_faces_stay_unnamed test_face_click_reads_named_faces_once test_face_clustering_rules "
             "test_face_exclusion test_face_roots_are_the_trees "
             "test_faces_from_tags test_folder_scope_roots test_group_tag_is_not_a_person "
-            "test_grouping_keeps_names_the_tags_confirm "
+            "test_clustering_keeps_a_name_the_tags_confirm "
             "test_identify_cache_keeps_others_writes test_identify_cache_sees_every_change test_identify_queries "
             "test_index_resolves_people test_journal_through_the_services "
             "test_new_person_reads_the_pool_once test_organize_faces test_people_by_id_tree "
