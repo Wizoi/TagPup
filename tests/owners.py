@@ -233,11 +233,11 @@ _FILES = {
             "test_library_union_and_order test_library_view test_library_view_plans test_models_in_use_survive_an_unload "
             "test_one_value_for_a_suggested_tag "
             "test_person_tag_edges test_photo_index_keeps_only_vectors "
-            "test_selection test_selection_tally test_settings "
+            "test_selection test_selection_tally "
             "test_suggest_index_stays_current test_suggest_reads_people_once test_suggest_respects_face_decisions "
             "test_suggest_status_poll_is_a_snapshot test_suggester_scoring "
             "test_suggestions_keep_hierarchy test_tag_usage_from_photo_tags "
-            "test_the_runtime_reaches_suggest test_thumbs_cli test_vector_index "
+            "test_the_runtime_keeps_models_by_settings test_the_runtime_reaches_suggest test_thumbs_cli test_vector_index "
             "test_thumbnail_routes test_zero_shot_skips_people vgrid"
         ),
         "guard": "test_gpu_single_owner test_no_test_loads_a_model",

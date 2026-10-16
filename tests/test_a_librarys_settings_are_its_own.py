@@ -7,7 +7,7 @@ undoable, refused through the validator, and for the model, face and ExifTool se
 libraries are made as the apps make them (tagpup.services.libraries.create) or as a library from before the settings were
 in it stands (its tables migrated, no settings rows); the dialog is the real route on both apps.
 
-Lifted: test_settings (the Data owner's 26 tests; its 12 runtime and model tests are Views' and stay in test_settings.py),
+Lifted: test_settings (the Data owner's 26 tests; its 12 runtime and model tests are Views', in test_the_runtime_keeps_models_by_settings.py),
 test_settings_routes (7). Breaks that fail the kept scenario: tagpup.services.settings.change() skipping the journal
 (`journal.apply` -> a bare write) fails the undo in History; `unacknowledged` returning [] fails the locked change being
 refused. Findings: review of f127e47 (the lock was the page's alone; a stamp undone was stamped again; the CLI's looks stamped).
