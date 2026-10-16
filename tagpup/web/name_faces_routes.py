@@ -16,6 +16,7 @@ from flask import Blueprint, jsonify, request
 from tagpup.core import paths
 from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import naming_faces
+from tagpup.web import lifecycle as lifecycles
 from tagpup.web import responses, security, state, tuner_routes
 
 logger = logging.getLogger(__name__)
@@ -66,9 +67,10 @@ def refuse_writes_while_naming():
 
 
 def _busy(library):
-    """What runs in this process that the job must not run beside, as sentences: the index queue, Suggest, a sync and a Verify
-    (tagpup.web.tuner_routes), and whatever is already clustering the library's faces (the flag TagTuner's writes honour)."""
-    said = list(tuner_routes._busy_in(library))
+    """What runs in this process that the job must not run beside, as sentences: the index queue, Suggest and a sync
+    (tagpup.web.lifecycle.running_for), and whatever is already clustering the library's faces (the flag TagTuner's writes
+    honour)."""
+    said = lifecycles.running_for(library)
     if tuner_routes.clustering.of(library).is_set():
         said.append("the faces are being clustered")
     return said

@@ -46,6 +46,7 @@ from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup.services import activity, batches
 from tagpup.services import indexing
 from tagpup.services import job_runs
+from tagpup.web import lifecycle as lifecycles
 from tagpup.web import responses, security
 
 logger = logging.getLogger(__name__)
@@ -56,9 +57,6 @@ routes = Blueprint(PAGE, __name__)
 PAGE_FILES = {"index.html": "text/html; charset=utf-8", "style.css": "text/css; charset=utf-8"}
 SCRIPT_TYPE = "application/javascript; charset=utf-8"
 NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0"}
-
-#: The background tasks the page asks (tagpup.runtime.BACKGROUND).
-WATCHER, JOBS = "folder watcher", "recurring jobs"
 
 #: A job's runs listed when the page asks for no number, and the most; the same for the timeline.
 RUNS, MOST_RUNS = 10, 50
@@ -152,9 +150,7 @@ def _task(name):
 def is_syncing(library):
     """Is this process's folder watcher syncing `library` right now? False when it runs none (a test server, a
     TagPup started without its jobs): the answer is what this process knows, not the library's."""
-    watcher = _task(WATCHER)
-    syncing = watcher.status().get("syncing") if watcher is not None and hasattr(watcher, "status") else None
-    return bool(syncing and str(syncing.get("library", "")).lower() == library.name.lower())
+    return any(work.kind == lifecycles.SYNC for work in _lifecycle().under_way(library))
 
 
 def _stamp(seconds):
@@ -232,8 +228,8 @@ def now():
         found.append({"name": library.name, "indexing": indexed,
                       "suggesting": [run for run in suggesting if run["library"].lower() == library.name.lower()],
                       "jobs": running, "batches": batches.listing(library)})
-    watcher = _task(WATCHER)
-    watching = watcher.status() if watcher is not None and hasattr(watcher, "status") else None
+    watcher = _lifecycle().watcher()
+    watching = watcher.status() if watcher is not None else None
     status = _lifecycle().status()
     return jsonify({"at": _stamp(time.time()), "libraries": found,
                     "syncing": watching["syncing"] if watching else None,
@@ -269,7 +265,7 @@ def cancel_batch():
 @routes.get("/api/activity/jobs")
 def jobs():
     limit = _int_arg("runs", RUNS, MOST_RUNS)
-    runner = _task(JOBS)
+    runner = _task(runtimes.RECURRING_JOBS)
     children = _index_runs_of()
     listed = []
     for library in _libraries():
@@ -290,7 +286,7 @@ def run_job():
     """Run a recurring job now for a library, on the runner of this process's recurring
     jobs: answered once the run has started or been refused (a run holds it already)."""
     body = request.get_json(silent=True) or {}
-    runner = _task(JOBS)
+    runner = _task(runtimes.RECURRING_JOBS)
     if runner is None:
         return responses.error(409, "This server runs no recurring jobs (one a test started, or TAGPUP_NO_JOBS "
                                     "is set); Run now works in the always-on server")
@@ -317,8 +313,8 @@ def run_job():
 
 @routes.get("/api/activity/sync")
 def sync_state():
-    watcher = _task(WATCHER)
-    watching = watcher.status() if watcher is not None and hasattr(watcher, "status") else None
+    watcher = _lifecycle().watcher()
+    watching = watcher.status() if watcher is not None else None
     children = _index_runs_of()
     listed = []
     for library in _libraries():

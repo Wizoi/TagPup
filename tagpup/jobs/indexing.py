@@ -53,14 +53,6 @@ def every_queue():
         return [(queue.library, queue) for queue in _queues.values()]
 
 
-def running():
-    """How many libraries have folders being indexed or waiting in this process: what an
-    update of the always-on process waits for (tagpup.web.lifecycle)."""
-    with _queues_lock:
-        queues = list(_queues.values())
-    return sum(1 for queue in queues if queue.busy())
-
-
 def forget(library):
     """Drop a library's queue and what became of its folders. A worker still indexing
     one finishes it, into a queue nothing reads."""

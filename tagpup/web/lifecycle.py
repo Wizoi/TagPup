@@ -32,6 +32,7 @@ import hmac
 import logging
 import threading
 import time
+from typing import NamedTuple, Optional
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -39,6 +40,7 @@ from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import naming_faces as naming_faces_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
 from tagpup import launcher
+from tagpup import runtime as runtimes
 from tagpup.services import batches
 from tagpup.services import libraries as library_actions
 from tagpup.web import responses, security
@@ -93,31 +95,67 @@ def exempt(path):
 UPDATING_MESSAGE = "TagPup is moving to a new version; this is sent again in a moment."
 
 
-def long_work():
-    """The work under way in this process beside its requests, by what it is: what a drain
-    will not interrupt."""
-    found = []
-    runs = suggestion_jobs.running()
-    if runs:
-        found.append("%d Suggest run(s)" % runs)
-    indexing = indexing_jobs.running()
-    if indexing:
-        found.append("indexing in %d library(ies)" % indexing)
+#: What a piece of work under way is (Work.kind). The drain tells a batch of photo files, which it asks to stop, from the
+#: rest, which it waits for, by its kind.
+INDEX, SUGGEST, NAMING, BATCH, MIGRATING, SYNC = "index", "suggest", "naming", "batch", "migrating", "sync"
+
+
+class Work(NamedTuple):
+    """One piece of work under way in this process: its `kind`, the name of the library it is for (None for what is
+    counted for the process: the naming of faces, the batches, the startup migrations) and the sentence that says it."""
+    kind: str
+    library: Optional[str]
+    sentence: str
+
+
+def under_way(watcher=None):
+    """The one list of what runs in this process beside its requests: [Work]. Each index queue busy and each Suggest
+    run by its library, the naming of faces, the batches of photo files and the startup migrations (#664) counted, and
+    the sync of `watcher` (the folder watcher this process runs, Lifecycle.watcher), when it is given. A drain reads it
+    (long_work), and so do the Activity page, the roots' moves and Name faces from tags (Lifecycle.under_way)."""
+    found = [Work(INDEX, name, "an index run is running or queued")
+             for name, queue in indexing_jobs.every_queue() if queue.busy()]
+    found += [Work(SUGGEST, run["library"], "Suggest is running") for run in suggestion_jobs.under_way()]
     naming = naming_faces_jobs.running()
     if naming:
-        found.append("%d naming of faces from tags" % naming)
-    found.extend(batches.sentences())
+        found.append(Work(NAMING, None, "%d naming of faces from tags" % naming))
+    found += [Work(BATCH, None, sentence) for sentence in batches.sentences()]
     bringing = library_actions.bringing_up_to_date()
     if bringing:
-        found.append("bringing %d library(ies) up to date" % bringing)   # the startup migrations (#664)
+        found.append(Work(MIGRATING, None, "bringing %d library(ies) up to date" % bringing))
+    syncing = watcher.status()["syncing"] if watcher is not None else None
+    if syncing:
+        found.append(Work(SYNC, syncing["library"], "a sync is running"))
     return found
+
+
+#: The kinds a drain says counted over every library, and how.
+COUNTED = {SUGGEST: "%d Suggest run(s)", INDEX: "indexing in %d library(ies)"}
+
+
+def long_work():
+    """The work under way in this process beside its requests, by what it is: what a drain will not interrupt, [Work],
+    the runs of one kind counted together (COUNTED). The folder watcher's sync is its background task's (Lifecycle.busy)."""
+    found = under_way()
+    counted = []
+    for kind, said in COUNTED.items():
+        count = sum(1 for work in found if work.kind == kind)
+        if count:
+            counted.append(Work(kind, None, said % count))
+    return counted + [work for work in found if work.kind not in COUNTED]
+
+
+def running_for(library):
+    """What runs for `library` in this process, as sentences (Lifecycle.under_way): what a move of a root and Name faces
+    from tags are refused beside."""
+    return [work.sentence for work in _lifecycle().under_way(library)]
 
 
 class Lifecycle:
     """One server process's: `version` (the installed version's name, or None from a
     checkout), `launcher_token` (the one in this
     server's record, tagpup.launcher, or None), `background` (tagpup.runtime.Background,
-    stopped by a drain and started again by a resume), `work()` (long_work, or a test's)
+    stopped by a drain and started again by a resume), `work()` (long_work, or a test's: [Work])
     and `clock`."""
 
     def __init__(self, version=None, background=None, work=long_work, clock=time.monotonic,
@@ -150,9 +188,21 @@ class Lifecycle:
         """The background tasks this process runs (tagpup.runtime.Background), or None."""
         return self._background
 
-    def busy(self):
-        """What runs beside the requests now: [what, ...]."""
-        return list(self._work()) + (self._background.busy() if self._background is not None else [])
+    def watcher(self):
+        """The folder watcher this process runs (tagpup.jobs.watching.Watcher), or None."""
+        return self._background.task(runtimes.FOLDER_WATCHER) if self._background is not None else None
+
+    def under_way(self, library=None):
+        """under_way, with this process's watcher: [Work], only `library`'s when it is given."""
+        found = under_way(self.watcher())
+        if library is None:
+            return found
+        return [work for work in found if work.library is not None and work.library.lower() == library.name.lower()]
+
+    def busy(self, but=()):
+        """What runs beside the requests now, but the kinds `but`: [what, ...]."""
+        return ([work.sentence for work in self._work() if work.kind not in but]
+                + (self._background.busy() if self._background is not None else []))
 
     def status(self):
         with self._changed:
@@ -223,7 +273,7 @@ class Lifecycle:
                 if quiet and since is not None and since < quiet:
                     return {"drained": False, "waiting_for": ["a request %ds ago" % since]}
                 # A batch is asked to stop once the server is closed (_drain_until), not waited for.
-                busy = [what for what in self.busy() if batches.WORD not in what]
+                busy = self.busy(but=(BATCH,))
                 if busy:
                     logger.info("An update waits: %s under way.", ", ".join(busy))
                     return {"drained": False, "waiting_for": busy}

@@ -18,7 +18,7 @@ import os
 import threading
 from contextlib import contextmanager
 
-from flask import Blueprint, abort, current_app, jsonify, request
+from flask import Blueprint, abort, jsonify, request
 
 from tagpup import config as tagpup_config
 from tagpup.core import paths
@@ -38,6 +38,7 @@ from tagpup.services import roots as roots_service
 from tagpup.services import roots_location
 from tagpup.services import tags as tags_service
 from tagpup.web import desktop, face_routes, responses, roots_gate, roots_ingress, security, state, tagpup_routes
+from tagpup.web import lifecycle as lifecycles
 from tagpup.web import libraries as web_libraries
 
 logger = logging.getLogger(__name__)
@@ -690,9 +691,6 @@ def browse_folder():
 # a row (tagpup.services.roots_location; docs/ARCHITECTURE.md, "Roots and machines"). They answer this
 # PC only, as the Activity page does.
 
-#: The background task the folder watcher is (tagpup.runtime.BACKGROUND).
-WATCHER = "folder watcher"
-
 @routes.before_request
 def _roots_from_this_pc():
     if request.path.startswith("/api/roots") and not security.from_this_pc(request.remote_addr):
@@ -705,30 +703,13 @@ def _machine():
                                  tagpup_config.machine_roots_path, tagpup_config.set_location)
 
 
-def _busy_in(library):
-    """What is running or queued for `library` in this process, as sentences: the index queue,
-    Suggest and the folder watcher's sync. (The library's own job runs, any
-    process's, are read by the service.)"""
-    said = []
-    if indexing_jobs.queue_for(library).busy():
-        said.append("an index run is running or queued")
-    if any(run["library"].lower() == library.name.lower() for run in suggestion_jobs.under_way()):
-        said.append("Suggest is running")
-    background = getattr(current_app.config.get("LIFECYCLE"), "background", None)
-    watcher = background.task(WATCHER) if background is not None else None
-    syncing = watcher.status().get("syncing") if watcher is not None and hasattr(watcher, "status") else None
-    if syncing and syncing.get("library", "").lower() == library.name.lower():
-        said.append("a sync is running")
-    return said
-
-
 def _busy(library, name=None):
-    """_busy_in `library` and, for root `name`, in each other library of the home that holds it
-    too: the machine's map is one for them all."""
-    said = _busy_in(library)
+    """What runs for `library` in this process (tagpup.web.lifecycle.running_for) and, for root `name`, in each other
+    library of the home that holds it too: the machine's map is one for them all."""
+    said = lifecycles.running_for(library)
     if name:
         for other in roots_location.sharing(library, name, web_libraries.home_libraries()):
-            said += ["%s (in %s, which uses this root too)" % (each, other.name) for each in _busy_in(other)]
+            said += ["%s (in %s, which uses this root too)" % (each, other.name) for each in lifecycles.running_for(other)]
     return said
 
 

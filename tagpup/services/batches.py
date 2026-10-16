@@ -36,7 +36,7 @@ MAX_BATCH = 5_000
 MOST_WAITING = 8
 
 QUEUED, RUNNING, STOPPING = "queued", "running", "stopping"
-#: What a sentence naming the batches under way starts with (lifecycle: a drain asks them to stop and waits for them).
+#: What a sentence naming the batches under way says they are.
 WORD = "photo batch"
 
 

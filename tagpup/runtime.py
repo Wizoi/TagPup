@@ -173,6 +173,9 @@ class Every:
 #: version (tagpup.web.lifecycle). One place, so sync's watcher (phase 8c) is one entry.
 BACKGROUND = {}
 
+#: The names of the background tasks others ask for by name (Background.task): the Activity page, the drain.
+RECURRING_JOBS, FOLDER_WATCHER = "recurring jobs", "folder watcher"
+
 
 def background_task(name):
     """Register the function it decorates as the background task `name`: make(runtime)."""
@@ -184,7 +187,7 @@ def background_task(name):
     return register
 
 
-@background_task("recurring jobs")
+@background_task(RECURRING_JOBS)
 def _recurring_jobs_task(runtime):
     """The recurring jobs of every library in the data folder (tagpup.jobs.recurring), in
     the process that runs them (runs_recurring_jobs)."""
@@ -200,7 +203,7 @@ def _idle_caches_task(runtime):
     return Every("ReleaseIdleCachesThread", runtime.release_idle, max(1.0, min(60.0, runtime.idle_after / 4)))
 
 
-@background_task("folder watcher")
+@background_task(FOLDER_WATCHER)
 def _folder_watcher_task(runtime):
     """Each library's folders watched, and a folder synced when its notifications settle
     (tagpup.jobs.watching); the whole library at start. In the process that runs the

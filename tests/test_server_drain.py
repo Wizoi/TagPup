@@ -150,7 +150,7 @@ class ADrain(Base):
                          "a drained server took new work before it was stopped")
 
     def test_is_refused_at_once_while_a_long_run_is_under_way(self):
-        self.long.append("1 Suggest run(s)")
+        self.long.append(lifecycles.Work(lifecycles.SUGGEST, None, "1 Suggest run(s)"))
         answer = self.drain().get_json()
         self.assertEqual({"drained": False, "waiting_for": ["1 Suggest run(s)"], "success": True}, answer)
         self.assertEqual(200, self.client().get("/harbour/api/tags").status_code, "work was turned away")
@@ -358,7 +358,7 @@ class WhatALongRunIs(unittest.TestCase):
             return Result()
         self.assertEqual([], lifecycles.long_work())
         indexing_jobs.queue_for(self.library).start([self.home.root], index)
-        self.assertEqual(["indexing in 1 library(ies)"], lifecycles.long_work())
+        self.assertEqual(["indexing in 1 library(ies)"], [work.sentence for work in lifecycles.long_work()])
         self.go.set()
         deadline = time.time() + 10
         while lifecycles.long_work() and time.time() < deadline:
@@ -376,7 +376,7 @@ class WhatALongRunIs(unittest.TestCase):
             def begin(self):
                 raise AssertionError("no photos, no model")
         suggestion_jobs.runs_for(self.library).start(self.home.root, Work())
-        self.assertEqual(["1 Suggest run(s)"], lifecycles.long_work())
+        self.assertEqual(["1 Suggest run(s)"], [work.sentence for work in lifecycles.long_work()])
         self.go.set()
         deadline = time.time() + 10
         while lifecycles.long_work() and time.time() < deadline:
