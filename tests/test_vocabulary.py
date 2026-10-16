@@ -70,6 +70,10 @@ class ComparingTags(unittest.TestCase):
         self.assertFalse(vocabulary.same_person("People/Rowan Thackeray", "People/Rowan"))
         self.assertFalse(vocabulary.same_person("", ""))
 
+    def test_a_keyword_is_looked_up_by_one_spelling(self):
+        # #6: the spelling extract_people looks up by, and people.follow_tree and photos_named_by find photos by.
+        self.assertEqual("people/rowan thackeray", vocabulary.keyword_key("  People" + chr(92) + "Rowan Thackeray "))
+
     def test_a_key_ignores_case_and_the_space_around_it(self):
         self.assertEqual(vocabulary.key("  Rowan Thackeray "), "rowan thackeray")
         self.assertEqual(vocabulary.key(None), "")
@@ -158,6 +162,19 @@ class TagsHaveOneReading(unittest.TestCase):
         self.assertEqual(problems, [], "\n\nTags are taken apart by tagpup/core/vocabulary.py "
                          "only (segments / leaf_of / root_of / parent_of / lineage / with_leaf):"
                          "\n\n" + "\n".join(problems))
+
+    def test_the_keyword_spelling_is_written_once(self):
+        # #6: vocabulary.keyword_key is the one copy of it.
+        spelled = 'replace("' + chr(92) * 2 + '", "/").strip().lower()'
+        found = []
+        for relative in python_sources():
+            full = os.path.join(ROOT, relative)
+            if os.path.exists(full):
+                with open(full, encoding="utf-8") as handle:
+                    count = handle.read().count(spelled)
+                if count:
+                    found.append((relative, count))
+        self.assertEqual([(OWNER, 1)], found)
 
     def test_the_guard_recognises_what_it_forbids(self):
         # A guard whose pattern quietly matches nothing passes forever.
