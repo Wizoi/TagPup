@@ -20,9 +20,9 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
 from tagpup.core.fields import read_document_id
+from tagpup.files.field_values import ensure_document_id
 from tagpup.files.identity import (
     DOCUMENT_ID_FIELD,
-    ensure_document_id,
     mint_document_id,
 )
 
@@ -105,7 +105,7 @@ class TestTheExtractorCarriesIt(unittest.TestCase):
 
         extractor = MetadataExtractor()
         record = extractor._structure(
-            "D:/a.jpg", {"XMP:DocumentID": "xmp.did:abc", "XMP:Subject": ["Beach"]}, None)
+            "D:/a.jpg", {"XMP:DocumentID": "xmp.did:abc", "XMP:Subject": ["Beach"]}, None, (1.0, 1))
         self.assertEqual(record["document_id"], "xmp.did:abc")
 
     def test_the_indexer_mints_and_nothing_else_does(self):

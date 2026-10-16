@@ -47,7 +47,9 @@ condition not met is the domain's queue.
   accepted by the decision of 2026-10-11 (#1326). Five flows run against the real apps
   (`tests/test_pages_against_the_real_server.py`); a flow converted deletes its fake copy unless the fake holds a reply
   shape no seed makes (contract row 22).
-- **`tagpup_routes._too_many`** stays until the Files pass moves the cap into `file_changes.rename`.
+- **The cap of a write of photo files** is one function with one sentence, `file_changes.too_many` (the Files pass,
+  2026-10-15): `tagpup_routes._too_many` is gone; write_fields, batch_exclusively, Smart Rename, the selection and a bulk face
+  assignment ask it.
 
 ## History
 

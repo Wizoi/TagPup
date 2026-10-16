@@ -7,13 +7,12 @@ refused. ExifTool is a table of files (tests/fake_exiftool.py); the rows are wha
 import os
 import sys
 import unittest
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_tags_from_faces import Mending  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
-from tagpup.services import face_people, folder_scope, tags_from_faces  # noqa: E402
+from tagpup.services import folder_scope, tags_from_faces  # noqa: E402
 from tagpup.store import db, people  # noqa: E402
 from tagpup.store import roots as store_roots  # noqa: E402
 
@@ -113,11 +112,6 @@ class TheWrite(InFolders):
         self.assertEqual(0, self.run_cli("--folder", self.run, "--apply").exit_code)
         self.assertTrue(self.written()["Run/Heat1/b.jpg"])
         self.assertEqual([], self.written()["Other/e.jpg"])
-
-    def test_chunks_of_the_folder_are_each_a_change(self):
-        with mock.patch.object(face_people, "CHUNK", 1):
-            said = self.run_cli("--folder", self.run, "--apply")
-        self.assertIn("2 photo file(s) in 2 change(s)", said.output)
 
     def test_a_folder_with_no_photo_is_refused_and_nothing_is_written(self):
         said = self.run_cli("--folder", os.path.join(self.folder, "Nowhere"), "--apply")

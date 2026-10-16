@@ -178,8 +178,8 @@ def _read(library, files, exiftool_path):
         batch = files[start:start + READ_BATCH]
         for (file, mtime, size), meta in zip(batch, reader.batch_read([f for f, _, _ in batch], people=people)):
             found[paths.key(file)] = page_record(
-                file, meta, meta.get("mtime", 0.0) if mtime is None else mtime,
-                meta.get("size", 0) if size is None else size)
+                file, meta, meta["mtime"] if mtime is None else mtime,
+                meta["size"] if size is None else size)
     return found
 
 
@@ -349,14 +349,15 @@ def smart_rename(library, photo_paths, grouping, rename_format, exiftool_path):
     the first part renamed, and says so. `file_only` and `with_rows` count the photos
     renamed each way.
 
-    Refused, and nothing renamed, for a grouping that may not be used
-    (tagpup.core.validation). The grouping is used trimmed as the rules trim it
+    Refused, and nothing read or renamed, for more photos than a write may name (file_changes.too_many) and
+    for a grouping that may not be used (tagpup.core.validation). The grouping is used trimmed as the rules trim it
     (validation.trim): the rules allow blanks at its ends, and a trailing space -- from
     a caller that does not strip, or before a U+FEFF, which strip() leaves -- put a
     double space before every photo's number.
     """
     result = Result(attempted=len(photo_paths))
-    problem = validation.problem("grouping", grouping)
+    # The cap of a write of photo files, asked before a caption is read (file_changes.too_many).
+    problem = validation.problem("grouping", grouping) or file_changes.too_many(len(photo_paths))
     if problem:
         result.refuse(problem)
         return result

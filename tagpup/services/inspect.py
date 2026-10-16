@@ -199,9 +199,9 @@ def photo_against_file(library, photo_id, exiftool_path=None, reveal=False):
         answer["stale"] = True
         return answer
     record = MetadataExtractor(exiftool_path).batch_read([row["path"]], people=known)[0]
-    if "document_id" not in record:
-        # ExifTool could not be started, or could not read this file: the extractor
-        # answers an empty record, which is no statement about what the file holds.
+    if "document_id" not in record or record["mtime"] is None:
+        # ExifTool could not be started, or could not read this file, or its stamp could not be taken: the extractor
+        # answers an empty or unstamped record, which is no statement about what the file holds.
         answer.update(file_read=False, stale=None)
         return answer
     answer["file_read"] = True

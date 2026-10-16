@@ -23,11 +23,11 @@ WRITES = {"POST", "PUT", "PATCH", "DELETE"}
 #: capped at batches.MAX_BATCH, stopped by Cancel or a hand-over at its chunk, listed on the Activity page.
 BATCHES = {
     "/api/library/bulk-edit": "bulk_edit.run takes the claim first (a delete is a batch too, with the same chunks)",
-    "/api/photos/bulk-tags": "file_changes.batch_exclusively takes the claim before the lock; the route refuses over the cap first",
+    "/api/photos/bulk-tags": "file_changes.batch_exclusively takes the claim before the lock, and refuses over the cap before it",
     "/api/folder/auto-apply": "file_changes.batch_exclusively takes the claim before the lock",
     "/api/folder/time-shift": "write_fields takes the claim; over the cap it is refused",
     "/api/folder/rename-photos": "the original names are written by write_fields under Smart Rename's lock (a batch waiting ahead "
-                                 "refuses it rather than wait); the route refuses over the cap first",
+                                 "refuses it rather than wait); Smart Rename refuses over the cap before it reads a caption",
     "/api/taxonomy/rename": "the tag tree's rewrite: no cap (owner, 2026-10-11), a batch with progress and Cancel",
     "/api/taxonomy/delete-confirm": "the tag tree's rewrite: no cap, a batch",
     "/api/tags/merge": "the tag tree's rewrite: no cap, a batch",
@@ -40,7 +40,8 @@ BATCHES = {
                           "(face_people.write_tags)",
 }
 
-#: Routes that reach write_fields for one photo, or a few at a time (tagpup.services.face_people writes batches.CHUNK photos a change).
+#: Routes that reach write_fields for one photo, or a few at a time (tagpup.services.face_people.write_tags: one change, a batch
+#: over batches.CHUNK).
 SMALL = {
     "/api/photo/save-metadata": "one photo",
     "/api/face/match": "one face's photo",

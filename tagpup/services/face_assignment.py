@@ -23,7 +23,7 @@ import logging
 from tagpup.core import paths, validation
 from tagpup.core.result import Conflict, Refused, Result
 from tagpup.core.vocabulary import Ref
-from tagpup.services import batches, face_people, file_changes, tagging
+from tagpup.services import face_people, file_changes, tagging
 from tagpup.services import faces as faces_service
 from tagpup.services import people as people_service
 from tagpup.services.face_batch import DESCRIPTIONS, EXCLUDE, GUESS, NAME, UNNAME, Work  # noqa: F401  (the ops, for the routes)
@@ -207,9 +207,9 @@ def run(library, plan, exiftool_path, told=None):
     outcome, work = Outcome(), plan.work
     photos = work.photos()
     if photos:
-        if len(photos) > batches.MAX_BATCH:
-            raise Refused("These faces are on {:,} photos whose files have to be changed, and {:,} is the most that is done at once. "
-                          "Nothing was changed: do it in parts.".format(len(photos), batches.MAX_BATCH))
+        too_many = file_changes.too_many(len(photos), "hold these faces")     # the one cap and its sentence
+        if too_many:
+            raise Refused(too_many + " Nothing was changed: do it in parts.")
         known = taxonomy.people_vocabulary(library.path)
         change = None
         try:

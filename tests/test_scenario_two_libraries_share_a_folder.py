@@ -37,7 +37,7 @@ class Reads:
 
     def batch_read(self, extractor, file_paths, people=None):
         return [MetadataExtractor._structure(extractor, path, dict(self.truth.get(os.path.basename(path), {})),
-                                             people) for path in file_paths]
+                                             people, MetadataExtractor._stamp(path)) for path in file_paths]
 
     def session(self, *args, **kwargs):
         reads = self

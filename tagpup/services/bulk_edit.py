@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
-from tagpup.files import recycle_bin, shares
+from tagpup.files import recycle_bin
 from tagpup.services import batches, file_changes, selection, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -201,7 +201,6 @@ def _write(library, edit, ids, exiftool_path):
     found = selection.paths_of(library, ids)
     present = [(photo_id, found[photo_id]) for photo_id in ids if photo_id in found]
     out = Outcome(skipped_missing=len(ids) - len(present))
-    present = _reachable(present, out)
     if not present:
         return out
     if edit.op == DELETE:
@@ -258,8 +257,12 @@ def _delete(library, edit, present, out):
     copies (recycle_bin.can_copy_here: the Bin fills during a long job, #703); if not, those photos are errors with the
     sentence and nothing of them is touched; the others go on."""
     with file_changes.exclusively():
-        there = [(photo_id, path) for photo_id, path in present if os.path.isfile(path)]
-        out.skipped_missing += len(present) - len(there)
+        # Where each file is (file_changes.file_states): one on a share that did not answer is its error, one gone missing.
+        states = dict((paths.key(path), state) for path, state in file_changes.file_states([path for _id, path in present]))
+        there = [(photo_id, path) for photo_id, path in present if states[paths.key(path)] == file_changes.PRESENT]
+        out.errors.extend((photo_id, os.path.basename(path)[:MOST_TEXT], file_changes.AWAY_WHY)
+                          for photo_id, path in present if states[paths.key(path)] == file_changes.AWAY)
+        out.skipped_missing += sum(1 for _id, path in present if states[paths.key(path)] == file_changes.GONE)
         refused = _cannot_keep(there)
         batch = batches.current()
         for n, (photo_id, path) in enumerate(there):
@@ -280,27 +283,8 @@ def _delete(library, edit, present, out):
     return out
 
 
-#: What an error says of a photo on a network share that did not answer.
-AWAY = "its folder could not be reached just now (a network share that did not answer), so nothing was written to it"
-
-
-def _reachable(present, out):
-    """`present` without the photos on a share that does not answer (each an error of `out`): a bounded stat of each file
-    (shares.stamp_of: a share is asked within a second, and one found away is answered at once for 30 seconds, so a
-    chunk of 25 waits once). Sent on, such a photo would cost ExifTool's whole deadline (five minutes) and then one more for each
-    photo of the batch it is retried singly for. A file that is gone is no matter here (the write counts it missing) and one that
-    cannot be read is the write's own error."""
-    kept = []
-    for photo_id, path in present:
-        if shares.stamp_of(path) is shares.UNANSWERED:
-            out.errors.append((photo_id, os.path.basename(path)[:MOST_TEXT], AWAY))
-        else:
-            kept.append((photo_id, path))
-    return kept
-
-
 def _count(out, result, present, by_key):
-    """Count a Result of one chunk into `out`, whose errors so far are the photos left out as away."""
+    """Count a Result of one chunk into `out`, whose errors so far are none (a photo on a share away is the write's error)."""
     away = len(out.errors)
     out.changed = result.changed
     gone = result.details.get(tagging.SKIPPED_MISSING, 0)

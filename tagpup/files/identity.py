@@ -13,7 +13,8 @@ Camera Raw write it, it survives copying and renaming, and it is what a catalogu
 tool is meant to track a file by. Of 1,129 photos sampled from this library, 1,075
 already had one -- 1,075 distinct values, no collisions.
 
-So the rule is: read it, and mint one only where it is missing. Nothing is rewritten
+So the rule is: read it, and mint one only where it is missing (tagpup.files.field_values.ensure_document_id, which writes
+it through the one writer of a photo's fields). Nothing is rewritten
 that already has an answer, and the minted ones use Adobe's own `xmp.did:` form so
 other tools recognise them.
 
@@ -23,8 +24,6 @@ grouping and useless for telling two files apart.
 """
 import logging
 import uuid
-
-from tagpup.core.fields import read_document_id
 
 logger = logging.getLogger("tagpup_cli.identity")
 
@@ -100,39 +99,3 @@ def tolerating_minor_errors(et, path, write, written=()):
         lost = sorted(field for field, values in keep.items() if after is not None and after.get(field) != values)
         if lost:
             logger.error("Writing %s past a minor error left %s other than it held", path, ", ".join(lost))
-
-
-def ensure_document_id(et, path, metadata=None):
-    """Return this photo's identity, writing one into the file if it has none.
-
-    `metadata` is the dict already read for the photo, so the common case -- a photo
-    that has an identity -- costs nothing beyond a dictionary lookup. Only a photo
-    without one is written to.
-
-    The write is one command, made again with `-m` only when ExifTool refuses it for an
-    error it calls minor -- a photo with two XMP blocks -- carrying the keywords as they
-    hold (tolerating_minor_errors); a lock or a timeout leaves the photo as it was.
-    A failure to write is logged and swallowed: an identity is an improvement on
-    knowing the path, and a photo that cannot take one is still perfectly indexable.
-    Returns None in that case, which every caller must treat as "no identity", not as
-    an error.
-    """
-    existing = read_document_id(metadata)
-    if existing:
-        return existing
-
-    minted = mint_document_id()
-
-    def command(extra, keep):
-        tags = {DOCUMENT_ID_FIELD: minted}
-        tags.update(keep)
-        et.set_tags([path], tags=tags, params=list(extra) + ["-overwrite_original"])
-
-    try:
-        tolerating_minor_errors(et, path, command)
-    except Exception as e:
-        logger.warning("Could not give %s an identity: %s", path, e)
-        return None
-
-    logger.debug("Minted %s for %s", minted, path)
-    return minted

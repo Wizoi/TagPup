@@ -10,7 +10,7 @@ ExifTool's "[minor]" refusal is retried, and the keyword fields the write does n
 go in the same -m command with the values they hold. Real ExifTool on a JPEG made with
 two XMP blocks here; a stand-in for the refusal that is not minor.
 
-The identity the indexer mints for a new photo (identity.ensure_document_id, #1355, #310) goes the same way: it
+The identity the indexer mints for a new photo (field_values.ensure_document_id, #1355, #310) goes the same way: it
 went past ANY failed mint with -m, which rewrites the XMP, and put back the keywords that cost in a second command,
 outside any record, whose failure was only logged. Now a lock or a timeout leaves the photo as it was, and a minor
 refusal is one forced command carrying the keywords. When the keywords cannot be read before that command, it is not
@@ -135,7 +135,7 @@ class ANewPhotoWithTwoXmpBlocksIsGivenAnIdentity(unittest.TestCase):
         with ExifToolSession(executable=EXIFTOOL) as et:
             with mock.patch.object(et, "set_tags", wraps=et.set_tags) as set_tags, \
                     mock.patch.object(et, "execute", wraps=et.execute) as execute:
-                minted = identity.ensure_document_id(et, self.photo, {})
+                minted = field_values.ensure_document_id(et, self.photo, {})
             held = self.held(et)
         self.assertTrue(minted and minted.startswith("xmp.did:"), minted)
         self.assertEqual(2, set_tags.call_count, "the refused mint, and one forced: %s" % set_tags.call_args_list)
@@ -154,7 +154,7 @@ class ANewPhotoWithTwoXmpBlocksIsGivenAnIdentity(unittest.TestCase):
                 before = self.held(et)
                 with mock.patch.object(et, "set_tags", side_effect=error) as set_tags, \
                         mock.patch.object(et, "execute", wraps=et.execute) as execute:
-                    minted = identity.ensure_document_id(et, self.photo, {})
+                    minted = field_values.ensure_document_id(et, self.photo, {})
                 after = self.held(et)
             self.assertIsNone(minted, "a photo that took no identity reported one")
             self.assertEqual(1, set_tags.call_count, "a mint that failed for a lock or a timeout was made again")
@@ -167,7 +167,7 @@ class ANewPhotoWithTwoXmpBlocksIsGivenAnIdentity(unittest.TestCase):
     def test_a_read_that_fails_after_a_minor_refusal_forces_nothing(self):
         # The indexer's mint and the journaled identity write share the forced path.
         def mint(et):
-            self.assertIsNone(identity.ensure_document_id(et, self.photo, {}))
+            self.assertIsNone(field_values.ensure_document_id(et, self.photo, {}))
 
         def journaled(et):
             # ExifTool's own refusal, as it was, not the read that failed.

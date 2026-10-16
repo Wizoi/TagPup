@@ -362,14 +362,6 @@ def vectors(conn, model):
                         " WHERE e.model = ? ORDER BY e.photo_id", (model,)).fetchall()
 
 
-def stamps_with_vectors(conn, model):
-    """(path, mtime, size, holds a vector under `model`) of every photo, native paths: all the
-    indexer needs to know whether a file is as it was. None of the JSON of the row is read."""
-    return store_roots.natives(conn, conn.execute(
-        "SELECT p.path, p.mtime, p.size, EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)"
-        " FROM photos p", (model,)).fetchall(), 0)
-
-
 def counts(conn, model):
     """(photos, photos holding a vector under `model`)."""
     return conn.execute("SELECT (SELECT COUNT(*) FROM photos),"
@@ -455,7 +447,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
     """Record what indexing read of a photo: `row` has mtime, size, tags, captions,
     raw_metadata (as values), embedding (bytes) and document_id; the embedding is kept
     under `model`, stamped with the row's mtime and size, and the photo's people are
-    rebuilt. The caller commits.
+    rebuilt. A row with no stamp is recorded unread (mtime and size NULL). The caller commits.
 
     A photo indexed before is updated in place, under the spelling its row already has.
     faces.photo_id references photos.id ON DELETE CASCADE, so anything that deletes
@@ -481,7 +473,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         " mtime = excluded.mtime, size = excluded.size, tags = excluded.tags,"
         " captions = excluded.captions, raw_metadata = excluded.raw_metadata,"
         " document_id = COALESCE(excluded.document_id, photos.document_id)",
-        (row_path, row.get("mtime", 0.0), row.get("size", 0), json.dumps(row.get("tags", [])),
+        (row_path, row.get("mtime"), row.get("size"), json.dumps(row.get("tags", [])),
          json.dumps(row.get("captions", [])),
          store_roots.raw_to_row(json.dumps(row.get("raw_metadata", {})), roots), row.get("document_id")))
     if not (batch is not None and batch.prepared) and derived.make_nodes(conn, [row.get("tags", [])], batch):
@@ -498,7 +490,7 @@ def record_indexed(conn, photo_path, row, model=None, known=None, batch=None):
         if model is None:
             # Dropped without a word, it left a library without the vector (#85).
             raise ValueError("An embedding is kept under the model that made it; none was named.")
-        embeddings.put(conn, stored, model, row.get("mtime", 0.0), row.get("size", 0), row["embedding"])
+        embeddings.put(conn, stored, model, row.get("mtime"), row.get("size"), row["embedding"])
 
 
 def remove_under(conn, folder):
@@ -636,13 +628,20 @@ def rows_to_check(conn, folder=None):
     return store_roots.natives(conn, conn.execute(query, params).fetchall(), 0, raw=(5,))
 
 
-def stamps(conn, folder=None):
-    """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what
-    sync compares with the disk (tagpup.services.sync). Nothing else of the row is read."""
-    query, params = "SELECT id, path, mtime, size FROM photos", ()
+def stamps(conn, folder=None, with_vectors=None):
+    """(id, path as stored, mtime, size) of every photo, or of those under `folder`: what sync
+    (tagpup.services.sync) and the indexer (services.search.PhotoIndex) compare with the disk. With
+    `with_vectors`, a model's name, each also says whether the photo holds a vector under it. Nothing else
+    of the row is read, none of its JSON."""
+    columns, params = "p.id, p.path, p.mtime, p.size", []
+    if with_vectors is not None:
+        columns += ", EXISTS (SELECT 1 FROM embeddings e WHERE e.photo_id = p.id AND e.model = ?)"
+        params.append(with_vectors)
+    query = "SELECT " + columns + " FROM photos p"
     if folder:
-        where, params = store_roots.sql_under(conn, "path", folder)
+        where, under = store_roots.sql_under(conn, "p.path", folder)
         query += " WHERE " + where
+        params += list(under)
     return store_roots.natives(conn, conn.execute(query, params).fetchall(), 1)
 
 

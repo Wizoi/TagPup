@@ -6,7 +6,7 @@ from tagpup.core import fields, paths, suggesting, validation, vocabulary
 from tagpup.core.result import CHANGED_ON_DISK, CHANGED_ON_DISK_SENTENCE, UNREADABLE_BASE_SENTENCE, Result
 # Looked up at call time, as exiftool_session.ExifToolSession, so a test standing in for
 # ExifTool there reaches this too.
-from tagpup.files import exiftool_session, field_values, metadata, names, shares
+from tagpup.files import exiftool_session, field_values, metadata, names
 from tagpup.services import file_changes, file_only, libraries
 from tagpup.services import photos as photo_actions
 from tagpup.services import roots as roots_service
@@ -241,14 +241,14 @@ SKIPPED_MISSING = "skipped_missing"
 
 
 def leave_out_missing(photo_paths):
-    """(`photo_paths` but those whose file is gone, [(path, why)] of those left out). A bulk write skips them and writes
-    the rest: the library still holds the row of a missing photo and a view shows it
+    """(`photo_paths` but those whose file is gone, [(path, why)] of those left out) (file_changes.file_states). A bulk write
+    skips them and writes the rest: the library still holds the row of a missing photo and a view shows it
     (phase 9c), so a selection can name one. A file that cannot be read, or on a share that does not answer, is NOT
-    missing: the write meets it itself, and stops at it as for any read or write error of a present file."""
-    present, gone = [], []
-    for path in photo_paths:
-        (gone if shares.stamp_of(path) is None else present).append(path)
-    return present, [(path, MISSING_WHY) for path in gone]
+    missing: the write meets it (file_changes.write_fields makes a photo on a share asleep its error at once), and stops at
+    it as for any read or write error of a present file."""
+    states = file_changes.file_states(photo_paths)
+    return ([path for path, state in states if state != file_changes.GONE],
+            [(path, MISSING_WHY) for path, state in states if state == file_changes.GONE])
 
 
 #: What the journal calls a change that adds and removes tags on a selection (History's `operation`).
@@ -393,7 +393,7 @@ def apply_suggestions(library, suggestions, exiftool_path):
     here, of those photos alone): that photo has them. A file that cannot be read names nobody, and the run is refused.
     Held or not held (add_tags)."""
     file_person = person_filer(library)
-    asked = {path: [name for name in ((person.get("name") or "").strip() for person in entry.get("people") or [])
+    asked = {path: [name for name in ((person.get("name") or "").strip() for person in entry["people"])
                     if name and file_person(name) is None]
              for path, entry in suggestions.items()}
     unfiled = set()
@@ -410,7 +410,7 @@ def apply_suggestions(library, suggestions, exiftool_path):
     for path, entry in suggestions.items():
         # A person the photo already has, whom the tree files twice, is no tag to add (None).
         additions[path] = [tag for tag in suggesting.offered_tags(entry, file_person) if tag is not None]
-        offered = {file_person(person["name"]) for person in entry.get("people") or []
+        offered = {file_person(person["name"]) for person in entry["people"]
                    if (person.get("name") or "").strip()} - {None}
         persons[paths.key(path)] = offered
     return add_tags(library, additions, exiftool_path, persons=persons)

@@ -523,6 +523,16 @@ class TestBatchReadSurvivesOneBadFile(unittest.TestCase):
 
         self.assertEqual([r["path"] for r in results], self.paths)
         self.assertTrue(all(r["tags"] == [] for r in results))
+        # Left unread, and the indexer says why: not "ExifTool did not answer" (#1495).
+        from tagpup.files import metadata
+        self.assertEqual([(None, metadata.NOT_STARTED)] * 3, [(r["mtime"], r["unread"]) for r in results])
+
+    def test_a_file_whose_stat_fails_is_left_unread_and_says_so(self):
+        from tagpup.files import metadata
+        with mock.patch("tagpup.files.metadata.ExifToolSession", self._fake_helper()), \
+                mock.patch.object(metadata.MetadataExtractor, "_stamp", return_value=(None, None)):
+            results = self.extractor.batch_read([self.paths[0]])
+        self.assertEqual([(None, metadata.NO_STAT)], [(r["mtime"], r["unread"]) for r in results])
 
 
 class TestABatchReadsTheLibrarysPeopleOnce(unittest.TestCase):

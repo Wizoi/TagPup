@@ -9,11 +9,11 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from tagpup.core import fields, renaming, vocabulary
+from tagpup.core import fields, paths, renaming, vocabulary
 from tagpup.core.fields import METADATA_FIELDS
 from tagpup.core.renaming import sanitize_filename  # noqa: F401  (imported from here by older code)
-from tagpup.files.exiftool_session import ExifToolSession
-from tagpup.files.identity import ensure_document_id
+from tagpup.files import field_values
+from tagpup.files.exiftool_session import ExifToolSession, StaysDead
 
 logger = logging.getLogger("tagpup_cli.metadata")
 
@@ -60,6 +60,11 @@ def structured(meta):
     return cleaned
 
 
+#: Why a record is left unread (its `unread`): what the indexer says of the photos it did not record.
+NOT_ANSWERED = "ExifTool did not answer for them (a share gone away?)"
+NOT_STARTED = "ExifTool could not be started"
+NO_STAT = "their file could not be looked at (its modified time and size could not be read)"
+
 #: Where ExifTool puts an error about a file in what it answers.
 READ_ERROR_KEYS = ("ExifTool:Error", "Error")
 
@@ -73,64 +78,70 @@ class MetadataExtractor:
 
     def batch_read(self, file_paths: List[str],
                    people: Optional[vocabulary.PeopleVocabulary] = None) -> List[Dict[str, Any]]:
-        """Read metadata for a batch of files using pyexiftool.
+        """A record of each of `file_paths`, in order, read in one ExifTool session through the one batch reader
+        (tagpup.files.field_values.read: a batch ExifTool refuses is read again a photo at a time, one it does not
+        answer is not retried).
 
-        `people` is what the library's tag tree says about people, read once for the
-        batch; without it, only the usual face roots name anybody.
+        A photo ExifTool refuses (or that is not a photo) is recorded holding nothing, with `read_error`, stamped: a
+        file that cannot be read is not read again every run. A photo ExifTool did not answer for (a share gone away),
+        or whose stat failed, or that no ExifTool could be started to read, is left UNREAD: its record has no stamp (mtime
+        and size None) and says why in `unread` (NOT_ANSWERED, NO_STAT, NOT_STARTED), so nothing records it as read. The
+        session stays dead after a timeout (StaysDead): one deadline is waited for, not one a command. `people` is what the library's tag tree says about people, read once for the batch; without it, only the
+        usual face roots name anybody.
         """
         if not file_paths:
             return []
 
-        # Configure pyexiftool path if provided
         executable = self.exiftool_path
         if executable and not os.path.isabs(executable):
-            # Try to resolve relative path to absolute
             executable = os.path.abspath(executable)
 
-        results = []
+        # Each file's stamp before the read (_stamp).
+        stamps = [self._stamp(path) for path in file_paths]
+        records, not_started = {}, None
         try:
-            # We initialize pyexiftool client
-            # ExifToolSession manages the lifecycle, and cannot stall on stderr
             with ExifToolSession(executable=executable) as et:
-                # Each file's stamp before the read (_stamp), then the fields we care about, by name
-                stamps = [self._stamp(path) for path in file_paths]
-                batch_meta = et.get_tags(file_paths, tags=METADATA_FIELDS)
-
-                # Check mapping to return formatted info
-                for path, meta, stamp in zip(file_paths, batch_meta, stamps):
-                    results.append(self._structure(path, meta, people, stamp))
+                found = field_values.read(StaysDead(et), file_paths, [], METADATA_FIELDS, records)
         except Exception as e:
-            # ExifTool exits non-zero if *any* file in the batch is unreadable, and
-            # pyexiftool raises on that status, so a single corrupt or unsupported
-            # file used to cost every other file in the batch its metadata -- 500 at
-            # a time, recorded as having no tags, people or captions at all. Read them
-            # one at a time instead, so the damage is limited to the file that caused it.
-            logger.warning(
-                f"Batch metadata read failed ({e}); retrying {len(file_paths)} file(s) "
-                f"individually so one bad file does not blank the rest."
-            )
-            results = self._read_one_by_one(file_paths, executable, people)
-
+            logger.error("Could not start ExifTool to read %d file(s): %s", len(file_paths), e)
+            not_started = str(e) or type(e).__name__
+            found = {}
+        results = []
+        for path, stamp in zip(file_paths, stamps):
+            held, record = found.get(paths.key(path)), records.get(paths.key(path))
+            if not_started is not None:
+                results.append(dict(self._empty(path, not_started, (None, None)), unread=NOT_STARTED))
+            elif isinstance(held, field_values.NotAnswered):
+                results.append(dict(self._empty(path, held, (None, None)), unread=NOT_ANSWERED))
+            elif stamp == (None, None):
+                results.append(dict(self._empty(path, held or "its stat failed", stamp), unread=NO_STAT))
+            elif isinstance(held, Exception) or not record:
+                logger.error("Unreadable metadata, indexing without it: %s (%s)", path, held or "no answer")
+                results.append(self._empty(path, held or "ExifTool answered nothing for it", stamp))
+            else:
+                # What the reader asked to tell a photo from another kind of file is not the photo's metadata.
+                record = {key: value for key, value in record.items() if key != field_values.MIME_TYPE}
+                results.append(self._structure(path, record, people, stamp))
         return results
 
     @staticmethod
     def _stamp(path):
         """(mtime, size) of the file, for change detection: taken BEFORE ExifTool reads it, so that a change another
         program makes during the read leaves the row older than its file, which the next scan reads again. Taken after,
-        it stamped what was read before the change as the newer file. (0.0, 0) when the stat fails."""
+        it stamped what was read before the change as the newer file. (None, None), unread, when the stat fails."""
         try:
             stat = os.stat(path)
             return stat.st_mtime, stat.st_size
-        except Exception:
-            return 0.0, 0
+        except OSError:
+            return None, None
 
-    def _structure(self, path, meta, people, stamp=None):
-        """Turn one ExifTool record into the shape the rest of the pipeline expects; `stamp`, the file's from before
-        the read (_stamp), taken now when not given."""
+    def _structure(self, path, meta, people, stamp):
+        """Turn one ExifTool record into the shape the rest of the pipeline expects; `stamp`, the file's (mtime, size)
+        from before the read (_stamp)."""
         cleaned = structured(meta)
 
         tags = vocabulary.extract_tags(cleaned)
-        mtime, size = stamp if stamp is not None else self._stamp(path)
+        mtime, size = stamp
 
         record = {
             "path": path,
@@ -147,42 +158,11 @@ class MetadataExtractor:
             record["read_error"] = str(error)
         return record
 
-    def _read_one_by_one(self, file_paths, executable, people):
-        """Fallback for a failed batch: read each file on its own.
-
-        A file that fails here is genuinely unreadable rather than merely unlucky in
-        its batch, so it gets the empty skeleton -- but it still carries its mtime and
-        size, or every later run would see it as changed and re-index it forever.
-        """
-        results = []
-        try:
-            et = ExifToolSession(executable=executable)
-            et.run()
-        except Exception as e:
-            logger.error(f"Could not start ExifTool for the per-file retry: {e}")
-            return [self._empty(path, e) for path in file_paths]
-
-        try:
-            for path in file_paths:
-                try:
-                    stamp = self._stamp(path)
-                    meta = et.get_tags([path], tags=METADATA_FIELDS)
-                    results.append(self._structure(path, meta[0], people, stamp))
-                except Exception as e:
-                    logger.error(f"Unreadable metadata, indexing without it: {path} ({e})")
-                    results.append(self._empty(path, e))
-        finally:
-            try:
-                et.terminate()
-            except Exception:
-                pass
-        return results
-
     @staticmethod
-    def _empty(path, error):
-        """The record of a file ExifTool could not read: nothing read, and `read_error`,
-        why -- so nothing is written into it (IdentityWriter)."""
-        mtime, size = MetadataExtractor._stamp(path)
+    def _empty(path, error, stamp):
+        """The record of a file ExifTool could not read: nothing read, and `read_error`, why -- so nothing is written
+        into it (IdentityWriter). `stamp` is the file's from before the read, or (None, None) for one left unread."""
+        mtime, size = stamp
         return {
             "path": path,
             "mtime": mtime,
@@ -239,7 +219,7 @@ class IdentityWriter:
         et = self._session()
         if et is None:
             return None
-        minted = ensure_document_id(et, record["path"], record.get("raw_metadata"))
+        minted = field_values.ensure_document_id(et, record["path"], record.get("raw_metadata"))
         if not minted:
             return None
         self.minted += 1

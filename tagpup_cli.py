@@ -1,6 +1,7 @@
 # tagpup_cli.py
 import contextlib
 import functools
+from collections import Counter
 import os
 import sys
 import logging
@@ -312,7 +313,13 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
     # Untagged photos contribute no tags when they turn up as a suggestion neighbour,
     # and the scoring denominator counts only neighbours that do contribute, so they
     # cannot dilute a suggestion.
-    to_index_meta = all_metadata
+    # A photo ExifTool did not answer for (a share gone away) is left as it was, unread: its record has no stamp
+    # (MetadataExtractor.batch_read), and the next index reads it again.
+    left_unread = Counter(m["unread"] for m in all_metadata if m["mtime"] is None)
+    to_index_meta = [m for m in all_metadata if m["mtime"] is not None]
+    for why, count in sorted(left_unread.items()):
+        console.print(f"[bold yellow]{count} photo(s) were not read: {why}.[/bold yellow] They are left as they were; "
+                      f"the next index reads them.")
     tagged_count = sum(1 for m in to_index_meta if m["tags"] or m["people"] or m["captions"])
 
     console.print(
@@ -689,8 +696,9 @@ def sync(ctx, folder, apply_):
                       " TagTuner (gear, Folders to review), never indexed on their own."
                       % (counts["review_folders"], counts["review_photos"]))
     if counts["missing"]:
-        console.print("  %d folder(s) wholly gone, %d of them a whole root; their rows are kept."
-                      % (counts["folders_gone"], counts["roots_gone"]))
+        console.print("  %d folder(s) wholly gone, %d of them a folder the library holds, not there at all (an "
+                      "unplugged drive looks the same); their rows are kept."
+                      % (counts["folders_gone"], counts["roots_gone"]), markup=False, soft_wrap=True)
         if counts["folders_gone"]:
             console.print("  A folder renamed in Explorer looks the same: its rows are kept; rename it back "
                           "by hand.")
@@ -724,6 +732,29 @@ def sync(ctx, folder, apply_):
         raise SystemExit(1)
 
 
+@contextlib.contextmanager
+def _break_is_an_interrupt():
+    """Ctrl+Break (SIGBREAK, Windows) stops a long write as Ctrl+C does, so that it ends as asked
+    (file_changes withdraws the files not reached) instead of being killed with them planned."""
+    import signal
+    if not hasattr(signal, "SIGBREAK"):
+        yield
+        return
+
+    def interrupt(_signum, _frame):
+        raise KeyboardInterrupt
+
+    try:
+        previous = signal.signal(signal.SIGBREAK, interrupt)
+    except ValueError:      # not the main thread: nothing to install
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGBREAK, previous)
+
+
 @cli.command("tags-from-faces")
 @click.option("--apply", "apply_", is_flag=True,
               help="Write the keywords into the photo files. Without it, only says how many photos it would write.")
@@ -738,7 +769,8 @@ def tags_from_faces(ctx, apply_, guesses, folder):
     saying "No people tags" (#861). A dry run unless --apply; counts only, never names.
 
     --apply CHANGES PHOTO FILES: it writes each person's keyword into the photo's file with
-    ExifTool, 25 photos to a change of the journal (`history` lists them, `undo` takes one back).
+    ExifTool, one change of the journal (`history` lists it, `undo` takes it back). Ctrl+C or Ctrl+Break
+    stops it: the files written stay written and undoable, the rest are not written.
     Run it on a small library first; TagPup and TagTuner may stay open (a file changed meanwhile
     is a conflict, reported and not overwritten: run it again). Left, and counted: a person the
     a photo whose keywords already name the person under a root the
@@ -764,7 +796,7 @@ def tags_from_faces(ctx, apply_, guesses, folder):
     console.print("  %d photo file(s) would be written, for %d people."
                   % (counts["photos_to_write"], counts["people_to_write"]))
     if not apply_:
-        console.print("Nothing changed. --apply writes the keywords into those %d PHOTO FILE(S), 25 photos to a change "
+        console.print("Nothing changed. --apply writes the keywords into those %d PHOTO FILE(S), one change "
                       "of the journal that `undo` takes back." % counts["photos_to_write"], markup=False, soft_wrap=True)
         return
     if not counts["photos_to_write"]:
@@ -772,9 +804,16 @@ def tags_from_faces(ctx, apply_, guesses, folder):
         return
     exiftool = get_exiftool_path(library.path)
     console.print("Writing %d photo file(s)..." % counts["photos_to_write"])
-    result = tags_from_faces_service.apply(
-        library, planned, exiftool,
-        on_chunk=lambda done, total: console.print("  %d of %d photo(s) done" % (done, total), markup=False))
+    try:
+        with _break_is_an_interrupt():
+            result = tags_from_faces_service.apply(library, planned, exiftool)
+    except KeyboardInterrupt as stopped:
+        written = getattr(stopped, "written", None)
+        console.print("Stopped: %s photo file(s) written, recorded as change %s of the journal (`undo` takes it back); "
+                      "the rest were not written. Run it again for them."
+                      % ("?" if written is None else written, getattr(stopped, "change", None) or "none"), markup=False,
+                      soft_wrap=True)
+        raise SystemExit(1) from None
     console.print("Wrote %d photo file(s) in %d change(s) of the journal (`history` lists them)."
                   % (result.changed, len(result.details.get("changes", []))), markup=False)
     if result.refused:

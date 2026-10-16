@@ -186,6 +186,14 @@ class TheCli(Drifted, unittest.TestCase):
         self.assert_no_path(result.output)
         return result.output
 
+    def test_a_held_folder_that_is_gone_is_said_as_a_folder_the_library_holds(self):
+        """#917: the folder a library's rows are in (no root is set), gone whole, was said to be "a whole root"."""
+        import shutil
+        shutil.rmtree(self.folder)
+        output = self.run_cli()
+        self.assertIn("1 of them a folder the library holds, not there at all", output)
+        self.assertNotIn("root", output)
+
     def test_apply_indexes_the_new_files_folder_and_waits_for_it(self):
         out = self.run_cli("--apply")
         self.assertEqual([self.folder], self.indexed)

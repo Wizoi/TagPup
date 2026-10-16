@@ -91,6 +91,20 @@ class ASleepingShare(unittest.TestCase):
         self.assertEqual((self.photo_paths, []), tagging.leave_out_missing(self.photo_paths))
         self.assertEqual(3, self.vl.rows("SELECT COUNT(*) FROM photos")[0][0])
 
+    def test_a_tag_write_to_its_photos_reads_none_of_them_and_says_the_share_is_away(self):
+        """#1492: the one place that leaves a photo of a share asleep out of a write is file_changes.write_fields, so a
+        TagTuner face write (face_people.write_tags, which lost its own 60 s deadline), a bulk tag write and a library
+        view's edit each get the error at once, not ExifTool's 300 s with the lock held."""
+        from tagpup.services import face_people
+        session = mock.MagicMock()
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", session):
+            done = face_people.write_tags(self.vl.library, {path: (["Trips/Coast"], ()) for path in self.photo_paths},
+                                          face_people.Writer("exiftool"), "person added for a named face")
+        self.assertEqual(0, session.return_value.__enter__.return_value.get_tags.call_count, "a photo of the share was read")
+        self.assertEqual(0, done.changed)
+        self.assertIn("network share that did not answer", str(done.errors[0][1]))
+        self.assertEqual(3, self.vl.rows("SELECT COUNT(*) FROM photos")[0][0])
+
     def test_the_rows_whose_file_is_gone_leave_out_the_photos_on_it_and_name_no_folder_gone(self):
         """The MCP tool's answer (inspect.missing_files): a photo on the share asleep is not looked at, not gone. The
         doctor says the same: it called all of them missing with a bare os.path.exists (#1388)."""

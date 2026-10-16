@@ -200,6 +200,20 @@ class Cap(T.Bulk):
         self.assertEqual("Select up to 5,000 photos at a time (5,001 were named).", done.refused)
         self.assertEqual((0, 0), (self.files.starts, self.files.read_calls))
 
+    def test_organizes_bulk_tags_and_smart_rename_over_the_cap_are_refused_before_a_turn_is_taken_or_a_file_read(self):
+        """The cap is file_changes' (too_many), not a route's: over it, a write that tells the page's records in order is
+        refused before its batch claims a turn (nothing waits behind it), and Smart Rename before a caption is read."""
+        from tagpup.files import names
+        from tagpup.services import photos as photo_actions
+        chosen = [self.path(each) for each in self.ids[:31]]
+        with mock.patch.object(batches, "MAX_BATCH", 30), mock.patch.object(batches, "claim") as claim, \
+                mock.patch.object(names, "read_for_renaming") as read_captions:
+            tagged = self.client.post("/library/api/photos/bulk-tags", json={"paths": chosen, "add_tags": ["Trips/Coast"]})
+            renamed = photo_actions.smart_rename(self.library, chosen, "Regatta", "{grouping} - {index} - {caption}", "exiftool")
+        self.assertEqual((400, "Select up to 30 photos at a time (31 were named)."), (tagged.status_code, tagged.get_json()["error"]))
+        self.assertEqual("Select up to 30 photos at a time (31 were named).", renamed.refused)
+        self.assertEqual((0, 0, 0), (claim.call_count, read_captions.call_count, self.files.read_calls))
+
     def test_at_the_cap_it_is_written_and_over_it_it_is_refused_with_nothing_read(self):
         with mock.patch.object(batches, "MAX_BATCH", 30):
             ok = self.tags_edit(add=["Trips/Coast"], selection_body={"ids": self.ids[:30]})

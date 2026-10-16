@@ -48,6 +48,10 @@ class TheMtimeOfARowAndItsFile(unittest.TestCase):
         with mock.patch.object(photos, "MTIME_TOLERANCE", 5.0):
             self.assertTrue(self.compared(103.0)["mtime"]["same"], "inspect keeps a tolerance of its own")
 
+    def test_a_file_answered_whose_stamp_could_not_be_taken_is_not_read(self):
+        """#1495: the reader leaves a record unstamped when its stat fails; it raised a TypeError here."""
+        self.assertEqual((False, None), (lambda answer: (answer["file_read"], answer["stale"]))(self.compared(None)))
+
 
 if __name__ == "__main__":
     unittest.main()

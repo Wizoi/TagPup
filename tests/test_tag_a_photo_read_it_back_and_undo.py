@@ -13,7 +13,7 @@ an error of its own in a selection, and the rest are written, journaled and undo
 
 Lifted: test_tag_write_is_journaled (#266), test_tag_write_follows_the_keyword_rules (#249; its mtime == compare is
 store.photos.describes now), test_single_save_and_smart_rename_are_journaled (#266), test_save_photo_rename_is_journaled
-(#298; its failing rename is test_save_reply_says_rename_failed's), test_a_save_is_one_session, test_a_saved_row_is_the_
+(#298; its failing rename is ASaveFromThePage's), test_a_save_is_one_session, test_a_saved_row_is_the_
 indexers_shape (#251) and test_a_file_undo_waits_for_newer_changes. Each was broken in a scratch copy and this file
 fails: change_tags writing the loose parts of a path (tag write), save_photo opening a second session (one session),
 MetadataExtractor._structure dropping the bare names (the indexer's shape), file_changes._undoable skipping the
@@ -24,6 +24,14 @@ disk: a title, a tag whole and not in pieces, a deep tag, a clear, Date Taken, a
 carries, a remove) -- the routes call these services and the pages' flow against the real routes is
 test_pages_against_the_real_server's. Broken in a scratch copy and this file fails: change_tags dropping the keywords a
 photo carries before it adds (an add keeps them), save_photo writing no Date Taken (one save), a remove that takes nothing off.
+
+Lifted (#1475): test_service_save_photo (a save's sub-second Date Taken in the one write, the named face kept among the
+photo's people, a new tag that may not be set refusing the save, the faces following a rename after a caption, a write
+that fails answered in the Result and not raised, #299; its ExifTool was a stand-in, here it is real; #266, #276) and
+test_save_reply_says_rename_failed (#884: a caption saved whose rename then fails says so in the reply, and the page's
+fixture of those replies, tests/frontend/fixtures/save_replies.json, is written here: ASaveFromThePage). Broken in a scratch
+copy and this file fails (2026-10-15): date_taken_fields writing no SubSecTimeOriginal, save_photo setting a tag without its
+check, the save route dropping `rename_failed`.
 """
 import json
 import os
@@ -34,11 +42,13 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import damaged_photos  # noqa: E402
+import face_rows  # noqa: E402
 import photo_rows  # noqa: E402
+import test_stale_record_precondition as S  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import ReadFilesCase  # noqa: E402
 from test_file_journal import EXIFTOOL, ExifToolSession, field_of, keywords_of, write_outside  # noqa: E402
 
-from tagpup.files import exiftool_session  # noqa: E402
+from tagpup.files import exiftool_session, names  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
 from tagpup.services import file_changes, photos as photo_actions, sync, tagging  # noqa: E402
 from tagpup.store import db, photos as store_photos  # noqa: E402
@@ -230,6 +240,8 @@ class TaggingAPhoto(ReadFilesCase):
 
     def test_one_save_is_one_change_one_session_a_row_as_the_indexer_makes_it_and_undone(self):
         a = self.make_read("a.jpg")
+        db.write_with_connection(self.library.path, lambda conn: face_rows.add_face(conn, a, name="Rowan Thackeray",
+                                                                                 name_source="manual"))
         real = exiftool_session.ExifToolSession
         sessions, reads, writes = [], [], []
 
@@ -248,6 +260,11 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual((True, 1), (result.ok, result.changed), result.message())
         self.assertEqual("2019:06:15 10:30:00", str(field_of(a, "EXIF:DateTimeOriginal")))
         self.assertEqual((1, 2, 1), (len(sessions), len(reads), len(writes)), "sessions, reads, writes of one save")
+        conn = db.connect(db.readonly_uri(self.library.path), uri=True)
+        try:
+            self.assertEqual(["Rowan Thackeray"], face_rows.people_of(conn, a), "the named face was dropped from the people")
+        finally:
+            conn.close()
         change = self.last_change()
         self.assertEqual(change, result.details["change"])
         self.assertEqual(("save photo", "applied", ["done"]),
@@ -270,6 +287,21 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual(["Beach"], keywords_of(a))
         self.assertIsNone(field_of(a, "XMP:Description"))
         self.assertEqual(["Beach"], self.indexed(a))
+
+    def test_a_save_takes_a_date_to_the_hundredth_refuses_a_tag_it_may_not_set_and_answers_a_write_that_fails(self):
+        a = self.make_read("a.jpg")
+        refused = tagging.save_photo(self.library, a, "Start", ["Beach", "Places|Harbour"], None, EXIFTOOL, "")
+        self.assertIn('"|"', refused.refused)
+        self.assertEqual((["Beach"], None), (keywords_of(a), field_of(a, "XMP:Description")), "a refused save wrote")
+        timed = tagging.save_photo(self.library, a, "Start", ["Beach"], "2019-06-15T10:30:00.25", EXIFTOOL, "")
+        self.assertTrue(timed.ok, timed.message())
+        self.assertEqual("25", str(field_of(a, "EXIF:SubSecTimeOriginal")), "the hundredths in the same write")
+        os.chmod(a, stat.S_IREAD)
+        self.addCleanup(self.writable_again)
+        failed = tagging.save_photo(self.library, a, "Finish", ["Beach"], None, EXIFTOOL, "")
+        # #299: the route answers from the Result: a write that fails is in it, not raised.
+        self.assertEqual((False, 0, None), (failed.ok, failed.changed, failed.refused))
+        self.assertIn("ExifTool", failed.message())
 
     def test_a_save_stopped_once_its_file_is_done_leaves_the_row_whole_as_the_indexer_makes_it(self):
         """#1368: a save's row is recorded once, whole and stamped, in the transaction that marks its file done. It was
@@ -311,16 +343,73 @@ class TaggingAPhoto(ReadFilesCase):
         a = self.make_read("IMG_0001.jpg")
         renamed = photo_actions.smart_rename(self.library, [a], "Regatta", "{grouping} - {index}",
                                              EXIFTOOL).details["updated_paths"][a]
+        db.write_with_connection(self.library.path, lambda conn: face_rows.add_face(conn, renamed, name="Rowan Thackeray",
+                                                                                 name_source="manual"))
         result = tagging.save_photo(self.library, renamed, "Start", ["Beach"], None, EXIFTOOL,
                                     "{grouping} - {index} - {caption}")
         new = os.path.join(self.folder, "Regatta - 1 - Start.jpg")
         self.assertEqual((new, True), (result.details["new_path"], result.details["renamed"]))
+        self.assertEqual([(new,)], self.rows("SELECT p.path FROM faces f JOIN photos p ON p.id = f.photo_id"),
+                         "the face stayed at the old name")
         change = self.rows("SELECT change_id FROM change_files WHERE new_path = ?", (new,))[0][0]
         self.assertEqual(("done", [new]), (self.rows("SELECT state FROM change_files WHERE new_path = ?", (new,))[0][0],
                                            [r[0] for r in self.rows("SELECT path FROM photos")]))
         self.assertEqual(1, self.undo(change).changed)
         self.assertEqual([renamed], [r[0] for r in self.rows("SELECT path FROM photos")])
         self.assertEqual(["Regatta - 1.jpg"], os.listdir(self.folder))
+
+
+#: The replies of a save the page test reads (tests/frontend/rename-failed.test.mjs).
+SAVE_REPLIES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "fixtures", "save_replies.json")
+
+
+@unittest.skipIf(S.EXIFTOOL is None, "ExifTool not installed")
+class ASaveFromThePage(S.Fresh):
+    """A caption saved on a Smart-Renamed photo whose rename then fails says so (#884): the save wrote the caption, the
+    follow-up rename failed (a locked file, a held share), and the reply said only `success`. The reply carries
+    `rename_failed`, and the page's test answers from the replies written here."""
+
+    def smart_renamed(self, seed=1):
+        path, photo_id = self.make("Regatta - 1.jpg", seed, ["Trips/Coast"])
+        S.write_into(path, **{PRESERVED: "IMG_0001.jpg"})
+        return path, self.record(photo_id)
+
+    def test_a_locked_file_keeps_its_name_and_the_reply_says_why(self):
+        path, record = self.smart_renamed()
+        refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
+        with mock.patch("tagpup.files.names.rename_all", side_effect=refused):
+            reply = self.save(record, title="Start line")
+        body = reply.get_json()
+        self.assertEqual((200, True, path), (reply.status_code, body["success"], body["new_path"]), reply.data)
+        self.assertIn("held by Viewer", body["rename_failed"])
+        self.assertEqual("Start line", S.caption_in(path))
+
+    def test_a_save_that_renames_or_attempts_no_rename_has_no_warning(self):
+        path, record = self.smart_renamed()
+        taken = os.path.join(self.folder, "Regatta - 1 - Start line.jpg")
+        S.damaged_photos.whole_jpeg(taken, seed=77)       # the name the caption wants is taken: a free one is chosen
+        renamed = self.save(record, title="Start line").get_json()
+        self.assertNotIn("rename_failed", renamed)
+        self.assertTrue(renamed["new_path"].endswith("Regatta - 1 - Start line_1.jpg"), renamed["new_path"])
+        plain, plain_id = self.make("IMG_0002.jpg", 3, ["Trips/Coast"])
+        reply = self.save(self.record(plain_id), title="A caption").get_json()
+        self.assertNotIn("rename_failed", reply)
+        self.assertEqual(plain, reply["new_path"])
+
+    def test_the_replies_the_page_reads_are_written_for_its_test(self):
+        path, record = self.smart_renamed()
+        refused = names.RenameFailed("The file is open in another program (held by Viewer)", [])
+        found = {}
+        with mock.patch("tagpup.files.names.rename_all", side_effect=refused):
+            found["rename_failed"] = self.save(record, title="Start line").get_json()
+        plain, plain_id = self.make("IMG_0002.jpg", 3, ["Trips/Coast"])
+        found["no_rename"] = self.save(self.record(plain_id), title="A caption").get_json()
+        for each in found.values():
+            each.update(mtime=1, size=1, new_path=os.path.basename(each["new_path"]))
+        text = json.dumps(found, sort_keys=True, indent=1) + "\n"
+        if not os.path.exists(SAVE_REPLIES) or open(SAVE_REPLIES, encoding="utf-8").read() != text:
+            with open(SAVE_REPLIES, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(text)
 
 
 class TheUndoOrder(ReadFilesCase):

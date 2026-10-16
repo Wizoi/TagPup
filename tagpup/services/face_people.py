@@ -21,8 +21,8 @@ open photo goes through here, and this is the one place that says how the keywor
 
 The tag is written by the machinery of every other keyword write (tagpup.services.tagging.change_each:
 one journaled change of photo files, `undo` and History take it back, a file changed outside since it was
-read is a conflict and never overwritten), under the one lock of changes of photo files, with a deadline
-on each ExifTool command so a share that has gone costs a minute, not five. TagPup's own page writes the
+read is a conflict and never overwritten; more than batches.CHUNK photos are a batch, written a chunk at a time, Cancel
+and a hand-over stopping it at a chunk), under the one lock of changes of photo files. TagPup's own page writes the
 tag itself for a box it draws (its queue, its undo, its placement question), so its calls say
 `page_writes_tags` and are told what to take off instead (`untag` in the details).
 
@@ -35,7 +35,6 @@ import logging
 
 from tagpup.core import fields, paths, vocabulary
 from tagpup.core.result import Conflict, Refused, Result
-from tagpup.files import exiftool_session
 from tagpup.services import faces as faces_service
 from tagpup.services import file_changes, tagging
 from tagpup.services import people as people_service
@@ -49,13 +48,6 @@ REMOVED = "person taken off for an unnamed face"
 
 #: The change that unnamed the faces of a person taken off a photo (History's `operation`).
 UNNAMED = removals.OPERATION
-
-#: How long one ExifTool command of these writes may take, in seconds (the bulk edits' chunk's is the same).
-TIMEOUT = 60
-
-#: How many photos one change of the repair writes: a chunk is one journaled change (History lists each).
-CHUNK = 25
-
 
 # ---- Which tag ----------------------------------------------------------------------------------------------
 
@@ -148,38 +140,35 @@ def _merge(into, tag_result):
 
 
 class Writer:
-    """Where a photo's tags are written: the ExifTool program, and `told(result)`, heard after each chunk written with the
-    Result of its change (details["written"] is what the pages' records are told, in the order the files were written), and
-    `on_chunk(done, total)`, the progress. A caller whose page writes the photo's tags itself passes no Writer."""
+    """Where a photo's tags are written: the ExifTool program, and `told(result)`, heard once the files are written with the
+    Result of their change (details["written"] is what the pages' records are told, in the order the files were written). A
+    caller whose page writes the photo's tags itself passes no Writer."""
 
-    def __init__(self, exiftool_path, told=None, on_chunk=None):
+    def __init__(self, exiftool_path, told=None):
         self.exiftool_path = exiftool_path
         self.told = told
-        self.on_chunk = on_chunk
 
 
 def write_tags(library, changes, writer, operation, persons=None, stop_at_first_error=True):
-    """Give each photo of `changes` ({path: (tags to add, tags to take off)}) its own, CHUNK photos at a time, each chunk one
-    journaled change under the one lock of changes of photo files and with a deadline on ExifTool; the lock is let go
-    between chunks, so another change of photo files waits for a chunk and not for all of them. Stops at the first chunk
-    that fails, unless `stop_at_first_error` is False (the repair: a photo that cannot be written is an error, and the
-    others are written). A Result: `changed` the files written, details["written"] and `changes`, the journal's ids."""
+    """Give each photo of `changes` ({path: (tags to add, tags to take off)}) its own, as ONE journaled change of photo files
+    (tagging.change_each, through file_changes.write_fields): more than batches.CHUNK photos are a batch -- its turn taken
+    before the lock (file_changes.batch_exclusively), written a chunk at a time, Cancel and a hand-over stopping it at a chunk --
+    and more than batches.MAX_BATCH are refused, nothing written (the most the repair has to write in the three libraries is
+    662 photos, counted 2026-10-15). The pages' records are told under the lock, in the order the files were written. Stops at
+    the first photo that fails, unless `stop_at_first_error` is False (the repair: a photo that cannot be written is an error,
+    and the others are written). A Result: `changed` the files written, details["written"] and `changes`, the journal's ids;
+    refused, nothing written, when too many batches wait or it was cancelled before its turn."""
     result = Result(attempted=len(changes))
-    items = list(changes.items())
-    for start in range(0, len(items), CHUNK):
-        chunk = dict(items[start:start + CHUNK])
-        with exiftool_session.ExifToolSession(executable=writer.exiftool_path, timeout=TIMEOUT) as session:
-            with file_changes.exclusively():
-                done = tagging.change_each(library, chunk, writer.exiftool_path, operation, persons=persons,
-                                           et=exiftool_session.StaysDead(session),
-                                           stop_at_first_error=stop_at_first_error)
-                if writer.told:
-                    writer.told(done)
-        _merge(result, done)
-        if not done.ok and stop_at_first_error:
-            break
-        if writer.on_chunk:
-            writer.on_chunk(min(start + CHUNK, len(items)), len(items))
+    try:
+        with file_changes.batch_exclusively(library, operation, len(changes)):
+            done = tagging.change_each(library, changes, writer.exiftool_path, operation, persons=persons,
+                                       stop_at_first_error=stop_at_first_error)
+            if writer.told:
+                writer.told(done)
+    except (Conflict, Refused) as why:
+        result.refuse(str(why))
+        return result
+    _merge(result, done)
     result.changed = result.details.get("tags_written", 0)
     return result
 

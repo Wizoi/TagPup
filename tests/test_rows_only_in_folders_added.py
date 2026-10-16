@@ -244,7 +244,7 @@ class TagTunersAddFolder(Folders, unittest.TestCase):
             indexing_jobs.queue_for(library).wait()
         self.assertEqual(([self.lighthouse], 1), (reply.get_json()["queued"], reply.get_json()["added"]))
         self.assertEqual(0, rows_under(library.path, self.lighthouse))
-        self.assertIsNone(library_actions.not_in(library, self.lighthouse))
+        self.assertEqual((None, False), library_actions.suggest_how(library, self.lighthouse))
         self.assertEqual([self.lighthouse], indexed.folders)
 
 

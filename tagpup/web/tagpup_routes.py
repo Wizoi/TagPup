@@ -26,7 +26,7 @@ from tagpup.core.library import picker_name
 from tagpup.core.result import Conflict, NotFound, Refused
 from tagpup.jobs import indexing as indexing_jobs
 from tagpup.jobs import suggestions as suggestion_jobs
-from tagpup.services import batches, bulk_edit
+from tagpup.services import bulk_edit
 from tagpup.services import file_changes, file_only
 from tagpup.services import libraries as library_actions
 from tagpup.services import library_view
@@ -462,10 +462,8 @@ def folder_time_shift():
             path = paths.stored(meta["path"])
             # Every map holding the photo: this folder's, and an ancestor's scan that
             # walked into it.
-            for held, previous in cache.entries_for(path):
-                held[paths.key(path)] = photo_actions.page_record(
-                    path, meta, meta.get("mtime", previous.get("mtime", 0.0)),
-                    meta.get("size", previous.get("size", 0)))
+            for held, _previous in cache.entries_for(path):
+                held[paths.key(path)] = photo_actions.page_record(path, meta, meta["mtime"], meta["size"])
     except Exception as e:
         logger.error("Error applying time shift to %s: %s", folder, e)
         return responses.error(500, str(e))
@@ -486,8 +484,6 @@ def folder_rename_photos():
         return responses.error(400, "Invalid folder path")
     if not photo_paths:
         return responses.error(400, "No photos selected for renaming")
-    if (refusal := _too_many(len(photo_paths))) is not None:
-        return refusal
     cache = folders.of(library)
     try:
         # In the order they were taken, by the Date Taken in the folder's cached scan; a
@@ -912,13 +908,6 @@ def photo_delete():
     return jsonify(reply)
 
 
-def _too_many(count):
-    """The 400 for a bulk write naming more than batches.MAX_BATCH photos (file_changes.write_fields refuses it too), else None."""
-    if count > batches.MAX_BATCH:
-        return responses.error(400, "Select up to {:,} photos at a time ({:,} were named).".format(batches.MAX_BATCH, count))
-    return None
-
-
 def _stamp_of(sent):
     """((mtime, size) a write names, or None; why it cannot be read): the `stamp` of a request, {"mtime", "size"}, is
     the file's stamp as the record the page built the write from had it (docs: findings #533); absent is no check."""
@@ -1016,8 +1005,6 @@ def photos_bulk_tags():
     remove_tags = body.get("remove_tags", [])
     if not photo_paths:
         return responses.error(400, "Missing paths list")
-    if (refusal := _too_many(len(photo_paths))) is not None:
-        return refusal
     try:
         # What is added is checked, not what is removed (tagpup.services.tagging). The
         # page's records are told in the order the files were written.
@@ -1027,8 +1014,11 @@ def photos_bulk_tags():
             if result.refused:
                 return _refused_after_writing(library, result)
             records_written(library, result)
-    except (Conflict, Refused) as why:
+    except Conflict as why:
         return responses.error(409, str(why))      # too many batches wait ahead (tagpup.services.batches)
+    except Refused as why:
+        # More photos than a write may name (file_changes.too_many), or cancelled before its turn: nothing was written.
+        return responses.error(400, str(why))
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
         return responses.error(500, str(e))

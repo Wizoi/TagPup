@@ -158,11 +158,11 @@ def _under_any(folder, folders):
     return False
 
 
-def folder_state(folder):
-    """"there", "gone" or "unanswered" of a root or a folder of the library (shares.folder_state, within its
-    SHARE_WAIT): what the folder watcher asks before it looks under it, a share that does not answer being neither
-    there nor gone. The jobs layer's door to it (tests/test_layers.py: jobs do not import tagpup.files)."""
-    return shares.folder_state(folder)
+def watch_states(folders):
+    """{paths.key(folder): "there", "gone" or "unanswered"} of the folders the watcher watches or would (shares.folder_state,
+    each within its SHARE_WAIT): what it asks before it watches under one, a share that does not answer being neither there
+    nor gone. The jobs layer asks sync, not tagpup.files (tests/test_layers.py)."""
+    return {paths.key(folder): shares.folder_state(folder) for folder in folders}
 
 
 def _scan(conn, folder, roots, library_folders):

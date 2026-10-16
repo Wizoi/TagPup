@@ -11,7 +11,6 @@ added whose index never ran was the library's to Suggest in and nobody's to sync
 remove. Every consumer asks here: holds() for one folder (a point query, for ensure_row and
 the services), of() for all of them at once (sync, the watcher, the lists).
 """
-import os
 
 from tagpup.core import paths, validation
 from tagpup.store import added_folders
@@ -56,16 +55,12 @@ def holds(conn, folder, ignored_folders=None):
 def with_rows(conn):
     """[(folder, photos the library holds directly in it)], the folder spelled as the
     library stores it, so it can be sent back to name the folder. Spellings differing only
-    in case are one folder, under the first seen. Every row's path is read: for a
-    whole-library answer (of), not a question about one folder."""
-    held, spelling = {}, {}
+    in case are one folder (the folders table's collation). Read from the derived folders, one
+    statement: it read every row's path, 0.6 s on the 59,519-photo library against 0.01 s, the
+    same answer in the three libraries (counted 2026-10-15, docs/findings.md #501)."""
     roots = store_roots.roots_for(conn)
-    for (photo_path,) in conn.execute("SELECT path FROM photos"):
-        folder = os.path.dirname(paths.from_row(photo_path, roots))
-        key = paths.key(folder)
-        spelling.setdefault(key, folder)
-        held[key] = held.get(key, 0) + 1
-    return [(spelling[key], count) for key, count in held.items()]
+    return [(paths.from_row(folder, roots), count) for folder, count in conn.execute(
+        "SELECT f.path, COUNT(*) FROM photo_folder pf JOIN folders f ON f.id = pf.folder_id GROUP BY pf.folder_id")]
 
 
 class Folders:

@@ -443,10 +443,11 @@ class Watcher:
         for watch in let_go:
             self._unschedule(observer, watch)
 
+        # A share that does not answer is neither there nor gone (sync.watch_states): a watch on it is
+        # kept while its emitter lives, and none is made until it answers.
+        states = sync_service.watch_states([root["path"] for _key, root in roots])
         for key, root in roots:
-            # A share that does not answer is neither there nor gone (sync.folder_state): a watch on it is
-            # kept while its emitter lives, and none is made until it answers.
-            state = sync_service.folder_state(root["path"])
+            state = states[paths.key(root["path"])]
             there = state == "there"
             watch = root["watch"]
             if watch is not None and (state == "gone" or not _emitter_alive(observer, watch)):
@@ -501,8 +502,9 @@ class Watcher:
                 - sum(1 for parent in self._parents.values() if parent["watch"] is not None)
         for watch in dead_watches:
             self._unschedule(observer, watch)
+        states = sync_service.watch_states([wanted[key] for key in died if key in wanted])
         for key in died:
-            if key in wanted and sync_service.folder_state(wanted[key]) == "there":
+            if key in wanted and states[paths.key(wanted[key])] == "there":
                 logger.warning("The watch on %s failed; watching it again and syncing its libraries whole.", wanted[key])
                 self._note_whole(children.get(key, []))
         for key, folder in missing:

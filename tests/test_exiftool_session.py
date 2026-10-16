@@ -162,7 +162,7 @@ class TestTheBatchReadersUseIt(unittest.TestCase):
         # The reader itself; its callers hand it the library's people.
         with open(os.path.join(WORKSPACE_DIR, "tagpup", "files", "metadata.py"), encoding="utf-8") as f:
             source = f.read()
-        for method in ("batch_read", "_read_one_by_one"):
+        for method in ("batch_read",):
             body = source.split("def %s(" % method, 1)[1].split("\n    def ", 1)[0]
             self.assertNotIn("ExifToolHelper(", body, method)
             self.assertIn("ExifToolSession(", body, method)

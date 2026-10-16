@@ -22,6 +22,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 import face_rows  # noqa: E402
 import fake_exiftool  # noqa: E402
 import tuner_client  # noqa: E402
@@ -1012,13 +1013,8 @@ class TestSubfolderListing(TunerAPITestBase):
     def test_already_indexed_photos_are_counted_per_folder(self):
         """So the picker can show what is already in rather than offering it as new."""
         child = self.make_child("shoot", images=2)
-        conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT INTO photos (path, tags, captions) VALUES (?, '[]', '[]')",
-            (os.path.join(child, "img0.jpg"),),
-        )
-        conn.commit()
-        conn.close()
+        # The row as the indexer records it, its folder with it (the library's folders are the derived folders).
+        db.write_with_connection(self.TEST_DB, lambda conn: photo_rows.add_read(conn, os.path.join(child, "img0.jpg"), {}))
         body = self.list_subfolders()
         self.assertEqual(body["folders"][0]["indexed"], 1)
 
@@ -1417,13 +1413,8 @@ class TestFolderSpellingsReachingTheIndexer(TestFolderQueue):
 class TestSubfoldersOfATypedParent(TestSubfolderListing):
     def test_children_of_a_parent_typed_with_forward_slashes_are_spelled_one_way(self):
         child = self.make_child("shoot", images=1)
-        conn = sqlite3.connect(self.TEST_DB)
-        conn.execute(
-            "INSERT INTO photos (path, tags, captions) VALUES (?, '[]', '[]')",
-            (os.path.join(child, "img0.jpg"),),
-        )
-        conn.commit()
-        conn.close()
+        # The row as the indexer records it, its folder with it (the library's folders are the derived folders).
+        db.write_with_connection(self.TEST_DB, lambda conn: photo_rows.add_read(conn, os.path.join(child, "img0.jpg"), {}))
         body = self.get("/api/folder/subfolders?path=%s"
                         % urllib.parse.quote(other_spelling(self.parent)))
         self.assertEqual(body["folders"][0]["indexed"], 1)

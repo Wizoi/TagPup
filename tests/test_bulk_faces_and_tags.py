@@ -189,7 +189,8 @@ class AssigningMany(Bulk):
         with mock.patch.object(batches, "MAX_BATCH", 3):
             reply = self.tuner_post("faces/match-bulk", {"face_ids": [face for _p, face in made], "person_name": WREN})
         self.assertEqual(400, reply.status_code)
-        self.assertIn("3 is the most", reply.get_json()["error"])
+        self.assertEqual("Select up to 3 photos at a time (4 hold these faces). Nothing was changed: do it in parts.",
+                         reply.get_json()["error"])
         self.assertEqual((0, [None] * 4, []), (self.files.writes, [self.row(f)[0] for _p, f in made], self.operations(ASSIGN)))
 
     def test_a_queue_that_is_full_refuses_and_changes_nothing(self):

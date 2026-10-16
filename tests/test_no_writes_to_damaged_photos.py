@@ -130,14 +130,14 @@ class TheIdentityWriter(unittest.TestCase):
 
     def test_nor_into_one_exiftool_could_not_read(self):
         et = FakeExifTool()
-        record = MetadataExtractor._empty("D:/Harbour/jetty.jpg", RuntimeError("Entire file is binary zeros"))
+        record = MetadataExtractor._empty("D:/Harbour/jetty.jpg", RuntimeError("Entire file is binary zeros"), (1.0, 1))
         self.assertIsNone(self.writer(et).give(record, decoded=True))
         self.assertEqual([], et.writes)
 
     def test_an_error_in_the_read_is_carried_on_the_record(self):
         record = MetadataExtractor()._structure("D:/Harbour/jetty.jpg",
                                                 {"SourceFile": "D:/Harbour/jetty.jpg",
-                                                 "ExifTool:Error": "File format error"}, None)
+                                                 "ExifTool:Error": "File format error"}, None, (1.0, 1))
         self.assertEqual("File format error", record["read_error"])
 
     def test_reading_writes_nothing(self):
