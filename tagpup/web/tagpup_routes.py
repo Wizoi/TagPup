@@ -1014,9 +1014,11 @@ def photos_bulk_tags():
             if result.refused:
                 return _refused_after_writing(library, result)
             records_written(library, result)
-    except (Conflict, Refused) as why:
-        # Too many batches wait ahead (tagpup.services.batches), or more photos than a write may name (file_changes.too_many).
-        return responses.error(409, str(why))
+    except Conflict as why:
+        return responses.error(409, str(why))      # too many batches wait ahead (tagpup.services.batches)
+    except Refused as why:
+        # More photos than a write may name (file_changes.too_many), or cancelled before its turn: nothing was written.
+        return responses.error(400, str(why))
     except Exception as e:
         logger.error("Error in bulk tags write: %s", e)
         return responses.error(500, str(e))

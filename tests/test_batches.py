@@ -205,14 +205,12 @@ class Cap(T.Bulk):
         refused before its batch claims a turn (nothing waits behind it), and Smart Rename before a caption is read."""
         from tagpup.files import names
         from tagpup.services import photos as photo_actions
+        chosen = [self.path(each) for each in self.ids[:31]]
         with mock.patch.object(batches, "MAX_BATCH", 30), mock.patch.object(batches, "claim") as claim, \
                 mock.patch.object(names, "read_for_renaming") as read_captions:
-            with self.assertRaises(Refused) as refused:
-                with file_changes.batch_exclusively(self.library, "bulk tags", 31):
-                    self.fail("the write began")
-            renamed = photo_actions.smart_rename(self.library, [self.path(each) for each in self.ids[:31]], "Regatta",
-                                                 "{grouping} - {index} - {caption}", "exiftool")
-        self.assertEqual("Select up to 30 photos at a time (31 were named).", str(refused.exception))
+            tagged = self.client.post("/library/api/photos/bulk-tags", json={"paths": chosen, "add_tags": ["Trips/Coast"]})
+            renamed = photo_actions.smart_rename(self.library, chosen, "Regatta", "{grouping} - {index} - {caption}", "exiftool")
+        self.assertEqual((400, "Select up to 30 photos at a time (31 were named)."), (tagged.status_code, tagged.get_json()["error"]))
         self.assertEqual("Select up to 30 photos at a time (31 were named).", renamed.refused)
         self.assertEqual((0, 0, 0), (claim.call_count, read_captions.call_count, self.files.read_calls))
 
