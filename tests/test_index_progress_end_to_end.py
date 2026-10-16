@@ -37,7 +37,7 @@ sys.path.insert(0, %(root)r)
 from unittest import mock
 from tagpup.ml import clip, faces
 mock.patch.object(clip.ClipModel, "_init_model").start()
-mock.patch.object(clip.ClipModel, "embed_picture", return_value=[0.1] * clip.output_dim(%(model)r)).start()
+mock.patch.object(clip.ClipModel, "embed_picture", return_value=[0.1] * 8).start()
 mock.patch.object(faces.FaceModel, "_init_models").start()
 mock.patch.object(faces.FaceModel, "detect_and_embed_faces", return_value=[]).start()
 '''
@@ -46,16 +46,11 @@ mock.patch.object(faces.FaceModel, "detect_and_embed_faces", return_value=[]).st
 @unittest.skipIf(EXIFTOOL is None, "ExifTool not installed")
 class TheBarReachesTheEnd(unittest.TestCase):
     def test_the_scraped_percent_reaches_100_the_final_message_is_the_cli_runs_and_an_index_again_reads_nothing(self):
-        from tagpup.ml.clip import output_dim
-        from tagpup.services import settings
-        model = settings.DEFAULTS["model.name"]
-        if not output_dim(model):
-            self.skipTest("the model's output size is unknown here")
         home = own_home.for_test(self, "index_progress_")
         shim = os.path.join(home.root, "shim")
         os.makedirs(shim)
         with open(os.path.join(shim, "sitecustomize.py"), "w", encoding="utf-8") as handle:
-            handle.write(SITECUSTOMIZE % {"root": ROOT, "model": model})
+            handle.write(SITECUSTOMIZE % {"root": ROOT})
         folder = os.path.join(home.root, "Regatta")
         os.makedirs(folder)
         for name in ("one.jpg", "two.jpg", "three.jpg"):

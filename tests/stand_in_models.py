@@ -1,0 +1,38 @@
+"""The models a Suggest run is handed, stood in for: no download, no GPU (tests/test_no_test_loads_a_model.py).
+
+A run is given both, always (tagpup.runtime.Runtime.begin -> tagpup.services.suggester.model_for_run), and a test reaches
+the suggester the way a run does:
+
+    suggester = stand_in_models.run_for(photo_index, faces, dim=3).suggester
+
+`faces` is the test's own face model (what it detects is the test's point); CLIP is `Clip`, which asks nothing of a photo
+(the test gives its vector) and embeds every word to nothing, so no word is offered.
+"""
+from tagpup.services import settings as library_settings
+from tagpup.services import suggester
+
+
+class Clip:
+    """CLIP as the runtime hands it to a run: the library's default settings, a word embedded to a zero vector `dim` long
+    (alike nothing), and `ready` -- the run's turn on the graphics card -- with nothing to wait for."""
+
+    def __init__(self, dim):
+        self.settings = library_settings.LibrarySettings(dict(library_settings.DEFAULTS)).embedder
+        self.model_name, self.pretrained = self.settings["model_name"], self.settings["pretrained"]
+        self.dim = dim
+        self.prompts = []
+
+    def ready(self):
+        """Nothing to wait for here."""
+
+    def embed_text(self, prompt):
+        self.prompts.append(prompt)
+        return [0.0] * self.dim
+
+    def embed_image(self, path, seen=None):
+        raise AssertionError("a photo was embedded: the test gives its vector")
+
+
+def run_for(photo_index, faces, dim, words=()):
+    """What a Suggest run over `photo_index` is handed (model_for_run), CLIP stood in for and `faces` the face model."""
+    return suggester.model_for_run(photo_index, Clip(dim), faces, list(words))

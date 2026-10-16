@@ -220,24 +220,6 @@ class TheOwnersValues(unittest.TestCase):
         self.assertEqual("a photo of a sunset in 1998", suggesting.clip_prompt("Sunset", 1998))
         self.assertEqual("a photo of Oda Castellane in 1998", suggesting.clip_prompt("Oda Castellane", 1998, person=True))
 
-    def test_the_length_of_a_photos_vector_is_the_models_own(self):
-        from tagpup.ml import clip
-        from tagpup.services import search
-        self.assertEqual((1280, 1024, 512, None), tuple(clip.output_dim(m) for m in
-                                                          ("ViT-bigG-14", "ViT-H-14", "ViT-B-32", "hf-hub:somebody/unknown-model")))
-
-        class Index:
-            def __init__(self, d):
-                self.d = d
-
-            def stored_dim(self):
-                return self.d
-
-        self.assertIsNone(search.stored_mismatch(Index(1280), "ViT-bigG-14"))
-        self.assertIsNone(search.stored_mismatch(Index(None), "ViT-bigG-14"))
-        self.assertIsNone(search.stored_mismatch(Index(7), "hf-hub:somebody/unknown-model"))
-        self.assertEqual((512, 1280), search.stored_mismatch(Index(512), "ViT-bigG-14"))
-
     def test_the_runtimes_model_is_the_librarys(self):
         import own_home
         from tagpup.core.library import Library

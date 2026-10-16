@@ -10,7 +10,8 @@ record_detected; one that failed is not; and Suggest reads it before it detects.
 The photo's row and vector are made as the indexer makes them (tests/photo_rows.py,
 store.embeddings.put); the detection as the indexer records it (record_batch). The face
 model is a stand-in that says which settings it detects with and counts what is asked of
-it: `ready` is what takes a Suggest run's turn on the graphics card (tagpup.runtime).
+it: `ready` is what takes a Suggest run's turn on the graphics card (tagpup.runtime). Suggest is reached as a run reaches
+it (model_for_run), CLIP stood in for (tests/stand_in_models.py).
 
 A photo whose face rows are deleted is detected again (#779): the record says detection ran on a photo, and deleting
 every face row of it -- by the faces store, by id, or by the journal -- left the record, so Suggest believed the photo's
@@ -28,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+import stand_in_models  # noqa: E402
 from face_rows import add_face  # noqa: E402
 from PIL import Image  # noqa: E402
 
@@ -37,11 +39,9 @@ from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.services.search import PhotoIndex  # noqa: E402
-from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import faces, faces_detected, journal  # noqa: E402
-from tagpup.store.taxonomy import TagTaxonomy  # noqa: E402
 
 
 class FaceModel:
@@ -104,9 +104,7 @@ class Case(unittest.TestCase):
         index = PhotoIndex(db_path=self.db_path, model=self.model_key)
         index.load()
         try:
-            taxonomy = TagTaxonomy(self.db_path)
-            taxonomy.load()
-            TagSuggester(index, taxonomy, faces=model).suggest_for_photo(self.photo, self.vector)
+            stand_in_models.run_for(index, model, dim=len(self.vector)).suggester.suggest_for_photo(self.photo, self.vector)
         finally:
             index.close()
 

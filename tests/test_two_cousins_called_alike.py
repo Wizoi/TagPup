@@ -32,6 +32,7 @@ from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, TwoSams, look, write
 from test_face_clustering_rules import identity_vector as clustering_vector, near as near_vector  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
+import stand_in_models  # noqa: E402
 from test_organize_faces import WREN  # noqa: E402
 
 import numpy as np  # noqa: E402
@@ -347,7 +348,7 @@ class AFilingTwiceIsSuggestedByTheNode(unittest.TestCase):
     def suggested(self, tags_by_id, person_id):
         known = clustering.KnownFaces.of([(person_id, unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg",
                                            Ref(person_id, "Imogen Vale"))])
-        run = TagSuggester(NoIndex(), tree_of(TWICE), faces=OneFace())
+        run = TagSuggester(NoIndex(), tree_of(TWICE), embedder=stand_in_models.Clip(3), faces=OneFace())
         with mock.patch.object(faces_service, "known_faces", return_value=known), \
                 mock.patch.object(TagSuggester, "_tags_by_id", return_value=tags_by_id), \
                 mock.patch.object(faces_service, "record_detected", return_value=0):

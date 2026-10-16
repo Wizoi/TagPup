@@ -77,6 +77,7 @@ class TheSelectionPanel(unittest.TestCase):
     def test_select_all_minus_the_excluded_is_the_same_photos_for_the_tally_the_folders_and_a_bulk_edit(self):
         sources = ({"kind": "all"}, {"kind": "keyword", "value": "Trips"}, {"kind": "person", "value": "Rowan Thackeray"},
                    {"kind": "year", "value": "2024"}, {"kind": "month", "value": "2024-06"},
+                   {"kind": "folder", "value": os.path.join(self.vl.pictures, "2024 Coast")},
                    {"kind": "folder", "value": os.path.join(self.vl.pictures, "Misc"), "recursive": True})
         for named in sources:
             held = self.ids(named)

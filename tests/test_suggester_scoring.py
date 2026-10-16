@@ -21,6 +21,10 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+from unittest import mock
+
+from tagpup.core import clustering
+from tagpup.services import faces as face_records
 from tagpup.services.suggester import TagSuggester, extract_path_hints
 from tagpup.store.taxonomy import TagTaxonomy
 
@@ -37,6 +41,7 @@ class StubIndex:
         self._neighbors = neighbors or []
         self._faces = faces or []
         self.conn = None
+        self.db_path = "no such library.db"
         self.metadata = []
         self.saved_tag_embeddings = []
 
@@ -72,6 +77,9 @@ class StubEmbedder:
 class StubFaceProcessor:
     """The face model a suggester is handed: finds no face in any photo."""
 
+    def ready(self):
+        """The run's turn on the graphics card (tagpup.runtime._OnTheCard): nothing to wait for here."""
+
     def detect_and_embed_faces(self, path):
         return []
 
@@ -103,7 +111,14 @@ class SuggesterTestBase(unittest.TestCase):
         taxonomy = TagTaxonomy(library)
         taxonomy.paths = set(taxonomy_paths)
         index = StubIndex(neighbors=list(neighbors))
-        return TagSuggester(index, taxonomy, embedder=embedder, candidate_tags=candidates or [],
+        # A library with no named faces, that keeps no face: the stubs are no library to read or write.
+        for patcher in (mock.patch.object(face_records, "known_faces", return_value=clustering.KnownFaces()),
+                        mock.patch.object(face_records, "record_detected", return_value=0),
+                        mock.patch.object(TagSuggester, "_tags_by_id", return_value={})):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        # A run is always given CLIP (model_for_run): with no candidate words, it is asked nothing.
+        return TagSuggester(index, taxonomy, embedder=embedder or StubEmbedder(), candidate_tags=candidates or [],
                             faces=StubFaceProcessor())
 
     def scores(self, result):

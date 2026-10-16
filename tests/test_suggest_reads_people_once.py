@@ -33,6 +33,7 @@ from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stand_in_models  # noqa: E402
 from face_rows import person_of  # noqa: E402
 
 
@@ -41,25 +42,9 @@ def unit(vector):
     return vector / np.linalg.norm(vector)
 
 
-class FakeTaxonomy:
-    paths = ["People/Rowan Thackeray", "Activity/Running"]
-
-    def expand_tag(self, tag):
-        return [tag]
-
-    def person_paths(self, name):
-        return ["People/" + name]
-
-    def find_by_leaf(self, leaf):
-        return None
-
-    def people_roots(self):
-        # The roots the library's tree flags as holding faces (docs/findings.md, #66).
-        return {"people"}
-
-
 class Index:
-    """A library with no neighbours and no faces on file."""
+    """A library with no neighbours, no faces on file and no tree (its file is not there): a run over it is handed the
+    suggester model_for_run makes (tests/stand_in_models.py)."""
     conn = None
     db_path = "no such library.db"
 
@@ -83,11 +68,11 @@ class ReadsPeopleOncePerRun(unittest.TestCase):
             known_reads.append(db_path)
             return clustering.KnownFaces.of([(7, unit([1, 0, 0]), None, r"D:\Pictures\Before\a.jpg", Ref(7, "Rowan Thackeray"))])
 
-        run = TagSuggester(Index(), FakeTaxonomy(), faces=FakeFaceProcessor())
         with mock.patch.object(face_records, "known_faces", side_effect=known_faces), \
                 mock.patch.object(TagSuggester, "_tags_by_id", return_value={7: "People/Rowan Thackeray"}), \
                 mock.patch.object(face_records, "record_detected", return_value=0), \
                 mock.patch.object(store_faces, "for_clustering", side_effect=AssertionError("read every face")):
+            run = stand_in_models.run_for(Index(), FakeFaceProcessor(), dim=3).suggester
             results = [run.suggest_for_photo(r"D:\Pictures\Run\%02d.jpg" % n, [1.0, 0.0, 0.0])
                        for n in range(3)]
         self.assertEqual(len(known_reads), 1)
@@ -135,25 +120,18 @@ class KnownFacesFromTheLibrary(unittest.TestCase):
 
 
 class FaceModelsLoadOnce(unittest.TestCase):
-    def test_warm_up_actually_loads_the_models(self):
-        loaded = []
-
-        class Faces:
-            def load(self):
-                loaded.append(True)
-
-        Runtime(clip=mock.Mock(), faces=Faces()).warm_up()
-        self.assertEqual(loaded, [True])
-
-    def test_warm_up_builds_each_model_once_from_the_settings(self):
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    def library(self):
         import own_home
         from tagpup.core.library import Library
         from tagpup.services import libraries as library_actions
-        from tagpup.services import settings as library_settings
         home = own_home.for_test(self)
         library_actions.create(home.library("harbour.db"))
-        library = Library(home.library("harbour.db"))
+        return Library(home.library("harbour.db"))
+
+    def test_warm_up_builds_each_model_once_from_the_settings_and_loads_them(self):
+        """The warm-up that was meant to load the face models only built them; each load is counted here."""
+        from tagpup.services import settings as library_settings
+        library = self.library()
         with mock.patch.object(clip_model, "ClipModel") as clip, \
                 mock.patch.object(face_model, "FaceModel") as faces:
             runtime = Runtime()
@@ -169,10 +147,11 @@ class FaceModelsLoadOnce(unittest.TestCase):
         """The warm-up made a PhotoIndex on the startup library and kept it open until
         the process ended; a thread starting after the file had gone made an empty
         library in its place (docs/findings.md, #99). The models are the process's."""
+        library = self.library()
         opened = []
         with mock.patch.object(search, "PhotoIndex", side_effect=lambda *a, **k: opened.append(a)), \
                 self.assertNoLogs("tagpup.runtime", level="ERROR"):
-            Runtime(clip=mock.Mock(), faces=mock.Mock()).warm_up()
+            Runtime(build_clip=lambda settings: mock.Mock(), build_faces=lambda settings: mock.Mock()).warm_up([library])
         # The warm-up catches what a model raises, and logs it: a patch that raised was
         # swallowed there, so the library it opened is counted instead.
         self.assertEqual([], opened)

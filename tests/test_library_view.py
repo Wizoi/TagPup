@@ -33,14 +33,8 @@ class Library(unittest.TestCase):
 
 
 class TheOrder(Library):
-    def test_by_date_taken_then_id_and_photos_with_no_date_at_the_end(self):
-        late = self.vl.photo("A", "late.jpg", taken="2024:06:03 10:00:00")
-        undated_first = self.vl.photo("A", "undated1.jpg")
-        early = self.vl.photo("A", "early.jpg", taken="2023:01:01 08:00:00")
-        undated_second = self.vl.photo("A", "undated2.jpg")
-        tied_a = self.vl.photo("A", "tied_a.jpg", taken="2024:01:01 00:00:00")
-        tied_b = self.vl.photo("A", "tied_b.jpg", taken="2024:01:01 00:00:00")
-        self.assertEqual([early, tied_a, tied_b, late, undated_first, undated_second], self.ids("all"))
+    """Dated by Date Taken then id, the undated after by id, in either direction, for every kind of source, across page
+    boundaries: scenario V1 (test_library_views_scenarios). Here the rules of what is a date."""
 
     def test_the_file_time_does_not_order_it(self):
         first = self.vl.photo("A", "z.jpg", taken="2020:01:01 00:00:00", real=True)
@@ -65,33 +59,6 @@ class TheOrder(Library):
     def test_an_empty_library_is_an_empty_list(self):
         found = library_view.ids(self.vl.library, "all")
         self.assertEqual(([], 0), (found["ids"], found["total"]))
-
-
-class EqualDates(Library):
-    """A run of photos with one Date Taken: the id decides."""
-
-    def setUp(self):
-        super().setUp()
-        self.vl.tree("Trips/Coast", "People/Wren Halloway", face_root="People")
-        self.same = [self.vl.photo("Run", "r%d.jpg" % n, taken="2024:06:15 12:00:00", tags=["Trips/Coast", "People/Wren Halloway"])
-                     for n in range(7)]
-        self.vl.photo("Run", "before.jpg", taken="2024:06:14 12:00:00", tags=["Trips/Coast"])
-        self.vl.photo("Run", "after.jpg", taken="2024:06:16 12:00:00", tags=["Trips/Coast"])
-        self.folder = os.path.join(self.vl.pictures, "Run")
-        self.sources = {"all": ("all", None, False), "folder": ("folder", self.folder, False),
-                        "folder+": ("folder", self.folder, True), "keyword": ("keyword", "Trips/Coast", False),
-                        "person": ("person", "People/Wren Halloway", False), "year": ("year", "2024", False),
-                        "month": ("month", "2024-06", False)}
-
-    def test_a_run_of_seven_equal_dates_is_in_id_order_and_none_is_lost_or_repeated(self):
-        for name, (kind, value, recursive) in self.sources.items():
-            with self.subTest(source=name):
-                found = library_view.ids(self.vl.library, kind, value, recursive)
-                ids = found["ids"]
-                self.assertEqual(len(ids), len(set(ids)), "no photo twice")
-                self.assertEqual(self.same, [each for each in ids if each in self.same], "equal dates in id order")
-                self.assertEqual(len(ids), found["total"])
-                self.assertTrue(set(self.same) <= set(ids), "none of the run skipped")
 
 
 class WhatIsRefused(Library):

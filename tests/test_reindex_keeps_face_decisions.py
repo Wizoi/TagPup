@@ -25,7 +25,6 @@ from tagpup.store import db as tagpup_db
 from tagpup.core import paths
 from tagpup.services.search import PhotoIndex
 from tagpup_cli import cli
-from tagpup.ml.clip import output_dim
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from face_rows import add_face, configured_model  # noqa: E402
@@ -37,10 +36,8 @@ def make_jpeg(path, color="green"):
 
 
 def expected_dim():
-    # The length the library's model makes, as the CLI checks it (tagpup.ml.clip.output_dim):
-    # a library made in a test's home holds the defaults.
-    from tagpup.services import settings
-    return output_dim(settings.DEFAULTS["model.name"]) or 512
+    """Any length: a model's vectors are kept under its own key (tagpup.store.embeddings.model_key)."""
+    return 8
 
 
 def swap_case(text):

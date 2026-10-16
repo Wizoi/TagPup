@@ -3,7 +3,7 @@
 Each case here was a difference between two of the 26 places that read config.ini:
 where it was, what a relative path meant, what a missing value meant, and which
 ExifTool to run. The settings are each library's now (tagpup.services.settings;
-tests/test_settings.py); what is left is the machine's.
+tests/test_a_librarys_settings_are_its_own.py); what is left is the machine's.
 """
 import os
 import shutil

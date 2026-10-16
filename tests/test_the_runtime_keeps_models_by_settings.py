@@ -145,7 +145,7 @@ class UnloadingModel(FakeModel):
 class FakeRun:
     """What model_for_run makes, for a run: it answers from the photo index it was given."""
 
-    def __init__(self, photo_index, clip, faces, words):
+    def __init__(self, photo_index, clip, faces, words, remember=True):
         self.photo_index, self.clip, self.faces = photo_index, clip, faces
         self.model_key = photo_index.model
         self.answered, self.failed = [], []
@@ -235,8 +235,8 @@ class TheRuntimeLetsGoOfWhatNoLibraryUses(ALibrary):
         runs = suggestion_jobs.SuggestionRuns(library.path)
         started = []
 
-        def make_run(*args):
-            run = FakeRun(*args)
+        def make_run(*args, **kwargs):
+            run = FakeRun(*args, **kwargs)
             started.append(run)
 
             def meanwhile():

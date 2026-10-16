@@ -4,7 +4,8 @@ The suggester read every face row on the photo and matched each against the know
 people, so a passer-by excluded in TagTuner, or a face marked "nobody", came back as a
 suggestion for whoever it most resembled -- the decision was undone one click later.
 Skipping them must not make the photo look faceless, either: a photo whose every face
-had been excluded would then be sent through detection again.
+had been excluded would then be sent through detection again. The suggester is the one a run
+is handed (model_for_run), its tree the library's, CLIP stood in for (tests/stand_in_models.py).
 """
 import os
 import shutil
@@ -17,30 +18,13 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tagpup.services.search import PhotoIndex  # noqa: E402
-from tagpup.services.suggester import TagSuggester  # noqa: E402
 from tagpup.store import taxonomy  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stand_in_models  # noqa: E402
 from face_rows import person_of  # noqa: E402
 
 ROWAN = [1.0, 0.0, 0.0]
-
-
-class FakeTaxonomy:
-    paths = ["People/Rowan Thackeray"]
-
-    def expand_tag(self, tag):
-        return [tag]
-
-    def person_paths(self, name):
-        return ["People/" + name]
-
-    def find_by_leaf(self, leaf):
-        return None
-
-    def people_roots(self):
-        # The roots the library's tree flags as holding faces (docs/findings.md, #66).
-        return {"people"}
 
 
 class CountingFaceProcessor:
@@ -81,7 +65,8 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         conn.commit()
 
     def suggested(self, path):
-        result = TagSuggester(self.index, FakeTaxonomy(), faces=self.processor).suggest_for_photo(path, ROWAN)
+        run = stand_in_models.run_for(self.index, self.processor, dim=len(ROWAN))
+        result = run.suggester.suggest_for_photo(path, ROWAN)
         return [t["tag"] for t in result["suggested_tags"]]
 
     def test_an_unnamed_face_is_still_matched(self):
@@ -97,8 +82,7 @@ class SuggestRespectsFaceDecisions(unittest.TestCase):
         self.assertNotIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\stranger.jpg"))
 
     def test_a_photo_with_no_face_rows_is_detected_with_the_model_it_is_given(self):
-        # The other tests only show detection is skipped, which a suggester given no
-        # face model would pass too; this one needs the model (found in review of 6.5).
+        # The other tests only show detection is skipped; this one needs the model (found in review of 6.5).
         self.assertIn("People/Rowan Thackeray", self.suggested(r"D:\Pictures\new.jpg"))
         self.assertEqual(1, self.processor.calls)
 

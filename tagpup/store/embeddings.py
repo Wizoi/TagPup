@@ -113,11 +113,6 @@ def lacking(conn, photo_id, held):
                         (photo_id,) + tuple(held)).fetchall()
 
 
-def clear(conn):
-    """Forget every photo's vectors. Returns rows deleted. The caller commits."""
-    return conn.execute("DELETE FROM embeddings").rowcount
-
-
 def count(conn, model):
     """How many photos have a vector under `model`."""
     return conn.execute("SELECT COUNT(*) FROM embeddings WHERE model = ?", (model,)).fetchone()[0]

@@ -75,7 +75,7 @@ from tagpup.services import roots as library_roots
 from tagpup.core.result import NotFound
 from tagpup.services import maintenance
 from tagpup.jobs import indexing as indexing_jobs
-from tagpup.services.search import PhotoIndex, stored_mismatch
+from tagpup.services.search import PhotoIndex
 from tagpup.store.locks import PathLocker
 from tagpup.store import taxonomy as store_taxonomy
 from tagpup.files import images as image_files
@@ -224,26 +224,14 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
 
     settings = runtime.settings(Library(db_path))
     exiftool_path = runtimes.exiftool(Library(db_path), settings)
-    model_name = settings.embedder["model_name"]
 
     # Setup / Load components
-    # Connected, its vectors not read: the index needs their length alone (stored_dim).
+    # Connected, its vectors not read: the index needs their stamps alone.
     photo_index = library_index(runtime, db_path)
     photo_index.open()
 
-    # The library's vectors against the length this model makes (tagpup.services.search.stored_mismatch).
-    mismatch = stored_mismatch(photo_index, model_name)
-    if mismatch:
-        console.print(f"[yellow]Warning: Index dimensionality ({mismatch[0]}) does not match current model {model_name} dimensionality ({mismatch[1]}). Clearing cached photo embeddings to reindex with the new model...[/yellow]")
-        try:
-            photo_index.clear_clip_embeddings()
-        except Exception as e:
-            console.print(f"[bold red]Failed to clear CLIP embeddings: {e}[/bold red]")
-
     taxonomy = TagTaxonomy(db_path)
     taxonomy.load()
-
-    embeddings = runtime.embeddings(Library(db_path), photo_index)
 
     # Each photo with the stamp its folder's listing gave (images.stamps_under / stamps_in), by paths.key.
     on_disk = {}
@@ -291,6 +279,11 @@ def index(ctx, directories, force_reembed: bool, reset: bool, skip_faces: bool, 
                 console.print(f"  • {root}: {count} path(s)")
         photo_index.close()
         return
+
+    # Only now that a photo is to be embedded: the CLIP model's library (open_clip, torch) takes seconds to import,
+    # and a run that finds nothing to index -- every sync, every watcher run -- needs none of it (docs/findings.md, #1089).
+    # A model's vectors are kept under its own key (tagpup.store.embeddings.model_key): another model's are never compared.
+    embeddings = runtime.embeddings(Library(db_path), photo_index)
 
     # Extract metadata in batches of 500
     console.print(f"[bold cyan]Reading metadata in batches for {len(images_to_process)} image(s)...[/bold cyan]")

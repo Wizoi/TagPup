@@ -32,9 +32,7 @@ from tagpup.files import images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
 from tagpup.core.fields import read_document_id  # noqa: E402
 from tagpup.files.metadata import IdentityWriter, MetadataExtractor  # noqa: E402
-from tagpup.ml.clip import output_dim  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.services import settings as library_settings  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
 EXIFTOOL = own_home.installed_exiftool()
@@ -55,7 +53,8 @@ def identity_in_file(path):
 
 
 def vector():
-    return [0.1] * (output_dim(library_settings.DEFAULTS["model.name"]) or 512)
+    """Any length: a model's vectors are kept under its own key (tagpup.store.embeddings.model_key)."""
+    return [0.1] * 8
 
 
 class Decoding(unittest.TestCase):

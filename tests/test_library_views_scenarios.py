@@ -9,7 +9,8 @@ wrote the library: the card says what the disk says, the keyword view lists what
 let go. The find route reads a path literally: `_` and `%` are not wildcards.
 
 Lifted from tests/test_library_view_routes.py, test_library_ids_routes.py, test_library_cards_stale.py,
-test_library_find.py and test_a_queued_folder_drops_its_scan.py (#341), and what each catches:
+test_library_find.py, test_a_queued_folder_drops_its_scan.py (#341) and test_library_view.py (EqualDates: a folder alone, a
+person and a month among the sources; TheOrder's dated-then-undated order), and what each catches:
   Lifted: the id tie-break dropped from the dated read of all_ids in tagpup/store/library_view.py (`ORDER BY p.taken%s,
           p.id%s` -> `ORDER BY p.taken%s`) fails scrolls_equal_dates_across_page_boundaries (descending, by keyword and by
           folder with its subfolders).
@@ -40,6 +41,7 @@ from tagpup.web import tagpup_routes  # noqa: E402
 
 REMOTE = {"REMOTE_ADDR": "10.0.0.7"}
 SAME = "2024:06:01 10:00:00"
+WREN = "Wren Halloway"
 WINDOW = 5   # the cards a page asks for at a time (the real window is up to library_view.MAX_CARDS)
 
 
@@ -77,9 +79,12 @@ class ScrollingALibraryOfEqualDates(Views):
         super().setUp()
         photo = self.vl.photo
         # Seven photos taken in the same second, added folder by folder in turn, so that id order is not folder order.
-        self.same = [photo("Lake", "l1.jpg", SAME), photo("Coast", "c1.jpg", SAME), photo("Misc", "m1.jpg", SAME),
-                     photo("Coast", "c2.jpg", SAME, tags=["Trips/Coast"]), photo(os.path.join("Coast", "Day 2"), "c3.jpg", SAME),
-                     photo("Lake", "l2.jpg", SAME, tags=["Trips/Coast"]), photo("Misc", "m2.jpg", SAME, tags=["Trips/Coast"])]
+        self.vl.tree("People/" + WREN, face_root="People")
+        self.same = [photo("Lake", "l1.jpg", SAME, tags=["People/" + WREN]), photo("Coast", "c1.jpg", SAME),
+                     photo("Misc", "m1.jpg", SAME),
+                     photo("Coast", "c2.jpg", SAME, tags=["Trips/Coast", "People/" + WREN]),
+                     photo(os.path.join("Coast", "Day 2"), "c3.jpg", SAME),
+                     photo("Lake", "l2.jpg", SAME, tags=["Trips/Coast"]), photo("Misc", "m2.jpg", SAME, tags=["Trips/Coast", "People/" + WREN])]
         self.early = photo("Misc", "early.jpg", "2023:01:02 10:00:00")
         self.late = photo("Lake", "late.jpg", "2024:12:24 10:00:00")
         self.undated = [photo("Misc", "u1.jpg"), self.vl.unread("Misc", "never read.jpg"), photo("Lake", "u2.jpg")]
@@ -88,7 +93,8 @@ class ScrollingALibraryOfEqualDates(Views):
     def test_scrolls_equal_dates_across_page_boundaries(self):
         dated = [self.early] + self.same + [self.late]
         sources = (dict(kind="all"), dict(kind="keyword", value="Trips"), dict(kind="year", value="2024"),
-                   dict(kind="folder", folder=self.coast, recursive="1"))
+                   dict(kind="month", value="2024-06"), dict(kind="person", value="People/" + WREN),
+                   dict(kind="folder", folder=self.coast), dict(kind="folder", folder=self.coast, recursive="1"))
         for query in sources:
             for order, direction in (("taken", 1), ("taken-desc", -1)):
                 with self.subTest(query=query, order=order):

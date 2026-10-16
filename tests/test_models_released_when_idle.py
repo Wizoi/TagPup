@@ -20,6 +20,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -39,7 +40,7 @@ from tagpup.web import tagpup_routes, tuner_routes  # noqa: E402
 IDLE = 5 * 60
 ELSEWHERE = {"REMOTE_ADDR": "192.168.1.20"}
 BOTH = ["CLIP", "faces"]
-A_RUN = mock.patch("tagpup.services.suggester.model_for_run", lambda *args: object())
+A_RUN = mock.patch("tagpup.services.suggester.model_for_run", lambda *args, **kwargs: object())
 
 
 class FakeModel:
@@ -97,6 +98,34 @@ class TheServer(unittest.TestCase):
     def later(self, seconds):
         self.clock.now += seconds
         return self.runtime.release_idle()
+
+
+class TheStartupWarmUp(TheServer):
+    def test_while_it_loads_the_page_names_it_and_not_a_suggest(self):
+        """The warm-up holds a run's lease while it loads (#1423). The Activity page read "a run holds them" as Suggest: it
+        said "In use by Suggest." and Unload answered "Suggest is using them" with no Suggest anywhere. Now each names
+        what holds them."""
+        started, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def slow_load(model):
+            model.on = True
+            started.set()
+            release.wait(20)
+        with mock.patch.object(FakeModel, "load", slow_load, create=True), \
+                mock.patch.object(FakeModel, "embed_text", lambda model, text: [0.0], create=True):
+            warming = self.runtime.warm_up_in_background([self.harbour])
+            self.assertTrue(started.wait(20))
+            text = self.client.get("/api/activity/server").get_json()["models"]["text"]
+            self.assertIn("In use by the warm-up of Suggest's models (TagPup server).", text)
+            self.assertNotIn("Suggest.", text)
+            busy = self.client.post("/api/activity/models/unload")
+            self.assertEqual(409, busy.status_code)
+            self.assertEqual("In use by the warm-up of Suggest's models (TagPup server): they are let go when it ends.",
+                             busy.get_json()["error"])
+            release.set()
+            warming.join(20)
+        self.assertNotIn("In use", self.client.get("/api/activity/server").get_json()["models"]["text"])
 
 
 class TheServerGoesIdle(TheServer):
@@ -169,7 +198,8 @@ class TheUnloadButton(TheServer):
             run = self.runtime.begin(self.harbour)
         busy = press()
         self.assertEqual(409, busy.status_code)
-        self.assertEqual("Suggest is using them: they are let go when it ends.", busy.get_json()["error"])
+        self.assertEqual("In use by Suggest in library: they are let go when it ends.", busy.get_json()["error"])
+        self.assertIn("In use by Suggest in library.", server()["text"])
         self.assertEqual((BOTH, True), (self.runtime.models_state()["loaded"], self.runtime.models_state()["in_use"]))
         run.end()
         done = press().get_json()

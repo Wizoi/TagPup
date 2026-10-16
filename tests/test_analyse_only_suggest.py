@@ -171,11 +171,11 @@ class Base(unittest.TestCase):
     def app_home(self):
         self.clip = None
         self.faces = FakeFaces()
-        self.runtime = Runtime(clip=None, faces=self.faces)
+        # Built as the runtime builds a library's models, from its settings: every library here gets these two.
+        self.runtime = Runtime(build_clip=lambda settings: self.clip, build_faces=lambda settings: self.faces)
         self.app, self.home = web_client.app_for(self, "tagpup", runtime=self.runtime)
         self.library = Library(self.home.library("library.db"))
         self.clip = FakeClip(library_settings.of(self.library).embedder)
-        self.runtime._clip = self.clip
         self.client = self.app.test_client()
         self.addCleanup(self.runtime.forget, self.library)
         self.addCleanup(suggestion_jobs.forget, self.library)
@@ -419,6 +419,31 @@ class AFailureIsSaidAndLeavesNothingHalfRun(Base):
         self.assertIn("CUDA out of memory", found["message"])
         self.assertIn("nothing was changed", found["message"])
         self.assertEqual({}, found["suggestions"])
+        self.assert_library_unchanged()
+
+    def test_a_read_of_the_named_faces_that_fails_fails_the_run_with_its_sentence(self):
+        """The suggester read who is known inside a catch-all and, when the read failed, knew nobody: every photo was
+        offered no person and the run said "The library has no named faces yet". A read that fails fails the run."""
+        import sqlite3
+        with mock.patch("tagpup.services.faces.known_faces", side_effect=sqlite3.OperationalError("database is locked")):
+            self.start(self.cup)
+        found = self.status(self.cup)
+        self.assertEqual("error", found["status"], found)
+        self.assertIn("database is locked", found["message"])
+        self.assertIn("nothing was changed", found["message"])
+        self.assertEqual({}, found["suggestions"])
+        self.assert_library_unchanged()
+
+    def test_a_read_of_a_photos_faces_that_fails_leaves_the_photo_unread_not_faceless(self):
+        """A failed read of a photo's faces was "no face on file": the photo was detected again and offered what the
+        detection found. Now the photo is not suggested for, said, and tried again by the next run."""
+        import sqlite3
+        with mock.patch("tagpup.store.faces.in_photo", side_effect=sqlite3.OperationalError("disk I/O error")):
+            self.start(self.cup)
+        found = self.status(self.cup)
+        self.assertEqual(("completed", 4), (found["status"], found["unread"]), found)
+        self.assertEqual(["disk I/O error"] * 3, [self.suggested(self.cup)["cup_0%d.jpg" % n].get("error") for n in (1, 2, 3)])
+        self.assertEqual([], self.faces.detected, "a photo whose faces could not be read was detected again")
         self.assert_library_unchanged()
 
     def test_a_model_that_fails_on_every_photo_says_so_and_records_nothing(self):

@@ -13,6 +13,8 @@ its own ViT-H-14; both sat at 0 of 165 for over half an hour. Now:
 - Suggest in a library naming another CLIP model than a run under way in this process holds is refused, naming that run
   and both models, and runs once it has ended: one process holds one set of models (#761). Once it has ended, the
   other library's Suggest lets go of the models kept from it before it builds its own, and keeps those it shares.
+  The startup warm-up is such a run while it loads (#1423), and a Suggest whose models cannot be made lets go of
+  nothing it found kept (#1424).
 
 Fictional names; stand-in models that say they are on "cuda", on a lock folder of the
 test's own home. No real model is loaded.
@@ -207,6 +209,9 @@ class _Suggester:
     def _precompute_candidates(self):
         pass
 
+    def knows_named_faces(self):
+        return False
+
     def suggest_for_photo(self, path, emb, k=15, min_sim=0.35, target_metadata=None):
         return {"path": path, "suggested_tags": [{"tag": "Activity/Sailing", "score": 0.7}]}
 
@@ -226,7 +231,8 @@ class SuggestWaitsForTheCard(_Library):
             self.addCleanup(patched.stop)
         self.clip = _CudaClip()
         self.card = gpu.Card(poll=0.05)
-        self.runtime = Runtime(clip=self.clip, faces=_CudaFaces(), card=self.card)
+        faces = _CudaFaces()
+        self.runtime = Runtime(build_clip=lambda settings: self.clip, build_faces=lambda settings: faces, card=self.card)
         other = gpu.Card(poll=0.05)
         # Every turn ends before the home is deleted: an open card.lock cannot be (#775).
         self.addCleanup(self.card.close)
@@ -362,6 +368,12 @@ class _CpuModel:
         self.settings = dict(settings)
         self.unloads = 0
 
+    def load(self):
+        pass
+
+    def embed_text(self, text):
+        return [0.0]
+
     def unload(self):
         self.unloads += 1
 
@@ -379,11 +391,15 @@ class TwoLibrariesNamingTwoModels(_Library):
         changed = library_settings.change(self.cove, {"model.name": "ViT-L-14"}, acknowledged=["clip"])
         self.assertEqual(1, changed.changed, changed.refused)
         self.built = []
+        #: The CLIP models that cannot be made (a download refused, say), by name.
+        self.unmakeable = ()
 
         #: The CLIP models not let go each time a run begins to use its own: never two (#761).
         self.loaded_when_used = []
 
         def build(settings):
+            if settings.get("model_name") in self.unmakeable:
+                raise RuntimeError("%s cannot be made" % settings["model_name"])
             self.built.append(_CpuModel(settings))
             return self.built[-1]
         self.runtime = Runtime(build_clip=build, build_faces=build)
@@ -469,6 +485,43 @@ class TwoLibrariesNamingTwoModels(_Library):
         faces = [model for model in self.built if "model_name" not in model.settings]
         self.assertEqual(1, len(faces), "the face models the two share were built again")
         self.assertEqual(0, faces[0].unloads, "the face models the two share were let go")
+
+    def test_a_suggest_on_other_models_waits_for_the_startup_warm_up(self):
+        """The server starts and warms harbour's models; the owner clicks Suggest in cove, naming ViT-L-14, while they load.
+        The warm-up held no run's place, so cove's run began, dropped harbour's models and loaded its own while the warm-up
+        went on with harbour's: two sets at once (#1423). Now the warm-up is a run of its own while it loads."""
+        started, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def slow_load(model):
+            started.set()
+            release.wait(DEADLINE)
+        with mock.patch.object(_CpuModel, "load", slow_load):
+            warming = self.runtime.warm_up_in_background([self.library])
+            self.assertTrue(started.wait(DEADLINE))
+            refused = self.suggest_in_cove()
+            self.assertEqual("error", refused["status"], refused)
+            self.assertIn("the warm-up of Suggest's models (TagPup server) is using", refused["message"])
+            [harbours] = self.clips()
+            self.assertEqual(0, harbours.unloads, "the warm-up's models were let go under it")
+            release.set()
+            warming.join(DEADLINE)
+        self.assertEqual("completed", self.suggest_in_cove()["status"])
+        self.assertEqual([["ViT-L-14"]], self.loaded_when_used, "two CLIP models were loaded at once")
+
+    def test_a_suggest_whose_models_cannot_be_made_loses_none_of_those_kept(self):
+        """cove's CLIP model cannot be made. The run is refused, and harbour's models, kept between its runs, are still
+        kept: they were taken off the runtime before cove's were made and never let go (#1424), and the next harbour run
+        made them again beside them."""
+        self.assertEqual("completed", self.suggest_in(self.runs, self.folder, self.library, self.photos)["status"])
+        [harbours] = self.clips()
+        self.unmakeable = ("ViT-L-14",)
+        refused = self.suggest_in_cove()
+        self.assertEqual("error", refused["status"], refused)
+        self.assertIn("ViT-L-14 cannot be made", refused["message"])
+        self.assertEqual("completed", self.suggest_in(self.runs, self.folder, self.library, self.photos)["status"])
+        self.assertEqual([harbours], self.clips(), "harbour's CLIP model was made a second time")
+        self.assertEqual(0, harbours.unloads)
 
 
 if __name__ == "__main__":
