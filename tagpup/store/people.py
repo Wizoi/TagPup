@@ -49,11 +49,10 @@ def _faces_named(conn, photo_ids):
     return named
 
 
-def _differences(conn, photo_ids, known, wanting=None):
+def _differences(conn, photo_ids, known):
     """(photo id, its people by the rule as [(id, name, source)]) of each photo in `photo_ids` -- every photo, without --
     whose rows say otherwise. A person the rule names with no id (a face named before names had ids, a keyword with no node) is
-    not listed. `wanting`, when given, gets {key: name} of the names a photo's person fields hold that no node is called: the
-    caller gives them nodes (_make_nodes)."""
+    not listed."""
     if known is None:
         from tagpup.store import taxonomy   # taxonomy imports this module
         known = taxonomy.read_people_vocabulary(conn)
@@ -79,29 +78,12 @@ def _differences(conn, photo_ids, known, wanting=None):
             if not isinstance(tags, list):
                 tags = []   # a damaged read wrote null, or a string: no keywords, as derived.keywords_of reads it
             rows = vocabulary.people_rows(raw, tags, named.get(photo_id, []), known)
-            if wanting is not None:
-                # A keyword that is a PATH names its leaf as a person when it sits under a face root: when it has no node
-                # (the writer of a keyword gives it one: derived.make_nodes) its leaf is no name to make a person of.
-                pathed = {vocabulary.key(vocabulary.leaf_of(tag)) for tag in tags
-                          if isinstance(tag, str) and vocabulary.SEPARATOR in vocabulary.normalize(tag)}
-                wanting.update({vocabulary.key(ref.name): ref.name for ref, source in rows
-                                if ref.id is None and source == "keyword" and vocabulary.key(ref.name) not in pathed})
             people = [(ref.id, ref.name, source) for ref, source in rows if ref.id is not None]
             if people != held.get(photo_id, []):
                 yield photo_id, people
 
 
-def _make_nodes(conn, wanting):
-    """Give the names in `wanting` ({key: name}) their nodes (taxonomy.ensure_node). Returns whether any has one now, so the
-    people are worked out again."""
-    from tagpup.store import taxonomy   # taxonomy imports this module
-    tree, found = derived.Tree.read(conn), False
-    for name in wanting.values():
-        found = taxonomy.ensure_node(conn, name, person=True, tree=tree)[0] is not None or found
-    return found
-
-
-def rebuild(conn, photo_ids=None, known=None, ids=None, make=False):
+def rebuild(conn, photo_ids=None, known=None, ids=None):
     """Write the people of each photo in `photo_ids` -- every photo, without -- by the one
     rule (vocabulary.people_rows: each person by the id of their node, a person with two faces
     or two keywords once, two people called alike both), and settle each row written
@@ -109,24 +91,9 @@ def rebuild(conn, photo_ids=None, known=None, ids=None, make=False):
     PeopleVocabulary, and `ids` its person_ids.People, each read from `conn` when not given.
     A person is listed by the id of a node and no other way (owner, 2026-10-11): one the rule cannot give an id -- a keyword
     no node is (the writer of a keyword makes its node), a group's name, a face named before names had ids -- is not listed, so no
-    row is written with a name and no id. `make`, which a writer that INTRODUCES names says (the index's read), gives a name a
-    photo's person field holds that no node is called its node first (`_make_nodes`: every tag has an id), and the photo's
-    people are worked out again; a tree edit that left a name behind makes nothing. Returns how many photos' people changed.
-    The caller commits."""
-    written, wanting = [], {}
-    changes = dict(_differences(conn, photo_ids, known, wanting if make else None))
-    if wanting:
-        if _make_nodes(conn, wanting):
-            ids = None   # read again: it holds none of the people just made
-            again = None if photo_ids is None else sorted(set(photo_ids))
-            if again is not None:
-                for photo_id in again:
-                    changes.pop(photo_id, None)
-            else:
-                changes = {}
-            changes.update(_differences(conn, again, None))
-    changes = list(changes.items())
-    for photo_id, people in changes:
+    row is written with a name and no id. Returns how many photos' people changed. The caller commits."""
+    written = []
+    for photo_id, people in list(_differences(conn, photo_ids, known)):
         conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))
         conn.executemany("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, ?, ?)",
                          [(photo_id, n, name, source, tag_id) for n, (tag_id, name, source) in enumerate(people)])
@@ -164,14 +131,14 @@ def repair(db_path, photo_ids):
                                     label="photos' people")
 
 
-def rebuild_photos(conn, photo_paths, known=None, make=False):
+def rebuild_photos(conn, photo_paths, known=None):
     """rebuild, for the photos at `photo_paths`, however they are spelled. Returns how many
     photos' people changed. The caller commits."""
     ids = []
     for photo_path in photo_paths:
         where, params = store_roots.sql_equals(conn, "path", photo_path)
         ids += [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos WHERE " + where, params)]
-    return rebuild(conn, ids, known, make=make) if ids else 0
+    return rebuild(conn, ids, known) if ids else 0
 
 
 def keyword_keys(conn):

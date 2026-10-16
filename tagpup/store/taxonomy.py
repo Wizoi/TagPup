@@ -82,10 +82,8 @@ def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
     tree = tree or derived.Tree.read(conn)
     bare = vocabulary.SEPARATOR not in path
     if bare and person:
-        try:
-            found = (known or person_ids.read(conn)).person(path)
-        except person_ids.PersonProblem:
-            found = None   # two people have the name, or it is a group's leaf: the path of the name is the person
+        # A name two people have, or a group's, raises: its one caller (faces._target) resolved it first and was refused.
+        found = (known or person_ids.read(conn)).person(path)
         if found is not None:
             return found.id, False
     spelled, level, hit = _walk(tree, path)

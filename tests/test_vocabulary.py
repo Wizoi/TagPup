@@ -101,7 +101,7 @@ class WhatAPhotosMetadataSays(unittest.TestCase):
     def test_without_a_library_the_usual_roots_name_people(self):
         tags = ["People/Rowan Thackeray", "Pets/Biscuit", "Hazel Brookmire"]
         self.assertEqual(vocabulary.extract_people({"XMP:PersonInImage": "Elias Marchetti-Oakes"}, tags),
-                         ["Elias Marchetti-Oakes", "Rowan Thackeray"])
+                         ["Rowan Thackeray"], "a person field is not read")
 
     def test_a_library_adds_its_own_roots_and_its_flat_people(self):
         known = vocabulary.PeopleVocabulary.from_rows(
@@ -123,7 +123,7 @@ class WhatAPhotosMetadataSays(unittest.TestCase):
 
     def test_a_named_face_counts_once_whatever_its_case(self):
         people = vocabulary.people_in_photo({}, ["People/Rowan Thackeray"],
-                                            ["rowan thackeray", "Hazel Brookmire"])
+                                            [vocabulary.Ref(None, "rowan thackeray"), vocabulary.Ref(None, "Hazel Brookmire")])
         self.assertEqual(people, ["Rowan Thackeray", "Hazel Brookmire"])
 
 

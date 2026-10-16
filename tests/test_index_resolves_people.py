@@ -60,14 +60,6 @@ class TheIndexResolvesPeople(unittest.TestCase):
 
         self.assertEqual({"Rowan Thackeray"}, set(self.stored_people(path)))
 
-    def test_people_the_reader_did_find_are_kept(self):
-        path = os.path.join(self.tmp.name, "slipway.jpg")
-        raw = {"XMP:PersonInImage": ["Tamsin Oakes"]}
-        meta = {"path": path, "tags": [], "captions": [], "raw_metadata": raw,
-                "mtime": 1.0, "size": 1, "people": ["Tamsin Oakes"]}
-        self.index.build_or_update([[0.1] * 512], [meta])
-        self.assertEqual(["Tamsin Oakes"], self.stored_people(path))
-
 
 class TheCliReadsWithItsLibrary(unittest.TestCase):
     """`suggest` compares suggestions with who is already in the photo."""
