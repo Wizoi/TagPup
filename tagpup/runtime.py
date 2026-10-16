@@ -354,23 +354,15 @@ def _build_faces(settings):
     return FaceModel(**settings)
 
 
-def _part(settings, part):
-    """_frozen(settings.<part>), or None for a part holding a value it cannot read: a
-    command that runs no face model is not failed by a face setting (the 5.5 review)."""
-    try:
-        return _frozen(getattr(settings, part))
-    except (ValueError, TypeError):
-        return None
-
-
 #: The two parts of a library's settings that name a model, in the order of a model set.
 PARTS = ("embedder", "faces")
 
 
 def _set_of(settings):
-    """The models a library's settings name, as one key: (its CLIP model's, its face models'), each _part. What a
-    library uses, a run holds and a run is refused for are each this one key."""
-    return tuple(_part(settings, part) for part in PARTS)
+    """The models a library's settings name, as one key: (its CLIP model's, its face models'), each _frozen. What a
+    library uses, a run holds and a run is refused for are each this one key. A value a part cannot read is refused
+    where it is set (tagpup.services.settings.change): none of the three libraries holds one."""
+    return tuple(_frozen(getattr(settings, part)) for part in PARTS)
 
 
 class RunModel:
