@@ -203,7 +203,7 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
     For every field: raw_metadata takes each field the scan reads (fields.scan_reads; under its bare name too, where the scan
     stored one), a cleared field taken out; the tags are derived again when a keyword
     field was written, the captions when a caption field was, document_id follows the
-    identity. With `stat`, the file's new mtime and size, its vectors carried over
+    identity written. With `stat`, the file's new mtime and size, its vectors carried over
     `before`, its stamp just before the write (_stamp). Without it -- a file read and not
     written -- the stamp stays, so the scan still reads what the row does not say. The
     photo's people and dates are rebuilt. Returns the photo's id, or None without a row.
@@ -217,7 +217,8 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
 
     `whole` is the file read back whole after the write (every field the scan reads, in the
     indexer's shape: tagpup.files.metadata.raw_metadata), as a save reads it: it is the row's
-    raw_metadata, its tags and captions are derived from it, and the row is stamped with `stat`
+    raw_metadata, its tags and captions are derived from it, its document_id is the DocumentID it holds
+    (one holding none keeps the row's, as record_indexed does), and the row is stamped with `stat`
     whatever it described before, since everything it says was just read."""
     where, params = store_roots.sql_equals(conn, "path", photo_path)
     row = conn.execute("SELECT id, raw_metadata, mtime, size FROM photos WHERE " + where + " LIMIT 1",
@@ -249,8 +250,11 @@ def follow_fields(conn, photo_path, written, stat=None, before=None, batch=None,
                     raw[name] = texts[0]
         keywords = keywords or key in vocabulary.KEYWORD_FIELDS + vocabulary.HIERARCHY_FIELDS
         captions = captions or key in vocabulary.CAPTION_FIELDS
-        if key.endswith(":DocumentID"):
+        if key in fields.DOCUMENT_ID_KEYS:
             identity = (texts[0] if texts else None,)
+    held = fields.read_document_id(whole) if whole is not None else None
+    if held:
+        identity = (held,)
     raw_text = json.dumps(raw)
     columns, values = ["raw_metadata"], [raw_text if whole is None else store_roots.raw_to_row(raw_text, store_roots.roots_for(conn))]
     if keywords:

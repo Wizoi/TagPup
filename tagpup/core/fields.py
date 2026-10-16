@@ -75,6 +75,26 @@ def scan_reads(field):
     return key in METADATA_FIELDS or bare in METADATA_FIELDS
 
 
+#: The keys a read answers a photo's DocumentID under (the XMP standard's per-document identifier, tagpup.files.identity).
+DOCUMENT_ID_KEYS = ("XMP:DocumentID", "XMP-xmpMM:DocumentID", "DocumentID")
+
+
+def read_document_id(metadata):
+    """The photo's identity as its metadata reports it, or None."""
+    if not isinstance(metadata, dict):
+        return None
+    for key in DOCUMENT_ID_KEYS:
+        value = metadata.get(key)
+        if isinstance(value, list):
+            value = value[0] if value else None
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
 #: The field a rotation journals: the EXIF Orientation, 1 to 8 (tagpup.services.rotation).
 ORIENTATION = "EXIF:Orientation"
 

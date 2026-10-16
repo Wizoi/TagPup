@@ -13,7 +13,7 @@ from tagpup.core import fields, renaming, vocabulary
 from tagpup.core.fields import METADATA_FIELDS
 from tagpup.core.renaming import sanitize_filename  # noqa: F401  (imported from here by older code)
 from tagpup.files.exiftool_session import ExifToolSession
-from tagpup.files.identity import ensure_document_id, read_document_id
+from tagpup.files.identity import ensure_document_id
 
 logger = logging.getLogger("tagpup_cli.metadata")
 
@@ -140,7 +140,7 @@ class MetadataExtractor:
             "people": vocabulary.extract_people(tags, people),
             "captions": vocabulary.extract_captions(cleaned),
             "raw_metadata": cleaned,
-            "document_id": read_document_id(cleaned),
+            "document_id": fields.read_document_id(cleaned),
         }
         error = next((meta[key] for key in READ_ERROR_KEYS if meta.get(key)), None)
         if error:
