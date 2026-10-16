@@ -63,9 +63,8 @@ def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
     """THE one place a name or a keyword that has no node gets one (owner, 2026-10-10: every tag has an id; 2026-10-11: only the id):
     (the node's id, whether a node was made or, for a name, marked as a person), or (None, False) for a text with no levels, a
     name that is the path of a group, and a keyword that would go under a person that faces or photos use. The caller commits.
-    The edit is a tree_edit, so what follows it follows: the photos carrying the keyword get their rows, and a person made (a
-    node under a face root, or for a name) is linked to the faces and listed people that hold the name and no id
-    (person_ids.follow_tree, the one owner of linking).
+    The edit is a tree_edit, so what follows it follows: the photos carrying the keyword get their rows (person_ids.follow_tree
+    renames and removes; nothing links a name to the person made: a row has the id or is not a person, owner 2026-10-11).
 
     A keyword IS its path: it is found as the tree spells it, else without case, in one Unicode form and as
     `vocabulary.normalize` spells it (derived.Tree), so a level that exists is never made a second time under another case; one
