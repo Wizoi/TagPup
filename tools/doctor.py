@@ -123,7 +123,7 @@ def report(db_path, show=0, out=print):
             "keywords into those photo FILES)" % on_faces_alone)
     if missing is not None:
         out("rows whose file is not on disk: %d, in %d folder(s); %d folder(s) are gone entirely; %d row(s) not looked at "
-            "(their drive or share did not answer, or the file could not be read)"
+            "(their share did not answer, or the file could not be read)"
             % (missing["rows"], missing["folders"], missing["folders_gone"], missing["not_looked_at"]))
         for entry in missing["by_folder"][:show]:
             out("    %6d  %s%s" % (entry["rows"], entry["path"], "  (folder gone)" if entry["folder_gone"] else ""))

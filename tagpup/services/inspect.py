@@ -347,9 +347,10 @@ def missing_files(library, reveal=False, limit=LIMIT):
     and excluded, and how many different names sit on them -- which answers #42's
     question, which names sit on rows of a folder whose files are gone. Folder paths
     and the names only with `reveal`. Missing rows are reported, never removed: a
-    folder renamed looks the same as a deleted one. A photo on a drive or share that does
-    not answer is not looked at (`not_looked_at`), neither gone nor there, and a folder is
-    gone only when its drive or share answers (shares.stamp_of, folder_state; #1356)."""
+    folder renamed looks the same as a deleted one. A photo on a share that does not answer,
+    or that cannot be read, is not looked at (`not_looked_at`), neither gone nor there, and a
+    folder on a share is gone only when the share answers (shares.stamp_of, folder_state;
+    #1356); on a local drive that is not connected it is gone (#1387)."""
     with _reading(library) as conn:
         held = inspection.photo_files(conn)
     gone, not_looked_at = [], 0

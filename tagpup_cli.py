@@ -660,7 +660,7 @@ def _not_looked_at(counts):
     """What `sync` says of the folders it could not look at, or None when it looked at every one."""
     if not counts.get("folders_not_looked_at"):
         return None
-    return ("%d folder(s) not looked at (not answering or not listable): %d row(s) under them are neither missing nor moved;"
+    return ("%d folder(s) not looked at (share not answering or not listable): %d row(s) under them are neither missing nor moved;"
             " not in step until a sync looks at them." % (counts["folders_not_looked_at"], counts["not_looked_at"]))
 
 
@@ -725,7 +725,7 @@ def sync(ctx, folder, apply_):
         for folder_path in result.details["reveal"]["new_folders"]:
             console.print("  %s" % queue.status(folder_path)["message"], markup=False)
     console.print("In step." if result.details["in_step"] else
-                  "Not in step: some folders were not looked at (not answering or not listable)." if _not_looked_at(counts) else
+                  "Not in step: some folders were not looked at (share not answering or not listable)." if _not_looked_at(counts) else
                   "Not yet in step: sync again once indexing is done.")
     if result.errors:
         raise SystemExit(1)

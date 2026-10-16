@@ -444,7 +444,7 @@ class Watcher:
             self._unschedule(observer, watch)
 
         for key, root in roots:
-            # A drive or share that does not answer is neither there nor gone (sync.folder_state): a watch on it is
+            # A share that does not answer is neither there nor gone (sync.folder_state): a watch on it is
             # kept while its emitter lives, and none is made until it answers.
             state = sync_service.folder_state(root["path"])
             there = state == "there"

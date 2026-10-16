@@ -25,7 +25,8 @@ def _look(library):
 
 def roots_there(roots):
     """[{"path", "there", "answering"}] of each root folder, asked as a sync asks it (shares.folder_state, bounded on
-    a share): a root on a share that does not answer is not answering, never "not there" (#1356)."""
+    a share): a root on a share that does not answer is not answering, never "not there" (#1356); one on a local
+    drive that is not connected is not there (#1387)."""
     listed = []
     for root in roots:
         state = shares.folder_state(root)

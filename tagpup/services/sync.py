@@ -29,7 +29,8 @@ folder scan's rule), and sorts what differs:
 - missing files -- a row whose file is gone and was not found elsewhere: reported, never
   removed. A folder renamed in Explorer looks the same as a deleted one, so removing
   rows stays the owner's choice (TagTuner's Remove Folder), and the report says which
-  folders are wholly gone (on a drive or share that answers: shares.folder_state).
+  folders are wholly gone (on a local drive, connected or not, or a share that answers:
+  shares.folder_state).
 - not looked at -- a row under a folder the walk could not look at: a root on a share that
   does not answer (tagpup.files.shares.folder_state), or a folder whose listing failed or
   dropped part-way (images.stamps_under's `unlisted`). Neither missing nor paired with a
@@ -131,8 +132,8 @@ def pair_by_stamp(missing, new):
 
 
 def _missing_by_folder(missing):
-    """[(folder, rows, whether it is gone)] of the missing rows' folders, the most first: gone only when its drive
-    or share answers that it is not there (shares.folder_state)."""
+    """[(folder, rows, whether it is gone)] of the missing rows' folders, the most first: on a share, gone only when
+    the share answers that it is not there (shares.folder_state)."""
     by_folder = {}
     for _photo_id, path in missing:
         folder = os.path.dirname(path)
@@ -149,8 +150,8 @@ def _under_any(folder, folders):
 
 def folder_state(folder):
     """"there", "gone" or "unanswered" of a root or a folder of the library (shares.folder_state, within its
-    SHARE_WAIT): what include() and the folder watcher ask before they look under it, a drive or share that does
-    not answer being neither there nor gone."""
+    SHARE_WAIT): what the folder watcher asks before it looks under it, a share that does not answer being neither
+    there nor gone. The jobs layer's door to it (tests/test_layers.py: jobs do not import tagpup.files)."""
     return shares.folder_state(folder)
 
 
@@ -449,10 +450,10 @@ def include(library, folder, roots, queue, ignored=()):
         result.refuse(problem)
         return result
     folder = paths.stored(folder)
-    state = folder_state(folder)
+    state = shares.folder_state(folder)
     if state != "there":
         result.refuse("That folder is not on disk." if state == "gone" else
-                      "That folder's drive or share is not answering, or it cannot be listed: try again when it is.")
+                      "That folder's share is not answering: try again when it is.")
         return result
     if ignored and _under_any(folder, {paths.key(f): paths.stored(f) for f in ignored}):
         result.refuse("That folder is one the library ignores (or under one).")

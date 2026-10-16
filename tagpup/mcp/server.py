@@ -246,7 +246,7 @@ def build():
     @tool("The rows whose file is not on disk, by folder: whether each folder is gone entirely, its "
           "rows as ids (up to `limit` a folder), and the faces on them -- named, named by hand, "
           "excluded, and how many different names. Answers which names sit on rows of a folder "
-          "whose files are gone (findings #42). Reported, never removed. A photo on a drive or share "
+          "whose files are gone (findings #42). Reported, never removed. A photo on a network share "
           "that does not answer is counted `not_looked_at`, never gone." + REVEAL)
     def missing_files(library: str, reveal: bool = False, limit: int = inspect.LIMIT) -> dict[str, Any]:
         return _answer(lambda: inspect.missing_files(find_library(library), reveal, limit), reveal)

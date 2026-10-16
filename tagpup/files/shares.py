@@ -114,54 +114,57 @@ UNANSWERED = object()
 CANNOT_READ = object()
 
 
-def _root_answers(photo_path):
-    """Does the drive or share the path is on answer? Windows says "not found" at once for a server that is
-    asleep (WinError 53), a share name that is not there (67) and a drive letter that is not connected (3), the
-    same words it uses for a file that was deleted: a file is gone only when the place it was on is there."""
+def _share_answers(photo_path):
+    """Does the network share the path is on answer? Windows says "not found" at once for a server that is asleep
+    (WinError 53), a share name that is not there (67) and a mapped drive that is not connected, the same words it
+    uses for a file that was deleted: a file on a share is gone only when the share is there. Asked of a network path
+    alone: a local drive letter that is not connected is a drive gone, and what was on it gone (owner, 2026-10-15: no
+    USB drives; #1387)."""
     root = os.path.splitdrive(photo_path)[0]
     if not root:
         return True
     return os.path.exists(root + os.sep)
 
 
-def _folder_state(folder):
-    """"there", "gone" or "unanswered" of a folder, asked of the disk now."""
+def _folder_state(folder, on_a_share):
+    """"there", "gone" or "unanswered" (a share's only) of a folder, asked of the disk now."""
     if os.path.isdir(folder):
         return "there"
-    return "gone" if _root_answers(folder) else "unanswered"
+    return "unanswered" if on_a_share and not _share_answers(folder) else "gone"
 
 
 def folder_state(folder, seconds=None):
-    """"there" when `folder` is a folder; "gone" when it is not and the drive or share it is on answers;
-    "unanswered" when that drive or share does not, or, on a network share, did not answer within `seconds`
-    (SHARE_WAIT by default), or is taken as away. What a sync asks of a root and of a missing row's folder: a
-    folder it cannot look at is not a folder gone (#1356)."""
+    """"there" when `folder` is a folder; "unanswered" when it is on a network share (UNC, or a mapped network drive)
+    that does not answer, did not answer within `seconds` (SHARE_WAIT by default), or is taken as away; otherwise
+    "gone" -- a local drive letter that is not connected included. What a sync asks of a root and of a missing row's
+    folder: a folder on a share it cannot look at is not a folder gone (#1356); only a share (#1387)."""
     folder = paths.stored(folder)
     if not on_a_network_drive(folder):
-        return _folder_state(folder)
-    state, found = bounded(folder, lambda: _folder_state(folder), SHARE_WAIT if seconds is None else seconds)
+        return _folder_state(folder, False)
+    state, found = bounded(folder, lambda: _folder_state(folder, True), SHARE_WAIT if seconds is None else seconds)
     return found if state == "ok" else "unanswered"
 
 
-def _stat_state(photo_path):
-    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError, and for a file
-    "not found" on a drive or share that does not answer (it is not known to be gone)."""
+def _stat_state(photo_path, on_a_share):
+    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError, and for a file "not found"
+    on a network share that does not answer (it is not known to be gone)."""
     try:
         stat = os.stat(photo_path)
     except (FileNotFoundError, NotADirectoryError):
-        return None if _root_answers(photo_path) else CANNOT_READ
+        return CANNOT_READ if on_a_share and not _share_answers(photo_path) else None
     except OSError:
         return CANNOT_READ
     return (stat.st_mtime, stat.st_size)
 
 
 def stamp_of(photo_path):
-    """(mtime, size) of the file now; None when it is not there; CANNOT_READ when it is there and cannot be
-    read; UNANSWERED when it is on a share that did not answer within SHARE_WAIT (or is away). What a page's
-    request asks of one file, without waiting on a share gone away, and without taking a file it cannot read for
-    one that is gone. A share found away is answered UNANSWERED at once for AWAY_SECONDS and no second thread is
-    started while one still waits, so a page of cards on an away share costs one wait and not one for each."""
+    """(mtime, size) of the file now; None when it is not there (a local drive letter that is not connected
+    included, #1387); CANNOT_READ when it is there and cannot be read; UNANSWERED when it is on a share that did not
+    answer within SHARE_WAIT (or is away). What a page's request asks of one file, without waiting on a share gone
+    away, and without taking a file it cannot read for one that is gone. A share found away is answered UNANSWERED at
+    once for AWAY_SECONDS and no second thread is started while one still waits, so a page of cards on an away share
+    costs one wait and not one for each."""
     if not on_a_network_drive(photo_path):
-        return _stat_state(photo_path)
-    state, found = bounded(photo_path, lambda: _stat_state(photo_path), SHARE_WAIT, AWAY_SECONDS)
+        return _stat_state(photo_path, False)
+    state, found = bounded(photo_path, lambda: _stat_state(photo_path, True), SHARE_WAIT, AWAY_SECONDS)
     return found if state == "ok" else UNANSWERED
