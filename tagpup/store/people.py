@@ -46,12 +46,13 @@ def _faces_named(conn, photo_ids):
     return named
 
 
-def _differences(conn, photo_ids, known):
+def _differences(conn, photo_ids, known, ids=None):
     """(photo id, its people by the rule as [(id, name, source)]) of each photo in `photo_ids` -- every photo, without --
-    whose rows say otherwise. A person the rule names with no id (a keyword with no node) is not listed."""
+    whose rows say otherwise. A person the rule names with no id (a keyword with no node) is not listed. `known` is the
+    tree's PeopleVocabulary, made from `ids` (its person_ids.People) when the caller has those and not it."""
     if known is None:
         from tagpup.store import taxonomy   # taxonomy imports this module
-        known = taxonomy.read_people_vocabulary(conn)
+        known = taxonomy.read_people_vocabulary(conn, ids)
     if photo_ids is None:
         photo_ids = [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos")]
     photo_ids = sorted(set(photo_ids))
@@ -88,7 +89,7 @@ def rebuild(conn, photo_ids=None, known=None, ids=None):
     no node is (the writer of a keyword makes its node), a group's name -- is not listed, so no row is written with a name and no
     id. Returns how many photos' people changed. The caller commits."""
     written = []
-    for photo_id, people in list(_differences(conn, photo_ids, known)):
+    for photo_id, people in list(_differences(conn, photo_ids, known, ids)):
         conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))
         conn.executemany("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, ?, ?)",
                          [(photo_id, n, name, source, tag_id) for n, (tag_id, name, source) in enumerate(people)])
