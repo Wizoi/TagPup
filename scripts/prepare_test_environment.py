@@ -88,12 +88,13 @@ def main():
     face_emb = np.random.randn(512).astype(np.float32)
     face_emb /= np.linalg.norm(face_emb)
 
-    # Insert Pets/Puppy into tag_taxonomy: Pets flagged as holding faces, so the puppy
-    # below it does too. A new library flags only People.
+    # Insert Pets/Puppy into tag_taxonomy as a person (the New person dialog's node): Pets (a root of the default tree) is flagged
+    # as holding faces first, so the puppy below it is one. The photo is tagged with this same path, so the face, the node and
+    # the photo's tag are one person.
     from tagpup.store import taxonomy as store_taxonomy
     store_taxonomy.set_branch_flags(conn, "Pets", has_face=1)
-    store_taxonomy.add_node(conn, "Pets/Puppy")
-    print("Taxonomy seeded: Added 'Pets/Puppy' (has_face = 1).")
+    puppy = store_taxonomy.add_node(conn, "Pets/Puppy")
+    print("Taxonomy seeded: Added 'Pets/Puppy' (a person).")
 
     # Crop real face from puppy.png (head region, approx [350, 200, 750, 600])
     puppy_face_box = [350, 200, 750, 600]
@@ -118,8 +119,7 @@ def main():
     }, model=MODEL)
 
     # Insert face for puppy representing already matched face
-    # The person first, as the New person dialog makes them (a face is named by the id of a node).
-    puppy = store_taxonomy.add_node(conn, "People/Puppy", root_has_face=1)
+    # A face is named by the id of the person's node, made above.
     store_faces.insert(conn, puppy_path, puppy_face_box, face_emb.tobytes(),
                        name=puppy, crop=puppy_crop, prob=0.98)  # matched to Puppy
 
