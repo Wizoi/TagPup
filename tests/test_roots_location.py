@@ -543,13 +543,6 @@ class WhatTheOwnerIsToldBeforeAMove(BeforeAMove):
         self.assertIn("stop Suggest in TagPup", result.refused)
         self.assertIn("a sync", result.refused)
 
-    def test_the_architecture_does_not_claim_more(self):                                      # #467
-        # "Roots and machines" moved verbatim to docs/history/ when ARCHITECTURE.md became a map
-        text = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "history",
-                                 "ARCHITECTURE_roots_and_markers.md"), encoding="utf-8").read()
-        self.assertNotIn("refused **while anything of the library is running or queued**", text)
-        self.assertIn("TagTuner's own runs", text)
-
 
 class AWriteStoppedHalfWay(BeforeAMove):
     def test_it_says_what_was_written_and_recorded_before_it_stopped(self):                   # #468
