@@ -533,8 +533,8 @@ class Failed(str):
 
 
 def wait_for(port, version, started, wait=START_WAIT, sleep=time.sleep, clock=time.monotonic, say=None):
-    """Wait for `version` to answer on `port`: the server `started` (a Popen, or None), or one a launch started
-    meanwhile. None once it answers, else why
+    """Wait for `version` to answer on `port`: the server `started` (the Popen of start_server), or one a launch
+    started meanwhile. None once it answers, else why
     not -- a `Failed` naming what answers instead, when the server started has exited and
     another version answers: stop at once, nothing is wrong with it (#806). `say` tells the
     owner every SAY_WAITING seconds that it still waits."""
@@ -544,7 +544,7 @@ def wait_for(port, version, started, wait=START_WAIT, sleep=time.sleep, clock=ti
         status = ask(port, timeout=5)
         if status is not None and status.get("version") == version:
             return None
-        if started is not None and started.poll() is not None:
+        if started.poll() is not None:
             if status is not None:
                 why = Failed("it exited with %s, and TagPup %s answers on port %d instead"
                              % (started.poll(), _name(status.get("version")), port))
@@ -629,7 +629,7 @@ def _hand_over(found, installed, python, home, say, sleep, clock):
         why = wait_for(port, new, started, wait=wait, sleep=sleep, clock=clock, say=say)
         if why is None:
             now = record(port) or {}
-            if started is not None and started.poll() is not None:
+            if started.poll() is not None:
                 say("TagPup %s answers on port %s (process %s): a launch of it took the ports first, and the server "
                     "this install started stood down. A page left open says TagPup was updated; a reload shows %s."
                     % (new, ports_of(found), now.get("pid"), new))
@@ -642,7 +642,7 @@ def _hand_over(found, installed, python, home, say, sleep, clock):
             say("TagPup %s did not start here (%s). What answers is left running; nothing else was done. "
                 "Install again, or launch TagPup, when you want %s." % (new, why, new))
             return False
-        if started is not None and started.poll() is None:
+        if started.poll() is None:
             processes.kill_tree(started.pid)
         say("TagPup %s did not start (%s); what it said is in %s." % (new, why, started_log(home)))
         started = None

@@ -84,7 +84,7 @@ def create_app(kind, startup=None, pages=None, runtime=None, ports=None, lifecyc
     app.config["APP_KIND"] = kind
     app.config["STARTUP_LIBRARY"] = startup
     app.config["RUNTIME"] = runtime
-    if runtime is not None and getattr(runtime, "idle", None) is not None:
+    if runtime is not None:
         # What the pages keep only while used, let go on the runtime's idle timer.
         tagpup_routes.idle_caches(runtime.idle)
         tuner_routes.idle_caches(runtime.idle)
