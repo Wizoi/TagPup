@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 from tagpup.core import paths, validation, vocabulary
 from tagpup.core.result import Conflict, Refused
-from tagpup.files import recycle_bin, shares
+from tagpup.files import recycle_bin
 from tagpup.services import batches, file_changes, selection, tagging
 from tagpup.services import people as people_service
 from tagpup.services import photos as photo_actions
@@ -285,18 +285,14 @@ AWAY = "its folder could not be reached just now (a network share that did not a
 
 
 def _reachable(present, out):
-    """`present` without the photos on a share that does not answer (each an error of `out`): a bounded stat of each file
-    (shares.stamp_of: a share is asked within a second, and one found away is answered at once for 30 seconds, so a
-    chunk of 25 waits once). Sent on, such a photo would cost ExifTool's whole deadline (five minutes) and then one more for each
-    photo of the batch it is retried singly for. A file that is gone is no matter here (the write counts it missing) and one that
-    cannot be read is the write's own error."""
-    kept = []
+    """`present` without the photos on a share that does not answer (tagpup.services.tagging.file_states: AWAY), each an
+    error of `out`. Sent on, such a photo would cost ExifTool's whole deadline (five minutes). A file that is gone is no
+    matter here (the write counts it missing) and one that cannot be read is the write's own error."""
+    away = {paths.key(path) for path, state in tagging.file_states([path for _id, path in present]) if state == tagging.AWAY}
     for photo_id, path in present:
-        if shares.stamp_of(path) is shares.UNANSWERED:
+        if paths.key(path) in away:
             out.errors.append((photo_id, os.path.basename(path)[:MOST_TEXT], AWAY))
-        else:
-            kept.append((photo_id, path))
-    return kept
+    return [(photo_id, path) for photo_id, path in present if paths.key(path) not in away]
 
 
 def _count(out, result, present, by_key):

@@ -240,15 +240,29 @@ MISSING_WHY = "missing, nothing is written to it: its file is not on disk"
 SKIPPED_MISSING = "skipped_missing"
 
 
+#: Where a photo's file is for a write (file_states).
+PRESENT, GONE, AWAY = "present", "gone", "away"
+
+
+def file_states(photo_paths):
+    """[(path, PRESENT | GONE | AWAY)] of `photo_paths`, in the order given: the one answer to "is this photo's file there
+    to be written", by one bounded stat of each (shares.stamp_of: a share is asked within a second, and one found away is
+    answered at once for 30 seconds). GONE: the disk or share answered that it is not there. AWAY: on a share that did not
+    answer, neither there nor gone. A file that cannot be read is PRESENT: the write meets it."""
+    states = []
+    for path in photo_paths:
+        stamp = shares.stamp_of(path)
+        states.append((path, GONE if stamp is None else AWAY if stamp is shares.UNANSWERED else PRESENT))
+    return states
+
+
 def leave_out_missing(photo_paths):
-    """(`photo_paths` but those whose file is gone, [(path, why)] of those left out). A bulk write skips them and writes
-    the rest: the library still holds the row of a missing photo and a view shows it
+    """(`photo_paths` but those whose file is gone, [(path, why)] of those left out) (file_states). A bulk write skips them
+    and writes the rest: the library still holds the row of a missing photo and a view shows it
     (phase 9c), so a selection can name one. A file that cannot be read, or on a share that does not answer, is NOT
     missing: the write meets it itself, and stops at it as for any read or write error of a present file."""
-    present, gone = [], []
-    for path in photo_paths:
-        (gone if shares.stamp_of(path) is None else present).append(path)
-    return present, [(path, MISSING_WHY) for path in gone]
+    states = file_states(photo_paths)
+    return [path for path, state in states if state != GONE], [(path, MISSING_WHY) for path, state in states if state == GONE]
 
 
 #: What the journal calls a change that adds and removes tags on a selection (History's `operation`).
