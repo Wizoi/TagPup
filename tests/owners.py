@@ -115,6 +115,7 @@ _SCENARIO_FILES = {
     "I6": "test_roots_scenarios",
     "I7": "test_mcp_server test_one_library_three_programs",
     "I8": "test_stale_record_precondition",
+    "I9": "scenario-a-scan-kept-by-an-older-page",
     "P1": "test_people_by_id_at_once",
     "P2": (
         "test_bulk_faces_and_tags test_clustering_meets_naming test_face_people_follow_file_changes "
