@@ -19,22 +19,9 @@ from tagpup.core.result import Refused  # noqa: E402
 from tagpup.services import batches, library_view, selection  # noqa: E402
 from tagpup.store import db  # noqa: E402
 
-SOURCES = (
-    {"kind": "all"},
-    {"kind": "folder", "value": "{folder}", "recursive": False},
-    {"kind": "folder", "value": "{folder}", "recursive": True},
-    {"kind": "keyword", "value": "Trips"},
-    {"kind": "keyword", "value": "Trips/Coast"},
-    {"kind": "person", "value": "Wren Halloway"},
-    {"kind": "year", "value": "2024"},
-    {"kind": "month", "value": "2024-06"},
-)
-
-
 class Library(unittest.TestCase):
     def setUp(self):
         self.app, self.home = web_client.app_for(self, "tagpup")
-        self.client = self.app.test_client()
         self.vl = ViewLibrary(self, "library", home=self.home)
         self.vl.tree("Trips/Coast", "Trips/Lakes", "People/Wren Halloway", face_root="People")
         self.a = self.vl.photo("2024 Coast", "a.jpg", taken="2024:06:01 10:00:00", tags=["Trips/Coast", "People/Wren Halloway"])
@@ -42,12 +29,7 @@ class Library(unittest.TestCase):
         self.c = self.vl.photo(os.path.join("2024 Coast", "Day 2"), "c.jpg", taken="2023:01:02 10:00:00")
         self.d = self.vl.photo("Misc", "d.jpg")
         self.e = self.vl.photo("Misc", "e.jpg")
-        self.folder = os.path.join(self.vl.pictures, "2024 Coast")
         self.library = self.vl.library
-
-    def sources(self):
-        return [{key: (value.format(folder=self.folder) if isinstance(value, str) else value) for key, value in each.items()}
-                for each in SOURCES]
 
     def resolve(self, body):
         return selection.resolve(self.library, selection.read(self.library, body))
@@ -83,29 +65,9 @@ class Reading(Library):
 
 
 class Resolving(Library):
-    def test_a_source_is_the_ids_route_for_the_same_source_in_the_same_order(self):
-        for named in self.sources():
-            with self.subTest(source=named):
-                query = {"kind": named["kind"]}
-                if named["kind"] == "folder":
-                    query.update(folder=named["value"], recursive="1" if named["recursive"] else "")
-                elif "value" in named:
-                    query["value"] = named["value"]
-                route = self.client.get("/library/api/library/ids", query_string=query).get_json()
-                resolved = self.resolve({"source": named})
-                self.assertEqual(route["ids"], resolved.ids)
-                self.assertEqual(route["total"], resolved.requested)
-                self.assertEqual(0, resolved.excluded)
-
-    def test_the_excluded_are_taken_out_and_the_order_is_kept(self):
-        self.assertEqual([self.c, self.b, self.e],
-                         self.resolve({"source": {"kind": "all"}, "excluded": [self.a, self.d]}).ids)
-        resolved = self.resolve({"source": {"kind": "all"}, "excluded": [self.a, self.d]})
-        self.assertEqual((5, 2), (resolved.requested, resolved.excluded))
-
-    def test_excluded_that_are_not_in_the_source_or_not_anywhere_take_nothing_out(self):
-        resolved = self.resolve({"source": {"kind": "year", "value": "2024"}, "excluded": [self.d, 9999, self.e]})
-        self.assertEqual(([self.a, self.b], 0), (resolved.ids, resolved.excluded))
+    """A source minus the excluded is the ids route's list of it, in its order, the excluded out and counted only when the
+    source held them: scenario V7 (test_selection_scenarios; mutation: resolve sorting the ids, or counting every excluded
+    id, fails it). Here the edges: nothing left, a list of ids, another library's ids, the caps."""
 
     def test_excluding_everything_leaves_nothing_and_is_not_an_error(self):
         resolved = self.resolve({"source": {"kind": "all"}, "excluded": [self.a, self.b, self.c, self.d, self.e, 77]})
