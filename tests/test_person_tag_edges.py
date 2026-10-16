@@ -28,7 +28,7 @@ class AnEmptyName(unittest.TestCase):
                  "people": [{"name": "", "score": 0.9}, {"name": "  ", "score": 0.9},
                             {"name": "Wren Okafor", "score": 0.9}]}
         filed = lambda name: vocabulary.person_tag(name, [], ["People"]) or name   # noqa: E731
-        self.assertEqual(suggesting.offered_tags(entry, 0.0, filed), ["Trips/Regatta", "People/Wren Okafor"])
+        self.assertEqual(suggesting.offered_tags(entry, filed), ["Trips/Regatta", "People/Wren Okafor"])
 
 
 if __name__ == "__main__":

@@ -58,14 +58,6 @@ def _library_roots(library):
         raise NotFound("The library cannot be read: %s" % problem) from None
 
 
-def require_root(library, name):
-    """The root's name as the library spells it; NotFound when the library has no such root."""
-    folded = paths.root_name(name)
-    if folded not in _library_roots(library):
-        raise NotFound("This library has no root called %s." % folded)
-    return folded
-
-
 def _writes_to(places):
     if not places:
         return None

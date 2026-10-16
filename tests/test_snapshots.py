@@ -449,7 +449,7 @@ class TheMonthlyFromBeforeRoots(unittest.TestCase):
             conn.close()
         snapshots.take(self.library.path, now=NOON)
         self.monthly = snapshots.listed(self.library.path, "monthly")[0]
-        self.assertEqual(schema.BASELINE, snapshots.schema_version(self.monthly.path))
+        self.assertEqual(schema.BASELINE, schema.version_of(self.monthly.path))
         self.enterContext(migration_names.ahead())   # a later step, run on opening the library
         schema.ensure(self.library.path)
         rl.convert_to_root(self.library.path, "D:\\Harbour")   # the owner's roots, arrived since
@@ -559,7 +559,7 @@ class ASnapshotBelowTheBaseline(Base):
             return CliRunner().invoke(tagpup_cli.cli, ["--db", self.library.path] + list(args))
 
     def digest(self):
-        schema._current.clear()
+        schema.forget()
         conn = db.connect(self.library.path)
         try:
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")

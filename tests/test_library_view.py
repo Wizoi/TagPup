@@ -389,9 +389,8 @@ class TheNavigator(Library):
         self.assertIsNone(found["Trips"]["parent"])
         self.assertEqual("Coast", found["Trips/Coast"]["name"])
 
-    def test_every_keyword_count_equals_the_store_s_count_under_a_tag(self):
+    def test_every_keyword_count_equals_the_photos_its_source_shows(self):
         for each in self.section("keywords")["keywords"]:
-            self.assertEqual(derived.count_under_tag(self.vl.conn, each["tag"]), each["count"], each["tag"])
             self.assertEqual(each["count"], len(self.ids("keyword", each["tag"])), each["tag"])
 
     def test_a_keyword_no_node_has_is_in_no_count(self):

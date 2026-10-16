@@ -54,7 +54,7 @@ class TheServerMigratesAtStart(unittest.TestCase):
         for path in self.behind:
             schema.ensure(path)
         self.enterContext(migration_names.ahead())   # the code knows a step the libraries have not had
-        self.addCleanup(schema._current.clear)
+        self.addCleanup(schema.forget)
 
     def test_every_library_it_serves_is_brought_up_to_date_on_a_thread(self):
         thread = library_actions.bring_up_to_date_in_background([Library(path) for path in self.behind])
@@ -132,7 +132,7 @@ class ALibraryBeingMigrated(unittest.TestCase):
             schema.ensure(path)
         self.enterContext(migration_names.ahead())   # the code knows a step the libraries have not had
         schema.ensure(current)   # "a library already current" is one this step has been run on
-        self.addCleanup(schema._current.clear)
+        self.addCleanup(schema.forget)
         self.entered, self.release = threading.Event(), threading.Event()
         last = schema.MIGRATIONS[-1]
         real = last.apply

@@ -305,8 +305,8 @@ class SyncSnapshotsAndTheTimeline(Base):
         self.assertEqual("sync:harbour:20260925T080000", harbour["last_whole"]["run"])
         self.assertEqual({"rows": 2, "queued_folders": 1}, harbour["last_folder"]["changed"])
         self.assertIsNotNone(harbour["last_in_step"])
-        self.assertEqual([{"path": root, "there": True, "watched": True},
-                          {"path": gone, "there": False, "watched": False}], harbour["roots"])
+        self.assertEqual([{"path": root, "there": True, "answering": True, "watched": True},
+                          {"path": gone, "there": False, "answering": True, "watched": False}], harbour["roots"])
         self.assertEqual("2026-09-26 09:59:00", harbour["watcher"]["last_event"])
         self.assertEqual("http://localhost:8080/harbour/?review=1", harbour["review_url"])
         regatta = [each for each in found["libraries"] if each["name"] == "regatta"][0]

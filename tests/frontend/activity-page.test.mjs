@@ -72,8 +72,11 @@ const SYNC = {
       last_whole: { id: 3, started: "2026-09-26 08:59:00", finished: "2026-09-26 09:00:00", seconds: 60, whole: true,
                     in_step: true, found: {}, changed: { rows: 0 }, change: null, run: "sync:harbour:20260926T085900",
                     logs: ["tagpup_web.log"] },
-      last_folder: null,
-      roots: [{ path: "D:\\Photos", there: true, watched: true }, { path: "E:\\Archive", there: false, watched: false }],
+      last_folder: { id: 4, started: "2026-09-26 09:10:00", finished: "2026-09-26 09:10:02", seconds: 2, whole: false,
+                     in_step: false, found: { not_looked_at: 1309, folders_not_looked_at: 1 }, changed: { rows: 0 },
+                     change: null, run: "sync:harbour:20260926T091000", logs: ["tagpup_web.log"] },
+      roots: [{ path: "D:\\Photos", there: true, watched: true }, { path: "E:\\Archive", there: false, answering: true, watched: false },
+              { path: "\\\\nas\\Pictures", there: false, answering: false, watched: false }],
       watches: ["D:\\Photos"], watcher: { last_event: "2026-09-26 09:59:00", pending_folders: 0, whole_pending: false,
                                           last_sync: null, not_watched: false } },
   ],
@@ -207,6 +210,13 @@ describe("the Activity page draws each section from what the server says", () =>
     assert.match(sync.textContent, /D:\\Photos/);
     assert.match(sync.textContent, /E:\\Archive/);
     assert.match(sync.textContent, /missing/);
+    // A root on a share asleep is not answering, never missing.
+    const asleep = [...sync.querySelectorAll("ul.roots li")].find(li => /nas/.test(li.textContent));
+    assert.match(asleep.textContent, /not answering/);
+    assert.doesNotMatch(asleep.textContent, /missing/);
+    // A sync that could not look at a folder on a share asleep says so, and is not in step.
+    assert.match(sync.textContent, /1 folder not looked at \(share not answering\)/);
+    assert.match(sync.textContent, /not in step/);
     const review = sync.querySelector('a[href="http://localhost:8080/harbour/?review=1"]');
     assert.ok(review, "the folders to review open TagTuner's dialog");
     assert.equal(review.getAttribute("target"), "_blank");

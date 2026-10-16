@@ -35,7 +35,7 @@ from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.mcp import server  # noqa: E402
 from tagpup.services import indexing  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
-from tagpup.services import suggestions as saved_suggestions  # noqa: E402
+from tagpup.services import suggester  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import embeddings as store_embeddings  # noqa: E402
 from tagpup.store import faces as store_faces  # noqa: E402
@@ -128,7 +128,7 @@ class TheStore(Folders, unittest.TestCase):
 
     def test_what_suggest_keeps_is_refused_there_too(self):
         with self.assertRaises(Conflict):
-            saved_suggestions.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
+            suggester.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
         self.assertEqual(0, rows_under(self.db_path, self.lighthouse))
 
     def test_a_folder_added_gets_no_rows_until_one_is_used(self):
@@ -136,13 +136,13 @@ class TheStore(Folders, unittest.TestCase):
         self.assertEqual(0, library_actions.record_added(Library(self.db_path), [self.lighthouse]), "added twice")
         self.assertEqual(0, rows_under(self.db_path, self.lighthouse), "the add made rows")
         # Then Suggest may keep what it found there: that photo's row, and no other.
-        saved_suggestions.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
+        suggester.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
         self.assertEqual(1, rows_under(self.db_path, self.lighthouse))
 
     def test_a_folder_added_with_its_subfolders_covers_them(self):
         below = make_photos(os.path.join(self.lighthouse, "Keepers"), "IMG_0100.jpg")[0]
         library_actions.record_added(Library(self.db_path), [self.lighthouse])
-        saved_suggestions.keep(self.db_path, below, {"tags": ["Family/Work"]})
+        suggester.keep(self.db_path, below, {"tags": ["Family/Work"]})
         self.assertEqual(1, rows_under(self.db_path, self.lighthouse))
 
     def test_removing_the_folder_forgets_the_add(self):
@@ -150,7 +150,7 @@ class TheStore(Folders, unittest.TestCase):
         library_actions.record_added(Library(self.db_path), [self.lighthouse])
         face_actions.remove_folder(Library(self.db_path), self.lighthouse)
         with self.assertRaises(Conflict):
-            saved_suggestions.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
+            suggester.keep(self.db_path, self.shared[0], {"tags": ["Family/Work"]})
 
 
 class FakeIndex:

@@ -299,13 +299,13 @@ class Crashes(FilesCase):
 
     def test_a_change_a_live_process_is_writing_is_left_to_it(self):
         change = self.crash("plan committed")
-        for owner in (file_journal.owner(), "another-machine:4242"):
+        for owner in (file_journal.owner(), "another-machine:4242:1"):
             self.execute("UPDATE changes SET owner = ? WHERE id = ?", (owner, change))
             self.assertEqual(self.settle(), 0, owner)
         self.assertEqual(self.states(change), ["planned"] * 3)
         # A process that has gone -- no process has id 0x7FFFFFF0 -- leaves it to whoever
         # opens the library next.
-        self.execute("UPDATE changes SET owner = ? WHERE id = ?", ("%s:%d" % (socket.gethostname(), 0x7FFFFFF0),
+        self.execute("UPDATE changes SET owner = ? WHERE id = ?", ("%s:%d:1" % (socket.gethostname(), 0x7FFFFFF0),
                                                                       change))
         self.assert_finished(change)
 

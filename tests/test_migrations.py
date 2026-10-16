@@ -4,10 +4,9 @@ There is one real migration, the baseline (schema 32): it makes a NEW library wh
 runner is for the next ones (33 on), so every test here gives the code SYNTHETIC steps (tests/migration_names.py) after the
 baseline and holds the runner to what it promises:
 
-* one that adds takes nothing and is watched to change nothing that was there; one that changes data has every row it
-  changed recorded in the journal, undoable while it is the newest; one that destroys takes one backup, under the write
-  lock. Each runs in one transaction with the checks it names, and a failed check rolls it back. Every run is a row of
-  `changes`. A table is rebuilt only by SQLite's twelve steps (`rebuild_table`).
+* one that adds takes nothing and is watched to change nothing that was there; one that destroys takes one backup, under
+  the write lock. Each runs in one transaction with the checks it names, and a failed check rolls it back. Every run is a
+  row of `changes`, and is not undone.
 * D8: a library kept at 32 meets an additive step and a destructive one: interrupted part-way it resumes; two openers apply
   each once; a failing check leaves the library as it was; one backup, before the destructive step only, and none for a
   library being made; an older app refuses it; a change made at 32 stays undoable across the additive step and not across
@@ -20,7 +19,6 @@ many destructive steps are pending, one copy from before the first holds the lib
 
 Libraries are seeded in plain SQL, as the indexer stores them, in homes of their own. The names are fictional.
 """
-import ast
 import contextlib
 import hashlib
 import json
@@ -164,80 +162,12 @@ class AnAdditiveMigration(Migrated):
         self.assertLessEqual(set(counted), {"added_folders"})
 
 
-# ---- Changing data -------------------------------------------------------------------------
-
-class ADataChangingMigration(Migrated):
-    def setUp(self):
-        super().setUp()
-        self.before = self.dump()
-
-    def change(self, conn):
-        conn.execute("UPDATE faces SET name = 'Maren Oakhollow', name_source = 'manual' WHERE id = ?",
-                     (self.ids["copy"],))
-        conn.execute("DELETE FROM tag_taxonomy WHERE tag = 'Activity/Sailing'")
-        conn.execute("INSERT INTO suggestions (photo_id, tags, people, title, raw, before_consensus, model, created)"
-                     " VALUES (?, '[]', '[]', 'Prize giving', '{}', 1, 'm', '2026-09-25 09:00:00')", (self.ids["finish"],))
-        conn.execute("UPDATE photos SET raw_metadata = json_set(raw_metadata, ?, '2023:07:01 12:00:00') WHERE id = ?",
-                     ('$."EXIF:DateTimeOriginal"', self.ids["prize"]))
-
-    def run_it(self):
-        self.migrate(step(schema.DATA, self.change, ("faces", "tag_taxonomy", "suggestions", "photos")))
-        return self.newest_change()
-
-    def test_takes_no_backup(self):
-        self.run_it()
-        self.assertEqual([], backups(self.db_path))
-
-    def test_records_every_row_it_changed(self):
-        change_id = self.run_it()
-        entry = journal.history(self.db_path, change_id=change_id)[0]
-        self.assertEqual("migration %d: a step" % (migration_names.BASE + 1), entry["operation"])
-        self.assertEqual(migration_names.BASE + 1, entry["schema_version"])
-        self.assertEqual({"faces": {"update": 1}, "tag_taxonomy": {"delete": 1}, "suggestions": {"insert": 1},
-                          "photos": {"update": 1}}, entry["rows"])
-        self.assertEqual({"faces": [[self.ids["copy"]]], "tag_taxonomy": [[self.ids["Activity/Sailing"]]],
-                          "suggestions": [[self.ids["finish"]]], "photos": [[self.ids["prize"]]]}, entry["keys"])
-        self.assertIn("every change recorded", entry["summary"]["checks"])
-
-    def test_is_undone_while_it_is_the_newest(self):
-        change_id = self.run_it()
-        self.assertNotEqual(self.before, self.dump())
-        self.assertTrue(journal.rehearse_undo(self.db_path, change_id).exact)
-        journal.undo(self.db_path, change_id)
-        self.assertEqual(self.before, self.dump())
-
-    def test_is_not_undone_once_another_migration_has_run(self):
-        change_id = self.run_it()
-        # One that touches a table the journal keys (a column of faces): the rows the change recorded may mean something else.
-        after = step(schema.ADDITIVE, lambda conn: conn.execute("ALTER TABLE faces ADD COLUMN quality REAL"),
-                     ("faces",), version=migration_names.BASE + 2)
-        self.migrate(step(schema.DATA, self.change, ("faces",), version=migration_names.BASE + 1), after)
-        with self.assertRaises(journal.Refusal):
-            journal.undo(self.db_path, change_id)
-
-    def test_that_writes_a_table_the_journal_does_not_record_is_refused(self):
-        def embed(conn):
-            conn.execute("INSERT INTO tag_embeddings (tag, prompt, model_name, pretrained, embedding)"
-                         " VALUES ('Activity/Sailing', 'a photo of sailing', 'ViT-B-32', 'laion', x'00')")
-
-        with self.assertRaises(schema.CheckFailed) as failed:
-            self.migrate(step(schema.DATA, embed, ("tag_embeddings",)))
-        self.assertEqual("every change recorded", failed.exception.check)
-        self.assertEqual([], self.query("SELECT tag FROM tag_embeddings"))
-        self.assertEqual(migration_names.BASE, self.version())
-
-
 # ---- Destroying ----------------------------------------------------------------------------
-
-SUGGESTIONS_WITHOUT_ERROR = ("photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,"
-                             " tags TEXT, people TEXT, title TEXT, raw TEXT,"
-                             " before_consensus INTEGER NOT NULL DEFAULT 0, model TEXT, created TEXT")
-
 
 class ADestructiveMigration(Migrated):
     @staticmethod
     def drop(conn):
-        schema.rebuild_table(conn, "suggestions", SUGGESTIONS_WITHOUT_ERROR)
+        conn.execute("ALTER TABLE suggestions DROP COLUMN error")
 
     def test_takes_one_backup_and_names_it(self):
         self.migrate(step(schema.DESTRUCTIVE, self.drop, ("suggestions",)))
@@ -295,7 +225,7 @@ class AFailedCheck(Migrated):
             conn.execute("INSERT INTO faces (photo_id, box) VALUES (987654, '[1,2,3,4]')")
 
         with self.assertRaises(schema.CheckFailed) as failed:
-            self.migrate(step(schema.DATA, orphan, ("faces",), checks=schema.STANDARD))
+            self.migrate(step(schema.DESTRUCTIVE, orphan, ("faces",), checks=schema.STANDARD))
         self.assertEqual("foreign keys", failed.exception.check)
         self.assertIn("1 row(s) of faces name a row of photos that is not there", str(failed.exception))
         self.assertEqual([], self.query("SELECT id FROM faces WHERE photo_id = 987654"))
@@ -307,109 +237,6 @@ class AFailedCheck(Migrated):
         self.migrate(step(schema.ADDITIVE, lambda conn: conn.execute("CREATE INDEX idx_x ON face_crops(jpeg)"),
                           ("face_crops",)))
         self.assertEqual(migration_names.BASE + 1, self.version())
-
-
-# ---- The twelve steps ----------------------------------------------------------------------
-
-FACES_WITHOUT_REASON = ("id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                        " photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,"
-                        " box TEXT, embedding BLOB, name TEXT, prob REAL, name_source TEXT, excluded INTEGER DEFAULT 0,"
-                        " tag_id INTEGER")
-
-
-class TheTwelveSteps(Migrated):
-    def objects(self):
-        return set(self.query("SELECT type, name, tbl_name FROM sqlite_master WHERE type IN ('index', 'trigger')"))
-
-    def rebuild(self, table, definition, **kwargs):
-        conn = db.connect(self.db_path)
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                copied = schema.rebuild_table(conn, table, definition, **kwargs)
-                conn.commit()
-                return copied
-            except BaseException:
-                conn.rollback()
-                raise
-        finally:
-            conn.close()
-
-    def test_keep_the_rows_indexes_triggers_and_counter(self):
-        gone = self.execute("INSERT INTO faces (photo_id, box) VALUES (?, '[9,9,9,9]')", (self.ids["prize"],))
-        self.execute("DELETE FROM faces WHERE id = ?", (gone,))
-        rows = self.query("SELECT id, photo_id, name, embedding FROM faces ORDER BY id")
-        objects = self.objects()
-        self.assertEqual(len(rows), self.rebuild("faces", FACES_WITHOUT_REASON))
-        self.assertEqual(rows, self.query("SELECT id, photo_id, name, embedding FROM faces ORDER BY id"))
-        self.assertEqual(objects, self.objects())
-        self.assertNotIn("excluded_reason", [r[1] for r in self.query("PRAGMA table_info(faces)")])
-        self.assertGreater(self.execute("INSERT INTO faces (photo_id, box) VALUES (?, '[1,1,1,1]')",
-                                        (self.ids["prize"],)), gone)
-        # The crop trigger came back with the table.
-        self.execute("DELETE FROM faces WHERE id = ?", (self.ids["kept"],))
-        self.assertEqual([], self.query("SELECT 1 FROM face_crops WHERE face_id = ?", (self.ids["kept"],)))
-
-    def test_rebuild_a_table_a_trigger_elsewhere_names(self):
-        # faces' trigger deletes from face_crops: the rename stopped on it while the
-        # table was gone, until the trigger is dropped and made again with it.
-        objects = self.objects()
-        self.rebuild("face_crops", "face_id INTEGER PRIMARY KEY REFERENCES faces(id) ON DELETE CASCADE,"
-                                   " jpeg BLOB NOT NULL")
-        self.assertEqual(objects, self.objects())
-        self.execute("DELETE FROM faces WHERE id = ?", (self.ids["kept"],))
-        self.assertEqual([], self.query("SELECT 1 FROM face_crops WHERE face_id = ?", (self.ids["kept"],)))
-
-    def test_refuse_a_connection_with_foreign_keys_on(self):
-        conn = db.connect(self.db_path, foreign_keys=True)
-        self.addCleanup(conn.close)
-        conn.execute("BEGIN IMMEDIATE")
-        with self.assertRaises(RuntimeError):
-            schema.rebuild_table(conn, "faces", FACES_WITHOUT_REASON)
-        conn.rollback()
-        self.assertIn("excluded_reason", [r[1] for r in self.query("PRAGMA table_info(faces)")])
-
-    def test_refuse_to_run_outside_a_transaction(self):
-        conn = db.connect(self.db_path)
-        self.addCleanup(conn.close)
-        with self.assertRaises(RuntimeError):
-            schema.rebuild_table(conn, "faces", FACES_WITHOUT_REASON)
-
-    def test_refuse_a_rebuild_leaving_a_row_naming_nothing(self):
-        columns = ["id", "photo_id", "box", "embedding", "name", "prob", "name_source", "excluded", "tag_id"]
-        copy = {c: c for c in columns}
-        copy["photo_id"] = "photo_id + 100000"
-        with self.assertRaises(schema.CheckFailed) as failed:
-            self.rebuild("faces", FACES_WITHOUT_REASON, copy=copy)
-        self.assertEqual("foreign keys", failed.exception.check)
-        self.assertIn("excluded_reason", [r[1] for r in self.query("PRAGMA table_info(faces)")])
-
-    def test_are_the_only_way_a_table_is_rebuilt(self):
-        allowed = {("tagpup/store/schema.py", "rebuild_table")}
-
-        def renames(node):
-            """A string in `node` that is SQL renaming a table: ALTER TABLE ... RENAME TO."""
-            return any(isinstance(n, ast.Constant) and isinstance(n.value, str)
-                       and "ALTER TABLE" in n.value.upper() and "RENAME TO" in n.value.upper()
-                       for n in ast.walk(node))
-
-        found = set()
-        for folder, _dirs, files in os.walk(os.path.join(ROOT, "tagpup")):
-            for name in files:
-                if not name.endswith(".py"):
-                    continue
-                path = os.path.join(folder, name)
-                with open(path, encoding="utf-8") as handle:
-                    tree = ast.parse(handle.read())
-                relative = os.path.relpath(path, ROOT).replace(os.sep, "/")
-                for node in ast.walk(tree):
-                    # The innermost function holding the statement.
-                    if isinstance(node, ast.FunctionDef) and renames(node) and not any(
-                            isinstance(inner, ast.FunctionDef) and inner is not node and renames(inner)
-                            for inner in ast.walk(node)):
-                        found.add((relative, node.name))
-        self.assertLessEqual(found, allowed)
-        self.assertIn(("tagpup/store/schema.py", "rebuild_table"), found)
 
 
 # ---- What a migration is -------------------------------------------------------------------
@@ -573,7 +400,7 @@ class ALibraryBelowTheBaseline(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
-        schema._current.clear()
+        schema.forget()
         return path
 
     def test_is_refused_with_a_sentence_and_nothing_is_written_or_backed_up(self):
@@ -606,7 +433,7 @@ class ALibraryBelowTheBaseline(unittest.TestCase):
         home = own_home.for_test(self)
         path = home.library("harbour.db")
         schema.ensure(path)
-        schema._current.clear()
+        schema.forget(path)
         before = digest(path)
         self.assertIsNone(schema.newer_problem(path))
         self.assertEqual([], schema.ensure(path))

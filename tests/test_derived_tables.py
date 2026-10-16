@@ -190,27 +190,21 @@ class AKeywordAndEverythingUnderIt(ALibrary):
         self.assertEqual(["People/Rowan", "People/Rowan/Swim Team"], found,
                          "not People/Rowanne or People/Rowan Quay, which only start the same")
 
-    def test_the_photos_are_each_one_once_by_id(self):
-        wanted = sorted([self.ids["People/Rowan"], self.ids["People/Rowan/Swim Team"], self.both])
-        self.assertEqual(wanted, derived.photos_under_tag(self.conn, "People/Rowan"))
-        self.assertEqual(3, derived.count_under_tag(self.conn, "People/Rowan"), "the photo with both counts once")
-        self.assertEqual(wanted[1:], derived.photos_under_tag(self.conn, "People/Rowan", limit=2, offset=1))
-        self.assertEqual([self.ids["People/Rowan/Swim Team"], self.both],
-                         derived.photos_under_tag(self.conn, "People/Rowan/Swim Team"))
+    def photos_under(self, tag):
+        sql, params = derived.under(tag)
+        return [photo for (photo,) in self.rows(
+            "SELECT DISTINCT photo_id FROM photo_tags WHERE tag_id IN (%s) ORDER BY photo_id" % sql, *params)]
 
     def test_an_underscore_or_a_percent_in_a_tag_is_a_plain_character(self):
-        self.assertEqual([self.ids["Club_A/Juniors"]], derived.photos_under_tag(self.conn, "Club_A"))
-        self.assertEqual([self.ids["Club%A"]], derived.photos_under_tag(self.conn, "Club%A"))
-        self.assertEqual([self.ids["ClubXA/Juniors"]], derived.photos_under_tag(self.conn, "ClubXA"))
+        self.assertEqual([self.ids["Club_A/Juniors"]], self.photos_under("Club_A"))
+        self.assertEqual([self.ids["Club%A"]], self.photos_under("Club%A"))
+        self.assertEqual([self.ids["ClubXA/Juniors"]], self.photos_under("ClubXA"))
 
     def test_a_root_is_everything_under_it_and_not_a_longer_name(self):
-        found = derived.photos_under_tag(self.conn, "People")
+        found = self.photos_under("People")
         self.assertNotIn(self.ids["Peoples"], found)
         self.assertEqual(5, len(found))
-
-    def test_a_tag_that_is_no_node_has_no_photos(self):
-        self.assertEqual([], derived.photos_under_tag(self.conn, "Nowhere"))
-        self.assertEqual(0, derived.count_under_tag(self.conn, "Nowhere"))
+        self.assertEqual([], self.photos_under("Nowhere"))
 
     def test_a_range_over_the_tree_is_where_the_tree_is_now(self):
         """The nodes keep their ids when the tree moves them, and the range is over the tree as it

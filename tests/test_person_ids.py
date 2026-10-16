@@ -124,7 +124,8 @@ class WritesKeepTheId(Library):
         self.assertIsNone(self.face_id(self.faces[0]))
 
     def test_clustering_and_a_guess(self):
-        write(self.path, lambda conn: faces.set_names(conn, {self.faces[0]: ODA, self.faces[2]: WREN}, {self.faces[0]: None, self.faces[2]: None}))
+        oda, wren = node_id(self.path, "Family/Coast/" + ODA), node_id(self.path, "People/" + WREN)
+        write(self.path, lambda conn: faces.set_names(conn, {self.faces[0]: oda, self.faces[2]: wren}, {self.faces[0]: None, self.faces[2]: None}))
         write(self.path, lambda conn: faces.name_if_unnamed(conn, self.faces[1], WREN))
         self.assertEqual([node_id(self.path, "Family/Coast/" + ODA), node_id(self.path, "People/" + WREN),
                           node_id(self.path, "People/" + WREN)], [self.face_id(f) for f in self.faces])

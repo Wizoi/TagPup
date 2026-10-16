@@ -1,5 +1,6 @@
 """The word index a search's words are matched in (docs/ARCHITECTURE.md, phase 9e-1): two SQLite FTS5 tables, derived
-from the photos' rows, never journaled, made by migration 24 and kept by the store's writes in their own transactions.
+from the photos' rows, never journaled, made by the baseline (tagpup.store.schema) and kept by the store's writes in their
+own transactions.
 
 * `search_words(tags, captions, people)`, tokenize `unicode61 remove_diacritics 2`, prefixes of 2 and 3 indexed: the
   words of each keyword the photo's row holds -- its path and its leaf, as the file spells it, so a keyword with no node
@@ -23,7 +24,7 @@ deletes it (`search_goes_with_its_photo`), as the derived tables do.
 **Who keeps them.** `refresh(conn, photo_ids)`, in the writer's transaction: called by tagpup.store.derived for every
 photo whose keywords, path, metadata or captions it refreshes (so the index's record, the bulk tag writes, sync, the moves
 and renames, the journal's undo), by people.rebuild for the photos whose people it wrote (so a face named, a tree edit that
-changes who is a person, a rename of a person), and by derived.rebuild_all and rebuild_folders whole. `rebuild(conn)`
+changes who is a person, a rename of a person), and by derived.rebuild_all whole. `rebuild(conn)`
 makes both from the photos, whole.
 
 **A search's words** (`clause`): the text typed, split at blanks, each TERM a set condition, ANDed with every other and with
@@ -34,7 +35,7 @@ term (`cameras_with`: a substring, without case or accents, of the one name `pho
 so AND, OR, NOT, NEAR, `*`, `^`, `"`, `:`, `(`, `)` and `-` are text and never FTS5's syntax. A term with no letter or digit
 and under three characters says nothing and is dropped (`terms`).
 
-The caller commits. Every function does nothing, and says 0, on a library without the tables (before migration 24).
+The caller commits.
 """
 import json
 import os
@@ -49,7 +50,7 @@ TABLES = (WORDS, NAMES)
 #: The tables FTS5 makes for each (contentless: no _content).
 SHADOWS = tuple("%s_%s" % (table, shadow) for table in TABLES for shadow in ("data", "idx", "docsize", "config"))
 
-#: The statements migration 24 runs.
+#: The statements the baseline runs (tagpup.store.schema).
 CREATE = (
     "CREATE VIRTUAL TABLE %s USING fts5(tags, captions, people, tokenize = 'unicode61 remove_diacritics 2',"
     " prefix = '2 3', content = '', contentless_delete = 1)" % WORDS,
@@ -143,7 +144,7 @@ def refresh(conn, photo_ids):
 
 
 def rebuild(conn):
-    """Make both tables what the photos say, whole, in the caller's transaction: migration 24's, the doctor's repair, and
+    """Make both tables what the photos say, whole, in the caller's transaction: the doctor's repair, and
     an adoption's (every path's spelling changes). Reads each photo once, in chunks by id; merges the index's segments
     after (`optimize`). Returns how many photos."""
     for table in TABLES:
@@ -214,7 +215,7 @@ LIMITS = ("the word index is checked by a row for every photo and a sample of %d
 
 
 def problems(conn):
-    """What is wrong with the word index, as sentences of counts, [] when nothing (or no index)."""
+    """What is wrong with the word index, as sentences of counts, [] when nothing."""
     wrong = stale(conn)
     return ["%d photo(s) have word index rows that are not what their rows give (tools/doctor.py --rebuild-derived --apply "
             "makes it again)" % len(wrong)] if wrong else []

@@ -64,18 +64,18 @@ class RootsChanged(RuntimeError):
     from here would be converted by roots the library no longer has."""
 
 
+#: The columns of paths a root holds as `@name/rel`: (table, the key a row is named by, column). The one list
+#: (tagpup.store.roots_check reads it for `roots check` and the doctor). Not the derived `folders`: its paths are the
+#: photos' folders in the form the photos' rows are in, and derived.stale_folders compares it with the photos.
+PATH_COLUMNS = (("photos", "id", "path"), ("change_files", "id", "path"), ("change_files", "id", "new_path"),
+                ("added_folders", "rowid", "path"))
+
+
 # ---- The table -------------------------------------------------------------------------
 
 def _rows(conn):
-    """((name, address), ...) of the library's roots, by name; () for a library with none or
-    one behind migration 18 (a migration of an earlier version reads the roots too, building a library from nothing)."""
-    try:
-        return tuple((name, address or "") for name, address in
-                     conn.execute("SELECT name, address FROM roots ORDER BY name"))
-    except sqlite3.OperationalError as problem:
-        if "no such table" in str(problem):
-            return ()
-        raise
+    """((name, address), ...) of the library's roots, by name; () for a library with none."""
+    return tuple((name, address or "") for name, address in conn.execute("SELECT name, address FROM roots ORDER BY name"))
 
 
 def every(conn):

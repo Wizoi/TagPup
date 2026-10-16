@@ -56,7 +56,7 @@ def make_newer(path, by=1):
         conn.commit()
     finally:
         conn.close()
-    schema._current.clear()
+    schema.forget()
 
 
 class AnOlderAppAndALibraryItHasNotSeen(unittest.TestCase):
@@ -222,7 +222,7 @@ class RecoveryOfANewerLibrary(unittest.TestCase):
         result = self.cli("snapshots", "restore", self.snapshot, "--apply")
         self.assertEqual(0, result.exit_code, result.output)
         self.assertEqual(schema.LATEST, schema.version_of(self.path))
-        schema._current.clear()
+        schema.forget(self.path)
         self.assertEqual([], schema.ensure(self.path))
 
     def test_every_cli_writer_is_refused_with_the_backups_named(self):

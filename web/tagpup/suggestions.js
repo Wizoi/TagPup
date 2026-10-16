@@ -550,12 +550,9 @@ function queueApplyAll(folder, targets, prior) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 folder_path: folder,
-                photo_paths: targets,
-                // Apply everything the panel is showing. A button called Apply All
-                // that applied 141 of 153 suggestions and left 12 on screen read as
-                // a failure, and the 12 it skipped were indistinguishable from the
-                // ones it wrote. What is offered is what gets applied.
-                threshold: 0.0
+                // Everything the panel is showing: the server applies what was offered, with no floor. A button
+                // called Apply All that applied 141 of 153 suggestions and left 12 on screen read as a failure.
+                photo_paths: targets
             })
         })
         .then(data => {

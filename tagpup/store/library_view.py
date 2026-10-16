@@ -376,21 +376,6 @@ for _orders, _key, _index, _nullable in (((NAME, NAME_DESC), name_sql("p.path"),
         _KEYED[_order] = (_key, _index, _nullable)
 
 
-def has_index(conn, index):
-    """Has the library on `conn` the index `index` (NAME_INDEX, migration 22; CAPTION_INDEX, migration 23)? Without it an
-    order by that key is a sort of the source, the same order; remembered on the connection once true."""
-    held = getattr(conn, "view_indexes", None)
-    if held is not None and index in held:
-        return True
-    found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (index,)).fetchone() is not None
-    if found:
-        try:
-            conn.view_indexes = (held or frozenset()) | {index}
-        except AttributeError:
-            pass   # a connection that is not db.connect's cannot remember
-    return found
-
-
 #: Read every source by the name or caption index, as before #722: what a measurement compares against.
 FORCE_ALWAYS = False
 
@@ -409,9 +394,8 @@ def _walks(conn, scope, index):
     list of ids -- a keyword, a person, a folder alone, a union holding one of those -- are: left to itself SQLite reads the
     list and sorts it. A range of another index (Scope.ranged: a month, a year, a year's Other, a folder with its
     subfolders, a union of months and years) is left to SQLite, which reads the range and sorts it, unless it holds more
-    than 1/RANGE_SHARE of the library: forced, a small range walked every photo of the library for each page (#722)."""
-    if not has_index(conn, index):
-        return False
+    than 1/RANGE_SHARE of the library: forced, a small range walked every photo of the library for each page (#722). Both
+    indexes are the baseline's (tagpup.store.schema)."""
     if FORCE_ALWAYS or not scope.ranged:
         return True
     held = conn.execute(*scope.count).fetchone()[0]
@@ -594,8 +578,8 @@ def keyword_counts(conn):
     """[{"id", "tag", "name", "parent_id", "count"}] of every node of the tag tree: `count` the photos carrying the
     node's tag or a tag under it, each photo once for a node however many tags of it lie under it. The nodes
     are one read; the photos' tags one pass of photo_tags by photo (151,000 rows on photo_index) rolled up the
-    tree's parent ids in Python -- not a range query for each node. Equal, node for node, to
-    `derived.count_under_tag`."""
+    tree's parent ids in Python -- not a range query for each node. Equal, node for node, to the photos a keyword source
+    (`derived.under`) gives."""
     nodes = conn.execute("SELECT id, tag, parent_id, name FROM tag_taxonomy").fetchall()
     parent = {node_id: parent_id for node_id, _tag, parent_id, _name in nodes}
     upward = {}   # each node and every node above it: a damaged tree that loops ends the walk, never the call

@@ -36,7 +36,7 @@ class TheIndexesALibraryViewPagesBy(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
-        schema._current.clear()
+        schema.forget()
 
     def test_the_planner_walks_each_index_with_no_sort(self):
         plan = " ".join(row[3] for row in look(

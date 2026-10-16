@@ -12,6 +12,7 @@ import numbers
 import time
 
 from tagpup.core import runs
+from tagpup.files import shares
 from tagpup.store import db, job_runs, journal, snapshots
 
 #: The most entries a timeline gathers from each record.
@@ -20,6 +21,16 @@ MOST = 500
 
 def _look(library):
     return db.connect(db.readonly_uri(library.path), uri=True)
+
+
+def roots_there(roots):
+    """[{"path", "there", "answering"}] of each root folder, asked as a sync asks it (shares.folder_state, bounded on
+    a share): a root on a share that does not answer is not answering, never "not there" (#1356)."""
+    listed = []
+    for root in roots:
+        state = shares.folder_state(root)
+        listed.append({"path": root, "there": state == "there", "answering": state != "unanswered"})
+    return listed
 
 
 def _counts(found):

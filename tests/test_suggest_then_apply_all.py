@@ -24,8 +24,7 @@ Mutation, each made in a scratch copy of the code and failing the test named:
 - A failed photo stored without its error; "completed" set before the consensus; the consensus taken over this run's
   photos only; the model asked for before the folder is known to hold a photo: the second-run, the restart and the
   empty-folder tests.
-Not kept: offered_tags' `threshold` ("a threshold still narrows it"): the page always sends 0.0 (suggestions.js), so
-no one narrows (a finding of this merge); and the pipeline test that a score is not boosted twice, which cannot happen
+Not kept: Apply All's `threshold`, deleted (the page always sent 0.0: no one narrowed); and the pipeline test that a score is not boosted twice, which cannot happen
 now that a run reads its raw list from the library's rows each time.
 """
 import os
@@ -45,7 +44,6 @@ from tagpup.jobs import suggestions as suggestion_jobs  # noqa: E402
 from tagpup.services import faces as faces_service  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import suggester  # noqa: E402
-from tagpup.services import suggestions as saved  # noqa: E402
 from tagpup.web import tagpup_routes  # noqa: E402
 
 Base = base.Base
@@ -99,11 +97,11 @@ class ASuggestRunInAHeldFolder(Base):
         runs = suggestion_jobs.runs_for(self.library)
         entry = runs.suggestions(self.cup)[self.loose[0]]
         entry["raw_suggestions"]["suggested_tags"].append(EXTRA)
-        saved.keep(self.library.path, self.loose[0], entry)
+        suggester.keep(self.library.path, self.loose[0], entry)
         shown = [t["tag"] for t in entry["tags"]] + [p["name"] for p in entry["people"]]
         self.assertTrue(shown)
 
-        reply = self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0})
+        reply = self.post("/folder/auto-apply", {"folder_path": self.cup})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual(shown, base.tags_in(self.loose[0]))
         self.assertNotIn(EXTRA["tag"], base.tags_in(self.loose[0]))
@@ -139,7 +137,7 @@ class ASuggestRunInAHeldFolder(Base):
     def test_a_folder_chosen_straight_after_a_restart_reports_its_run_not_its_saved_rows(self):
         self.start(self.regatta)
         self.restart()
-        real = saved.saved_in
+        real = suggester.saved_in
         with mock.patch.object(suggestion_jobs, "threading",
                                types.SimpleNamespace(Lock=base.threading.Lock, Thread=base.Deferred)):
             self.assertEqual("running", self.start(self.cup)["status"])
@@ -154,7 +152,7 @@ class ASuggestRunInAHeldFolder(Base):
                 return real(db_path, folder)
 
             runs.statuses[paths.key(self.cup)]["status"] = "running"
-            with mock.patch.object(saved, "saved_in", finishing_while_read):
+            with mock.patch.object(suggester, "saved_in", finishing_while_read):
                 self.assertEqual("running", self.status(self.cup)["status"], "rows from before the finish (#93)")
             base.Deferred.waiting[0].run()
         self.assertEqual("completed", self.status(self.cup)["status"])
@@ -163,14 +161,14 @@ class ASuggestRunInAHeldFolder(Base):
         late, later = (os.path.join(self.cup, "cup_0%d.jpg" % n) for n in (6, 7))
         damaged_photos.whole_jpeg(late, seed=6)
         damaged_photos.whole_jpeg(later, seed=7)
-        real = saved.keep
+        real = suggester.keep
 
         def locked_for_one(db_path, photo, found, model_key=None):
             if photo == late:
                 raise RuntimeError("database is locked")
             return real(db_path, photo, found, model_key)
 
-        with mock.patch.object(saved, "keep", locked_for_one):
+        with mock.patch.object(suggester, "keep", locked_for_one):
             self.start(self.cup)
         found = self.suggested(self.cup)
         self.assertEqual(("completed", True, False), (self.status(self.cup)["status"], "cup_07.jpg" in found,

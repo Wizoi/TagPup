@@ -226,7 +226,7 @@ _FILES = {
             "navigator-multi photo-camera photo-position photo-suggestions-panel search-page selection "
             "selection-follows-the-photo selection-panel selection-suggestions stale-cards suggest-cancel tagging-flow "
             "test_a_search_keeps_no_thread_buffers "
-            "test_camera_words test_caption_order test_chip_keys_follow_the_server "
+            "test_camera_words test_caption_order test_chip_keys_follow_the_server test_view_rules_follow_the_server "
             "test_clip_sees_photos_upright test_embeddings_follow_their_photo "
             "test_every_library_keeps_its_saved_suggestions "
             "test_index_reload_reuses_its_connection test_jobs_suggestions "
