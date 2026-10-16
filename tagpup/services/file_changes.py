@@ -157,11 +157,13 @@ def exclusively():
         _one_at_a_time.release()
 
 
-def too_many(count):
-    """The sentence refusing a write of photo files that names more than batches.MAX_BATCH photos, or None: the one cap
-    (write_fields, batch_exclusively, and Smart Rename before it reads a caption; the tag tree's rewrites are uncapped)."""
+def too_many(count, counted="were named"):
+    """The sentence refusing a write of photo files that names more than batches.MAX_BATCH photos, or None: the one cap and
+    its one sentence (write_fields, batch_exclusively, Smart Rename before it reads a caption, a library view's selection
+    before it resolves its ids, a bulk face assignment; the tag tree's rewrites are uncapped). `counted` says what the
+    count is of: "were named", "are selected"."""
     if count > batches.MAX_BATCH:
-        return "Select up to {:,} photos at a time ({:,} were named).".format(batches.MAX_BATCH, count)
+        return "Select up to {:,} photos at a time ({:,} {}).".format(batches.MAX_BATCH, count, counted)
     return None
 
 

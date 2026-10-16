@@ -20,7 +20,7 @@ import os
 from tagpup.core import paths, vocabulary
 from tagpup.core.result import Refused
 from tagpup.files import recycle_bin
-from tagpup.services import batches, library_view
+from tagpup.services import batches, file_changes, library_view
 from tagpup.store import library_view as store
 from tagpup.store import person_ids
 from tagpup.store import selection_folders as store_folders
@@ -200,8 +200,9 @@ def _too_long(library, photo_ids, binless, named):
 
 
 def _refuse_if_large(count):
-    if count > batches.MAX_BATCH:
-        raise Refused("Select up to %s photos at a time (%s are selected)." % ("{:,}".format(batches.MAX_BATCH), "{:,}".format(count)))
+    why = file_changes.too_many(count, "are selected")     # the one cap and its sentence
+    if why:
+        raise Refused(why)
 
 
 def resolve(library, selection):
