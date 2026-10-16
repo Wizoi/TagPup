@@ -414,7 +414,7 @@ class TheSchemaMovedOn(unittest.TestCase):
     def test_a_gap_of_only_additive_migrations_that_touch_no_journaled_table_is_exempt(self):
         first, second = migration_names.step(), migration_names.step(version=schema.LATEST + 2)
         with migration_names.ahead(first, second):
-            self.assertIsNone(journal.schema_gap_blocker(schema.BASELINE, second.version))
+            self.assertIsNone(journal.schema_gap_blocker(migration_names.BASE, second.version))
             self.assertIsNone(journal.schema_gap_blocker(second.version, second.version))
 
     def test_a_migration_that_touches_only_derived_tables_blocks_no_undo(self):
@@ -423,14 +423,17 @@ class TheSchemaMovedOn(unittest.TestCase):
         step = migration_names.step(touches=("photo_tags", "folders", "photo_folder"))
         self.assertLessEqual({"photo_tags", "folders", "photo_folder"}, set(journal.DERIVED))
         with migration_names.ahead(step):
-            self.assertIsNone(journal.schema_gap_blocker(schema.BASELINE, step.version))
+            self.assertIsNone(journal.schema_gap_blocker(migration_names.BASE, step.version))
 
     def test_a_change_made_below_the_baseline_is_refused_in_a_sentence_that_says_why(self):
-        # Every journal change made before schema 32 is refused (DECISIONS 2026-10-15); the baseline's own are not.
+        # Every journal change of rows made before schema 32 is refused (DECISIONS 2026-10-15); one made at 32 is refused
+        # across migration 33, which destroys (a table dropped); one made at 33 is not.
         for version in (9, 14, 20, 31):
             found = journal.schema_gap_blocker(version, schema.LATEST)
             self.assertIn("before the baseline, schema %d" % schema.BASELINE, found)
-        self.assertIsNone(journal.schema_gap_blocker(schema.BASELINE, schema.LATEST), "32 is the baseline: undoable")
+        self.assertIn("migration 33, drop faces_pending and idx_faces_name, is destructive",
+                      journal.schema_gap_blocker(schema.BASELINE, schema.LATEST))
+        self.assertIsNone(journal.schema_gap_blocker(schema.LATEST, schema.LATEST))
 
     def test_a_gap_with_a_migration_that_is_not_additive_refuses_naming_it(self):
         fake = schema.Migration(schema.LATEST + 1, "rewrites", lambda conn: None, schema.DESTRUCTIVE, "rewrites", (), ())
@@ -440,9 +443,10 @@ class TheSchemaMovedOn(unittest.TestCase):
         self.assertIn("destructive", found)
 
     def test_a_migration_that_is_not_in_the_list_refuses(self):
-        later = migration_names.step(version=schema.LATEST + 2)   # 33 is missing from the list
+        later = migration_names.step(version=schema.LATEST + 2)   # the one between is missing from the list
         with migration_names.ahead(later):
-            self.assertIn("migration 33 is not known", journal.schema_gap_blocker(schema.BASELINE, later.version))
+            self.assertIn("migration %d is not known" % (migration_names.BASE + 1),
+                          journal.schema_gap_blocker(migration_names.BASE, later.version))
         self.assertIn("is not applied here", journal.schema_gap_blocker(schema.LATEST + 1, schema.LATEST))
 
     def test_a_fake_additive_migration_touching_a_journaled_table_is_not_exempt(self):

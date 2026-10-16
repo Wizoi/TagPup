@@ -37,7 +37,7 @@ SCENARIOS = {
     "D5": ("data", "Every writer rebuilds the derived rows in its own transaction."),
     "D6": ("data", "A library's settings are its own: stamped, changed, undone, and read by the next run."),
     "D7": ("data", "The folders a library holds (roots) are stored, verified and followed through the same flows with and without them."),
-    "D8": ("data", "A library kept at the baseline meets an additive and a destructive step: interrupted, two openers, a failing check, a backup, an older app, undoable; one below the baseline is refused untouched."),
+    "D8": ("data", "A library kept at the baseline meets an additive and a destructive step: interrupted, two openers, a failing check, a backup, an older app, undoable; one below the baseline is refused untouched; the owner's library at 32 meets the real 33."),
     "P1": ("people", "A person is the id of a tag-tree node: two processes naming, renaming or merging at once leave one answer."),
     "P2": ("people", "Names, tags and faces stay in step across photo files, jobs and the CLI's journaled apply."),
     "P3": ("people", "Identify faces: a cluster is named, ignored or split, and the page shows what the server says."),

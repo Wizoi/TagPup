@@ -185,7 +185,8 @@ class TheDoctor(Library):
         too_old = os.path.join(self.dir, "too_old.db")
         schema.ensure(too_old)
         conn = db.connect(too_old)
-        conn.execute("UPDATE schema_version SET version = 31")
+        conn.execute("DELETE FROM schema_version")
+        conn.execute("INSERT INTO schema_version VALUES (31, 'an old step', '2026-09-01 00:00:00')")
         conn.commit()
         conn.close()
         lines = []

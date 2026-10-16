@@ -140,7 +140,7 @@ class OneLibrary(unittest.TestCase):
         self.assertEqual(3, len(asked))
         with open(behind, "rb") as handle:
             self.assertEqual(before, handle.read(), "a look migrated the library")
-        self.assertEqual(schema.BASELINE, schema.version_of(behind))
+        self.assertEqual(migration_names.BASE, schema.version_of(behind))
 
     def test_the_clis_sync_and_the_servers_sync_over_one_drift_write_it_once(self):
         folder = os.path.join(self.home.root, "Regatta")
