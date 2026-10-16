@@ -217,6 +217,38 @@ class ASyncThatCannotLookAtAFolder(unittest.TestCase):
         self.assertEqual([harbour], result.details["reveal"]["not_looked_at"])
         self.assertEqual(sorted(taken), self.paths_of(library), "a row followed a copy because its folder did not list")
 
+    def test_a_root_that_answers_and_will_not_list_is_not_counted_walked(self):
+        """#1389: a top folder that answered and then failed to list was counted among the folders walked."""
+        pictures = os.path.join(self.home.root, "Pictures")
+        taken = [self.photo(os.path.join(pictures, "2020 Harbour"), "IMG_0001.jpg")]
+        library = self.library("harbour.db", taken)
+        real = os.scandir
+
+        def scandir(path="."):
+            if os.path.normcase(str(path)) == os.path.normcase(pictures):
+                raise PermissionError(5, "Access is denied")
+            return real(path)
+        with mock.patch.object(os, "scandir", scandir):
+            result = sync.sync(library, apply=True, roots=[pictures])
+        self.assert_not_looked_at(result, 1, 1)
+        self.assertEqual(0, result.details["counts"]["folders_walked"])
+
+    def test_a_folder_to_review_on_a_share_asleep_is_refused_at_once_and_not_called_gone(self):
+        """#1392: include() asked a bare os.path.isdir, which held the request while the share hung and then said the
+        folder was not on disk."""
+        share = os.path.join(self.home.root, "NAS", "Pictures")
+        folder = os.path.join(share, "2019 Regatta")
+        self.photo(folder, "IMG_0001.jpg")
+        library = self.library("regatta.db", [])
+        self.asleep(share)
+        queued = []
+        started = time.monotonic()
+        with mock.patch.object(shares, "SHARE_WAIT", 0.05):
+            result = sync.include(library, folder, [share], queued.append)
+        self.assertLess(time.monotonic() - started, 1.0, "the request waited on the share")
+        self.assertIn("not answering", result.refused or "")
+        self.assertEqual([], queued)
+
     def test_a_listing_that_drops_part_way_leaves_the_photos_it_did_not_reach_not_looked_at(self):
         pictures = os.path.join(self.home.root, "Pictures")
         harbour = os.path.join(pictures, "2020 Harbour")
