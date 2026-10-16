@@ -176,7 +176,7 @@ _FILES = {
             "test_index_resolves_people test_journal_through_the_services "
             "test_new_person_reads_the_pool_once test_organize_faces test_people_by_id_tree "
             "test_people_representative_faces "
-            "test_people_vocabulary test_person_face_samples test_person_ids "
+            "test_person_face_samples test_person_ids "
             "test_person_rename_reaches_the_files test_queued_clustering_is_guarded "
             "test_reindex_keeps_face_decisions test_server_lists_are_alphabetical test_service_faces test_service_tags "
             "test_shared_taxonomy_routes test_store_taxonomy_add_path test_tag_order "
