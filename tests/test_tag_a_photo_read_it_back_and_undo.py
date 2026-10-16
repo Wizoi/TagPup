@@ -115,16 +115,17 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertTrue(tagging.save_photo(self.library, a, "", [], None, EXIFTOOL, "").ok)
         self.assertEqual([], keywords_of(a))
 
-    def cut_short(self, name):
-        """A photo of noise holding Beach, then cut short as a copy that stopped leaves it, and its row as the
-        indexer leaves it after reading the cut file."""
+    def damaged(self, name, shape):
+        """A photo of noise holding Beach, then damaged as a copy that stopped leaves it -- `cut` short, or with its
+        second half `zeros` in a file of its full size -- and its row as the indexer leaves it after reading it."""
         path = os.path.join(self.folder, name)
-        damaged_photos.whole_jpeg(path)
+        damaged_photos.whole_jpeg(path, size=(480, 360))
         write_outside(path, {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"]})
         with open(path, "rb") as handle:
             whole = handle.read()
+        half = len(whole) // 2
         with open(path, "wb") as handle:
-            handle.write(whole[:-damaged_photos.CUT])
+            handle.write(whole[:-damaged_photos.CUT] if shape == "cut" else whole[:half] + bytes(len(whole) - half))
         conn = db.connect(self.library.path)
         try:
             photo_rows.add_read(conn, path, {"XMP:Subject": ["Beach"], "IPTC:Keywords": ["Beach"]})
@@ -134,7 +135,11 @@ class TaggingAPhoto(ReadFilesCase):
         return path
 
     def test_a_photo_cut_short_takes_a_tag_and_keeps_its_picture_and_undo_takes_it_off(self):
-        cut, whole = self.cut_short("cut short.jpg"), self.make_read("whole.jpg")
+        for shape in ("cut", "zeros"):
+            with self.subTest(shape):
+                self.takes_a_tag(self.damaged("%s.jpg" % shape, shape), self.make_read("whole %s.jpg" % shape))
+
+    def takes_a_tag(self, cut, whole):
         picture = picture_of(cut)
 
         result = tagging.change_tags(self.library, [cut, whole], ["Activity/Rowing"], [], EXIFTOOL)
@@ -175,6 +180,8 @@ class TaggingAPhoto(ReadFilesCase):
             self.assertEqual(["Activity/Rowing", "Beach"], self.indexed(path))
         with open(b, "rb") as handle:
             self.assertEqual(held, handle.read(), "the file it could not write changed")
+        self.assertEqual(["a.jpg", "b.jpg", "c.jpg"], sorted(os.listdir(self.folder)),
+                         "the failed write left ExifTool's temporary file beside the photo")
         self.assertEqual(row, self.rows("SELECT tags, mtime, size FROM photos WHERE path = ?", (b,)), "its row changed")
         change = result.details["change"]
         self.assertEqual(["done", "done"], self.states(change), "the failed file is not left in the change")
