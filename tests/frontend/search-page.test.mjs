@@ -98,6 +98,27 @@ describe("one chip for one source (the page's key against the server's reading)"
     }
   });
 
+  test("every kind a union may hold (view_rules.json member_kinds) has a section, a chip key and labels of its own", async (t) => {
+    // A kind added to the server's KINDS and not to the pages fails here: navigator-model.js has no section for it,
+    // tests/fixtures/chip_keys.json no pair the server is held to, and library-source.js labels it as it labels a kind it
+    // does not know (charter of Views, contract 7: a view kind moves in every layer together).
+    const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}` });
+    const { sectionOf } = pageExports(ctx.window, "web/tagpup/navigator-model.js");
+    const { memberKey, chipLabel } = pageExports(ctx.window, "web/tagpup/search-model.js");
+    const { memberLabel, viewLabel } = pageExports(ctx.window, "web/tagpup/library-source.js");
+    const paired = new Set(CHIP_KEYS.pairs.flatMap((each) => [each.a.kind, each.b.kind]));
+    const labels = (member) => [memberLabel(member), viewLabel(member), chipLabel(member).title];
+    const unknown = labels({ kind: "no_such_kind", value: "2024-01", recursive: false });
+    for (const kind of VIEW_RULES.member_kinds) {
+      const member = { kind, value: "2024-01", recursive: false };
+      if (kind !== "all") assert.ok(sectionOf(member), `${kind} has no section of the navigator`);
+      assert.ok(paired.has(kind), `${kind} has no pair in tests/fixtures/chip_keys.json`);
+      assert.ok(memberKey(member).startsWith(`${kind}:`), `${kind}'s chip key`);
+      assert.notDeepEqual(labels(member), unknown, `${kind} is labelled as a kind the page does not know`);
+    }
+    assert.equal(sectionOf({ kind: "no_such_kind", value: "2024-01" }), null);
+  });
+
   test("what the page refuses before it asks is what the server refuses: tests/fixtures/view_rules.json", async (t) => {
     const ctx = await loadViewPage(t, { search: `?view=year&value=${YEAR - 1}` });
     const source = pageExports(ctx.window, "web/tagpup/library-source.js");
