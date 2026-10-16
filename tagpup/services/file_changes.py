@@ -553,7 +553,6 @@ def _read_back(et, library, wrote, read=None):
             logger.warning("%s: %s holds what it held before its write; taken out of the change",
                            library.path, row.named())
             continue
-        row.after = kept
         logger.warning("%s: %s does not hold %s quite as written; recorded as it holds it",
                        library.path, row.named(), ", ".join(differ))
     return unchanged
