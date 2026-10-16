@@ -20,7 +20,7 @@ Paths are checked by `tests/test_the_test_map.py`; a moved module is changed her
 - Backups and checks: `tagpup/store/snapshots.py`, `tagpup/services/snapshots.py`, `tagpup/store/checks.py`, `tools/doctor.py`
 - Journal and maintenance services: `tagpup/services/journal.py`, `tagpup/services/maintenance.py`, `tagpup/services/job_runs.py`, `tagpup/store/job_runs.py`
 - Settings: `tagpup/store/settings.py`, `tagpup/services/settings.py` (the `SETTINGS` registry in `tagpup/core/validation.py` is shared with Integration)
-- Roots as data: `tagpup/store/roots.py`, `tagpup/store/root_rows.py`, `tagpup/store/roots_check.py`, `tagpup/services/roots.py`, `tagpup/services/roots_location.py`, `tagpup/services/roots_verify.py`
+- Roots as data: `tagpup/store/roots.py`, `tagpup/store/root_rows.py`, `tagpup/store/roots_check.py`, `tagpup/services/roots.py`, `tagpup/services/roots_location.py`, `tagpup/services/roots_sample.py`
 - Small stores: `tagpup/store/added_folders.py`, `tagpup/store/faces_detected.py`, `tagpup/store/removals.py`
 - Tables: `schema_version`, `changes`, `change_rows`, `change_files`, `settings`, `generations`, `job_runs` (the syncs among them), `roots`, `added_folders`, `faces_detected`, every derived table (`photo_tags`, `folders`, `photo_folder`, `photo_people`, `search_words`, `search_names` and their FTS shadows) and every trigger. The schema file holds every domain's tables, so a new table anywhere is a Data review.
 - State on 2026-10-15 (counted): the three live libraries are at schema 32, which is the BASELINE: a new library is made whole at 32 and one below is refused (`schema.TooOld`); the migrations 1 to 32 and their probes are deleted (DECISIONS 2026-10-15). The next migration is 33; none is in flight.

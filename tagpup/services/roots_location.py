@@ -1,5 +1,5 @@
 """Where this machine keeps each root, and moving one: TagTuner's Roots
-(docs/ARCHITECTURE.md, "Roots and machines"; tagpup.services.roots_verify for the sample).
+(docs/ARCHITECTURE.md, "Roots and machines"; tagpup.services.roots_sample for the sample).
 
 A root's rows say `@pictures/2024/a.jpg`; the machine's map (machine_roots.json) says where
 `pictures` is. Moving the library to the share, or back, is therefore one edit of the map and
@@ -36,7 +36,7 @@ from tagpup.core import paths
 from tagpup.core.result import NotFound, Result
 from tagpup.store import file_journal, job_runs, root_rows
 from tagpup.store import roots as store_roots
-from tagpup.services import roots_verify
+from tagpup.services import roots_sample
 
 logger = logging.getLogger(__name__)
 
@@ -191,13 +191,13 @@ def change_location(library, name, location, machine, apply=False, override=Fals
         result.details["message"] = "%s is at %s already; nothing to change." % (name, location)
         return result
 
-    reached = roots_verify.reach(location, seconds)
+    reached = roots_sample.reach(location, seconds)
     if reached["state"] in ("no_drive", "no_folder", "unreadable"):
         result.details["reach"] = reached
         result.refuse("Not changed. " + reached["message"])
         return result
     try:
-        checked = roots_verify.verify(library, name, location, machine, seconds=seconds)
+        checked = roots_sample.verify(library, name, location, machine, seconds=seconds)
     except (NotFound, ValueError) as problem:
         result.refuse(str(problem))
         return result
