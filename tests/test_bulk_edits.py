@@ -412,11 +412,12 @@ class People(Bulk):
         self.assertIn("People/Cora Ingersoll", self.tags(self.ids[0]))
         self.assertEqual(nodes, self.vl.rows("SELECT COUNT(*) FROM tag_taxonomy"))
 
-    def test_a_person_the_file_already_names_by_their_leaf_is_not_added_again_whatever_the_path(self):
+    def test_a_keyword_that_only_shares_the_persons_leaf_is_not_them_and_the_person_is_added(self):
+        # By the id of their node alone (#1394): it was "already named by their leaf, whatever the path", and not written.
         self.files.keep_tags(self.path(self.ids[1]), ["Family/Rowan Thackeray"])
         done = self.edit("people", {"ids": [self.ids[1], self.ids[2]]}, {"add": self.rowan})
-        self.assertEqual((1, 1), (done["changed"], done["unchanged"]))
-        self.assertEqual(["Family/Rowan Thackeray"], self.tags(self.ids[1]))
+        self.assertEqual((2, 0), (done["changed"], done["unchanged"]))
+        self.assertEqual(["Family/Rowan Thackeray", "People/Rowan Thackeray"], self.tags(self.ids[1]))
         self.assertEqual(["People/Rowan Thackeray"], self.tags(self.ids[2]))
 
     def test_a_person_filed_in_two_places_is_refused_up_front_with_a_sentence(self):

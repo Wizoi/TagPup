@@ -82,10 +82,15 @@ class ApplyAllFilesAPersonAsTheChipDoes(unittest.TestCase):
                 self.tree_before = self.tree(library)
                 entry = {"tags": [], "people": [{"name": TABLE["name"], "score": 0.9}]}
                 result = tagging.apply_suggestions(library, {photo: entry}, EXIFTOOL, 0.0)
-                self.assertFalse(result.refused, result.refused)
-                wanted = {"already": case["file"], "ask": case["file"] + [TABLE["name"]]}.get(
-                    case["expect"], case["file"] + [case["expect"]])
-                self.assertEqual(wanted, tags_in(photo))
+                if case["expect"] == "ask":
+                    # With nobody to ask, Apply All refuses before it writes: it wrote the bare name, which names nobody.
+                    self.assertTrue(result.refused, "written without asking")
+                    self.assertIn(TABLE["name"], result.refused)
+                    self.assertEqual(case["file"], tags_in(photo))
+                else:
+                    self.assertFalse(result.refused, result.refused)
+                    wanted = case["file"] if case["expect"] == "already" else case["file"] + [case["expect"]]
+                    self.assertEqual(wanted, tags_in(photo))
                 if not held:   # a held write has its journal and rows; the tree is the same either way
                     self.assertEqual(before, library_dump.dump(library.path), "the library was changed")
                 self.assertEqual(self.tree(library), self.tree_before)

@@ -53,7 +53,7 @@ class ThePlan(InFolders):
         self.assertEqual(2, tags_from_faces.plan(self.library, folder=self.run.upper()).details["counts"]["photos_to_write"])
 
     def test_the_plan_of_a_folder_is_the_library_plan_restricted_to_its_photos(self):
-        # The cases the rule sorts: a guess only, a photo that already names the person under another root.
+        # The cases the rule sorts: a guess only, and a photo whose keyword only shares the person's leaf (written, #1394).
         guess = self.photo("Run/guess.jpg")
         self.files.keep_tags(guess, [])
         self.face(guess, name=ODA)
@@ -67,7 +67,8 @@ class ThePlan(InFolders):
                 self.assertEqual([(photo, name) for photo, name in whole.details["work"] if paths.is_under(photo, folder)],
                                  part.details["work"])
         part = tags_from_faces.plan(self.library, folder=self.run).details["counts"]
-        self.assertEqual((1, 1), (part["people_from_a_guess_only"], part["people_the_file_names_under_another_root"]))
+        self.assertEqual(1, part["people_from_a_guess_only"])
+        self.assertIn(paths.key(other_root), [paths.key(photo) for photo, _person in whole.details["work"]])
 
     def test_a_folder_with_no_photo_is_refused(self):
         nothing = tags_from_faces.plan(self.library, folder=os.path.join(self.folder, "Nowhere"))

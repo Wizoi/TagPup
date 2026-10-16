@@ -335,7 +335,12 @@ export function renderSuggestionsPanel(photoPath) {
 
     // A name two people have is offered as one chip for each (replacing the question "which folder?"), and what is already on
     // the photo is taken out after that, so the Sam the photo has is not offered and the other Sam is.
-    const people = outstanding(personChips(sugg.people), 'name');
+    // A suggested person is on the photo when a keyword is THEM, by the id of their node: a keyword spelled like their name
+    // (a bare "Wren Okafor", Trips/Wren Okafor) names nobody, and the person is offered (#1394).
+    const people = personChips(sugg.people).filter(item => {
+        const person = item.person || state.people.ofText(item.name);
+        return !(person && photoAlreadyHas(photo, person.tag, namesAPerson, state.people));
+    });
     const tags = outstanding(sugg.tags, 'tag');
 
     // Nothing left to act on: the box would be a heading over two empty lists.
