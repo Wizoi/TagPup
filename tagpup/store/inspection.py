@@ -10,7 +10,7 @@ import json
 import re
 import sqlite3
 
-from tagpup.store import person_ids, schema
+from tagpup.store import person_ids
 from tagpup.store import roots as store_roots
 
 #: How many ids go in one IN (...): well under SQLite's limit on parameters.
@@ -35,11 +35,6 @@ def _json(text, empty):
 
 
 # ---- What a library holds ---------------------------------------------------------------
-
-def schema_version(conn):
-    """The highest migration applied, or 0 before any was recorded (schema.version)."""
-    return schema.version(conn)
-
 
 def tree_nodes(conn):
     """How many nodes the tag tree has."""
