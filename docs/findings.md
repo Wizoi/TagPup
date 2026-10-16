@@ -32,5 +32,3 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 
 | # | Found | Finding | Status |
 |---|---|---|---|
-| 1 | 2026-09-23 | Faces are detected on the photo as stored, so a sideways photo (about 1 in 600, more as photos are rotated) is searched sideways. A rotated TIFF also keeps the embedding of its old turn. Detecting upright changes the coordinate system of stored face boxes, the crops, and the rotate logic. | open: owner to confirm: wanted after the feature freeze (DECISIONS 2026-10-07 un-tabled the redesign: boxes stored as the photo displays; the 2026-10-09 freeze defers it; its fingerprint half is wanted after the freeze, DECISIONS 2026-10-15 Files (6)); meanwhile /api/photo-faces says 'turned' and the panel says so |
-| 831 | 2026-10-07 | #791 known limit: a photo stored with EXIF Orientation 2-8 has its boxes drawn at the stored pixels' positions on the turned picture; /api/photo-faces says `turned` and the panel says so. | open: owner to confirm: the same redesign as #1 (wanted after the feature freeze?) |

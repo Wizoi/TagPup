@@ -234,8 +234,12 @@ reported 60 done, and wrote nothing; the paths did not match and nothing said so
 The project grew 43k to 103k lines of code and 44k to 110k of tests in two weeks
 (reports/Project health review 2026-10-09.md, untracked). Accuracy held; scope did not.
 
-- **No new feature until the owner lifts the freeze.** Allowed: deletion, simplification,
-  docs, test speed, bug fixes for something the owner hit, and installing what is merged.
+- **The feature freeze is lifted (owner, 2026-10-16):** the five domains meet the seven conditions of health
+  (docs/domains/). A feature is taken one at a time, with its live count in the brief, planned by the owners of the
+  domains it touches (a sweep first, the single place that owns each rule named), built by one worker who checks
+  its diff against the seven conditions, and reviewed once by each owner against its charter: it keeps the
+  domain healthy and adds no debt, or it is refused. No schema work while the owner's note stands (DECISIONS
+  2026-10-15, the migration machinery is questioned in about a month).
 - **A branch is about 1,200 lines or fewer, one concern.** A larger piece is cut into
   merges that each leave the trunk whole (the last one, identity stage 2, was 10,800 lines).
 - **At most two review rounds**, the ownership question in the second. A finding carries a

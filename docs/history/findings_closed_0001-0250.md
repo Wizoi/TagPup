@@ -4,6 +4,7 @@ Rows moved byte for byte from [findings.md](../findings.md) when their status cl
 
 | # | Found | Finding | Status |
 |---|---|---|---|
+| 1 | 2026-09-23 | Faces are detected on the photo as stored, so a sideways photo (about 1 in 600, more as photos are rotated) is searched sideways. A rotated TIFF also keeps the embedding of its old turn. Detecting upright changes the coordinate system of stored face boxes, the crops, and the rotate logic. | decided: left as it is (owner, 2026-10-16): the fingerprint feature, wanted after the freeze, covers a photo turned outside TagPup; until then /api/photo-faces says 'turned' and the panel says so |
 | 2 | 2026-09-23 | One of the library's two PNGs cannot be rotated. The rotate refuses and changes nothing. | decided: left as is (owner, 2026-09-23); a file ExifTool cannot write is that photo's error (services/photos.py rotate_photos) (audit 2026-10-15) |
 | 3 | 2026-09-23 | Six faces in `photo_index` were both excluded and named. | fixed: the owner kept the names *(2026-09-23)*; exclusions lifted, with a backup taken first (`photo_index.before-keep-names-20260923_180819.db`) |
 | 4 | 2026-09-23 | Rows had people missing that their keywords or faces name: 741 names on 597 rows in one library, 885 names in the other. | fixed: `refresh_rows_from_files.py --apply` on both libraries (550 and 591 rows), with a backup taken first. Phase 4 derives people instead of storing them. |
