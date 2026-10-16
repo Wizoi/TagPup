@@ -299,7 +299,9 @@ class AKeptLibraryMeetsTwoNewSteps(Migrated):
             out, err = each.communicate(timeout=120)
             self.assertEqual(0, each.returncode, err)
             answers.append(out.strip())
-        self.assertEqual(["0", "2"], sorted(answers))
+        # Each step is a transaction of its own under the write lock: one process may take both, or each may take one
+        # (a split depends on timing). What holds either way: the two steps were applied once between the two.
+        self.assertEqual(2, sum(int(answer) for answer in answers), answers)
         self.assertEqual([(32,), (33,), (34,)], self.query("SELECT version FROM schema_version ORDER BY version"))
         self.assertEqual(migration_names.operations(self.additive, self.destroying),
                          [row[0] for row in self.query("SELECT operation FROM changes WHERE operation LIKE 'migration %' ORDER BY id")])
