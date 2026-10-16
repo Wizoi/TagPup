@@ -57,8 +57,8 @@ BY_HAND = re.compile(r"""TAGPUP_HOME\s*=\s*(sandbox|home)\b|environ\[["']TAGPUP_
 #: process it restarts on unchanged.
 SPAWN_EXCEPTIONS = {"reloader.py": "restarts the process it runs in"}
 
-#: A query of the machine, not a TagPup process: git, powershell.
-QUERIES = ("git", "powershell")
+#: A query of the machine, not a TagPup process: git, powershell, nvidia-smi (the card's use, sandbox.Sampler).
+QUERIES = ("git", "powershell", "nvidia-smi")
 
 #: Starts a process of its own from the same folder and exits, leaving it running: what a process handing over does.
 STARTER = '''import os, sys
