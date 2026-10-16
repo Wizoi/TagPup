@@ -53,8 +53,9 @@ KINDS = (ADDITIVE, DESTRUCTIVE)
 Migration = collections.namedtuple("Migration", "version name apply kind why touches checks")
 
 
-def _columns(conn, table):
-    return [row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)]
+def table_columns(conn, table):
+    """The columns of `table` on `conn`, in their order: the one reading of them the schema's watch and the journal share."""
+    return [row[1] for row in conn.execute('PRAGMA table_info("%s")' % table)]
 
 
 #: The first version of the schema this one makes: a new library is made at it (`_baseline`), and a library below it is
@@ -467,8 +468,9 @@ class Integrity(Check):
 STANDARD = (ForeignKeys(), Integrity())
 
 
-def _same(a, b):
-    """Equal as SQLite stores them: 1 is not 1.0, nor b'1' '1' (journal._same)."""
+def same_stored(a, b):
+    """Equal as SQLite stores them: 1 is not 1.0, nor b'1' '1'. The journal's comparison of a row with what a change read is
+    this one."""
     return type(a) is type(b) and a == b
 
 
@@ -482,7 +484,7 @@ class _Watch:
 
     def __init__(self, conn):
         self.conn = conn
-        self.columns = {t: _columns(conn, t) for t in _tables_now(conn)
+        self.columns = {t: table_columns(conn, t) for t in _tables_now(conn)
                         if t not in RUNNER_TABLES and t not in UNWATCHED}
         conn.execute("CREATE TEMP TABLE %s (seq INTEGER PRIMARY KEY, action TEXT NOT NULL, tbl TEXT NOT NULL,"
                      " rid INTEGER, col TEXT, old, new)" % self.TABLE)
@@ -539,7 +541,7 @@ class _Watch:
         for table, rids in by_table.items():
             if table not in present:
                 continue
-            columns = _columns(self.conn, table)
+            columns = table_columns(self.conn, table)
             for start in range(0, len(rids), 500):
                 chunk = rids[start:start + 500]
                 for row in self.conn.execute("SELECT rowid, %s FROM %s WHERE rowid IN (%s)" % (
@@ -555,14 +557,14 @@ class _Watch:
             elif after is None:
                 seen.append((table, rid, before, None))
             else:
-                changed = {c: v for c, v in before.items() if c in after and not _same(v, after[c])}
+                changed = {c: v for c, v in before.items() if c in after and not same_stored(v, after[c])}
                 if changed:
                     seen.append((table, rid, changed, after))
         return seen, sorted(moved)
 
 
 def _shape(conn):
-    return {table: _columns(conn, table) for table in _tables_now(conn)}
+    return {table: table_columns(conn, table) for table in _tables_now(conn)}
 
 
 def _dropped(conn, shape):
@@ -612,14 +614,19 @@ def version(conn):
     return row[0] or 0
 
 
+def pending_on(conn):
+    """The migrations the library on `conn` has not had, in order. Reads only."""
+    current = version(conn)
+    return [m for m in MIGRATIONS if m.version > current]
+
+
 def pending(db_path):
-    """The migrations the library at `db_path` has not had, in order. Reads only."""
+    """pending_on, of the library file at `db_path` opened read-only."""
     conn = db.connect(db.readonly_uri(db_path), uri=True)
     try:
-        current = version(conn)
+        return pending_on(conn)
     finally:
         conn.close()
-    return [m for m in MIGRATIONS if m.version > current]
 
 
 #: Libraries this process has found current, by what the file is and when it last

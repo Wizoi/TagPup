@@ -38,8 +38,7 @@ def _check(name, broken):
 
 def schema_current(conn):
     """Migrations not yet applied (tagpup.store.schema)."""
-    current = schema.version(conn)
-    return _check("migrations not applied", [m.name for m in schema.MIGRATIONS if m.version > current])
+    return _check("migrations not applied", [m.name for m in schema.pending_on(conn)])
 
 
 def generations_kept(conn):
