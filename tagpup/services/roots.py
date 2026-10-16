@@ -178,7 +178,8 @@ def canonical_args(*names, both=()):
 def listing(library, machine=None):
     """The library's roots: [{"name", "address", "added", "locations", "mapped"}], where this
     machine keeps each (`machine`, the map; none when there is none to ask). Reads only."""
-    found = store_roots.listing(library.path) if _there(library) else []
+    _there(library)
+    found = store_roots.listing(library.path)
     placed = machine.roots() if machine is not None else {}
     return {"roots": [dict(entry, locations=list(placed.get(entry["name"], ())),
                            mapped=entry["name"] in placed) for entry in found],
@@ -186,9 +187,9 @@ def listing(library, machine=None):
 
 
 def _there(library):
+    """NotFound when there is no library file at `library.path`."""
     if not os.path.exists(library.path):
         raise NotFound("There is no library at %s." % library.path)
-    return True
 
 
 def check(library):
