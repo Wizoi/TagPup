@@ -19,6 +19,7 @@ from click.testing import CliRunner  # noqa: E402
 
 import tagpup_cli  # noqa: E402
 from tagpup.core import paths  # noqa: E402
+from tagpup.files import field_values  # noqa: E402
 from tagpup.services import batches, file_changes, tags_from_faces  # noqa: E402
 from tagpup.store import checks, db  # noqa: E402
 
@@ -193,6 +194,55 @@ class TheApply(Mending):
 
     def test_ctrl_c_after_a_file_is_recorded_keeps_it(self):
         self.stopped_by_ctrl_c_at("file recorded", on_disk=3)
+
+    def stopped_with_exiftool_gone_at(self, step, on_disk):
+        """#1508: Ctrl+C in the CLI reaches ExifTool too (one console), so the session the stop would read the file under way
+        through is often gone. That file is left `writing` and the change unfinished, never a conflict of a read that could not
+        be made; the CLI says only what the journal holds done, and the next open settles the file as a crash leaves it:
+        holding what it was to hold, done; holding what it held, written (the person asked --apply). Undo then puts all back."""
+        photos = [self.drifted("drift_%d.jpg" % n) for n in range(batches.CHUNK + 1)]
+        seen, gone = [], []
+        real = field_values.read_one
+
+        def read_one(et, path, wanted):
+            if gone:
+                raise field_values.NotAnswered("ExifTool did not answer in 300 s")
+            return real(et, path, wanted)
+
+        def reached(at):
+            if at == step:
+                seen.append(at)
+                if len(seen) == 3:
+                    gone.append(at)
+                    raise KeyboardInterrupt
+        with mock.patch.object(file_changes, "_reached", side_effect=reached), \
+                mock.patch.object(field_values, "read_one", side_effect=read_one):
+            said = self.run_cli("--apply")
+        self.assertEqual(1, said.exit_code, said.output)
+        self.assertEqual(on_disk, sum(1 for photo in photos if self.files.tags_of(photo)))
+        self.assertIn("Stopped: 2 photo file(s) written", said.output)
+        self.assertIn("1 more is settled the next time the library is opened", said.output)
+        query = ("SELECT c.id, c.status, f.state FROM changes c JOIN change_files f ON f.change_id = c.id"
+                 " WHERE c.operation = ? ORDER BY f.id")
+        rows = self.look(query, (tags_from_faces.OPERATION,))
+        self.assertEqual(["done", "done", "writing"], [state for _id, _status, state in rows])
+        self.assertEqual({"planned"}, {status for _id, status, _state in rows}, "the change is left for the next open")
+        file_changes._settled.clear()
+        self.assertEqual(1, file_changes.settle_once(self.library, "exiftool"))
+        rows = self.look(query, (tags_from_faces.OPERATION,))
+        self.assertEqual([("applied", "done")] * 3, [(status, state) for _id, status, state in rows])
+        self.assertEqual(3, sum(1 for photo in photos if self.files.tags_of(photo)))
+        with mock.patch.object(tagpup_cli, "get_exiftool_path", return_value="exiftool"):
+            undone = CliRunner().invoke(tagpup_cli.cli, ["--db", self.path, "undo", str(rows[0][0]), "--apply"])
+        self.assertEqual(0, undone.exit_code, undone.output)
+        self.assertIn("3 file(s) written back", undone.output)
+        self.assertEqual([], [photo for photo in photos if self.files.tags_of(photo)])
+
+    def test_ctrl_c_that_ends_exiftool_after_a_file_is_written_leaves_it_to_the_next_open(self):
+        self.stopped_with_exiftool_gone_at("file written", on_disk=3)
+
+    def test_ctrl_c_that_ends_exiftool_before_a_file_is_written_leaves_it_to_the_next_open(self):
+        self.stopped_with_exiftool_gone_at("file writing", on_disk=2)
 
     def test_it_can_be_run_again_and_finds_nothing_more(self):
         self.drifted("drift_a.jpg")

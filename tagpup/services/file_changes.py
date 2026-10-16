@@ -202,19 +202,27 @@ def _settle_stopped(library, change_id, et=None):
 
     With `et`, the session the change wrote through (a Ctrl+C), the one file it left `writing` is read in it --
     after the write it was given, if any -- and settled by what it holds, never written: done if it holds what it
-    was to hold, as a crash settle records it (_held_or_conflict); taken out if it holds what it held (#1507)."""
+    was to hold, as a crash settle records it (_held_or_conflict); taken out if it holds what it held (#1507). A Ctrl+C
+    in the CLI often ends ExifTool too (one console): a file that cannot be read now stays `writing` and the change
+    unfinished, for the next open to settle as a crash leaves it (#1508). Returns how many files are left so."""
     if not change_id:
-        return
+        return 0
+    left = 0
     try:
         rows = file_journal.files_of(library.path, change_id)
         file_journal.withdraw(library.path, [row.id for row in rows if row.state == "planned"])
         for row in rows:
             if et is not None and row.state == "writing":
-                if _held_or_conflict(et, library, row, row.before, row.after, "done") is None:
+                settled = _held_or_conflict(et, library, row, row.before, row.after, "done", unread_stays=True)
+                if settled is None:
                     file_journal.withdraw(library.path, [row.id])
-        file_journal.finish(library.path, change_id, also=face_batch.tidy)
+                elif settled[0] == "writing":
+                    left += 1
+        if not left:
+            file_journal.finish(library.path, change_id, also=face_batch.tidy)
     except Exception as problem:
         logger.warning("Could not finish change %s after it was stopped: %s", change_id, problem)
+    return left
 
 
 def _pinned(function):
@@ -470,7 +478,7 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         if isinstance(stopped, KeyboardInterrupt):
             # Stopped by the person (Ctrl+C, Ctrl+Break in the CLI): what is written stays, applied and undoable; the files
             # not reached are taken out, not written by whatever opens the library next (#1493). A crash is settled forward.
-            _settle_stopped(library, change_id, et)
+            stopped.left = _settle_stopped(library, change_id, et)
             # What the journal holds done, not what this loop had counted: the file under way may be done already.
             try:
                 stopped.written = sum(1 for row in file_journal.files_of(library.path, change_id) if row.state == "done")
@@ -661,10 +669,11 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     return finished, None
 
 
-def _held_or_conflict(et, library, row, origin, target, finished, now=None):
+def _held_or_conflict(et, library, row, origin, target, finished, now=None, unread_stays=False):
     """The one rule of a file settled by what it holds, before anything is written to it: holding `target`, it is recorded
     `finished` as it holds it; holding neither, or unreadable, a conflict. Returns (outcome, why) so; or None when it holds
-    `origin`: still to be written (_carry writes it, a stop takes it out). `now`, as _carry's."""
+    `origin`: still to be written (_carry writes it, a stop takes it out). `now`, as _carry's. `unread_stays` (a stop, whose
+    session a Ctrl+C may have ended, not a read that waited its deadline): unreadable, it is left as it is, ("writing", why)."""
     seen = None
     if now is None:
         # The stat before the read: a file found holding `target` is recorded stamped as it was before what was read of it.
@@ -672,6 +681,8 @@ def _held_or_conflict(et, library, row, origin, target, finished, now=None):
         try:
             now = field_values.read_one(et, row.path, list(target))
         except field_values.Unreadable as e:
+            if unread_stays:
+                return "writing", str(e)
             return _conflict(library, row, "could not be read: %s" % e)
     if fields.reads_same(now, target):
         # Written already: by a run a crash (or a stop) cut off before it recorded the row, whose

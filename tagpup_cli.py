@@ -808,7 +808,15 @@ def tags_from_faces(ctx, apply_, guesses, folder):
         with _break_is_an_interrupt():
             result = tags_from_faces_service.apply(library, planned, exiftool)
     except KeyboardInterrupt as stopped:
-        written = getattr(stopped, "written", None)
+        written, left = getattr(stopped, "written", None), getattr(stopped, "left", 0)
+        if left:
+            # The file under way could not be read (the Ctrl+C ended ExifTool too): its count is not known yet.
+            console.print("Stopped: %s photo file(s) written, recorded as change %s of the journal; %d more is settled the "
+                          "next time the library is opened, and then `undo` takes the change back. The rest were not "
+                          "written. Run it again for them."
+                          % ("?" if written is None else written, getattr(stopped, "change", None), left),
+                          markup=False, soft_wrap=True)
+            raise SystemExit(1) from None
         console.print("Stopped: %s photo file(s) written, recorded as change %s of the journal (`undo` takes it back); "
                       "the rest were not written. Run it again for them."
                       % ("?" if written is None else written, getattr(stopped, "change", None) or "none"), markup=False,
