@@ -341,10 +341,10 @@ class PeopleVocabulary:
     not a person (owner, 2026-10-09; docs/findings.md, #986): it names nobody here, and is
     in neither `by_keyword` nor anyone's offer, so a bare keyword spelled like it names nobody.
 
-    `ids` are the people by the id of their node, when the rows carried it (docs/ARCHITECTURE.md, "People by
-    id, stage 2"): {keyword: id} for a keyword spelled as a person's PATH (which names exactly one node, even when
-    the leaf is shared) and for a bare leaf that exactly one person has -- a leaf two people have is in
-    `by_keyword` (the first row's name) and not in `ids`, since nothing says which. `names` is {id: name}.
+    `ids` are the people by the id of their node (docs/ARCHITECTURE.md, "People by id, stage 2"): {keyword: id} for a
+    keyword spelled as a person's PATH, which names exactly one node, even when the leaf is shared. `names` is {id: name}.
+    Who is a person and who a group is not decided here: `of_people` is given the tree's people as
+    tagpup.store.person_ids.People reads them (tagpup.store.taxonomy.vocabulary_of), the one owner of that rule.
     """
 
     #: What a photo read without its library assumes (NEW_LIBRARY_FACE_ROOT).
@@ -363,46 +363,18 @@ class PeopleVocabulary:
         return cls(cls.DEFAULT_ROOTS, {})
 
     @classmethod
-    def from_rows(cls, root_names, face_rows, group_tags=()):
-        """From a tag tree: the names of its face roots, (tag, name) of every face node, and the
-        tags of those that have tags under them (`group_tags`: a group is not a person, so it is
-        left out of `by_keyword`). The tree's roots only: a root it does not flag holds no faces."""
-        roots = {name.lower().strip() for name in root_names if name}
-        groups = {keyword_key(tag) for tag in group_tags if tag and SEPARATOR in tag}
-        # A root with tags under it is a category (People, Family), not a person; a root with none is a person
-        # of the top level (owner, 2026-10-10).
-        categories = {keyword_key(tag) for tag in group_tags if tag and SEPARATOR not in tag} | {NEW_LIBRARY_FACE_ROOT.lower()}
-        categories |= {keyword_key(segments(row[-2])[0]) for row in face_rows if len(row[-2:]) == 2 and SEPARATOR in row[-2]}
-        by_keyword, ids, names, tops = {}, {}, {}, {}
-        called = collections.Counter()   # how many people each bare name has
-        for row in face_rows:
-            # (tag, name), or (id, tag, name) from a tree whose nodes have ids.
-            node_id, tag, name = (None,) + tuple(row) if len(row) == 2 else tuple(row)
-            if tag and keyword_key(tag) in groups:
-                continue
-            # A face ROOT with tags under it (People, Family, Pets, ...) is a category, not a person, so
-            # a photo tagged plainly "Family" must not gain a name.
-            if name and name.lower() in roots and "/" not in tag and keyword_key(tag) in categories:
-                continue
-            # A keyword is a PATH (owner, 2026-10-11): a person's leaf is not a keyword that names them. A person at the top
-            # of the tree is their own path.
-            if tag:
-                by_keyword.setdefault(tag.lower(), name)
-            if node_id is not None:
-                names[node_id] = name
-                if tag and SEPARATOR not in tag:
-                    tops[node_id] = tag
-                if tag:
-                    ids.setdefault(tag.lower(), node_id)
-                if name:
-                    called[name.lower()] += 1
-                    ids.setdefault(name.lower(), node_id)
-        for bare, number in called.items():
-            if number > 1:
-                # Two people are called it: the name alone names neither; the person at the top of the tree called so IS that path.
-                ids.pop(bare, None)
-                ids.update({tag.lower(): node_id for node_id, tag in tops.items() if tag.lower() == bare})
-        return cls(roots, by_keyword, groups, ids, names)
+    def of_people(cls, roots, people, groups=()):
+        """From the tree's people as person_ids.People tells them apart: the names of the face nodes at the top of the tree
+        (`roots`: a keyword under one names a person), (id, tag, name) of each person (`people`), and the tags of the groups
+        (`groups`: a group names nobody). A keyword is a PATH (owner, 2026-10-11): a person's leaf alone names nobody, and a
+        person at the top of the tree is their own path."""
+        by_keyword, ids, names = {}, {}, {}
+        for node_id, tag, name in people:
+            by_keyword.setdefault(keyword_key(tag), name)
+            ids.setdefault(keyword_key(tag), node_id)
+            names[node_id] = name
+        return cls({key(name) for name in roots if name}, by_keyword,
+                   {keyword_key(tag) for tag in groups if SEPARATOR in tag}, ids, names)
 
 
 #: One person as a photo lists them: the id of their node (None for a name no person is filed under, or that two

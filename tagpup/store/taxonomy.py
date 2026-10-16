@@ -176,7 +176,7 @@ def people_filing(db_path):
         top = set(top_level_people(conn))   # a person at the top is no root that people are filed under
         roots = {name.strip().lower(): name.strip() for (name,) in conn.execute(
             "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name and name not in top}
-        found, groups = {}, set(group_tags(conn))
+        found, groups = {}, {group.tag for group in person_ids.read(conn).groups.values()}
         for tag_path in tags(conn):
             if tag_path in groups:
                 continue   # a group of people is not filed as a person (#986)
@@ -211,23 +211,21 @@ def people_vocabulary(db_path=None, conn=None):
             own.close()
 
 
-def group_tags(conn):
-    """The tags of the face nodes that have a node under them: group tags, which are not people
-    (#986). The same reading as person_ids.People's `parents`."""
-    return [tag for (tag,) in conn.execute(
-        "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND id IN"
-        " (SELECT DISTINCT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL)") if tag]
+def vocabulary_of(known):
+    """The PeopleVocabulary of the tree's people `known` (person_ids.People, the one owner of who is a person and who a
+    group): the face roots are the face nodes at the top -- a group, a new library's empty People, or a person at the top."""
+    tops = [name for _id, tag, name in known.listing if vocabulary.SEPARATOR not in tag]
+    tops += [group.name for group in known.groups.values() if vocabulary.SEPARATOR not in group.tag]
+    tops += list(known.filing_roots.values())
+    return PeopleVocabulary.of_people(tops, known.listing, [group.tag for group in known.groups.values()])
 
 
-def read_people_vocabulary(conn):
-    """The PeopleVocabulary of the library open on `conn`: a new library's while its tree
-    is empty (people_roots)."""
+def read_people_vocabulary(conn, known=None):
+    """The PeopleVocabulary of the library open on `conn` (vocabulary_of; `known` its person_ids.People when the caller has
+    read them in this transaction): a new library's while its tree is empty (people_roots)."""
     if not tree_has_nodes(conn):
         return PeopleVocabulary.defaults()
-    roots = [name for (name,) in conn.execute(
-        "SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")]
-    faces = conn.execute("SELECT id, tag, name FROM tag_taxonomy WHERE has_face = 1").fetchall()
-    return PeopleVocabulary.from_rows(roots, faces, group_tags(conn))
+    return vocabulary_of(known or person_ids.read(conn))
 
 
 # ---- The tree's nodes ------------------------------------------------------------------

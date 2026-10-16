@@ -19,6 +19,7 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tagpup.core import validation, vocabulary  # noqa: E402
+from tagpup.store import person_ids, taxonomy  # noqa: E402
 from shipped_sources import ROOT, python_sources  # noqa: E402
 
 
@@ -107,10 +108,9 @@ class WhatAPhotosMetadataSays(unittest.TestCase):
         self.assertEqual(vocabulary.extract_people(tags), ["Rowan Thackeray"])
 
     def test_a_library_adds_its_own_roots_and_its_flat_people(self):
-        known = vocabulary.PeopleVocabulary.from_rows(
-            ["Pets", "Crew"],
-            [("Pets", "Pets"), ("Pets/Biscuit", "Biscuit"), ("Crew", "Crew"), ("Crew/Tamsin Oakes", "Tamsin Oakes"),
-             ("Hazel Brookmire", "Hazel Brookmire")])
+        nodes = [(1, "Pets", "Pets"), (2, "Pets/Biscuit", "Biscuit"), (3, "Crew", "Crew"),
+                 (4, "Crew/Tamsin Oakes", "Tamsin Oakes"), (5, "Hazel Brookmire", "Hazel Brookmire")]
+        known = taxonomy.vocabulary_of(person_ids.People(nodes, {1, 3}))
         tags = ["Pets/Biscuit", "Crew/Tamsin Oakes", "Hazel Brookmire", "Crew"]
         self.assertEqual(vocabulary.extract_people(tags, known),
                          ["Biscuit", "Tamsin Oakes", "Hazel Brookmire"])

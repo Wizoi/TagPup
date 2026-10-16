@@ -206,7 +206,7 @@ def photos_named_by(conn, nodes):
     follow_tree compares the tree's people from before an edit with after; a change the
     journal finishes at start (tagpup.store.journal) has only its rows, not the tree from
     before. A keyword whose person changes is one some changed node spells, by tag or by
-    name (PeopleVocabulary.from_rows), or one under a root that changed, so this finds
+    name (taxonomy.vocabulary_of), or one under a root that changed, so this finds
     every photo follow_tree would, and some it would not, which rebuild leaves alone.
     """
     keys, roots = set(), set()
@@ -290,9 +290,9 @@ def tree_edit(conn):
     # does not reach across processes; SQLite's does, and the busy timeout waits for it.
     if not conn.in_transaction:
         db.begin(conn, immediate=True)
-    before = taxonomy.read_people_vocabulary(conn)
-    nodes = derived.tree_before(conn)
     ids = person_ids.read(conn)
+    before = taxonomy.read_people_vocabulary(conn, ids)
+    nodes = derived.tree_before(conn)
     yield
     follow_tree(conn, before)
     derived.follow_tree(conn, nodes)
