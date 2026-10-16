@@ -1,8 +1,9 @@
 """A hand-run cluster-faces reads the faces at its start and writes their names at its end (53 minutes on the
 68,000-photo library). A person who names a face in TagTuner in between keeps that name: the clustering's guess does not
 overwrite it, the photo's keyword and the face stay in step, and the run says how many faces it left (docs/findings.md, #832).
-A photo whose keywords name two people nobody's face is known for keeps its two faces unnamed, and the run says how many it
-left so (#1374).
+A photo whose keywords name two people nobody's face is known for keeps its two faces unnamed, whether the two would be paired
+by elimination (#1374) or one face given the first of a tie of votes (#1454), and the run says how many earlier guesses it took
+back and how many faces it left so (#1455).
 """
 import json
 import os
@@ -34,7 +35,7 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
             if stage == "left":
                 heard.append(done)
             if stage == "unpaired":
-                self.unpaired.append(done)
+                self.unpaired.append((done, total))
         self.unpaired = []
         from tagpup.services import identities
         self.stats = identities.resolve(self.index, on_step=on_step)
@@ -189,11 +190,12 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
         self.assertEqual([(None, None), (None, None)], [self.row(left_face), self.row(right_face)],
                          "a face was given one of two people with nothing to tell them apart")
         self.assertEqual({}, self.stats, "the summary counted a face as named")
-        self.assertEqual([2], self.unpaired, "the run did not say it left the two faces unnamed")
+        self.assertEqual([(0, 2)], self.unpaired, "the run did not say it left the two faces unnamed, and took back no guess")
         self.assertEqual([], heard)
 
     def test_a_pairing_an_earlier_run_guessed_for_two_unknown_people_is_taken_back(self):
-        """The owner's library after an earlier run paired them: the two guesses are unnamed, and counted as left so."""
+        """The owner's library after an earlier run paired them: the two guesses are unnamed, and counted as taken back (#1455);
+        the run after it changes nothing and says so."""
         photo = self.photo_tagged("pair.jpg", ["Mara Quill", "Tobin Ash"])
         conn = db.connect(self.db_path)
         try:
@@ -209,7 +211,11 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
 
         self.assertEqual([(None, None), (None, None)], [self.row(face) for face in guessed],
                          "a coin-toss pairing of an earlier run was kept")
-        self.assertEqual([2], self.unpaired)
+        self.assertEqual([(2, 2)], self.unpaired)
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual([(0, 2)], self.unpaired, "a rerun counted the same guesses as taken back again")
 
     def test_one_face_left_and_one_person_left_on_a_photo_is_still_named(self):
         """The case #1374 keeps: every other face of the photo is somebody known, so the one face left is the one person left."""
@@ -222,6 +228,41 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
         self.run_while(lambda conn: None)
 
         self.assertEqual([("Jane Doe", None), ("Mara Quill", None)], [self.row(known), self.row(other)])
+        self.assertEqual([], self.unpaired)
+
+    def test_a_tie_of_votes_between_two_people_no_face_is_known_for_names_neither_face(self):
+        """#1454: a solo photo of Wren is her anchor; the owner tags a pair photo with Mara and Tobin, whose faces nobody knows. Its
+        first face is like no other; its second looks like Wren, who is not on the photo. The first face's votes are one each for
+        Mara and Tobin: a tie, no evidence. It was given the lower id's person, and elimination then gave the second face the other:
+        two coin tosses written as names. Both stay unnamed."""
+        wren = identity_vector(3)
+        solo = self.add_face(self.photo_tagged("solo.jpg", ["Wren Hollis"]), wren)
+        photo = self.photo_tagged("pair.jpg", ["Mara Quill", "Tobin Ash"])
+        unique = self.add_face(photo, identity_vector(21), box=(0, 0, 200, 200))
+        like_wren = self.add_face(photo, near(wren, 2), box=(300, 0, 500, 200))
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual([(None, None), (None, None)], [self.row(unique), self.row(like_wren)],
+                         "a face was named by a tie of votes, or by elimination after one")
+        self.assertEqual(("Wren Hollis", None), self.row(solo))
+        self.assertEqual({"People/Wren Hollis": 1}, self.stats)
+        self.assertEqual([(0, 2)], self.unpaired)
+
+    def test_a_person_with_more_votes_than_the_others_is_still_named(self):
+        """A tie lower down is no tie: Mara is on both photos the face is in, Tobin and Pell on one each. The face is hers, and
+        each photo's other face is the one person left on it."""
+        mara = identity_vector(31)
+        first = self.photo_tagged("first.jpg", ["Mara Quill", "Tobin Ash"])
+        second = self.photo_tagged("second.jpg", ["Mara Quill", "Pell Varga"])
+        hers = [self.add_face(first, mara, box=(0, 0, 200, 200)), self.add_face(second, near(mara, 2), box=(0, 0, 200, 200))]
+        tobin = self.add_face(first, identity_vector(32), box=(300, 0, 500, 200))
+        pell = self.add_face(second, identity_vector(33), box=(300, 0, 500, 200))
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual([("Mara Quill", None)] * 2, [self.row(face) for face in hers])
+        self.assertEqual([("Tobin Ash", None), ("Pell Varga", None)], [self.row(tobin), self.row(pell)])
         self.assertEqual([], self.unpaired)
 
 

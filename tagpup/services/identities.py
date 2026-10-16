@@ -124,12 +124,13 @@ def resolve(photo_index, on_step=None):
     overwritten, and excluded faces take no part.
 
     `on_step(stage, done, total)`, if given, hears where it has got -- "reading", "grouping" (one call of
-    DBSCAN: no count inside it), "voting", "propagating", "matching", "unpaired" (done: the faces left unnamed because
-    their photo names as many people no face is known for, and nothing tells which is whose; #1374) and "saving", then
-    "left" (done: the faces not written because the library changed under the run: a person named the face, or another
-    face of its photo, or merged the person away) -- and may raise to stop it. Every
-    stage but the last only reads; the names are written in one commit after "saving" is announced, so a stop is
-    nothing written or all of it, never part (the job behind the apps' button, tagpup.jobs.naming_faces).
+    DBSCAN: no count inside it), "voting", "propagating", "matching" and "saving", then "unpaired" (total: the faces
+    left unnamed because their photo names people no face is known for and nothing tells which is whose, #1374, #1454;
+    done: how many of them carried a guess this run took back, #1455) and "left" (done: the faces not written because
+    the library changed under the run: a person named the face, or another face of its photo, or merged the person
+    away) -- and may raise to stop it. Every stage before "saving" only reads; the names are written in one commit
+    after it is announced, so a stop is nothing written or all of it, never part (the job behind the apps' button,
+    tagpup.jobs.naming_faces).
     """
     step = on_step or (lambda stage, done=0, total=1: None)
     logger.info("Starting self-tuning face identity resolution...")
@@ -307,13 +308,13 @@ def resolve(photo_index, on_step=None):
                 if anchor_name == resolved_name:
                     trigger_photos.append(path)
         elif photo_people_tags:
-            # Fall back to majority voting of people tags on all parent photos (the lowest id of a tie)
+            # Fall back to majority voting of people tags on all parent photos: a tie names nobody (#1454)
             tag_freqs = collections.Counter(photo_people_tags)
-            best_tag = max(sorted(tag_freqs), key=tag_freqs.get)
-            
+            best_tag = clustering.singled_out(tag_freqs)
+
             # Check if this tag appears on at least 50% of the photos holding this face cluster
             total_photos = len(photo_face_counts)
-            if tag_freqs[best_tag] / total_photos >= 0.50:
+            if best_tag is not None and tag_freqs[best_tag] / total_photos >= 0.50:
                 resolved_name = best_tag
                 method = "cluster_majority_vote"
                 for face in cluster_faces:
@@ -560,12 +561,13 @@ def resolve(photo_index, on_step=None):
                 unknown_unused = [t for t in unused_tags if t not in resolved_by_name]
                 
                 # 2. Match unknown tags by process of elimination: every other face of the photo is somebody, so the one
-                # face left is the one person left. Two faces and two such people are not paired: nothing tells which is
-                # whose, and pairing them by the order of their ids wrote a coin toss as a name (owner, 2026-10-15, #1374).
-                if len(unassigned_faces) == 1 and len(unknown_unused) == 1:
-                    f = unassigned_faces[0]
-                    tag = list(unknown_unused)[0]
-                    face_resolved[f["id"]] = tag
+                # face left is the one person left. Two faces and two such people are a tie and not paired: nothing tells
+                # which is whose, and pairing them by the order of their ids wrote a coin toss as a name (owner, 2026-10-15,
+                # #1374).
+                face_left = clustering.singled_out(dict.fromkeys((f["id"] for f in unassigned_faces), 1))
+                person_left = clustering.singled_out(dict.fromkeys(unknown_unused, 1))
+                if face_left is not None and person_left is not None:
+                    face_resolved[face_left] = person_left
                 elif len(unassigned_faces) == len(unknown_unused) > 1:
                     unpaired[p_path] = {f["id"] for f in unassigned_faces}
 
@@ -637,7 +639,7 @@ def resolve(photo_index, on_step=None):
     resolved_stats = {}
     as_read = {f["id"]: f["person_id"] for f in all_faces}
     unpaired_ids = set().union(*unpaired.values())
-    left_unpaired = 0
+    left_unpaired = []
 
     # Names already spoken for in each photo. The iterative loop refuses to put one
     # person on two faces of the same photo; without tracking that here, this final
@@ -724,7 +726,7 @@ def resolve(photo_index, on_step=None):
                 "trigger_photos": []
             }
         elif final_name is None and face["id"] in unpaired_ids:
-            left_unpaired += 1
+            left_unpaired.append(face["id"])
             traces[face["id"]]["resolution_method"] = "unpaired_people_with_no_known_face"
 
         # A face a person decided is not written; nor is one that already carries what was found: the person, or nobody.
@@ -733,19 +735,26 @@ def resolve(photo_index, on_step=None):
         if face["id"] not in manual_names and not unchanged:
             face_updates.append((final_name, face["id"]))
 
-    if left_unpaired:
-        logger.info("%d face(s) left unnamed: their photo names as many people no face is known for.", left_unpaired)
-        step("unpaired", left_unpaired, len(all_faces))
-
     # Apply name updates to the SQLite database: the last place to stop
     step("saving", 0, 1)
+    written, left = [], 0
     if face_updates:
         written, left, given = _save_face_names(photo_index, face_updates, as_read)
         for tag in given.values():
             resolved_stats[tag] = resolved_stats.get(tag, 0) + 1
         logger.info("Wrote %d face(s); %d left as they were.", len(written), left)
-        if left:
-            step("left", left, len(face_updates))   # the library changed under them while this ran
+    # What the run did to them (#1455): a guess it wrote off is taken back; a face it meant to write off and found changed
+    # under it is the "left" below, not one it left unnamed.
+    meant = {face_id for _, face_id in face_updates}
+    written = set(written)
+    left_unpaired = [face_id for face_id in left_unpaired if face_id not in meant or face_id in written]
+    if left_unpaired:
+        taken_back = sum(1 for face_id in left_unpaired if face_id in written)
+        logger.info("%d face(s) left unnamed, %d guess(es) taken back: their photo names people no face is known for.",
+                    len(left_unpaired), taken_back)
+        step("unpaired", taken_back, len(left_unpaired))
+    if left:
+        step("left", left, len(face_updates))   # the library changed under them while this ran
         
     # Save traces to JSON
     try:
