@@ -7,7 +7,8 @@ Prints what the library holds, then each rule (tagpup.store.checks) with how man
 break it -- among them the library's roots: a rooted row that cannot be read, a native row
 under a root -- then how many photos have no CLIP vector for the model the config names,
 then the photos that list a person from a face alone (a face was named and no keyword says so: reported, not broken),
-then the rows whose file is not on disk, by folder, how many photos' files fail to open (empty, ending in zero bytes, not a
+then the rows whose file is not on disk, by folder (inspect.missing_files: a drive or share that does not answer is
+not looked at, never "gone"), how many photos' files fail to open (empty, ending in zero bytes, not a
 picture: the end of each file is read, no picture decoded), and the photos under no root, by folder.
 Counts only, unless --show asks for examples: they are paths and tags, and paths name
 people. Then the keywords photos carry that the tag tree has no node for, which is reported, not
@@ -81,10 +82,6 @@ def report(db_path, show=0, out=print):
             return 1
         held = checks.summary(conn)
         results = checks.run(conn)
-        try:
-            missing = checks.missing_files(conn)
-        except paths.RootsError as problem:
-            unplaced, missing = unplaced or str(problem), []
         unembedded = checks.without_a_vector(conn, model) if model else None
         on_faces_alone = checks.people_on_faces_alone(conn)
         unrooted = checks.unrooted_by_folder(conn)
@@ -95,6 +92,12 @@ def report(db_path, show=0, out=print):
         under_a_person = checks.keywords_under_a_person(conn)
     finally:
         conn.close()
+    missing = None
+    if not unplaced:
+        try:
+            missing = inspect.missing_files(Library(db_path), reveal=bool(show), limit=0)
+        except paths.RootsError as problem:
+            unplaced = str(problem)
 
     out("library: %s" % db_path)
     out("  " + "  ".join("%s %d" % (name, count) for name, count in held.items()))
@@ -118,13 +121,12 @@ def report(db_path, show=0, out=print):
         out("photos listing a person from a face alone: %d, %d people (reported, not broken: a face was named and the "
             "photo's keywords do not say so; `tagpup_cli.py tags-from-faces` counts them, and with --apply writes the "
             "keywords into those photo FILES)" % on_faces_alone)
-    if not unplaced:
-        rows = sum(count for _folder, count, _there in missing)
-        gone = [(folder, count) for folder, count, there in missing if not there]
-        out("rows whose file is not on disk: %d, in %d folder(s); %d folder(s) are gone entirely"
-            % (rows, len(missing), len(gone)))
-        for folder, count, there in missing[:show]:
-            out("    %6d  %s%s" % (count, folder, "" if there else "  (folder gone)"))
+    if missing is not None:
+        out("rows whose file is not on disk: %d, in %d folder(s); %d folder(s) are gone entirely; %d row(s) not looked at "
+            "(their drive or share did not answer, or the file could not be read)"
+            % (missing["rows"], missing["folders"], missing["folders_gone"], missing["not_looked_at"]))
+        for entry in missing["by_folder"][:show]:
+            out("    %6d  %s%s" % (entry["rows"], entry["path"], "  (folder gone)" if entry["folder_gone"] else ""))
         opens = inspect.files_that_fail_to_open(Library(db_path))
         out("photos whose file fails to open: %d (reported, not broken: empty, ending in zero bytes as an interrupted copy "
             "leaves a file, or not a picture; a JPEG cut short inside its picture is not looked for)%s"

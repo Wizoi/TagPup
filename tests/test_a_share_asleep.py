@@ -23,6 +23,8 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+import doctor  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 import share_waits  # noqa: E402
@@ -86,9 +88,14 @@ class ASleepingShare(unittest.TestCase):
         self.assertEqual(3, self.vl.rows("SELECT COUNT(*) FROM photos")[0][0])
 
     def test_the_rows_whose_file_is_gone_leave_out_the_photos_on_it_and_name_no_folder_gone(self):
-        """The MCP tool's answer (inspect.missing_files): a photo on the share asleep is not looked at, not gone."""
+        """The MCP tool's answer (inspect.missing_files): a photo on the share asleep is not looked at, not gone. The
+        doctor says the same: it called all of them missing with a bare os.path.exists (#1388)."""
         found = inspect.missing_files(self.vl.library)
         self.assertEqual((0, 0, 0, 3), (found["rows"], found["folders"], found["folders_gone"], found["not_looked_at"]))
+        said = []
+        doctor.report(self.vl.path, out=said.append)
+        self.assertIn("rows whose file is not on disk: 0, in 0 folder(s); 0 folder(s) are gone entirely; 3 row(s) not "
+                      "looked at (their drive or share did not answer, or the file could not be read)", said)
 
 
 class ASyncThatCannotLookAtAFolder(unittest.TestCase):

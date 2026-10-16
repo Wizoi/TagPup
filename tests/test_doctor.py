@@ -153,7 +153,11 @@ class TheRules(Library):
     def test_missing_files_are_counted_by_folder_not_as_broken(self):
         self.photo("gone.jpg", on_disk=False)
         self.assertEqual({}, self.broken())
-        self.assertEqual([(self.dir, 1, True)], checks.missing_files(self.conn))
+        said = []
+        self.assertEqual(0, doctor.report(self.db_path, 1, out=said.append))
+        self.assertIn("rows whose file is not on disk: 1, in 1 folder(s); 0 folder(s) are gone entirely; 0 row(s) not "
+                      "looked at", " | ".join(said))
+        self.assertIn("         1  %s" % self.dir, said)
 
 
 class TheDoctor(Library):
