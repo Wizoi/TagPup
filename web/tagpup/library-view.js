@@ -131,9 +131,7 @@ export function libraryChanged() {
     libraryStripTotal.textContent = total;
     libraryStripTotal.classList.toggle('hidden', !total);
     let status = lib.notice;
-    if (lib.waiting) {
-        status = lib.waiting;        // the library asked to be asked again: a 503 with Retry-After (library-source.js)
-    } else if (lib.loading && lib.status !== 'loading') {
+    if (lib.loading && lib.status !== 'loading') {
         status = 'Refreshing...';
     } else if (lib.status === 'error') {
         status = lib.message;
@@ -141,7 +139,7 @@ export function libraryChanged() {
         status = lib.message;
     }
     libraryStripStatus.textContent = status || '';
-    libraryStripStatus.classList.toggle('library-strip-problem', lib.status === 'error' || Boolean(lib.notice) || Boolean(lib.waiting));
+    libraryStripStatus.classList.toggle('library-strip-problem', lib.status === 'error' || Boolean(lib.notice));
     libraryStripStatus.title = status || '';
     btnLibraryRefresh.disabled = lib.invalid || lib.loading;
     upper.showSortOrder();

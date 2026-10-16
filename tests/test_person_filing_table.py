@@ -81,7 +81,7 @@ class ApplyAllFilesAPersonAsTheChipDoes(unittest.TestCase):
                 before = library_dump.dump(library.path)
                 self.tree_before = self.tree(library)
                 entry = {"tags": [], "people": [{"name": TABLE["name"], "score": 0.9}]}
-                result = tagging.apply_suggestions(library, {photo: entry}, EXIFTOOL, 0.0)
+                result = tagging.apply_suggestions(library, {photo: entry}, EXIFTOOL)
                 if case["expect"] == "ask":
                     # With nobody to ask, Apply All refuses before it writes: it wrote the bare name, which names nobody.
                     self.assertTrue(result.refused, "written without asking")

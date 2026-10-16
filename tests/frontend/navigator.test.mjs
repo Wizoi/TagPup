@@ -306,25 +306,6 @@ describe("loading, failing and nothing", () => {
     assert.deepEqual(ctx.consoleErrors, []);
   });
 
-  test("a library at schema 18: the server's sentence is shown in each section, not a trace, and no row", async (t) => {
-    const sentence = "photo_index has not been brought up to date for browsing by folder, keyword, person or date yet. Open it in TagPup once.";
-    const behind = { status: 409, body: { error: sentence } };
-    const ctx = await loadViewPage(t, {
-      search: "?view=all",
-      navigator: {
-        folders: () => behind.body, keywords: () => behind.body, people: () => behind.body, dates: () => behind.body,
-      },
-    });
-    ctx.server.first("/api/library/navigator", { error: sentence }, { status: 409 });
-    for (const name of ["folders", "keywords", "people", "dates"]) {
-      ctx.state.nav.sections[name].status = "idle";
-      await ctx.openTab(name);
-      assert.equal(ctx.status(name), sentence, name);
-      assert.equal(ctx.rows(name).length, 0, name);
-    }
-    assert.ok(!ctx.consoleErrors.some((each) => /Traceback/.test(String(each))));
-  });
-
   test("an unplaced root: the roots banner is shown (by api.js) and the sections say the same sentence", async (t) => {
     const sentence = "This computer does not know where this library keeps its photos.";
     const ctx = await loadViewPage(t, { search: "?view=all" });

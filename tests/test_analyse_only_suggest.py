@@ -256,7 +256,7 @@ class ARunInAFolderNotHeldAddsNothing(Base):
         self.assertEqual(["cup_01.jpg", "cup_02.jpg", "cup_03.jpg"], sorted(os.path.basename(p) for p in self.faces.detected))
         self.assert_library_unchanged()
 
-        reply = self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0})
+        reply = self.post("/folder/auto-apply", {"folder_path": self.cup})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual((3, 0), (reply.get_json()["file_only"], reply.get_json()["with_rows"]))
         self.assertEqual(["Trips/Regatta", "People/Rowan Thackeray"], tags_in(self.loose[0]))
@@ -497,8 +497,8 @@ class SuggestedTwice(Base):
         seen = list(self.clip.images)
         self.start(self.cup)
         self.assertEqual(seen, self.clip.images, "no photo was analysed again")
-        first = self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0})
-        again = self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0})
+        first = self.post("/folder/auto-apply", {"folder_path": self.cup})
+        again = self.post("/folder/auto-apply", {"folder_path": self.cup})
         self.assertEqual((200, 200), (first.status_code, again.status_code))
         self.assertEqual((3, 0), (first.get_json()["file_only"], again.get_json()["file_only"]))
         self.assertEqual(["Trips/Regatta", "People/Rowan Thackeray"], tags_in(self.loose[0]))
@@ -509,7 +509,7 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
     def test_a_tag_another_program_added_meanwhile_stays(self):
         self.start(self.cup)
         write_into(self.loose[1], **{"XMP:Subject": ["From Elsewhere"]})
-        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
+        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup}).status_code)
         self.assertEqual(["From Elsewhere", "Trips/Regatta", "People/Rowan Thackeray"], tags_in(self.loose[1]))
         self.assert_library_unchanged()
 
@@ -525,7 +525,7 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
         self.start(self.cup)
         offer = self.suggested(self.cup)["cup_03.jpg"]
         self.assertEqual(["Wren Okafor"], [p["name"] for p in offer["people"]])
-        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0}).status_code)
+        self.assertEqual(200, self.post("/folder/auto-apply", {"folder_path": self.cup}).status_code)
         # As a click on the chip files her: by her node, which naming her face made at the top of the tree (2026-10-10).
         self.assertEqual(["Trips/Regatta", "Wren Okafor"], tags_in(self.loose[2]))
         self.assertEqual(tree, tree_of(self.library.path))
@@ -534,7 +534,7 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
     def test_a_folder_added_after_the_run_is_applied_with_its_rows_as_a_held_folder_is(self):
         self.start(self.cup)
         library_actions.record_added(self.library, [self.cup])
-        reply = self.post("/folder/auto-apply", {"folder_path": self.cup, "threshold": 0.0})
+        reply = self.post("/folder/auto-apply", {"folder_path": self.cup})
         self.assertEqual(200, reply.status_code, reply.data)
         self.assertEqual((0, 3), (reply.get_json()["file_only"], reply.get_json()["with_rows"]))
 

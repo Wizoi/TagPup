@@ -43,7 +43,7 @@ from tagpup.jobs import indexing as indexing_jobs  # noqa: E402
 from tagpup.mcp import server as mcp_server  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
-from tagpup.services import suggestions as saved_suggestions  # noqa: E402
+from tagpup.services import suggester  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
 from tagpup.services import sync, tagging  # noqa: E402
@@ -745,7 +745,7 @@ class AFolderTheLibraryDoesNotHold(unittest.TestCase):
 
     def test_suggest_sync_and_the_watcher_leave_the_folder_alone_until_it_is_added(self):
         with contextlib.suppress(Conflict):      # refused now; kept, and a row made, before
-            saved_suggestions.keep(self.library.path, self.photo, {"tags": ["Family/Work"]})
+            suggester.keep(self.library.path, self.photo, {"tags": ["Family/Work"]})
         runtimes.sync(self.library, apply=True)
         indexing_jobs.queue_for(self.library).wait()
         self.assertEqual([], [f for f in self.queued if paths.same(f, self.lighthouse) or paths.is_under(f, self.lighthouse)],

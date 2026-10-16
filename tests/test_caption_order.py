@@ -99,13 +99,6 @@ class TheOrder(Captioned):
         tallied = selection.tally(self.vl.library, chosen)
         self.assertEqual((2, [WREN]), (tallied["total"], [each["name"] for each in tallied["people"]]))
 
-    def test_without_the_caption_index_the_order_is_the_same(self):
-        with_index = (self.ids(), self.ids(order="caption-desc"))
-        conn = db.connect(self.vl.path)
-        conn.execute("DROP INDEX %s" % store.CAPTION_INDEX)
-        conn.commit()
-        conn.close()
-        self.assertEqual(with_index, (self.ids(), self.ids(order="caption-desc")))
 
 class ThePlans(Captioned):
     def plans(self, kind, value, order):

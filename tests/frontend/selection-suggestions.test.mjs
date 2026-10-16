@@ -291,8 +291,7 @@ describe("Apply All applies all of it", () => {
     const ctx = await applyAll(t, 0.9);
     const body = ctx.server.lastBody("/api/folder/auto-apply");
     assert.ok(body, "Apply All sent nothing");
-    assert.equal(body.threshold, 0.0,
-      `a threshold was still sent, so some suggestions would be skipped: ${body.threshold}`);
+    assert.equal(body.threshold, undefined, `a threshold was sent, so some suggestions would be skipped: ${body.threshold}`);
   });
 
   test("a low-confidence suggestion still enables the button", async (t) => {

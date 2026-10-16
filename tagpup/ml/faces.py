@@ -99,14 +99,6 @@ class FaceModel:
         if self.device == "cuda":
             self.resnet = self.resnet.half()
 
-        # Conditionally compile model for CUDA acceleration (disabled on Windows due to lack of Triton support)
-        if self.device == "cuda" and os.name != "nt" and hasattr(torch, "compile"):
-            try:
-                logger.info("Compiling InceptionResnetV1 model for CUDA acceleration...")
-                self.resnet = torch.compile(self.resnet)
-            except Exception as compile_err:
-                logger.warning(f"Failed to compile InceptionResnetV1 model: {compile_err}. Using standard model.")
-
         logger.info("Face models loaded successfully.")
 
     def detect_and_embed_faces(self, img_path):
