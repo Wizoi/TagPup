@@ -21,7 +21,7 @@ function fact(label, ...value) {
 }
 
 /** Unload models now: the server lets every model go and gives up the graphics card, unless
- *  Suggest is using them, and says which in a sentence. Shown beside the button. */
+ *  a run (Suggest, or the startup warm-up) holds them, and says which in a sentence. Shown beside the button. */
 export function unloadModels() {
     if (state.unloading) return Promise.resolve(null);
     state.unloading = true;
