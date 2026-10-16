@@ -124,6 +124,17 @@ def looks_wrong(similarity):
     return similarity is not None and similarity < OFFER_A_NAME
 
 
+def singled_out(votes):
+    """The one person (or face) `votes` ({who: how many votes}) gives more than any other, or None. A tie at the top is no
+    evidence of who is who: the first of a tie by id order was written as a name, a coin toss (owner, 2026-10-15; #1374,
+    #1454). Clustering's keyword vote asks it, and its process of elimination, whose candidates have a vote
+    each: one face and one person left is the pairing, two of either are a tie."""
+    ranked = sorted(votes.values(), reverse=True)
+    if not ranked or (len(ranked) > 1 and ranked[0] == ranked[1]):
+        return None
+    return max(votes, key=votes.get)
+
+
 # ---- Faces in the background ---------------------------------------------------------
 
 #: A face smaller than this many square pixels is a speck in the background: not named by the tag alone,

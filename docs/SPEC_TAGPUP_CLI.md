@@ -221,7 +221,8 @@ Scans and indexes a photo library recursively: one or more directories, in one r
 #### 2. `cluster-faces`
 Internal: the indexer runs it after every index (`tagpup.services.indexing`), with no options; it is not run by hand. It clusters the face embeddings and names the faces from their photos' people (`tagpup.services.identities.resolve`). Names a person gave (`name_source = 'manual'`), their "nobody" decisions and exclusions are kept; a face is written only while it is still as the run read it, and a person is written by id. Two or more faces of a photo
 whose keywords name as many people no face is known for stay unnamed (nothing tells which is whose; owner, 2026-10-15), and
-the run says how many it left so.
+so does a face whose people tie in its votes; the run says how many faces it left so and how many earlier guesses it took
+back.
 
 ### `compact [--apply]`
 Says how much of the library's file holds nothing: pages left free by deleted rows and dropped columns, which SQLite keeps until the file is rewritten. With `--apply`, backs the library up (`db.backup`, into `backups/`), then rewrites it without them (`VACUUM`, `db.compact`) and says the size before and after. The rewrite needs the file to itself; close the apps first. After phase 4's migrations photo_index holds about 1 GB free of 4 GB.

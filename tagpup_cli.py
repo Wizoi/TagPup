@@ -998,16 +998,22 @@ def cluster_faces(ctx):
         return
 
     try:
+        unpaired = []
+
         def heard(stage, done=0, total=1):
             if stage == "left":
                 console.print(f"[bold yellow]{done} face(s) were left as they were: the library changed under them while this ran.[/bold yellow]")
             if stage == "unpaired":
-                console.print(f"[yellow]{done} face(s) were left unnamed: their photo names as many people no face is known for, "
-                              "and nothing tells which is whose.[/yellow]")
+                # The reason first, and short: the indexer's progress line shows 90 characters.
+                unpaired.append(total)
+                console.print(f"[yellow]People with no known face, not told apart: {done} guess(es) taken back, "
+                              f"{total} left unnamed.[/yellow]")
         resolved_stats = identities.resolve(photo_index, on_step=heard)
-        
+
         if not resolved_stats:
-            console.print("[yellow]No face was newly named. Try tagging photos with people names first.[/yellow]")
+            # Tagging is no advice for faces whose photo is tagged and whose people cannot be told apart.
+            console.print("[yellow]No face was newly named." + ("" if unpaired else " Try tagging photos with people names first.")
+                          + "[/yellow]")
             return
 
         table = Table(title="Resolved Face Identities Summary")
