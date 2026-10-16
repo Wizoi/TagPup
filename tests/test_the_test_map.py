@@ -230,6 +230,21 @@ class OwnerCharters(unittest.TestCase):
             with self.subTest(owner=owner):
                 self.assertIn("tagpup-owner-%s" % owner, page)
 
+    def test_every_charter_ends_with_the_owners_checklist_in_the_words_of_owners_md(self):
+        # An agent reads its own definition and opens OWNERS.md only if it chooses to, so the seven conditions and the
+        # order of a review stand in each charter; this holds the six copies to one text (retro 2026-10-16).
+        def checklist(text):
+            found = re.findall(r"^\*\*Standing goal: the domain is healthy\*\*.*?Say so in the review\.$", text, re.M | re.S)
+            self.assertEqual(1, len(found), "one checklist, from **Standing goal** to 'Say so in the review.'")
+            return found[0]
+
+        model = checklist(read(os.path.join(ROOT, "docs", "OWNERS.md")))
+        self.assertEqual(7, len(re.findall(r"^\d\. ", model, re.M)))
+        for owner in CHARTERS:
+            with self.subTest(owner=owner):
+                self.assertEqual(model, checklist(read(charter_path(owner))),
+                                 "the charter's checklist differs from docs/OWNERS.md: change all six together")
+
     def test_the_check_would_notice_a_missing_path(self):
         self.assertEqual(paths_in("`tagpup/store/db.py` and `tagpup.store.db` and `no/such.py`"), ["tagpup/store/db.py"])
         self.assertFalse(exists("tagpup/store/not_a_module.py"))

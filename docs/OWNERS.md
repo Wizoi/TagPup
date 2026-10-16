@@ -53,8 +53,9 @@ owner's. The output of every owner is the same: findings ranked, each with a sev
 ## Every owner's standing goal and checklist
 
 This section is part of every charter in `.claude/agents/tagpup-owner-*.md`: an owner reads it before it reviews or
-plans, as if it stood at the end of its own charter (the five charters each held a copy until the retro of 2026-10-16).
-The state of each domain, with its evidence, is its document in docs/domains/.
+plans. The seven conditions and the order of a review also end each charter, in the same words
+(`tests/test_the_test_map.py` holds the six copies equal), since an agent reads its own definition first; the
+explanations and the planning are here only. The state of each domain, with its evidence, is its document in docs/domains/.
 
 ### In every review
 - **Tests answer scenarios, not code** (CLAUDE.md): you review every change in your domain for the scenario it must keep
@@ -64,9 +65,9 @@ The state of each domain, with its evidence, is its document in docs/domains/.
   domain that cites neither a live count above zero nor the user action that produces it; the fix is to refuse the write at
   the source, not to handle the case.
 
-### Standing goal: the domain is healthy (owner, 2026-10-15)
-Your domain is healthy when each of these is true, counted, and stated with its evidence and date in your domain document
-(docs/domains/):
+### The seven conditions and reviewing any change
+**Standing goal: the domain is healthy** (owner, 2026-10-15). Your domain is healthy when each of these is true,
+counted, and stated with its evidence and date in your domain document (docs/domains/):
 1. No other domain reaches into your internals: every cross-domain use is a row of the contract table.
 2. No rule is written twice inside the domain.
 3. No hidden coupling: nothing changes together by convention only.
@@ -74,14 +75,13 @@ Your domain is healthy when each of these is true, counted, and stated with its 
 5. No compatibility branch or fallback without a live instance (CLAUDE.md, "a special case needs a real instance").
 6. Its tests are scenarios, each file owned and mapped (tests/owners.py); no granular test where a scenario already covers it.
 7. No open finding of severity data or wrong.
-A healthy domain has no "top changes": whatever was worth doing is done, so your document has no such section. When a
-condition is not met, what is unmet IS the queue, and no new feature is taken into the domain until it is met.
-
-### Reviewing any change
-For every feature or change in your domain, or touching its contract, ask in this order: does it keep each of the seven
-healthy? does it add debt: a second copy of a rule, a branch for a case with no instance, a reach into another domain's
-internals, a concept the domain already has under another name, a test of code where a scenario belongs? If yes, the change
-is not done: it removes that debt in the same branch, or it is refused. Say so in the review.
+**Reviewing any change.** For every feature or change in your domain, or touching its contract, ask in this order: does
+it keep each of the seven healthy? does it add debt: a second copy of a rule, a branch for a case with no instance, a
+reach into another domain's internals, a concept the domain already has under another name, a test of code where a
+scenario belongs? If yes, the change is not done: it removes that debt in the same branch, or it is refused. Say so in the review.
+A healthy domain has no "top changes": whatever was worth doing is done, so its document has no such section.
+When a condition is not met, what is unmet IS the queue, and no new feature is taken into the domain until it
+is met.
 
 ### Planning a domain pass (owner, 2026-10-15)
 A domain's queue is planned once, whole, before any code: (1) re-verify every open row and every unmet condition against
