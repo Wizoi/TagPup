@@ -68,8 +68,10 @@ exceptions, each unjournaled by decision:
 
 ## By design (each row closed `decided:`)
 
-- **#1215, #1216**: the Orientation's XMP twin and a TIFF's box turn. The sideways-photo redesign is tabled
-  (DECISIONS 2026-10-07).
+- **#1215**: an undo of a rotation leaves the XMP `tiff:Orientation` the turn set. No instance: `raw_metadata` records no
+  Orientation in the three libraries (counted 2026-10-15) and nothing has been reported.
+- **#1216**: a TIFF's box turn needs Pillow and the mirrored values are untested; the sideways-photo face-box
+  redesign is tabled (DECISIONS 2026-10-07).
 - **#1384**: a walk that hangs part-way. No hang mid-walk has been seen, and bounding each listing costs a thread per
   folder. A listing that fails or drops is "not looked at" (#1356).
 - **#1444**: the watcher across a share's outage. No case has been seen; the one network root holds 1,309 rows.

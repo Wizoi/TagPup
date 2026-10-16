@@ -4,6 +4,7 @@ Rows moved byte for byte from [findings.md](../findings.md) when their status cl
 
 | # | Found | Finding | Status |
 |---|---|---|---|
+| 501 | 2026-10-02 | Phase 9a-1: store.folders.with_rows reads every photo's path on each call; the folders table answers it with one query. | fixed: the Files domain pass (merge of worktree-agent-a91398b6c56501466) |
 | 502 | 2026-10-02 | Phase 9a-2 review: a file on a network share that is away costs one second and one leaked thread per request (and per photo in thumbs warm): damaged_photos.stamp_of starts a thread per call and never consults the shares' away memory, unlike the folder listings; photo_index holds 24 rows under a share path, so a page of cards with them is 24 one-second waits. | fixed: 038b96c, d284be5 (phase 9a-2) |
 | 503 | 2026-10-02 | Phase 9a-2: damaged_photos._stamp answers None for any OSError, so an unreadable file (permissions, a lock) is "not there" to every caller and the thumbnail route says so. | fixed: 038b96c, d284be5 (phase 9a-2) |
 | 504 | 2026-10-02 | Phase 9a-2 review: no test puts equal taken values across a page boundary; with the keyset comparison weakened to taken > ? one unrelated test fails by accident and the real library would skip 107 photos (2,248 groups share a taken, the largest 54). | fixed: 038b96c, d284be5 (phase 9a-2) |
