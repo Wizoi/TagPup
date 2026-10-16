@@ -66,7 +66,7 @@ def find_stale(conn, folder=None, seen=None, ids=None, found=None):
                 found[row[0]] = {"mtime": row[1], "size": row[2], "tags": row[3], "captions": row[4],
                                  "raw_metadata": row[5]}
             if ids is not None:
-                ids[row[0]] = row[7]
+                ids[row[0]] = row[6]
     return stale
 
 
@@ -87,8 +87,7 @@ def read_files(conn, photo_paths, exiftool_path, progress=None):
             # People from the keywords AND the photo's named faces, as every writer
             # of the column now records them; the extractor alone knows only the
             # keywords, and would take off everyone identified by face.
-            record["people"] = people_in_photo(record["raw_metadata"], record["tags"],
-                                               store_faces.face_refs(record["path"], conn=conn), known)
+            record["people"] = people_in_photo(record["tags"], store_faces.face_refs(record["path"], conn=conn), known)
             records[record["path"]] = record
         if progress is not None:
             progress("read", {"done": min(start + BATCH, len(photo_paths)), "total": len(photo_paths)})

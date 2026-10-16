@@ -11,7 +11,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 import { REPO_ROOT } from "./harness.mjs";
 
 const JANE = "Jane Doe";
@@ -31,7 +31,7 @@ const TREE = [
 function serverWith(faces, samples) {
   return new FakeServer()
     .on("/api/tags", [])
-    .on("/api/people?records=1", peopleRecordsOf(TREE))
+    .on(PEOPLE_ROUTE, peopleRecordsOf(TREE))
     .on("/api/taxonomy/tree", TREE)
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/suggest-status", { status: "idle" })

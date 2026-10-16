@@ -13,7 +13,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -33,7 +33,7 @@ const photos = () => [photoRecord({ path: A, filename: "IMG_0001.jpg", tags: ["B
 function server(scanned = photos) {
   return new FakeServer()
     .on("/api/tags", [])
-    .on("/api/people?records=1", [])        // an empty tree: nobody
+    .on(PEOPLE_ROUTE, [])        // an empty tree: nobody
     .on("/api/taxonomy/tree", [])
     .on("/api/taxonomy/create", { success: true })
     .on("/api/databases", { databases: ["kr-track", "photo_index"] })

@@ -47,15 +47,19 @@ export function updateURLParams() {
     window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
 }
 
-// The people with a tag, by id: who a typed name is, the label of each (identity by id), and what is offered while typing.
+// The people with a tag, by id: everyone, hidden from autocomplete or not -- who a typed name is and the label of each
+// (identity by id) -- and, read apart, those not hidden: what is offered while typing.
 export function fetchKnownPeople() {
-    api.fetch('/api/people?records=1&include_hidden=1')
-        .then(res => res.ok ? res.json() : [])
+    const read = (url) => api.fetch(url).then(res => (res.ok ? res.json() : []));
+    read('/api/people?include_hidden=1')
+        .then(data => { state.people = new PeopleDirectory(data); })
+        .catch(err => console.error('Error fetching the people:', err));
+    read('/api/people')
         .then(data => {
-            state.people = new PeopleDirectory(data);
+            state.offeredPeople = new PeopleDirectory(data);
             updatePeopleDatalist();
         })
-        .catch(err => console.error('Error fetching the people records:', err));
+        .catch(err => console.error('Error fetching the people offered:', err));
 }
 
 /**
@@ -118,8 +122,8 @@ function updatePeopleDatalist() {
     if (!datalist) return;
     datalist.innerHTML = '';
     const offered = new Map();
-    // A person is offered by their name, with their tag as the hover.
-    for (const person of state.people.all()) offered.set(person.name, person);
+    // A person is offered by their name, with their tag as the hover; one hidden from autocomplete is not offered.
+    for (const person of state.offeredPeople.all()) offered.set(person.name, person);
     sortedTags(offered.keys()).forEach(text => {
         const option = document.createElement('option');
         option.value = text;

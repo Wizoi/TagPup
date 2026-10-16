@@ -7,7 +7,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -25,13 +25,12 @@ const TAXONOMY = [
 // In the order a file would hold them: how they were added, not the alphabet.
 const IN_FILE_ORDER = ["Zoo", "Trip 10", "People/Wen Zhao", "apple", "Trip 3", "People/anh Tran", "Banana"];
 
-async function open(t, { photos, suggestions = {}, tags = [], people = [] } = {}) {
+async function open(t, { photos, suggestions = {}, tags = [] } = {}) {
   const list = photos || [photoRecord({ filename: "a.jpg", tags: IN_FILE_ORDER, people: ["Wen Zhao", "anh Tran"] })];
   const server = new FakeServer()
     .on("/api/tags", tags)
-    .on("/api/people", people)
     .on("/api/taxonomy/tree", TAXONOMY)
-    .first("/api/people?records=1", peopleRecordsOf(TAXONOMY))
+    .first(PEOPLE_ROUTE, peopleRecordsOf(TAXONOMY))
     .on("/api/taxonomy/create", { success: true })
     .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
     .on("/api/folder/index-status", { status: "completed", percent: 100 })

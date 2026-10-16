@@ -183,10 +183,10 @@ def _read(library, files, exiftool_path):
     return found
 
 
-def people_of(library, raw_meta, tags, photo_path):
-    """Everyone in a photo, by its metadata and its named faces
+def people_of(library, tags, photo_path):
+    """Everyone in a photo, by its keywords and its named faces
     (tagpup.core.vocabulary.people_in_photo), for a page record just written."""
-    return vocabulary.people_in_photo(raw_meta, tags, faces.face_refs(photo_path, db_path=library.path),
+    return vocabulary.people_in_photo(tags, faces.face_refs(photo_path, db_path=library.path),
                                       taxonomy.people_vocabulary(library.path))
 
 
@@ -199,7 +199,7 @@ def record_written(library, record, path, tags, flat, hierarchical):
     """
     raw_meta = fields.record_keyword_fields(record.setdefault("raw_metadata", {}), flat, hierarchical)
     record["tags"] = list(tags)
-    record["people"] = people_of(library, raw_meta, tags, path)
+    record["people"] = people_of(library, tags, path)
     return raw_meta
 
 

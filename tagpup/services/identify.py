@@ -155,7 +155,7 @@ def _groups(people_of_rows):
 
 def _closest_to_mean(ids, people_of_rows, matrix, skip=()):
     """{person: id of the face nearest the mean of that person's faces}, for each person not in `skip` (people as they travel:
-    the id of their node, or the name of one no node is). One pass over the matrix's rows: the people are grouped once and each
+    the id of their node). One pass over the matrix's rows: the people are grouped once and each
     group is read as a slice, so no group's mean is the size of the table. A tie goes to the lowest id."""
     if matrix is None or not len(ids):
         return {}
@@ -175,8 +175,8 @@ def _closest_to_mean(ids, people_of_rows, matrix, skip=()):
 
 
 def representative_faces(decided, named):
-    """{person: face id}: for each person the face most like them, to show beside the name (a person is the id of their node,
-    or the name of one no node is: person_ids.wire).
+    """{person: face id}: for each person the face most like them, to show beside the name (a person is the id of their node:
+    person_ids.wire).
 
     The decided face (decided_faces: named by hand, or borne out by its photo's keyword)
     nearest the mean of that person's decided faces. A person none of whose faces is
@@ -749,7 +749,7 @@ def grid(library, name, named, on_progress=None):
     """(fingerprint, payload): the nameless faces that are candidates for `name` -- or
     for the Unknown Faces and Ungrouped buckets -- grouped by resemblance, each group
     offered the person it most resembles, and the leftovers ranked and capped. `name` is a bucket, or a person as
-    person_ids.wire has it: the id of their node, or the name of one no node is.
+    person_ids.wire has it: the id of their node.
 
     The slow path of the screen, the better part of a minute on a real library.
     `on_progress(stage, fraction, message)` hears each stage as it starts and, while

@@ -146,7 +146,7 @@ def same_person(a, b):
 def person_ref_of_tag(tag, known):
     """The Ref the one keyword `tag` names -- under a face root or a person's node, by `known` (a PeopleVocabulary) -- or None
     when it names nobody (a group, a word)."""
-    found = extract_refs({}, [tag], known)
+    found = extract_refs([tag], known)
     return found[0] if found else None
 
 
@@ -410,7 +410,7 @@ class PeopleVocabulary:
 Ref = collections.namedtuple("Ref", "id name")
 
 
-def extract_refs(meta, tags, known=None):
+def extract_refs(tags, known=None):
     """The people a photo's keywords name, as Refs, in order. A file's person fields (XMP PersonInImage, RegionName) are not
     read: a bare name is never linked to a person by its leaf (owner, DECISIONS 2026-10-15).
 
@@ -452,14 +452,14 @@ def extract_refs(meta, tags, known=None):
     return [ref for ref in refs if ref.id is not None or key(ref.name) not in resolved]
 
 
-def extract_people(meta, tags, known=None):
+def extract_people(tags, known=None):
     """Whom a photo's keywords name, as names (extract_refs, without the ids). A name appears once for each person called
     it."""
-    return [ref.name for ref in extract_refs(meta, tags, known)]
+    return [ref.name for ref in extract_refs(tags, known)]
 
 
-def people_rows(meta, tags, face_refs, known=None):
-    """Everyone in a photo, as [(Ref, source)]: whom its metadata names ('keyword') and whom its faces were named as
+def people_rows(tags, face_refs, known=None):
+    """Everyone in a photo, as [(Ref, source)]: whom its keywords name ('keyword') and whom its faces were named as
     ('face') -- `face_refs` are Refs, (tag_id, name) of each face not ruled out, in detection order.
 
     The one rule for a photo's people (tagpup.store.people rebuilds `photo_people` by it). Two sources and two kinds
@@ -468,7 +468,7 @@ def people_rows(meta, tags, face_refs, known=None):
     face. Every writer goes through here, so both sources always count. A person is listed once by id; two faces named
     two people called alike list both; a face whose name no person is filed under (no id) is listed once by name, and is
     not listed beside a person of that name."""
-    rows = [[ref, "keyword"] for ref in extract_refs(meta, tags, known)]
+    rows = [[ref, "keyword"] for ref in extract_refs(tags, known)]
     for face in face_refs:
         if not face.name:
             continue
@@ -486,10 +486,10 @@ def people_rows(meta, tags, face_refs, known=None):
     return [(ref, source) for ref, source in rows]
 
 
-def people_in_photo(meta, tags, face_refs, known=None):
+def people_in_photo(tags, face_refs, known=None):
     """Everyone in a photo, as names: whom its keywords name, and whom its faces were named as (people_rows; `face_refs`
     are Refs). A name two people are called appears twice."""
-    return [ref.name for ref, _source in people_rows(meta, tags, face_refs, known or PeopleVocabulary.defaults())]
+    return [ref.name for ref, _source in people_rows(tags, face_refs, known or PeopleVocabulary.defaults())]
 
 
 def retag(tags, old, new=None):

@@ -8,7 +8,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf } from "./harness.mjs";
+import { loadApp, FakeServer, photoRecord, flush, click, openFolder, closeAllApps, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -40,9 +40,8 @@ for (const found of TABLE.cases) {
     const photo = photoRecord({ filename: "wren.jpg", tags: found.file, people: [] });
     const server = new FakeServer()
       .on("/api/tags", [])
-      .on("/api/people", found.known)
       .on("/api/taxonomy/tree", tree)
-      .first("/api/people?records=1", peopleRecordsOf(tree))
+      .first(PEOPLE_ROUTE, peopleRecordsOf(tree))
       .on("/api/taxonomy/create", { success: true })
       .on("/api/databases", { databases: ["photo_index"], selected: "photo_index" })
       .on("/api/folder/index-status", { status: "completed", percent: 100 })

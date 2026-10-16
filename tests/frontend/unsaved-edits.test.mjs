@@ -14,7 +14,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, openFolder, click, peopleRecordsOf, PEOPLE_ROUTE } from "./harness.mjs";
 
 const PHOTOS = [
   { path: "D:\\p\\a.jpg", filename: "a.jpg", tags: ["People/Tamsin Ashgrove"], people: ["Tamsin Ashgrove"], captions: [], title: "" },
@@ -33,7 +33,7 @@ function server({ save = { success: true }, people = peopleRecordsOf(TREE), tags
     .on("/api/folder/scan", PHOTOS.map((p) => ({ ...p, tags: [...p.tags], people: [...p.people] })))
     .on("/api/taxonomy/tree", TREE)
     .on("/api/taxonomy/create", { success: true })
-    .on("/api/people?records=1", people)
+    .on(PEOPLE_ROUTE, people)
     .on("/api/tags", tags)
     .on("/api/photo-faces", { faces: [], total: 0, unmatched: 0 })
     .on("/api/photo/save-metadata", save)

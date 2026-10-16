@@ -10,7 +10,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, click, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, click, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
 
 const NAME = "Unknown Faces";
 
@@ -42,7 +42,7 @@ async function open(t, faces) {
       unclustered_shown: faces.length, has_more: false, page: 1, limit: -1,
     })
     .on("/api/people-with-counts", [])
-    .on("/api/people", ["Rory Olwen", "Kira Bao"]);
+    .on(PEOPLE_ROUTE, [{ id: 21, name: "Rory Olwen", tag: "People/Rory Olwen" }, { id: 22, name: "Kira Bao", tag: "People/Kira Bao" }]);
   const { window, document } = await loadApp("tagtuner", {
     t, server,
     url: `http://localhost:8080/kr-track/?mode=unmatched-faces&person=${encodeURIComponent(NAME)}`,

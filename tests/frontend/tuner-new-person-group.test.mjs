@@ -7,7 +7,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, flush, click, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, flush, click, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
 
 afterEach(() => closeAllApps());
 
@@ -40,8 +40,7 @@ async function open(t, { create = { success: true, id: 90, tag: "Pets/Sam" } } =
     .on("/api/taxonomy/tree", TREE)
     .on("/api/taxonomy/create", create)
     .on("/api/faces/match-bulk", { success: true, matched_ids: [1] })
-    .first("/api/people?records=1", [SAM_FRIEND])
-    .on("/api/people", ["Sam"]);
+    .on(PEOPLE_ROUTE, [SAM_FRIEND]);
   const ctx = await loadApp("tagtuner", { t, server,
     url: "http://localhost:8080/kr-track/?mode=unmatched-faces&person=Unknown%20Faces" });
   await flush(ctx.window, 10);

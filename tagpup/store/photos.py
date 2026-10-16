@@ -634,10 +634,9 @@ def rows_under(conn, folder):
 # ---- What refresh_rows_from_files reads and writes --------------------------------------
 
 def rows_to_check(conn, folder=None):
-    """(path, mtime, size, tags JSON, captions JSON, raw_metadata JSON, people JSON, id)
-    of every photo, or of those under `folder`: what is compared with the files."""
-    query = ("SELECT p.path, p.mtime, p.size, p.tags, p.captions, p.raw_metadata, " + PEOPLE_JSON
-             + ", p.id FROM photos p")
+    """(path, mtime, size, tags JSON, captions JSON, raw_metadata JSON, id) of every photo, or of those under
+    `folder`: what is compared with the files."""
+    query = "SELECT p.path, p.mtime, p.size, p.tags, p.captions, p.raw_metadata, p.id FROM photos p"
     params = ()
     if folder:
         where, params = store_roots.sql_under(conn, "path", folder)

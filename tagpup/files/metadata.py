@@ -137,7 +137,7 @@ class MetadataExtractor:
             "mtime": mtime,
             "size": size,
             "tags": tags,
-            "people": vocabulary.extract_people(cleaned, tags, people),
+            "people": vocabulary.extract_people(tags, people),
             "captions": vocabulary.extract_captions(cleaned),
             "raw_metadata": cleaned,
             "document_id": read_document_id(cleaned),

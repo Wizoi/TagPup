@@ -16,7 +16,7 @@
  */
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadApp, FakeServer, closeAllApps } from "./harness.mjs";
+import { loadApp, FakeServer, closeAllApps, PEOPLE_ROUTE } from "./harness.mjs";
 
 const NAME = "Unknown Faces";
 const GUESS = "Imogen Vale";
@@ -67,7 +67,7 @@ async function openGrid(t, { clusterSize = 6, matchReply, matchStatus = 200,
     .on("/api/history/31/undo", { success: true, changed: 3, errors: [] })
     .on("/api/faces/restore", { success: true })
     .on("/api/people-with-counts", [])
-    .on("/api/people", [GUESS]);
+    .on(PEOPLE_ROUTE, [{ id: 31, name: GUESS, tag: `People/${GUESS}` }]);
 
   const { window, document } = await loadApp("tagtuner", {
     server,

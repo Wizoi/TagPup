@@ -55,12 +55,12 @@ class FaceRootsAreTheTrees(unittest.TestCase):
 
     def test_a_keyword_under_a_root_the_tree_does_not_flag_names_nobody(self):
         self.write(lambda conn: taxonomy.add_path(conn, "Friends/Ansel Ditmore"))
-        people = vocabulary.extract_people({}, ["Friends/Ansel Ditmore"], self.vocabulary())
+        people = vocabulary.extract_people(["Friends/Ansel Ditmore"], self.vocabulary())
         self.assertEqual([], people)
 
     def test_a_keyword_under_a_root_the_tree_flags_names_its_leaf(self):
         self.write(lambda conn: taxonomy.add_path(conn, "Crew/Ansel Ditmore", root_has_face=1))
-        people = vocabulary.extract_people({}, ["Crew/Ansel Ditmore"], self.vocabulary())
+        people = vocabulary.extract_people(["Crew/Ansel Ditmore"], self.vocabulary())
         self.assertEqual(["Ansel Ditmore"], people)
 
     def test_everyone_under_a_flagged_people_root_is_a_person_to_the_indexer(self):
@@ -73,7 +73,7 @@ class FaceRootsAreTheTrees(unittest.TestCase):
 
     def test_an_empty_tree_is_a_new_librarys(self):
         # The indexer resolves a new library's people before it first saves its tree.
-        people = vocabulary.extract_people({}, ["People/Wren Halloway"], self.vocabulary())
+        people = vocabulary.extract_people(["People/Wren Halloway"], self.vocabulary())
         self.assertEqual(["Wren Halloway"], people)
 
     def test_a_caption_files_people_by_the_trees_roots(self):

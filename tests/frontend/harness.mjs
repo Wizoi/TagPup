@@ -258,7 +258,7 @@ export class FakeServer {
   }
 
   /**
-   * Reply with `body` (JSON-encoded) for any URL containing `match`.
+   * Reply with `body` (JSON-encoded) for any URL containing `match` (a string), or that `match` (a RegExp) matches.
    *
    * `body` may be a function of the URL returning the body or a promise of it, for a
    * reply that has to arrive later -- a scan still running while someone types.
@@ -307,8 +307,9 @@ export class FakeServer {
       // Match on the path regardless of a leading slash: the apps issue both
       // absolute ("/api/x") and relative ("api/x") URLs, and a relative one would
       // otherwise fall through to the default empty reply.
-      const route = self.routes.find(
-        (r) => url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
+      const route = self.routes.find((r) => (typeof r.match === "string"
+        ? url.includes(r.match) || url.includes(r.match.replace(/^\//, ""))
+        : r.match.test(url))
       ) || (url.includes("api/rules") ? { body: PUBLISHED_RULES, status: 200 } : undefined);
       const status = route ? route.status : 200;
       const headers = (route && route.headers) || {};
@@ -381,7 +382,13 @@ export class RealServer extends FakeServer {
 }
 
 /**
- * The people /api/people?records=1 answers for the tree `nodes` (as /api/taxonomy/tree sends it), as
+ * The match of the people reads alone -- /api/people and /api/people?include_hidden=1 -- not of /api/people-with-counts,
+ * /api/people-faces and the rest, which the text "/api/people" is the start of.
+ */
+export const PEOPLE_ROUTE = /\/api\/people(\?|$)/;
+
+/**
+ * The people /api/people?include_hidden=1 answers for the tree `nodes` (as /api/taxonomy/tree sends it), as
  * tagpup.store.person_ids.People.read makes them: each node marked as holding faces with no node under it, but an
  * empty People (where a new library files people), as {id, name, tag}. A page told of a tree with people and of no
  * records holds a shape no server sends (docs/findings.md, #1358).
