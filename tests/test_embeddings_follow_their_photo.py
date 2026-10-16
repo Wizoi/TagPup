@@ -8,7 +8,9 @@ folder left its photos' vectors behind.
 
 Lifted: test_rename_moves_suggestions_and_embeddings. Its two route tests are the rename in test_suggest_then_apply_all
 (mutation: a rename that deletes the suggestions row, or the vectors, fails it); its swap is below (mutation: the
-rename's placeholder step removed, so a swap collides on the unique path, fails it).
+rename's placeholder step removed, so a swap collides on the unique path, fails it). A rename keeping the vectors and a
+folder's removal taking them are scenario V9 (test_suggest_then_apply_all, through the routes; mutation: move_rows_in
+deleting the photo's vectors, or remove_under deleting no photo, fails it).
 """
 import os
 import sys
@@ -109,11 +111,6 @@ class Vectors(unittest.TestCase):
         self.assertEqual(1, photo_actions.rotate(self.lib.library, self.photo, "right", "exiftool").changed)
         self.assertIsNone(self.stored())
 
-    def test_a_rename_keeps_them(self):
-        renamed = os.path.join(os.path.dirname(self.photo), "renamed.jpg")
-        photo_rows.move(self.lib.library.path, {self.photo: renamed})
-        self.assertEqual(VECTOR, self.stored(photo=renamed).vector)
-
     def test_two_photos_swapping_names_swap_their_vectors(self):
         # path is the photos table's unique key, so a swap passes through placeholders (the Smart Rename that
         # shuffles numbered files among themselves). The rename's own suggestions: test_suggest_then_apply_all.
@@ -125,15 +122,6 @@ class Vectors(unittest.TestCase):
     def test_deleting_the_photo_takes_them(self):
         self.keep(OTHER, 1.0, 1)
         photos.forget_photo(self.lib.library.path, self.photo)
-        self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM embeddings"))
-
-    def test_removing_the_folder_takes_them(self):
-        conn = db.connect(self.lib.library.path)
-        try:
-            photos.remove_under(conn, os.path.dirname(self.photo))
-            conn.commit()
-        finally:
-            conn.close()
         self.assertEqual([(0,)], self.lib.rows("SELECT COUNT(*) FROM embeddings"))
 
     def test_each_model_keeps_its_own(self):
