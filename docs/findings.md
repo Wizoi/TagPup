@@ -32,3 +32,6 @@ Findings fixed before 2026-09-23 are in the git log (`git log --grep="^fix"`). T
 
 | # | Found | Finding | Status |
 |---|---|---|---|
+| 1518 | 2026-10-16 | low: `tools/retro_metrics.py` counts a merge's size against the 1,200-line budget as added plus removed lines, so a deletion reads as over budget: the data file of 2026-10-16 says 74 of 134 trunk merges are over; counted with added lines only it is 33 of 49 before the freeze and 4 of 85 after (49 of those 85 net-negative). Count added lines (or both, side by side). Retro 2026-10-16, section 2. | open |
+| 1519 | 2026-10-16 | low: `tools/retro_metrics.py` reports sessions per day as distinct session ids per day (1 on each day), which hides that one main transcript spans 2026-10-02 to 2026-10-16 with 4 compact boundaries (meta fields `sessionId`, `type: system`, `subtype: compact_boundary`); "compactions" is listed as not counted. Report main sessions over the window and their compactions. Retro 2026-10-16, section 2. | open |
+| 1520 | 2026-10-16 | low: `tools/retro_metrics.py` cannot tie a subagent run to a branch, so review rounds per branch and runs never merged are not counted; a subagent transcript's `cwd` (a meta field, not text) names its worktree and so its branch. Retro 2026-10-16, open question 1. | open |

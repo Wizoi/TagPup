@@ -18,20 +18,9 @@ three; a listed person with no id: 0 in all three; a person hidden from autocomp
 
 ## The seven conditions (2026-10-15)
 
-1. **No reach-ins.** Met in the code; four contract rows are still to be written into the Integration charter's table (the
-   main session's: the agents' definitions are not edited by a worker). They are #1471's uses, each checked by grep today:
-   - V (`core/suggesting`), D (`core/validation`, `store/derived`), F (`files/metadata`, `services/tagging`, `bulk_edit`,
-     `refresh_rows`, `store/photos`), I (`web/tagpup_routes`) -> P (`core/vocabulary`): a tag is taken apart, a person's tag
-     built and a keyword compared only there. Guard: `tests/test_vocabulary.py`, `tests/test_rules_have_one_owner.py`.
-   - F (`services/photos`, `refresh_rows`, `tagging`, `search.PhotoIndex`), I (`services/inspect`) -> P
-     (`store/taxonomy.people_vocabulary`, `read_people_vocabulary`): who a photo's keywords name is read from the library's own
-     tree, once for a batch, made from `person_ids.People`. Guard: `tests/test_group_tag_is_not_a_person.py`,
-     `tests/test_metadata_extraction.py` (TestExtractPeopleWithATaxonomy).
-   - F (`services/photos`, `refresh_rows`) -> P (`store/faces.face_refs`, `crop_of`, `cache_crop`): a photo's faces as
-     Refs, a face's crop read and kept through the faces store. Guard: `tests/test_photo_people_follow_their_sources.py`,
-     `tests/test_service_page_images.py`.
-   - D (`services/libraries.create`) -> P (`store/taxonomy.seed`): a new library's tree holds People only. Guard:
-     `tests/test_face_roots_are_the_trees.py`.
+1. **No reach-ins.** Met. The uses of People's internals by other domains are rows of the Integration charter's contract
+   table: `core/vocabulary` (row 60), `people_vocabulary` / `read_people_vocabulary` (61), `face_refs` / `crop_of` /
+   `cache_crop` (62), `taxonomy.seed` (63), each with its guard test.
 2. **No rule written twice.** Met.
    - Who is a person and who a group: `person_ids.People`, alone. `taxonomy.vocabulary_of` builds the `PeopleVocabulary`
      from its listing and groups; `PeopleVocabulary.from_rows` (its own roots, categories and groups) and
