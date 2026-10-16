@@ -1,6 +1,6 @@
 /**
  * A caption saved whose rename then failed (findings #884). The replies are the real route's
- * (tests/test_save_reply_says_rename_failed.py writes fixtures/save_replies.json): the page says the caption saved and the
+ * (tests/test_tag_a_photo_read_it_back_and_undo.py, ASaveFromThePage, writes fixtures/save_replies.json): the page says the caption saved and the
  * photo kept its name, says it once however often the save is repeated, and says plain "Saved" when no rename was wanted.
  */
 import fs from "node:fs";
