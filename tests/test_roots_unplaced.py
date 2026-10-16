@@ -14,6 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
@@ -65,7 +66,7 @@ class WithoutTheMap(RootedCase):
     def test_a_write_is_refused_too_so_no_row_is_written_that_cannot_be_read(self):
         from tagpup.core import paths
         with self.assertRaises(paths.UnmappedRoot):
-            store_photos.move_rows(self.side.db_path, {self.side.real[0]: self.side.real[0] + ".x"})
+            photo_rows.move(self.side.db_path, {self.side.real[0]: self.side.real[0] + ".x"})
         self.assertIn("@pictures/2024 Regatta/IMG_1001.jpg", self.side.raw_paths())
 
     def test_the_library_file_is_untouched_by_the_refusals(self):

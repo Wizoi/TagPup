@@ -14,7 +14,7 @@ from service_fixture import TempLibrary  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.jobs.suggestions import SuggestionRuns  # noqa: E402
-from tagpup.store import photos as photo_rows  # noqa: E402
+import photo_rows  # noqa: E402
 
 
 class Model:
@@ -91,7 +91,7 @@ class RenamedPhotos(RunsCase):
         self.runs.run(self.folder, Work(self.photos))
         old = paths.stored(os.path.join(self.folder, "a.jpg"))
         new = paths.stored(os.path.join(self.folder, "Regatta - 1.jpg"))
-        self.assertEqual(photo_rows.move_rows(self.lib.library.path, {old: new})[0], 1)
+        self.assertEqual(photo_rows.move(self.lib.library.path, {old: new})[0], 1)
         # What a process started afresh finds: they are in the library.
         saved = SuggestionRuns(self.lib.library.path).suggestions(self.folder)
         self.assertIn(new, saved)

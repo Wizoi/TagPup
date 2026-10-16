@@ -15,6 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 import own_home  # noqa: E402
 import roots_library as rl  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -26,7 +27,7 @@ from tagpup.files import images, shares, thumbs  # noqa: E402
 from tagpup.services import thumbnails  # noqa: E402
 from tagpup.services import faces as face_actions  # noqa: E402
 from tagpup.services import photos as photo_actions  # noqa: E402
-from tagpup.store import db, photos  # noqa: E402
+from tagpup.store import db  # noqa: E402
 
 
 def entries_of(library):
@@ -163,7 +164,7 @@ class AFileThatChanges(Cache):
         before = entries_of(self.library)
         new_path = os.path.join(os.path.dirname(self.path), "renamed.jpg")
         os.rename(self.path, new_path)
-        moved, skipped = photos.move_rows(self.library.path, {self.path: new_path})
+        moved, skipped = photo_rows.move(self.library.path, {self.path: new_path})
         self.assertEqual((1, []), (moved, skipped))
         with self.renders() as render:
             self.serve()
@@ -180,7 +181,7 @@ class AFileThatChanges(Cache):
         self.serve()
         folded = os.path.join(os.path.dirname(self.path), "BOAT.JPG")
         os.rename(self.path, folded)
-        photos.move_rows(self.library.path, {self.path: folded})
+        photo_rows.move(self.library.path, {self.path: folded})
         with self.renders() as render:
             self.serve()
         self.assertEqual(0, render.call_count)

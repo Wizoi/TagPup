@@ -15,12 +15,13 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 from people_by_id import MAX_FRIEND, MAX_PET, SAM_I, SAM_T, TwoSams, look, write  # noqa: E402
 
 from tagpup.core import vocabulary  # noqa: E402
 from tagpup.core.result import NotFound, Refused, Result  # noqa: E402
 from tagpup.services import tags as tags_service  # noqa: E402
-from tagpup.store import db, faces, person_ids, photos, taxonomy  # noqa: E402
+from tagpup.store import db, faces, person_ids, taxonomy  # noqa: E402
 
 
 def stand_in_for_the_files(case):
@@ -36,7 +37,7 @@ def stand_in_for_the_files(case):
                 result.fail(path, "the file is open elsewhere")
             else:
                 held = json.loads(look(case.path, "SELECT tags FROM photos WHERE path = ?", (path,))[0][0])
-                photos.record_tags(library.path, path, vocabulary.retag(held, old, new)[0])
+                photo_rows.tag(library.path, path, vocabulary.retag(held, old, new)[0])
         return result
 
     patcher = mock.patch("tagpup.services.tagging.replace_tag", side_effect=replace_tag)

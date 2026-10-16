@@ -17,6 +17,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 
 import own_home  # noqa: E402
 
@@ -102,7 +103,7 @@ class OneBatchForALoop(WithABigTree):
         paths = self.seed(2000)
         renames = {path: path.replace("IMG_", "Regatta_") for path in paths}
         with self.counted() as seen:
-            moved, skipped = photos.move_rows(self.path, renames)
+            moved, skipped = photo_rows.move(self.path, renames)
         self.assertEqual((2000, []), (moved, skipped))
         self.assertEqual(1, seen["locks"], "the rows of every photo are moved under one taking of the write lock")
         self.assertEqual(1, seen["tree_reads"], "and the tree is read once for all of them")

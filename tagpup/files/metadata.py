@@ -64,20 +64,6 @@ def structured(meta):
 READ_ERROR_KEYS = ("ExifTool:Error", "Error")
 
 
-def exiftool_starts(exiftool_path):
-    """(True, None) if ExifTool starts at `exiftool_path` (None: on PATH), else (False, why): what a run that read none of its
-    files asks, to tell a program that is not there from files that are damaged."""
-    executable = exiftool_path
-    if executable and not os.path.isabs(executable):
-        executable = os.path.abspath(executable)
-    try:
-        with ExifToolSession(executable=executable) as et:
-            et.version   # noqa: B018 (asking starts it)
-        return True, None
-    except Exception as e:
-        return False, "%s: %s" % (type(e).__name__, e)
-
-
 class MetadataExtractor:
     """Reads photos' metadata; never writes into a photo. Giving a photo an identity is
     IdentityWriter's, after its picture has decoded."""

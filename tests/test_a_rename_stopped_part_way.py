@@ -11,7 +11,7 @@ here, the rows seeded as the indexer stores them; a crash is a BaseException at 
 
 Lifted: test_rename_settle_knows_a_copy (its two plans-without-file-ids tests are deleted: no live plan lacks an id),
 test_a_case_only_rename_settles (#283), test_smart_rename_stays_put and test_rename_keeps_the_index (15 tests of
-store.photos.move_rows, the unit under every real rename here; #298 is its route guard, which inspected source and is
+store.photos.move_rows_in, the unit under every real rename here; #298 is its route guard, which inspected source and is
 deleted: the real renames show the rows move). Each was broken in a scratch copy and this file fails: _holds knowing a
 file by size and modified time alone with a file under both names no longer a conflict (the copy tests: the copy is taken
 for the photo); _settle_renames without its case-only branch (both case-only tests); move_rows_in treating a name another

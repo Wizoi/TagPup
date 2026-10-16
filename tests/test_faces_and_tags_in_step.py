@@ -17,11 +17,12 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 from test_organize_faces import Case, ODA, WREN  # noqa: E402
 
 from tagpup.core import paths  # noqa: E402
 from tagpup.services import journal as journal_service  # noqa: E402
-from tagpup.store import checks, db, faces, people, photos, taxonomy  # noqa: E402
+from tagpup.store import checks, db, faces, people, taxonomy  # noqa: E402
 
 PEOPLE = "People/"
 
@@ -137,7 +138,7 @@ class NamingAddsThePersonToThePhoto(InStep):
         chosen = self.face(photo, name=ODA, name_source="manual")
         other = self.face(photo, box=(70, 10, 110, 60))
         self.files.keep_tags(photo, [PEOPLE + ODA, PEOPLE + WREN])
-        photos.record_tags(self.path, photo, [PEOPLE + ODA, PEOPLE + WREN])
+        photo_rows.tag(self.path, photo, [PEOPLE + ODA, PEOPLE + WREN])
         self.assertEqual(WREN, self.row(other)[0], "the rule gave the other face the name as a guess")
         reply = self.post("face/match", {"face_id": chosen, "person_name": WREN, "page_writes_tags": True})
         self.assertEqual(200, reply.status_code, reply.get_json())
@@ -253,7 +254,7 @@ class AKeywordWriteKeepsThePeopleOnlyAFaceNames(InStep):
         photo = self.held("kept_001.jpg", ["Regatta"])
         self.face(photo, name=WREN, name_source="manual")
         self.assertEqual([(WREN, "face")], self.indexed_people())
-        photos.record_tags(self.path, photo, ["Regatta", "Event/Classic"])
+        photo_rows.tag(self.path, photo, ["Regatta", "Event/Classic"])
         self.assertEqual([(WREN, "face")], self.indexed_people(), "a keyword write rebuilt the people from keywords alone")
         self.photo("kept_001.jpg", ["Regatta"])               # the indexer reads the changed file again
         self.assertEqual([(WREN, "face")], self.indexed_people(), "a re-index took the person off")

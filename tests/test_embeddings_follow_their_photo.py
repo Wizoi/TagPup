@@ -16,6 +16,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 import fake_exiftool  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
@@ -63,12 +64,12 @@ class Vectors(unittest.TestCase):
 
     def test_a_keyword_write_keeps_the_vector_for_the_file_it_leaves(self):
         before, stat = self.written_by_the_app()
-        photos.record_tags(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
+        photo_rows.tag(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
         self.assertEqual((stat.st_mtime, stat.st_size), self.stored()[:2])
 
     def test_a_caption_or_a_time_shift_keeps_it_too(self):
         before, stat = self.written_by_the_app()
-        photos.record_file_stat(self.lib.library.path, self.photo, before=before)
+        photo_rows.written(self.lib.library.path, self.photo, {"XMP:Description": "At the beach"}, before=before)
         self.assertEqual((stat.st_mtime, stat.st_size), self.stored()[:2])
 
 
@@ -78,20 +79,20 @@ class Vectors(unittest.TestCase):
         # vector was carried onto the new file (#84).
         stored = self.stored()
         self.change_the_file()
-        photos.record_tags(self.lib.library.path, self.photo, ["Places/Beach"])
+        photo_rows.tag(self.lib.library.path, self.photo, ["Places/Beach"])
         self.assertEqual(stored, self.stored())
 
     def test_a_file_changed_elsewhere_and_then_tagged_in_the_app_is_embedded_again(self):
         stored = self.stored()
         self.change_the_file()
         before, _stat = self.written_by_the_app()
-        photos.record_tags(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
+        photo_rows.tag(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
         self.assertEqual(stored, self.stored())
 
     def test_a_vector_already_stale_is_not_made_current_by_a_write(self):
         self.keep(MODEL, 1.0, 1)
         before, _stat = self.written_by_the_app()
-        photos.record_tags(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
+        photo_rows.tag(self.lib.library.path, self.photo, ["Places/Beach"], before=before)
         self.assertEqual((1.0, 1), self.stored()[:2])
 
     def test_an_embedding_without_its_model_is_refused(self):
@@ -110,7 +111,7 @@ class Vectors(unittest.TestCase):
 
     def test_a_rename_keeps_them(self):
         renamed = os.path.join(os.path.dirname(self.photo), "renamed.jpg")
-        photos.move_rows(self.lib.library.path, {self.photo: renamed})
+        photo_rows.move(self.lib.library.path, {self.photo: renamed})
         self.assertEqual(VECTOR, self.stored(photo=renamed).vector)
 
     def test_two_photos_swapping_names_swap_their_vectors(self):
@@ -118,7 +119,7 @@ class Vectors(unittest.TestCase):
         # shuffles numbered files among themselves). The rename's own suggestions: test_suggest_then_apply_all.
         other, vector = self.lib.photo("dunes.jpg"), b"\x00\x00\x00\x40" * 4
         self.keep(MODEL, 1.0, 1, photo=other, vector=vector)
-        photos.move_rows(self.lib.library.path, {self.photo: other, other: self.photo})
+        photo_rows.move(self.lib.library.path, {self.photo: other, other: self.photo})
         self.assertEqual((VECTOR, vector), (self.stored(photo=other).vector, self.stored(photo=self.photo).vector))
 
     def test_deleting_the_photo_takes_them(self):
@@ -146,11 +147,12 @@ class Vectors(unittest.TestCase):
             other_photo = self.lib.photo("dunes.jpg")
             embeddings.put(conn, other_photo, OTHER, 1.0, 1, VECTOR)
             conn.commit()
-            vectors = {path: vector for path, *_rest, vector in photos.index_rows(conn, MODEL)}
+            vectors = dict(photos.vectors(conn, MODEL))
+            (photo_id,), (other_id,) = photos.ids_at(conn, [self.photo]), photos.ids_at(conn, [other_photo])
         finally:
             conn.close()
-        self.assertEqual(VECTOR, vectors[self.photo])
-        self.assertIsNone(vectors[other_photo])
+        self.assertEqual(VECTOR, vectors[photo_id])
+        self.assertNotIn(other_id, vectors)
 
 
 class AnEmbedding(unittest.TestCase):

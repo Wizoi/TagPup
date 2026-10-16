@@ -52,11 +52,6 @@ def _read_files(found, fields, exiftool_path):
     return rows
 
 
-def read_files(found, fields, exiftool_path=None):
-    """(SourceFile, row) of each photo in `found`, read for `fields` (_read_files, public)."""
-    return _read_files(list(found), list(fields), exiftool_path)
-
-
 def _by_identity(rows):
     """{DocumentID: the file claiming it} of what ExifTool answered, an identity two files
     claim left out."""

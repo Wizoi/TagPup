@@ -28,7 +28,7 @@ import web_client  # noqa: E402
 import fake_exiftool  # noqa: E402
 
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.store import db, faces, people, photos, taxonomy  # noqa: E402
+from tagpup.store import db, faces, people, taxonomy  # noqa: E402
 from tagpup.web import app as web  # noqa: E402
 from tagpup.web import tuner_routes  # noqa: E402
 
@@ -246,7 +246,7 @@ class NamingFromABox(Case):
         photo = self.photo("regatta_005.jpg")
         first, second, third = (self.face(photo, box=(5 + 20 * n, 5, 20 + 20 * n, 25)) for n in range(3))
         # The page's save of the keyword (its own flow), as the index records it.
-        photos.record_tags(self.path, photo, ["People/" + WREN])
+        photo_rows.tag(self.path, photo, ["People/" + WREN])
         self.assertEqual([(None,)] * 3, self.look("SELECT name FROM faces ORDER BY id"),
                          "three faces and one person are not decided by the tag alone (#788)")
         reply = self.post("face/match", {"face_id": second, "person_name": WREN})
@@ -265,7 +265,7 @@ class NamingFromABox(Case):
     def test_naming_the_name_a_tag_gave_makes_it_the_persons_decision(self):
         photo = self.photo("regatta_006.jpg")
         face = self.face(photo)
-        photos.record_tags(self.path, photo, ["People/" + WREN])        # one face, one person: named by the tag
+        photo_rows.tag(self.path, photo, ["People/" + WREN])        # one face, one person: named by the tag
         self.assertEqual((WREN, None), self.row(face)[:2])
         reply = self.post("face/match", {"face_id": face, "person_name": WREN})
         self.assertEqual(1, reply.get_json()["changed"])
@@ -294,13 +294,13 @@ class NamingFromABox(Case):
         photo = self.photo("regatta_009.jpg", ["People/" + WREN])
         self.files.keep_tags(photo, ["People/" + WREN])
         face = self.face(photo)
-        photos.record_tags(self.path, photo, ["People/" + WREN])
+        photo_rows.tag(self.path, photo, ["People/" + WREN])
         self.assertEqual(WREN, self.row(face)[0])
         self.post("face/unmatch", {"face_id": face})
         self.assertEqual((None, "manual"), self.row(face)[:2])
         self.assertEqual([], self.look("SELECT name FROM photo_people"))
         self.assertEqual([], self.files.tags_of(photo))
-        photos.record_tags(self.path, photo, ["People/" + WREN])          # saved again: not renamed
+        photo_rows.tag(self.path, photo, ["People/" + WREN])          # saved again: not renamed
         self.assertEqual((None, "manual"), self.row(face)[:2])
 
     def test_a_write_is_refused_while_the_library_is_being_clustered(self):

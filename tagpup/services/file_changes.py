@@ -14,7 +14,7 @@ per file. dpkg's per-item states, and its recovery at start, are the model here:
 2. **Write**, a file at a time: read it again, and if it no longer holds what the plan
    read, it is a `conflict` -- changed outside since -- reported and never overwritten.
    Otherwise mark it `writing`, write it, and in one transaction record its row
-   (tagpup.store.photos.follow_fields, which record_tags' rule generalises) and mark it
+   (tagpup.store.photos.follow_fields) and mark it
    `done`. Then the files written are read back, in one read, and a file that does not
    hold quite what was written -- IPTC cuts a keyword at 64 bytes -- is recorded, in the
    journal and its row, as it holds it (_read_back). The change is `applied` once every

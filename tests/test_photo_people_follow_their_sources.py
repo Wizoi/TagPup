@@ -11,6 +11,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import photo_rows  # noqa: E402
 from face_rows import add_face, people_of, person_of  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 
@@ -88,7 +89,7 @@ class PhotoPeople(unittest.TestCase):
     def test_a_keyword_write_keeps_whom_a_face_names(self):
         face_id = self.face()
         self.write(lambda conn: faces.name(conn, [face_id], ODA))
-        photos.record_tags(self.lib.library.path, self.photo, ["Places/Dunes"])
+        photo_rows.tag(self.lib.library.path, self.photo, ["Places/Dunes"])
         self.assertEqual([ODA], self.listed())
 
     def test_a_root_flagged_as_holding_faces_names_the_people_under_it(self):
@@ -127,8 +128,8 @@ class PhotoPeople(unittest.TestCase):
         self.assertGreater(self.read(lambda conn: generations.value(conn, "photos")), before)
 
     def test_readers_see_them_as_the_list_they_always_had(self):
-        rows = self.read(lambda conn: photos.index_rows(conn, "any model"))
-        self.assertEqual('["%s"]' % WREN, rows[0][4])
+        rows = self.read(lambda conn: photos.records(conn, "any model"))
+        self.assertEqual('["%s"]' % WREN, rows[0][photos.RECORD_COLUMNS.index("people")])
 
     def test_the_doctor_finds_a_photo_whose_people_were_written_by_hand(self):
         self.write(lambda conn: conn.execute("UPDATE photo_people SET name = 'Somebody Else'"))
