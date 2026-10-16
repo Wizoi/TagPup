@@ -10,6 +10,8 @@ the share only, the library is the one the indexer makes; fictional names.
 A sync that cannot look at a folder -- a root on a share asleep, a folder whose listing fails or drops part-way -- counts
 the rows under it as "not looked at", neither missing nor paired with a copy elsewhere, and leaves the library not in step
 (owner, 2026-10-15; #1356). A sync stopped part-way writes nothing: its look is a dry read and its rows one change after.
+"Not looked at" is for a SHARE only: a local drive letter that is not connected is a root gone and its rows missing, as
+before #1356 (owner, 2026-10-15: no USB drives; #1387).
 
 Lifted: test_unreachable_is_not_missing (#566; its gzip q=0 test went to test_gzip_json) and test_membership_is_bounded
 (#568 #570 #721). Mutation proof: shares.bounded calling `call()` through with no deadline fails
@@ -31,11 +33,13 @@ import share_waits  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
+from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
-from tagpup.services import inspect, library_view, settings, sync, tagging  # noqa: E402
+from tagpup.services import activity, inspect, library_view, settings, sync, tagging  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
 from tagpup.store import db  # noqa: E402
+from tagpup.store import photos as store_photos  # noqa: E402
 
 #: When every photo of a sync's library was last written.
 THEN = 1_700_000_000
@@ -95,7 +99,7 @@ class ASleepingShare(unittest.TestCase):
         said = []
         doctor.report(self.vl.path, out=said.append)
         self.assertIn("rows whose file is not on disk: 0, in 0 folder(s); 0 folder(s) are gone entirely; 3 row(s) not "
-                      "looked at (their drive or share did not answer, or the file could not be read)", said)
+                      "looked at (their share did not answer, or the file could not be read)", said)
 
 
 class ASyncThatCannotLookAtAFolder(unittest.TestCase):
@@ -185,6 +189,48 @@ class ASyncThatCannotLookAtAFolder(unittest.TestCase):
         self.assertEqual([], waits, "the share taken as away is answered at once for the second library")
         self.assertEqual((sorted(taken), sorted(taken)), (self.paths_of(regatta), self.paths_of(crew)))
 
+    def a_drive_not_connected(self):
+        """A local drive letter this machine has nothing on: where the photos of a drive unplugged are spelled."""
+        for letter in "QRSTUVWXYZ":
+            drive = letter + ":" + os.sep
+            if not recycle_bin.on_a_network_drive(drive) and not os.path.exists(drive):
+                return drive
+        self.skipTest("every drive letter from Q to Z is in use")
+
+    def test_a_root_on_a_local_drive_not_connected_is_gone_and_its_rows_missing_and_one_on_a_share_asleep_is_not(self):
+        """#1387: a local drive letter that did not answer was taken for a share asleep -- its root "not looked at" and the
+        library never in step -- where it was, and is again, a root gone with its rows missing (reported, never removed)."""
+        unplugged = os.path.join(self.a_drive_not_connected(), "Pictures")
+        share = os.path.join(self.home.root, "NAS", "Pictures")
+        on_share = [self.photo(os.path.join(share, "2019 Regatta"), "IMG_%04d.jpg" % n) for n in range(3)]
+        # The rows of the drive as the indexer recorded them while it was connected: a read of a file of that stamp.
+        made = [self.photo(os.path.join(self.home.root, "Was on the drive"), "DSC_%04d.jpg" % n) for n in range(2)]
+        on_drive = [os.path.join(unplugged, "2018 Harbour", os.path.basename(path)) for path in made]
+        library = self.library("regatta.db", on_share)
+        conn = db.connect(library.path)
+        try:
+            for path, read_from in zip(on_drive, made):
+                store_photos.record_indexed(conn, path, dict(photo_rows.as_read(read_from, {}), path=path))
+            conn.commit()
+        finally:
+            conn.close()
+        self.asleep(share)
+        with mock.patch.object(shares, "SHARE_WAIT", 0.05):
+            result = sync.sync(library, apply=True, roots=[unplugged, share])
+            found = inspect.missing_files(library)
+            roots = activity.roots_there([unplugged, share])
+        counts = result.details["counts"]
+        self.assertTrue(result.ok, result.message())
+        self.assertEqual({"roots_gone": 1, "missing": 2, "folders_gone": 1, "not_looked_at": 3, "folders_not_looked_at": 1},
+                         {what: counts[what] for what in ("roots_gone", "missing", "folders_gone", "not_looked_at",
+                                                          "folders_not_looked_at")})
+        self.assertEqual([unplugged], result.details["reveal"]["roots_gone"])
+        self.assertFalse(result.details["in_step"], "a share asleep leaves the library not in step")
+        self.assertEqual((2, 1, 1, 3), (found["rows"], found["folders"], found["folders_gone"], found["not_looked_at"]))
+        self.assertEqual([(False, True), (False, False)], [(root["there"], root["answering"]) for root in roots],
+                         "the drive is missing, the share not answering")
+        self.assertEqual(sorted(on_share + on_drive), self.paths_of(library), "nothing was removed")
+
     def test_a_folder_synced_alone_takes_no_row_on_a_share_asleep_for_a_file_moved_in(self):
         share = os.path.join(self.home.root, "NAS", "Pictures")
         taken = [self.photo(os.path.join(share, "2019 Regatta"), "IMG_0001.jpg")]
@@ -249,6 +295,26 @@ class ASyncThatCannotLookAtAFolder(unittest.TestCase):
         self.assertIn("not answering", result.refused or "")
         self.assertEqual([], queued)
 
+    def test_a_share_whose_listing_failed_for_a_thousand_folders_sorts_its_rows_within_a_second(self):
+        """#1442: each row the walk did not see was compared with every folder not looked at (two paths.key each), so
+        1,282 unlisted folders of the 2,564-folder library cost about 125 s; its parents are asked of the folders' keys."""
+        share = os.path.join(self.home.root, "NAS", "Pictures")
+        folders = [os.path.join(share, "%04d Regatta" % n, "Day %d" % (n % 7)) for n in range(1000)]
+        rows = {}
+        for n in range(3000):
+            path = os.path.join(folders[n % 1000] if n % 2 else os.path.join(share, "Elsewhere", "%04d" % n),
+                                "IMG_%04d.jpg" % n)
+            rows[paths.key(path)] = (n + 1, path, THEN, 100)
+        started = time.perf_counter()
+        missing, unseen = sync._unseen(rows, {}, folders)
+        self.assertLess(time.perf_counter() - started, 1.0)
+        self.assertEqual((1500, 1500), (len(missing), len(unseen)))
+        unc = os.sep * 2 + "nas" + os.sep + "photos"
+        for folder, under, answer in ((unc + os.sep + "2019", unc, True), (unc + "2" + os.sep + "2019", unc, False),
+                                      (unc, unc + os.sep, True), (os.path.join("C:" + os.sep, "a"), "C:" + os.sep, True),
+                                      (os.path.join("C:" + os.sep, "ab"), os.path.join("C:" + os.sep, "a"), False)):
+            self.assertEqual(answer, sync._under_any(folder, {paths.key(under): under}), (folder, under))
+
     def test_a_listing_that_drops_part_way_leaves_the_photos_it_did_not_reach_not_looked_at(self):
         pictures = os.path.join(self.home.root, "Pictures")
         harbour = os.path.join(pictures, "2020 Harbour")
@@ -312,14 +378,18 @@ class TheSyncCardOfARootOnAShareAsleep(unittest.TestCase):
 
 
 class ADriveThatSaysNotFound(unittest.TestCase):
-    def test_a_file_is_gone_only_when_the_place_it_was_on_answers(self):
-        """Lifted from test_unreachable_is_not_missing (#566); break: _stat_state not asking _root_answers."""
-        for path, drive_answers, gone in (("Q:\\Pictures\\a.jpg", False, False), ("Q:\\Pictures\\a.jpg", True, True),
-                                          ("pictures/a.jpg", False, True)):
+    def test_a_file_on_a_share_is_gone_only_when_the_share_answers_and_on_a_local_drive_when_it_is_not_there(self):
+        """Lifted from test_unreachable_is_not_missing (#566); break: _stat_state not asking _share_answers. A mapped
+        network drive is a share; a local drive letter that is not connected is a drive gone (#1387)."""
+        for path, network, drive_answers, gone in (("Q:\\Pictures\\a.jpg", True, False, False),
+                                                   ("Q:\\Pictures\\a.jpg", True, True, True),
+                                                   ("Q:\\Pictures\\a.jpg", False, False, True),
+                                                   ("pictures/a.jpg", False, False, True)):
             with mock.patch("tagpup.files.shares.os.stat", side_effect=FileNotFoundError(2, "not found")), \
-                    mock.patch("tagpup.files.shares.os.path.exists", return_value=drive_answers):
+                    mock.patch("tagpup.files.shares.os.path.exists", return_value=drive_answers), \
+                    mock.patch.object(shares, "on_a_network_drive", return_value=network):
                 present, left_out = tagging.leave_out_missing([path])
-            self.assertEqual((not gone, gone), (present == [path], left_out != []), (path, drive_answers))
+            self.assertEqual((not gone, gone), (present == [path], left_out != []), (path, network, drive_answers))
 
 
 class OneWalkAtATime(unittest.TestCase):

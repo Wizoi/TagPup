@@ -3,20 +3,28 @@ index command's skip of a photo it has, the embeddings cache, the thumbnail's ve
 refresh's re-read go by it, as sync does, and not by an `==` or a tolerance of their own. A photo whose modified time differs
 by less than the tolerance -- a copy on a drive that rounds times, a share that keeps whole
 milliseconds -- is current for all three; one that differs by more is not.
+
+A file another program changes while TagPup reads it leaves a row older than its file, which the next scan reads again:
+the stamp is taken before the read, by the indexer's read (MetadataExtractor) and a save's whole read back
+(file_changes._carry). Taken after, it stamped content read before the change as the newer file.
 """
 import os
 import sys
 import types
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from face_rows import configured_model  # noqa: E402
+from test_a_file_holds_what_exiftool_kept import ReadFilesCase  # noqa: E402
+from test_file_journal import EXIFTOOL  # noqa: E402
 from test_one_photo_whatever_its_spelling import CliDatabaseCase, expected_dim, make_jpeg  # noqa: E402
 
-from tagpup.services import refresh_rows, settings, thumbnails  # noqa: E402
+from tagpup.files import metadata  # noqa: E402
+from tagpup.services import file_changes, refresh_rows, settings, tagging, thumbnails  # noqa: E402
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
 
@@ -61,6 +69,53 @@ class SubSecondRounding(CliDatabaseCase):
             self.assertIsNone(PhotoEmbeddings(clip, index).cached(self.photo))
         finally:
             index.close()
+
+
+def touched_by_another_program(path):
+    """What another program's save does to the file's stamp: a newer modified time."""
+    os.utime(path, (os.stat(path).st_mtime + 30,) * 2)
+
+
+def describes_its_file(stamp, path):
+    now = os.stat(path)
+    return store_photos.describes(*stamp, (now.st_mtime, now.st_size))
+
+
+class AFileChangedWhileItIsRead(ReadFilesCase):
+    def test_the_indexers_read_stamps_the_file_as_it_was_before_the_read(self):
+        a = self.make("a.jpg", ("Beach",), row=False)
+
+        class Session:
+            def __init__(self, executable=None):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def get_tags(self, files, tags=None):
+                for path in files:
+                    touched_by_another_program(path)
+                return [{"SourceFile": path, "XMP:Subject": ["Beach"]} for path in files]
+        with mock.patch.object(metadata, "ExifToolSession", Session):
+            (record,) = metadata.MetadataExtractor().batch_read([a])
+        self.assertFalse(describes_its_file((record["mtime"], record["size"]), a),
+                         "a change made during the read was stamped as read")
+
+    def test_a_saves_row_is_stamped_as_the_file_was_before_its_read_back(self):
+        a = self.make_read("a.jpg")
+        real = file_changes._read_whole
+
+        def read_whole(et, row, read):
+            touched_by_another_program(row.path)
+            return real(et, row, read)
+        with mock.patch.object(file_changes, "_read_whole", read_whole):
+            saved = tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, EXIFTOOL, "")
+        self.assertTrue(saved.ok, saved.message())
+        stamp = self.rows("SELECT mtime, size FROM photos WHERE path = ?", (a,))[0]
+        self.assertFalse(describes_its_file(stamp, a), "a change made during the read back was stamped as read")
 
 
 class TheRefresh(unittest.TestCase):

@@ -642,7 +642,7 @@ class OneOwnerOfAShareBeingAway(unittest.TestCase):
     def test_and_the_other_way(self):                                                         # #474
         release = threading.Event()
         self.addCleanup(release.set)
-        with mock.patch.object(shares, "_stat_state", lambda path: release.wait(30)), \
+        with mock.patch.object(shares, "_stat_state", lambda path, on_a_share: release.wait(30)), \
                 mock.patch.object(shares, "SHARE_WAIT", 0.2):
             self.assertIs(shares.UNANSWERED, shares.stamp_of(self.SHARE + "\\2024\\a.jpg"))
         self.assertIn(shares.share_of(self.SHARE), shares._away)

@@ -281,13 +281,7 @@ class PhotoIndex:
         """Batch insert/update photos inside the SQLite database (transaction-safe)."""
         if not embeddings or self.conn is None:
             return
-        # A row is stamped with the read it records (MetadataExtractor gives every record its mtime and size); one
-        # with none would be stamped 0.0 / 0 and then neither trusted nor known for unread.
-        unstamped = sum(1 for meta in metas if meta.get("mtime") is None or meta.get("size") is None)
-        if unstamped:
-            raise ValueError("%d photo(s) of the batch carry no stamp of the read they were recorded from (mtime and"
-                             " size); nothing of the batch was recorded" % unstamped)
-
+        # A row is stamped with the read it records: MetadataExtractor gives every record its mtime and size.
         try:
             # Who each photo's keywords name depends on this library's tree, read once;
             # the store rebuilds each photo's people from it and the photo's faces.

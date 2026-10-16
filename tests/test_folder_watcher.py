@@ -239,16 +239,18 @@ class WhenNotificationsMayHaveBeenMissed(Base):
         self.wait_until(lambda: watcher.watched() == [paths.stored(self.root)])
         self.wait_until(lambda: ("harbour", None) in self.synced)
 
-    def test_a_watched_folder_whose_drive_stops_answering_keeps_its_watch_and_is_not_synced_whole(self):
-        """#1392: the watcher asked a bare os.path.isdir, so a root on a drive that stopped answering was let go as not
-        there, and its library synced whole when it answered again. Neither there nor gone, it keeps its watch."""
+    def test_a_watched_folder_whose_share_stops_answering_keeps_its_watch_and_is_not_synced_whole(self):
+        """#1392: the watcher asked a bare os.path.isdir, so a root on a share that stopped answering was let go as not
+        there, and its library synced whole when it answered again. Neither there nor gone, it keeps its watch. (A local
+        drive that is not connected is gone, #1387: test_a_watched_folder_removed_is_let_go_...)"""
         watcher = self.started(self.make())
         root = paths.key(self.root)
         real_isdir = os.path.isdir
         with mock.patch.object(os.path, "isdir", lambda path: False if paths.key(path) == root else real_isdir(path)), \
-                mock.patch("tagpup.files.shares._root_answers", lambda path: paths.key(path) != root):
+                mock.patch("tagpup.files.shares.on_a_network_drive", lambda path: paths.key(path) == root), \
+                mock.patch("tagpup.files.shares._share_answers", lambda path: paths.key(path) != root):
             time.sleep(0.8)   # four looks at the roots (recheck 0.2)
-            self.assertEqual([paths.stored(self.root)], watcher.watched(), "a drive that does not answer was let go")
+            self.assertEqual([paths.stored(self.root)], watcher.watched(), "a share that does not answer was let go")
         time.sleep(0.5)
         self.assertEqual([], self.synced, "synced whole as if it had come back")
 

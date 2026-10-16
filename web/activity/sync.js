@@ -18,12 +18,12 @@ export function loadSync() {
     });
 }
 
-/** The folders a sync could not look at (a share asleep): their rows were neither missing nor moved. */
+/** The folders a sync could not look at (a share asleep, a listing denied): their rows were neither missing nor moved. */
 function notLookedAt(found) {
     const folders = found ? found.folders_not_looked_at : 0;
     if (!folders) return null;
     return buildElement('span', { className: 'detail',
-        text: `${folders} folder${folders === 1 ? '' : 's'} not looked at (not answering or not listable)` });
+        text: `${folders} folder${folders === 1 ? '' : 's'} not looked at (share not answering or not listable)` });
 }
 
 function syncLine(label, record) {
@@ -43,7 +43,7 @@ function librarySync(library) {
     const roots = (library.roots || []).map(root => buildElement('li', {}, [
         buildElement('span', { className: 'path', text: root.path }),
         root.there ? badge('on disk', 'ok')
-            : root.answering === false ? badge('not answering', 'busy') : badge('missing', 'bad'),
+            : root.answering === false ? badge('share not answering', 'busy') : badge('missing', 'bad'),
         badge(root.watched ? 'watched' : 'not watched', root.watched ? 'ok' : 'quiet'),
     ]));
     const watcher = library.watcher;

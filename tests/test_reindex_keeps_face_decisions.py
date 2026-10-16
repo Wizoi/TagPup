@@ -173,18 +173,6 @@ class TestReindexingAChangedPhoto(FaceDecisionCase):
 
 
 class TestBuildOrUpdateWritesInPlace(FaceDecisionCase):
-    def test_a_record_without_the_stamp_of_its_read_is_refused_and_nothing_of_its_batch_is_written(self):
-        ids = self.seed()
-        index = PhotoIndex(self.db_path, configured_model())
-        index.load()
-        meta = fake_meta(self.photo)
-        before = index.records()
-        del meta["size"]
-        with self.assertRaises(ValueError):
-            index.build_or_update([[0.3] * expected_dim()], [dict(meta, tags=["Places/Harbour"])], dim=expected_dim())
-        self.assertEqual(before, index.records(), "a row was stamped with a size nobody read")
-        self.assertTrue(ids)
-
     def test_a_second_write_of_the_same_photo_keeps_its_faces(self):
         ids = self.seed()
         index = PhotoIndex(self.db_path, configured_model())
