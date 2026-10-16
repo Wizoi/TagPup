@@ -165,7 +165,7 @@ class TaggingAPhoto(ReadFilesCase):
         """A read-only file (copied off a disc, say): ExifTool reads it and fails the write. A bulk edit goes on past it."""
         a, b, c = self.make_read("a.jpg"), self.make_read("b.jpg"), self.make_read("c.jpg")
         os.chmod(b, stat.S_IREAD)
-        self.addCleanup(os.chmod, b, stat.S_IREAD | stat.S_IWRITE)
+        self.addCleanup(self.writable_again)
         with open(b, "rb") as handle:
             held = handle.read()
         row = self.rows("SELECT tags, mtime, size FROM photos WHERE path = ?", (b,))
@@ -180,8 +180,6 @@ class TaggingAPhoto(ReadFilesCase):
             self.assertEqual(["Activity/Rowing", "Beach"], self.indexed(path))
         with open(b, "rb") as handle:
             self.assertEqual(held, handle.read(), "the file it could not write changed")
-        self.assertEqual(["a.jpg", "b.jpg", "c.jpg"], sorted(os.listdir(self.folder)),
-                         "the failed write left ExifTool's temporary file beside the photo")
         self.assertEqual(row, self.rows("SELECT tags, mtime, size FROM photos WHERE path = ?", (b,)), "its row changed")
         change = result.details["change"]
         self.assertEqual(["done", "done"], self.states(change), "the failed file is not left in the change")
@@ -193,6 +191,42 @@ class TaggingAPhoto(ReadFilesCase):
         for path in (a, b, c):
             self.assertEqual(["Beach"], keywords_of(path))
             self.assertEqual(["Beach"], self.indexed(path))
+
+    def writable_again(self):
+        """ExifTool's temporary file of a failed write carries the photo's read-only attribute: the home goes after."""
+        for name in os.listdir(self.folder):
+            os.chmod(os.path.join(self.folder, name), stat.S_IREAD | stat.S_IWRITE)
+
+    def test_a_write_exiftool_fails_after_deleting_the_original_leaves_its_temporary_file_alone(self):
+        """#1410: ExifTool can fail after deleting the original ("Error renaming temporary file after deleting
+        original"), and then its temporary file is the photo's only copy: nothing here deletes it. Stood in for: the
+        one command of b's write does what that failure does."""
+        a, b = self.make_read("a.jpg"), self.make_read("b.jpg")
+        with open(b, "rb") as handle:
+            held = handle.read()
+        temporary = b + "_exiftool_tmp"
+        real = ExifToolSession.set_tags
+
+        def failing_after_deleting(session, files, *args, **kwargs):
+            if files == [b]:
+                with open(temporary, "wb") as handle:
+                    handle.write(held)
+                os.remove(b)
+                raise exiftool_session.ExifToolFailed(
+                    1, b"", b"Error: Error renaming temporary file after deleting original - " + b.encode(), files)
+            return real(session, files, *args, **kwargs)
+
+        with mock.patch.object(ExifToolSession, "set_tags", failing_after_deleting):
+            result = tagging.change_tags(self.library, [a, b], ["Activity/Rowing"], [], EXIFTOOL,
+                                         stop_at_first_error=False)
+
+        self.assertEqual(([b], 1), ([path for path, _why in result.errors], result.changed), result.message())
+        self.assertIn("after deleting original", str(result.errors[0][1]))
+        with open(temporary, "rb") as handle:
+            self.assertEqual(held, handle.read(), "the only copy of the photo was deleted")
+        self.assertEqual(["Activity/Rowing", "Beach"], keywords_of(a))
+        # b's file is not what the plan read now (it is gone): a conflict, which nothing settles by writing it.
+        self.assertEqual(["done", "conflict"], self.states(result.details["change"]))
 
     def test_one_save_is_one_change_one_session_a_row_as_the_indexer_makes_it_and_undone(self):
         a = self.make_read("a.jpg")

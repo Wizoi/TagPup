@@ -14,8 +14,6 @@ file holding neither what it held nor what it was to hold (docs/findings.md, #27
 photo's identity goes in that command too (#282).
 """
 import logging
-import os
-import stat
 
 from exiftool.exceptions import ExifToolNotRunning
 
@@ -29,10 +27,6 @@ MIME_TYPE = "File:MIMEType"
 
 #: Photos read in one ExifTool command.
 READ_BATCH = 200
-
-#: What ExifTool names the copy it writes beside a photo before putting it in the photo's place.
-TEMPORARY = "_exiftool_tmp"
-
 
 class Unreadable(Exception):
     """A photo whose fields could not be read: missing, locked, or not a photo."""
@@ -113,24 +107,8 @@ def write(et, photo_path, values):
     field whose value is empty. A write of the photo's identity that ExifTool refuses is
     made again telling it an objection to the photo's XMP is minor, and checked to have
     cost the keywords nothing (tagpup.files.identity.tolerating_minor_errors). Raises
-    when ExifTool fails, leaving no temporary file of its own beside the photo: ExifTool keeps the one it could not put
-    in the photo's place (a read-only or locked file), and every later write of the photo then failed on it. One that
-    was there before the command is another write's, and stays."""
-    temporary = photo_path + TEMPORARY
-    theirs = os.path.exists(temporary)
-    try:
-        _write(et, photo_path, values)
-    except BaseException:
-        if not theirs and os.path.exists(temporary):
-            try:
-                os.chmod(temporary, stat.S_IWRITE)   # it carries the photo's read-only attribute
-                os.remove(temporary)
-            except OSError as e:
-                logger.warning("%s: ExifTool's temporary file of a failed write could not be removed: %s", photo_path, e)
-        raise
-
-
-def _write(et, photo_path, values):
+    when ExifTool fails. Nothing beside the photo is deleted, a temporary file ExifTool left included: one ExifTool
+    fails after deleting the original is the photo's only copy (#1410)."""
     params, clear = {}, []
     for field, value in values.items():
         texts = fields.field_values(value)

@@ -304,21 +304,29 @@ class ASmartRename(Base):
     def test_a_photo_exiftool_cannot_read_or_keep_the_name_of_refuses_the_whole_rename(self):
         """#523: a photo left out of a rename keeps a name the numbering may give another, and the name it had is kept
         only in its file. One ExifTool cannot read (a file of zeros), or whose PreservedFileName it cannot write (a
-        read-only file), renames none of them; nothing is looked at before ExifTool is asked."""
+        read-only file), renames none of them; nothing is looked at before ExifTool is asked. The file of zeros
+        stops the rename before anything is written; with the read-only one, the others are given the name they have
+        as their PreservedFileName first (in their files only: the folder is not the library's), which a later rename
+        keeps. ExifTool's temporary file of the failed write may stay beside the read-only photo (#1410, #1411)."""
         zeros = damaged_photos.all_zeros(os.path.join(self.lighthouse, "IMG_0004.jpg"), size=images.ZERO_TAIL + 100)
         locked = damaged_photos.whole_jpeg(os.path.join(self.lighthouse, "IMG_0005.jpg"), seed=31) and \
             os.path.join(self.lighthouse, "IMG_0005.jpg")
         os.chmod(locked, stat.S_IREAD)
-        self.addCleanup(os.chmod, locked, stat.S_IREAD | stat.S_IWRITE)
+
+        def writable_again():
+            for name in os.listdir(self.lighthouse):
+                os.chmod(os.path.join(self.lighthouse, name), stat.S_IREAD | stat.S_IWRITE)
+        self.addCleanup(writable_again)
         original = self.names()
         self.before = library_dump.dump(self.library.path)
-        for one in (zeros, locked):
+        for one, kept in ((zeros, [None] * 3), (locked, [os.path.basename(path) for path in self.loose])):
             reply = self.rename(self.loose + [one])
             self.assertNotEqual(200, reply.status_code, (one, reply.data))
             self.assertIn("ExifTool", reply.get_json()["error"], one)
-            self.assertEqual(original, self.names(), "a photo was renamed")
-            self.assertEqual([None] * 3, [in_file(path, "XMP-xmpMM:PreservedFileName").get("XMP-xmpMM:PreservedFileName")
-                                          for path in self.loose], "a name was kept for a rename that was not made")
+            self.assertEqual(original, [name for name in self.names() if not name.endswith("_exiftool_tmp")],
+                             "a photo was renamed")
+            self.assertEqual(kept, [in_file(path, "XMP:PreservedFileName").get("XMP:PreservedFileName")
+                                    for path in self.loose], one)
         self.assert_library_unchanged()
 
     def test_the_caption_then_renames_a_photo_that_was_renamed_before(self):
