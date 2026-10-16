@@ -163,7 +163,7 @@ def on_faces_alone(conn, folder=None):
         where = " AND " + where
     return [(path, vocabulary.Ref(tag_id, name), decided) for path, tag_id, name, decided in conn.execute(
         "SELECT p.path, pp.tag_id, pp.name, EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = pp.photo_id AND "
-        "f.tag_id = pp.tag_id AND f.name_source = 'manual' AND f.excluded = 0)"
+        "+f.tag_id = pp.tag_id AND f.name_source = 'manual' AND f.excluded = 0)"
         " FROM photo_people pp JOIN photos p ON p.id = pp.photo_id"
         " WHERE pp.source = 'face'" + where + " ORDER BY pp.photo_id, pp.position", params).fetchall()]
 
