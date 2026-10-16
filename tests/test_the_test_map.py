@@ -15,10 +15,15 @@ that is renamed or deleted leaves the charter pointing at nothing, and the owner
 wrong. This fails the build on any backticked repository path in a charter that does not exist (a `*` is a glob), so the
 commit that moves a module changes its charter too. Dotted module names and prose are not paths and are not checked.
 
+Every module of the package (tagpup/, but its __init__.py files) is in one charter's Scope: a module in none was
+reviewed by nobody (services/tagging.py, store/inspection.py and mcp/__main__.py were, #1368). A module two Scopes each
+claim a part of is listed in SHARED, which only goes down.
+
 Lifted: test_guard_tests_have_one_owner, test_tiers_name_real_files and test_owner_charters_name_real_paths, every
 assertion kept. Mutation: a test file with no entry in owners.py, a tier naming a missing file, and a charter naming a
 missing path each fail the matching test below.
 """
+import fnmatch
 import glob
 import os
 import re
@@ -45,6 +50,17 @@ IN_THE_MAP = dict(zip(CHARTERS, owners.OWNERS))
 PATH = re.compile(r"^(?:(?:tagpup|tests|web|scripts|tools|docs|\.claude)/\S+|tagpup_cli\.py|tagpup_web\.py)$")
 TICKED = re.compile(r"`([^`\n]+)`")
 SCOPE_HEAD = "## Scope"
+#: A Scope line that names what is not the domain's, or is gone.
+NOT_CLAIMED = ("Not yours", "Gone")
+
+#: Modules two charters' Scopes each own a part of, as the Scopes say: the composition root, the word index's query
+#: side and its writers, a server's routes split by domain. It only goes down: a module newly in two Scopes fails.
+SHARED = {
+    "tagpup/runtime.py": ("integration", "views-ai"),
+    "tagpup/store/search_index.py": ("data", "views-ai"),
+    "tagpup/web/tagpup_routes.py": ("integration", "views-ai"),
+    "tagpup/web/tuner_routes.py": ("integration", "people"),
+}
 
 
 def test_files():
@@ -85,6 +101,26 @@ def scope_of(text):
     start = text.index(SCOPE_HEAD) + len(SCOPE_HEAD)
     end = text.find("\n## ", start)
     return text[start:end if end >= 0 else len(text)]
+
+
+def scope_claims(owner):
+    """The repository paths (and globs) a charter's Scope claims: a line naming what is not the domain's left out."""
+    lines = scope_of(read(charter_path(owner))).splitlines()
+    return paths_in("\n".join(line for line in lines if not line.lstrip("- ").startswith(NOT_CLAIMED)))
+
+
+def package_modules():
+    """tagpup/**/*.py, but the __init__.py files, as charters spell them."""
+    found = []
+    for here, folders, names in os.walk(os.path.join(ROOT, "tagpup")):
+        folders[:] = [f for f in folders if f != "__pycache__"]
+        found += [os.path.relpath(os.path.join(here, n), ROOT).replace(os.sep, "/") for n in names
+                  if n.endswith(".py") and n != "__init__.py"]
+    return sorted(found)
+
+
+def claimed_by(module, token):
+    return fnmatch.fnmatch(module, token) or module.startswith(token.rstrip("/") + "/")
 
 
 class EveryTestFileHasOneOwner(unittest.TestCase):
@@ -166,6 +202,15 @@ class OwnerCharters(unittest.TestCase):
                 self.assertIsNotNone(line, "a charter ends with its scenario ids (tests/owners.py)")
                 mine = {i for i, (o, _sentence) in owners.SCENARIOS.items() if o == IN_THE_MAP[owner]}
                 self.assertEqual(mine, set(re.findall(r"\b[A-Z]\d+\b", line.group(1))))
+
+    def test_every_module_of_the_package_is_in_one_charters_scope(self):
+        claims = {owner: scope_claims(owner) for owner in CHARTERS}
+        owners_of = {module: tuple(sorted(owner for owner in CHARTERS if any(claimed_by(module, t) for t in claims[owner])))
+                     for module in package_modules()}
+        self.assertEqual([], [m for m, found in owners_of.items() if not found],
+                         "a module in no charter's Scope: add it to its owner's, in the commit that makes it")
+        self.assertEqual(SHARED, {m: found for m, found in owners_of.items() if len(found) > 1},
+                         "a module in two charters' Scopes: one owns it, or both say which part each has (SHARED)")
 
     def test_the_owners_page_names_every_charter(self):
         page = read(os.path.join(ROOT, "docs", "OWNERS.md"))
