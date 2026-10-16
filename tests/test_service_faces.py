@@ -12,6 +12,7 @@ from unittest import mock
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 from face_rows import add_face, people_of  # noqa: E402
 
@@ -85,7 +86,8 @@ class FacesCase(unittest.TestCase):
 class NamingAFace(FacesCase):
     def test_the_fingerprints_either_side_say_what_the_grids_must_drop(self):
         face = self.face(self.photo("a.jpg"))
-        result = faces.name_face(self.lib.library, face, "Wren Halloway")
+        wren = db.write_with_connection(self.lib.library.path, lambda conn: face_rows.person_of(conn, "Wren Halloway"))
+        result = faces.name_face(self.lib.library, face, wren)
         before, after = result.details["fingerprints"]
         self.assertNotEqual(before, after)
         self.assertEqual(result.details["face_ids"], [face])

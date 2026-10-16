@@ -1,11 +1,10 @@
-"""Every tag has an id (owner, 2026-10-10): a keyword the index reads, and a name a face or a photo's person field holds, that has
-no node in the tag tree is given one when it is first seen -- a keyword its own path, a name a node directly under the tree's
-root marked as a person -- so no row is left holding a name and no id. taxonomy.ensure_node is the one place; photos.record_indexed
-(the read) and faces' writers (a name) reach it. The owner merges the nodes into the right branch with the tag merge.
+"""Every tag has an id (owner, 2026-10-10): a keyword the index reads that has no node in the tag tree is given one when it is
+first seen, its own path, so no row is left holding a name and no id. taxonomy.ensure_node is the one place, which
+photos.record_indexed (the read) reaches. A new person named on a face is made by face_people.made, the tag first; the store's
+face writers make no node and refuse a name no node has. The owner merges the nodes into the right branch with the tag merge.
 
-Nothing is left holding a name and no id (owner, 2026-10-11: only the id): a name that two people have, or that is a group's
-leaf, is a different path, so it gets a node directly under the root; a bare keyword is a path of its own, never a person's
-name. Only a name that is the path of a group at the top is given none, and is not listed as a person.
+Nothing is left holding a name and no id (owner, 2026-10-11: only the id): a bare keyword is a path of its own, never a person's
+name.
 """
 import os
 import sys
@@ -31,10 +30,8 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
         self.make_library()
         self.later = os.path.join(os.path.dirname(self.photo), "regatta_003.jpg")
 
-    def read_photo(self, subject=(), people=None, path=None):
+    def read_photo(self, subject=(), path=None):
         fields = {"XMP:Subject": list(subject)}
-        if people:
-            fields["XMP:PersonInImage"] = fields["XMP:RegionName"] = list(people)
         return people_by_id.write(self.path, lambda conn: photo_rows.add_read(conn, path or self.later, fields))
 
     def tags(self):
@@ -93,14 +90,7 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
         self.read_photo(["Regatta"])
         self.assertEqual([(0,)], people_by_id.look(self.path, "SELECT has_face FROM tag_taxonomy WHERE tag = 'Regatta'"))
 
-    def test_a_keyword_under_a_face_root_makes_a_person_the_faces_of_that_name_follow(self):
-        def name(conn):
-            return faces.insert(conn, self.photo, [40, 0, 50, 10], b"\x07" * 8, name=ZED)
-        face = people_by_id.write(self.path, name)
-        # The name came first (a top-level node), then a file says the person is filed in a branch.
-        self.assertEqual(1, self.count(ZED))
-        node = self.node(ZED)
-        self.assertEqual((node, ZED), self.face(face)[:2])
+    def test_a_keyword_under_a_face_root_makes_a_person_its_photo_lists(self):
         self.read_photo(["People/Zed Quill Jr"], path=self.other)
         self.assertEqual(1, self.count("People/Zed Quill Jr"))
         self.assertEqual((1,), people_by_id.look(self.path, "SELECT has_face FROM tag_taxonomy WHERE tag = 'People/Zed Quill Jr'")[0])
@@ -109,15 +99,18 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
 
     # ---- a name
 
-    def test_a_face_named_with_a_name_no_node_has_gets_a_node_at_the_top_and_the_id(self):
-        face_id = self.faces[0]
-        people_by_id.write(self.path, lambda conn: faces.name(conn, [face_id], ZED))
-        node = self.node(ZED)
-        self.assertIsNotNone(node)
-        self.assertEqual([(None,)], people_by_id.look(self.path, "SELECT parent_id FROM tag_taxonomy WHERE id = ?", (node,)))
-        self.assertEqual([(1,)], people_by_id.look(self.path, "SELECT has_face FROM tag_taxonomy WHERE id = ?", (node,)))
-        self.assertEqual((node, ZED), self.face(face_id)[:2])
-        self.assertEqual([(node, ZED, "face")], self.listed(self.photo)[-1:])
+    def test_a_face_named_with_a_name_no_node_has_is_refused_and_nothing_is_made(self):
+        """The store's face writers name a face by a person who has a node; a new person is made by face_people.made, the tag
+        first, the one maker (docs/findings.md, #1252). Mutation: the old store writer made a node at the top of the tree and
+        named the face by it."""
+        before = self.tags()
+        for write in (lambda conn: faces.name(conn, [self.faces[0]], ZED),
+                      lambda conn: faces.name_if_unnamed(conn, self.faces[0], ZED),
+                      lambda conn: faces.insert(conn, self.photo, [40, 0, 50, 10], b"\x07" * 8, name=ZED)):
+            with self.assertRaises(ValueError):
+                people_by_id.write(self.path, write)
+        self.assertEqual(before, self.tags())
+        self.assertEqual((None, None), self.face(self.faces[0])[:2])
 
     def test_a_face_is_named_by_a_person_not_a_path(self):
         """A path no person has once made nodes `a` and `a/b` (has_face 0) and named the face for a node that is no person; a
@@ -131,37 +124,14 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
         people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[1]], people_by_id.WREN))
         self.assertEqual((self.node(people_by_id.WREN), "Wren Halloway"), self.face(self.faces[1])[:2])
 
-    def test_naming_two_faces_with_the_same_new_name_makes_one_node(self):
-        people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], ZED))
-        people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[1], self.faces[2]], ZED.upper()))
-        self.assertEqual(1, self.count(ZED))
-        self.assertEqual({self.node(ZED)}, {self.face(each)[0] for each in self.faces})
-
-    def test_a_person_field_names_nobody_and_makes_no_node(self):
-        """A file that names people in XMP PersonInImage and RegionName (0 photos in the three libraries, 2026-10-15) gets no
-        node and lists nobody, whether a person is called the name or not: a bare name is never linked to a person by its leaf
-        (owner, DECISIONS 2026-10-15). Mutation: the old reader made Zed Quill a node and listed Wren Halloway by name."""
-        before = self.tags()
-        self.read_photo(people=[ZED, "Wren Halloway", "Sam", "Family"])
-        self.assertEqual(before, self.tags())
-        self.assertEqual([], self.listed(self.later))
-
     def test_a_name_an_existing_person_has_makes_no_duplicate(self):
         before = self.tags()
         people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], "wren halloway"))
         self.assertEqual(before, self.tags())
         self.assertEqual((self.node(people_by_id.WREN), "Wren Halloway"), self.face(self.faces[0])[:2])
 
-    def test_a_childless_word_tag_of_the_name_at_the_top_becomes_the_person(self):
-        self.read_photo(["Kentridge"])
-        self.assertEqual([(0,)], people_by_id.look(self.path, "SELECT has_face FROM tag_taxonomy WHERE tag = 'Kentridge'"))
-        people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], "Kentridge"))
-        self.assertEqual(1, self.count("Kentridge"))
-        self.assertEqual([(1,)], people_by_id.look(self.path, "SELECT has_face FROM tag_taxonomy WHERE tag = 'Kentridge'"))
-        self.assertEqual(self.node("Kentridge"), self.face(self.faces[0])[0])
-
     def test_a_person_made_at_the_top_is_filed_by_their_node_and_is_no_people_root(self):
-        people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], ZED))
+        tag_service.create(self.library, ZED, has_face=1)
         filed, roots = taxonomy.people_filing(self.path)
         self.assertEqual([ZED], filed[ZED.lower()])
         self.assertNotIn(ZED, roots, "a person is not a root that people are filed under")
@@ -170,7 +140,7 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
     def test_the_first_node_of_an_empty_tree_keeps_people_the_face_root(self):
         def empty(conn):
             conn.execute("DELETE FROM tag_taxonomy")
-            return faces.name(conn, [self.faces[0]], ZED)
+            return taxonomy.ensure_node(conn, NEW)
         people_by_id.write(self.path, empty)
         self.assertEqual([("People",)], people_by_id.look(self.path, "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND parent_id IS NULL AND tag = 'People'"))
 
@@ -250,8 +220,8 @@ class Seen(unittest.TestCase, people_by_id.TwoSams):
 
     def test_ensure_node_run_twice_is_one_node(self):
         def twice(conn):
-            first = taxonomy.ensure_node(conn, ZED, person=True)
-            return first, taxonomy.ensure_node(conn, ZED, person=True)
+            first = taxonomy.ensure_node(conn, NEW)
+            return first, taxonomy.ensure_node(conn, NEW)
         (first, made), (second, again) = people_by_id.write(self.path, twice)
         self.assertEqual((first, True, False), (second, made, again))
 

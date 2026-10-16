@@ -118,8 +118,10 @@ def main():
     }, model=MODEL)
 
     # Insert face for puppy representing already matched face
+    # The person first, as the New person dialog makes them (a face is named by the id of a node).
+    puppy = store_taxonomy.add_node(conn, "People/Puppy", root_has_face=1)
     store_faces.insert(conn, puppy_path, puppy_face_box, face_emb.tobytes(),
-                       name="Puppy", crop=puppy_crop, prob=0.98)  # matched to Puppy
+                       name=puppy, crop=puppy_crop, prob=0.98)  # matched to Puppy
 
     # Insert puppy2 image representing new content (untagged, unmatched face)
     clip_emb_puppy2 = np.random.randn(1024).astype(np.float32)

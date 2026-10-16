@@ -58,7 +58,7 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
     def test_a_face_named_by_hand_while_clustering_runs_keeps_the_owners_name(self):
         first, second = self.two_faces_of_jane()
 
-        heard = self.run_while(lambda conn: store_faces.name(conn, [second], "Bob Roe"))
+        heard = self.run_while(lambda conn: store_faces.name(conn, [second], face_rows.person_of(conn, "Bob Roe")))
 
         self.assertEqual(("Bob Roe", "manual"), self.row(second), "the owner's naming was overwritten by the guess")
         self.assertEqual(("Jane Doe", None), self.row(first), "the face nobody touched is named as before")
@@ -67,7 +67,7 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
     def test_a_face_another_run_named_meanwhile_is_not_written_over(self):
         first, second = self.two_faces_of_jane()
 
-        heard = self.run_while(lambda conn: store_faces.name_if_unnamed(conn, second, "Bob Roe"))
+        heard = self.run_while(lambda conn: store_faces.name_if_unnamed(conn, second, face_rows.person_of(conn, "Bob Roe")))
 
         self.assertEqual("Bob Roe", self.row(second)[0], "a face that carries another person than the one read is left")
         self.assertEqual([1], heard)
@@ -133,7 +133,7 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
     def test_the_summary_counts_the_faces_written_not_the_faces_meant(self):
         first, second = self.two_faces_of_jane()
 
-        self.run_while(lambda conn: store_faces.name(conn, [second], "Bob Roe"))
+        self.run_while(lambda conn: store_faces.name(conn, [second], face_rows.person_of(conn, "Bob Roe")))
 
         self.assertEqual({"Jane Doe": 1}, self.stats, "a face the owner named meanwhile was counted as linked")
 

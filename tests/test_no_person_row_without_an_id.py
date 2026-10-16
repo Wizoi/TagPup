@@ -38,20 +38,13 @@ class NoRowWithoutAnId(unittest.TestCase, people_by_id.TwoSams):
         with self.subTest(what):
             self.assertEqual((0, 0), people_by_id.write(self.path, clear))
 
-    def read(self, subject=(), named=()):
+    def read(self, subject=()):
         fields = {"XMP:Subject": list(subject)}
-        if named:
-            fields["XMP:PersonInImage"] = list(named)
         people_by_id.write(self.path, lambda conn: photo_rows.add_read(conn, self.later, fields))
 
     def use_sam(self):
         node = self.node(people_by_id.SAM_T)
         people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[0]], node))
-
-    def test_a_person_field_read_by_the_indexer(self):
-        for name in ("Zed Quill", "Sam", "Thackeray", "Places", "Family", "Wren Halloway", "People", "max"):
-            self.read(named=[name])
-            self.none_without_an_id(name)
 
     def test_a_keyword_read_by_the_indexer(self):
         self.use_sam()
@@ -64,15 +57,15 @@ class NoRowWithoutAnId(unittest.TestCase, people_by_id.TwoSams):
         for name in ("Zed Quill", "Sam", "Thackeray", "Places", "Family", "Max"):
             try:
                 people_by_id.write(self.path, lambda conn: faces.name(conn, [self.faces[1]], name))
-            except person_ids.PersonProblem:
-                pass   # the write is refused, with a sentence
+            except (person_ids.PersonProblem, ValueError):
+                pass   # the write is refused: a name two people have, a group's, or no person's node (face_people.made makes one)
             self.none_without_an_id(name)
 
     def test_a_face_detected_with_a_name(self):
         for name in ("Zed Quill", "Sam", "Thackeray", "Places"):
             try:
                 people_by_id.write(self.path, lambda conn: faces.insert(conn, self.other, [5, 5, 9, 9], b"\x09" * 8, name=name))
-            except person_ids.PersonProblem:
+            except (person_ids.PersonProblem, ValueError):
                 pass
             self.none_without_an_id(name)
 
@@ -95,9 +88,9 @@ class NoRowWithoutAnId(unittest.TestCase, people_by_id.TwoSams):
             self.none_without_an_id("undo of change %d" % change)
 
     def test_a_photo_read_again_after_a_person_is_renamed(self):
-        self.read(subject=[people_by_id.WREN], named=["Wren Halloway"])
+        self.read(subject=[people_by_id.WREN])
         tag_service.rename_person(self.library, self.node(people_by_id.WREN), "Wren Halloway Jr", None)
-        self.read(subject=[people_by_id.WREN], named=["Wren Halloway"])
+        self.read(subject=[people_by_id.WREN])
         self.none_without_an_id("read after rename")
 
 

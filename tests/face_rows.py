@@ -40,9 +40,10 @@ def add_people(conn, photo_path, names, source="keyword"):
 
 
 def person_of(conn, name):
-    """The id of the person a name is, as the writers that name someone give it (every tag has an id: a name no node is called gets
-    one, as tagpup.store.taxonomy.ensure_node makes it). Raises ValueError for a name no writer can give a node (two people have it,
-    a group's, a tag's path): such a row is a shape nothing real makes."""
+    """The id of the person a name is: the one person called it, or -- for a name no node is called -- a person made at the top
+    of the tree, as the tree's New tag makes one there (tagpup.services.tags.create with has_face; the store's face writers make no
+    node). Raises ValueError for a name no writer can give a node (two people have it, a group's, a tag's path): such a row is a
+    shape nothing real makes."""
     from tagpup.store import person_ids, taxonomy   # a test helper reads the tree as the writers do
     conn = getattr(conn, "connection", conn)   # a test may hold a cursor
     try:
@@ -50,7 +51,7 @@ def person_of(conn, name):
     except person_ids.PersonProblem as problem:
         raise ValueError("no writer lists %r as a person: %s" % (name, problem)) from problem
     if found is None:
-        found = taxonomy.ensure_node(conn, name, person=True)[0] if "/" not in name else None
+        found = taxonomy.add_node(conn, name.strip(), root_has_face=1) if "/" not in name else None
     if found is None:
         raise ValueError("no writer can make a node of %r" % (name,))
     return found

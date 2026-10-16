@@ -59,40 +59,27 @@ def add_path(conn, path, root_has_face=0):
     return parent_id
 
 
-def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
-    """THE one place a name or a keyword that has no node gets one (owner, 2026-10-10: every tag has an id; 2026-10-11: only the id):
-    (the node's id, whether a node was made or, for a name, marked as a person), or (None, False) for a text with no levels, a
-    name that is the path of a group, and a keyword that would go under a person that faces or photos use. The caller commits.
+def ensure_node(conn, text, tree=None, edited=False):
+    """THE one place a keyword that has no node gets one (owner, 2026-10-10: every tag has an id; 2026-10-11: only the id): (the
+    node's id, whether a node was made), or (None, False) for a text with no levels and a keyword that would go under a person
+    that faces or photos use. A new PERSON named on a face is made by tagpup.services.face_people.made (the tag first, at the
+    path the filer chooses); the store's face writers make no node. The caller commits.
     The edit is a tree_edit, so what follows it follows: the photos carrying the keyword get their rows (person_ids.follow_tree
     renames and removes; nothing links a name to the person made: a row has the id or is not a person, owner 2026-10-11).
 
     A keyword IS its path: it is found as the tree spells it, else without case, in one Unicode form and as
     `vocabulary.normalize` spells it (derived.Tree), so a level that exists is never made a second time under another case; one
     that does not is made with each missing level above it (add_path), a root without the flag. A bare keyword is a node of its
-    own at the top, never a person's name. A NAME (`person`; a bare one) is the one person called it if exactly one is; else
-    -- none, two, or a group's leaf, which are other paths -- the node of that path directly under the tree's root, marked as a
-    person (a childless word tag of that name there is marked as one); the name of a node with nodes under it is a group's, and
-    is given none. `tree` is the derived.Tree the caller holds (kept up to date here); `known` the person_ids.People, read here
-    when it is needed and not given. `edited`: the caller is inside a tree_edit of its own (derived's batch makes many
-    nodes in one). Idempotent: the second call finds the node the first made."""
+    own at the top, never a person's name. `tree` is the derived.Tree the caller holds (kept up to date here). `edited`: the
+    caller is inside a tree_edit of its own (derived's batch makes many nodes in one). Idempotent: the second call finds the
+    node the first made."""
     path = vocabulary.normalize(text)
     if not path:
         return None, False
     tree = tree or derived.Tree.read(conn)
-    bare = vocabulary.SEPARATOR not in path
-    if bare and person:
-        # A name two people have, a group's or the empty People's raises (People.person): a name found here is no group.
-        found = (known or person_ids.read(conn)).person(path)
-        if found is not None:
-            return found.id, False
     spelled, level, hit = _walk(tree, path)
     parts = vocabulary.segments(path)
     if hit is not None:
-        if person and bare:
-            if not conn.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (hit,)).fetchone()[0]:
-                with contextlib.nullcontext() if edited else people.tree_edit(conn):
-                    conn.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (hit,))
-                return hit, True
         return hit, False
     new = unicodedata.normalize("NFC", vocabulary.SEPARATOR.join(([spelled] if spelled else []) + parts[level:]))   # one form
     try:
@@ -102,7 +89,7 @@ def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
     with contextlib.nullcontext() if edited else people.tree_edit(conn):
         if not tree_has_nodes(conn):   # a tree with no node says People is the face root (people_roots): its first node keeps that
             add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT, root_has_face=1)
-        node_id = add_path(conn, new, root_has_face=1 if person and bare else 0)
+        node_id = add_path(conn, new, root_has_face=0)
     for each in vocabulary.lineage(new):
         found = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (each,)).fetchone()
         tree.add(found[0], each)

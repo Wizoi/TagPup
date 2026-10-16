@@ -13,6 +13,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
@@ -112,14 +113,15 @@ class WhenTheFacesChange(Case):
         face = self.face(at(0), "Wren Halloway")
         self.assertEqual(self.chosen(), {"Wren Halloway": face})
         db.write_with_connection(self.lib.library.path, lambda conn: store_faces.name(
-            conn, [face], "Wren Hallowell"))
+            conn, [face], face_rows.person_of(conn, "Wren Hallowell")))
         self.assertEqual(self.chosen(), {"Wren Hallowell": face})
 
     def test_a_representative_named_for_someone_else_meanwhile_is_replaced(self):
         first = self.face(at(0), "Wren Halloway")
         second = self.face(at(40), "Wren Halloway")
         self.assertEqual(self.chosen()["Wren Halloway"], first)
-        faces.name_face(self.lib.library, first, "Ines Okafor")
+        faces.name_face(self.lib.library, first, db.write_with_connection(
+            self.lib.library.path, lambda conn: face_rows.person_of(conn, "Ines Okafor")))
         got = self.chosen()
         self.assertEqual(got["Wren Halloway"], second)
         self.assertEqual(got["Ines Okafor"], first)
