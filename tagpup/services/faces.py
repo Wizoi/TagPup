@@ -586,10 +586,11 @@ def panel(library, photo_path, named):
 # (tagpup.ml.faces), and the named faces a new one is compared with. PhotoIndex held a
 # wrapper for each (docs/ARCHITECTURE.md, phase 5.5).
 
-def _insert_detected(conn, photo_path, face, name=None):
+def _insert_detected(conn, photo_path, face):
+    """A face as the face model found it: unnamed (a detection names nobody; its photo's tag may name it after: face_tags)."""
     faces.insert(conn, photo_path, face.get("box", []),
                  np.array(face["embedding"], dtype=np.float32).tobytes(),
-                 name=name, crop=face.get("crop_image"), prob=face.get("prob"))
+                 crop=face.get("crop_image"), prob=face.get("prob"))
 
 
 #: What a face model is told apart by: the settings it detects with (tagpup.ml.faces.SETTINGS).
@@ -698,7 +699,7 @@ def record_batch(conn, batch, overwrite=False, detector=None):
             faces.remove_for_photo(conn, photo_path)
             _record_detection(conn, photo_path, detector, detected)
             for face in detected:
-                _insert_detected(conn, photo_path, face, name=face.get("name"))
+                _insert_detected(conn, photo_path, face)
             if detected:
                 recorded.append(photo_path)
         # The photos' person tags name their faces (#788), once the batch's faces are all there.
