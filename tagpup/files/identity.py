@@ -24,28 +24,13 @@ grouping and useless for telling two files apart.
 import logging
 import uuid
 
+from tagpup.core.fields import read_document_id
+
 logger = logging.getLogger("tagpup_cli.identity")
 
 #: Where the identity lives. The short spelling is what ExifTool returns in a
 #: metadata dict; the long one is what it must be written as.
 DOCUMENT_ID_FIELD = "XMP-xmpMM:DocumentID"
-DOCUMENT_ID_KEYS = ("XMP:DocumentID", "XMP-xmpMM:DocumentID", "DocumentID")
-
-
-def read_document_id(metadata):
-    """The photo's identity as its metadata reports it, or None."""
-    if not isinstance(metadata, dict):
-        return None
-    for key in DOCUMENT_ID_KEYS:
-        value = metadata.get(key)
-        if isinstance(value, list):
-            value = value[0] if value else None
-        if value is None:
-            continue
-        text = str(value).strip()
-        if text:
-            return text
-    return None
 
 
 def mint_document_id():

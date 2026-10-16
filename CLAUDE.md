@@ -265,6 +265,7 @@ The project grew 43k to 103k lines of code and 44k to 110k of tests in two weeks
   'top changes' section: what was worth doing is done. The freeze lifts when all five say healthy. After that, every feature or
   change is reviewed by its owner for whether it keeps the domain healthy and adds no debt; a change that adds debt removes it
   in the same branch or is refused.
+  A `low` finding is fixed or recorded as by design, with its reason in DECISIONS.md or the domain's document and the row closed `decided:`; there is no third state, no list of accepted debt (owner, 2026-10-15). A finding is verified against the trunk, and against a live count where it names one, before it is reported or briefed.
 
 ## Performance work
 

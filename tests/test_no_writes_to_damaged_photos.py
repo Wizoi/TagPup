@@ -30,7 +30,7 @@ from click.testing import CliRunner  # noqa: E402
 import tagpup_cli  # noqa: E402
 from tagpup.files import images  # noqa: E402
 from tagpup.files.exiftool_session import ExifToolSession  # noqa: E402
-from tagpup.files.identity import read_document_id  # noqa: E402
+from tagpup.core.fields import read_document_id  # noqa: E402
 from tagpup.files.metadata import IdentityWriter, MetadataExtractor  # noqa: E402
 from tagpup.ml.clip import output_dim  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402

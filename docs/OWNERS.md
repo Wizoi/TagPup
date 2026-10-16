@@ -53,3 +53,7 @@ owner's. The output of every owner is the same: findings ranked, each with a sev
 ## A healthy domain
 
 Each owner's charter ends with seven conditions of health and a review it applies to every change (the owner's goal of 2026-10-15). A domain meeting all seven has no queue of top changes; one that does not has exactly the unmet conditions as its queue, and no feature is taken into it meanwhile. The state of each domain, with its evidence, is its document in docs/domains/.
+
+## A domain pass
+
+A domain's queue is done in one pass: its owner plans the whole domain (every open row and unmet condition re-verified against the trunk, every instance of each violated rule swept by grep or count, the single owner of each rule named, the worker's brief written); one worker does the sweep and checks its own diff against the seven conditions; the owner reviews once. A `low` is fixed or by design, never left (DECISIONS 2026-10-15).

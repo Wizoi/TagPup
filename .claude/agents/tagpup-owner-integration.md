@@ -73,7 +73,7 @@ Domains: **D** Data, **P** People, **F** Files, **V** Views and AI, **I** this o
 | 45 | I (`tuner_routes`) -> P (`face_routes._read_face_ids`) | TagTuner's face writes read the face ids as Organize's do | none |
 | 46 | F (the indexer, `services/search.PhotoIndex`) -> F (`store/photos.record_indexed`) -> D (`store/derived`) | A row records what was read of its file, and the derived rows follow in one transaction | `tests/test_derived_writers.py`, `tests/test_a_row_describes_its_file_one_way.py` |
 | 47 | P, V (Suggest), D -> F (`store/photos.ensure_row`, `remove_under`) | A row is made only in a folder the library holds (else `NotHeld`); a folder removed takes its rows and what follows them | `tests/test_rows_only_in_folders_added.py`, `tests/test_remove_folder_lists_the_library.py`, `tests/test_embeddings_follow_their_photo.py` |
-| 48 | D, V, I (`services/thumbnails`, `library_view`, `activity`, `inspect`, `sync`, `selection`, `bulk_edit`) -> F (`files/images`, `files/shares`, `files/recycle_bin`, `files/identity.read_document_id`) | What a photo is, a share that does not answer (not "missing"), where a delete goes, a photo's identity: read only through Files | `tests/test_a_share_asleep.py`, `tests/test_photo_identity.py`, `tests/test_just_look_bin_and_long_names.py`, `tests/test_no_writes_to_damaged_photos.py` |
+| 48 | D, V, I (`services/thumbnails`, `library_view`, `activity`, `inspect`, `sync`, `selection`, `bulk_edit`) -> F (`files/images`, `files/shares`, `files/recycle_bin`, `files/core/fields.read_document_id`) | What a photo is, a share that does not answer (not "missing"), where a delete goes, a photo's identity: read only through Files | `tests/test_a_share_asleep.py`, `tests/test_photo_identity.py`, `tests/test_just_look_bin_and_long_names.py`, `tests/test_no_writes_to_damaged_photos.py` |
 | 49 | pages (`web/tagpup/selected.js`, `library-source.js`) -> V/I (`batches.MAX_BATCH`, `selection.MAX_LISTED`, the view's caps, kinds and orders) | What a page refuses before it asks is what the server refuses | `tests/test_view_rules_follow_the_server.py` (`tests/fixtures/view_rules.json` against the server), `tests/frontend/search-page.test.mjs` and `tests/frontend/library-selection.test.mjs` (the pages against the table) |
 
 ## Scenario list (flows that cross domains)
@@ -138,3 +138,12 @@ For every feature or change in your domain, or touching its contract, ask in thi
 healthy? does it add debt: a second copy of a rule, a branch for a case with no instance, a reach into another domain's
 internals, a concept the domain already has under another name, a test of code where a scenario belongs? If yes, the change
 is not done: it removes that debt in the same branch, or it is refused. Say so in the review.
+
+## Planning a domain pass (owner, 2026-10-15)
+A domain's queue is planned once, whole, before any code: (1) re-verify every open row and every unmet condition against
+the trunk and a live count (read-only); drop what is stale; (2) for each rule or kind violated, sweep: list EVERY
+instance (grep, AST scan, count), not the ones a finding names; (3) say the single place that should own each rule
+(the second round's ownership question, asked in the first); (4) write the brief the worker will get: the sweep lists, the
+owner decisions already made (cite DECISIONS), what NOT to touch (other domains), the live counts, the tests to lift or delete
+(scenarios, owned and mapped), the order of commits; (5) review the worker's branch once, against the seven conditions,
+and say merge or not. A `low` is fixed or by design, with the reason.

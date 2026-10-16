@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from tagpup.core import paths
-from tagpup.files.identity import read_document_id
+from tagpup.core.fields import read_document_id
 from tagpup.ml.vector_index import VectorIndex
 from tagpup.store import db, generations, schema
 from tagpup.store import derived as store_derived

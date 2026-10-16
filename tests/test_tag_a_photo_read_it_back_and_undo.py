@@ -40,7 +40,7 @@ from test_file_journal import EXIFTOOL, ExifToolSession, field_of, keywords_of, 
 
 from tagpup.files import exiftool_session  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
-from tagpup.services import file_changes, photos as photo_actions, tagging  # noqa: E402
+from tagpup.services import file_changes, photos as photo_actions, sync, tagging  # noqa: E402
 from tagpup.store import db, photos as store_photos  # noqa: E402
 
 PRESERVED = "XMP-xmpMM:PreservedFileName"
@@ -287,6 +287,25 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual(MetadataExtractor(exiftool_path=EXIFTOOL).batch_read([a])[0]["raw_metadata"], raw)
         self.assertEqual(["Beach", "Places/Quay"], self.indexed(a))
         self.assert_row_describes_file(a)
+
+    def test_a_photo_given_an_identity_elsewhere_is_saved_then_renamed_elsewhere_and_sync_follows_it(self):
+        """#1469: a save records its row from the file read back whole, its DocumentID column too. The column was set
+        only when a DocumentID was written, so a photo another program gave one after it was indexed kept a NULL
+        column; renamed by another program, sync found no row to follow it by and its row was left missing."""
+        a = self.make_read("IMG_0001.jpg")
+        write_outside(a, {"XMP-xmpMM:DocumentID": "xmp.did:5b2c-quay"})
+        photo_id = self.rows("SELECT id FROM photos WHERE path = ?", (a,))[0][0]
+
+        self.assertTrue(tagging.save_photo(self.library, a, "Quay at dusk", ["Beach"], None, EXIFTOOL, "").ok)
+
+        self.assertEqual([("xmp.did:5b2c-quay",)], self.rows("SELECT document_id FROM photos WHERE path = ?", (a,)),
+                         "the row took the file whole but not its identity")
+        renamed = os.path.join(self.folder, "Quay.jpg")
+        os.rename(a, renamed)   # another program renames it
+
+        result = sync.sync(self.library, folder=self.folder, apply=True, exiftool_path=EXIFTOOL)
+
+        self.assertEqual([(photo_id, renamed)], self.rows("SELECT id, path FROM photos"), result.message())
 
     def test_a_caption_that_renames_the_photo_is_a_change_that_undo_reverses_with_the_row(self):
         a = self.make_read("IMG_0001.jpg")

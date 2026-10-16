@@ -19,11 +19,11 @@ WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
 
+from tagpup.core.fields import read_document_id
 from tagpup.files.identity import (
     DOCUMENT_ID_FIELD,
     ensure_document_id,
     mint_document_id,
-    read_document_id,
 )
 
 
