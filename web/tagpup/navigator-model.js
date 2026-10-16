@@ -140,9 +140,8 @@ export function indexPeople(list, groups = [], unfiled = 0) {
     }
     for (const each of Array.isArray(list) ? list : []) {
         if (!each || typeof each.name !== 'string') continue;
-        // A person is the id of their node (two people called alike are two rows) and nothing else: a name the server sends
-        // with no id is no person. `tag` is the person's path.
-        if (each.person_id === undefined || each.person_id === null) continue;
+        // A person is the id of their node (two people called alike are two rows): the route sends every row with one
+        // (tagpup.services.library_view.navigator). `tag` is the person's path.
         const record = each.person && typeof each.person === 'object' ? each.person : {};
         people.push({
             id: `p:${each.person_id}`, name: each.name, count: Number(each.count) || 0, groupTag: each.group || null, children: [],
