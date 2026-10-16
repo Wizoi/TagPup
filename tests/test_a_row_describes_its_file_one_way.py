@@ -5,8 +5,9 @@ by less than the tolerance -- a copy on a drive that rounds times, a share that 
 milliseconds -- is current for all three; one that differs by more is not.
 
 A file another program changes while TagPup reads it leaves a row older than its file, which the next scan reads again:
-the stamp is taken before the read, by the indexer's read (MetadataExtractor) and a save's whole read back
-(file_changes._carry). Taken after, it stamped content read before the change as the newer file.
+the stamp is taken before the read, by the indexer's read (MetadataExtractor), a save's whole read back
+(file_changes._carry) and the settling of a file a crash left written (file_changes._record_held, #1462). Taken after, it
+stamped content read before the change as the newer file.
 """
 import os
 import sys
@@ -20,10 +21,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from face_rows import configured_model  # noqa: E402
 from test_a_file_holds_what_exiftool_kept import ReadFilesCase  # noqa: E402
-from test_file_journal import EXIFTOOL  # noqa: E402
+from test_file_journal import EXIFTOOL, Crash, crash_at  # noqa: E402
 from test_one_photo_whatever_its_spelling import CliDatabaseCase, expected_dim, make_jpeg  # noqa: E402
 
-from tagpup.files import metadata  # noqa: E402
+from tagpup.files import field_values, metadata  # noqa: E402
 from tagpup.services import file_changes, refresh_rows, settings, tagging, thumbnails  # noqa: E402
 from tagpup.services.search import PhotoEmbeddings, PhotoIndex  # noqa: E402
 from tagpup.store import photos as store_photos  # noqa: E402
@@ -116,6 +117,22 @@ class AFileChangedWhileItIsRead(ReadFilesCase):
         self.assertTrue(saved.ok, saved.message())
         stamp = self.rows("SELECT mtime, size FROM photos WHERE path = ?", (a,))[0]
         self.assertFalse(describes_its_file(stamp, a), "a change made during the read back was stamped as read")
+
+    def test_a_file_a_crash_left_written_is_stamped_as_it_was_before_the_settles_read(self):
+        a = self.make_read("a.jpg")
+        with mock.patch.object(file_changes, "_reached", side_effect=crash_at("file written")):
+            with self.assertRaises(Crash):
+                self.add([a])
+        real = field_values.read_one
+
+        def read_one(et, path, wanted):
+            held = real(et, path, wanted)
+            touched_by_another_program(path)
+            return held
+        with mock.patch.object(field_values, "read_one", read_one):
+            self.assertEqual(1, self.settle())
+        stamp = self.rows("SELECT mtime, size FROM photos WHERE path = ?", (a,))[0]
+        self.assertFalse(describes_its_file(stamp, a), "a change made during the settle's read was stamped as read")
 
 
 class TheRefresh(unittest.TestCase):

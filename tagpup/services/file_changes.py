@@ -573,7 +573,10 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     holds when the caller has just read it in this session; otherwise it is read here.
     `whole`, a dict, asks for the file written to be read back whole and recorded so
     (_read_whole). Returns (outcome, why): `finished`, "conflict" or "failed"."""
+    seen = None
     if now is None:
+        # The stat before the read: a file found holding `target` is recorded stamped as it was before what was read of it.
+        seen = _stat(row.path)
         try:
             now = field_values.read_one(et, row.path, list(target))
         except field_values.Unreadable as e:
@@ -581,7 +584,7 @@ def _carry(et, library, row, origin, target, finished, on_failure, wrote=None, n
     if fields.reads_same(now, target):
         # Written already: by a run a crash stopped before it recorded the row, whose
         # stamp from before the write was recorded with it (#265).
-        _record_held(library, row, now, target, finished, row.stamp)
+        _record_held(library, row, now, target, finished, row.stamp, seen)
         return finished, None
     if not fields.reads_same(now, origin):
         return _conflict(library, row, "changed since it was read: it holds neither what the change found"
@@ -624,28 +627,31 @@ def _read_whole(et, row, read):
     return metadata.raw_metadata(record)
 
 
-def _record_held(library, row, now, target, finished, stamp=None):
+def _record_held(library, row, now, target, finished, stamp, stat):
     """Record a file found holding `target` already, as it holds it: a value ExifTool does
     not keep as written ("1.50" read as 1.5) is recorded as read, in the row and, going
     forward, as the journal's after, as _read_back records a file just written. `stamp`
-    is the file's from just before a write of this change, when one was made."""
+    is the file's from just before a write of this change, when one was made; `stat`, the file's
+    taken before `now` was read, or None when the caller read it (then it is taken now)."""
     held = {field: now.get(field, []) for field in target}
     after = None
     if finished == "done" and not fields.same_fields(held, target):
         after = held
         row.after = held
     # A file that was not to change (its faces were) is not stamped as written.
-    _record(library, row, held, finished, stamp, wrote=not fields.reads_same(row.before, row.after), after=after)
+    wrote = not fields.reads_same(row.before, row.after)
+    _record(library, row, held, finished, stamp, wrote=wrote, after=after, stat=stat if wrote else None)
 
 
 def _after_failure(et, library, row, origin, target, finished, on_failure, error):
     """A write that raised: settled by what the file holds after it."""
+    seen = _stat(row.path)
     try:
         now = field_values.read_one(et, row.path, list(target))
     except field_values.Unreadable:
         now = None
     if now is not None and fields.reads_same(now, target):
-        _record_held(library, row, now, target, finished, row.stamp)
+        _record_held(library, row, now, target, finished, row.stamp, seen)
         return finished, None
     error = lock_owners.explain(error, row.path)   # after a failure only: who holds the file, if it is held
     if now is not None and fields.reads_same(now, origin):
