@@ -1253,7 +1253,7 @@ _settled_guard = threading.Lock()
 
 def settle_once(db_path):
     """settle, the first time this process opens the library at `db_path`: at start."""
-    key = db._key(db_path)
+    key = db.key(db_path)
     with _settled_guard:
         if key in _settled:
             return 0

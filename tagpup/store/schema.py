@@ -653,7 +653,7 @@ def forget(db_path=None):
         if db_path is None:
             _current.clear()
         else:
-            _current.pop(db._key(db_path), None)
+            _current.pop(db.key(db_path), None)
 
 
 def _still_current(path):
@@ -692,7 +692,7 @@ def ensure(db_path):
     The first time a process opens a library, a change of the journal that a crash left
     `derived_pending` is finished (tagpup.store.journal.settle).
     """
-    key = db._key(db_path)
+    key = db.key(db_path)
     identity = _identity(db_path)
     with _current_guard:
         seen = _current.get(key)
@@ -726,7 +726,7 @@ _migrating = {}
 def migrating(db_path):
     """Is a thread of this process migrating (or making) the library at `db_path` just now? A cheap read, no connection."""
     with _current_guard:
-        return _migrating.get(db._key(db_path), 0) > 0
+        return _migrating.get(db.key(db_path), 0) > 0
 
 
 def _ensure(db_path):
@@ -737,7 +737,7 @@ def _ensure(db_path):
             raise NewerLibrary(os.path.basename(db_path), found, LATEST)
         if found == LATEST:
             return []
-        key = db._key(db_path)
+        key = db.key(db_path)
         with _current_guard:
             _migrating[key] = _migrating.get(key, 0) + 1
         try:
