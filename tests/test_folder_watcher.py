@@ -8,7 +8,6 @@ TagPup makes is synced too, and the sync reads no file. Stopping waits for a syn
 way. No library of the owner's is touched: the libraries here are stand-ins, or made in
 the test's own home.
 """
-import json
 import os
 import shutil
 import sys
@@ -20,6 +19,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 
 from tagpup import runtime as runtimes  # noqa: E402
 from tagpup.core import paths  # noqa: E402
@@ -364,15 +364,9 @@ class WhichProcessWatches(unittest.TestCase):
 
 
 def seed(library_path, photo):
-    """The photo's row as the indexer leaves it: its stamp and what it holds."""
-    stat = os.stat(photo)
-    conn = db.connect(library_path)
-    try:
-        conn.execute("INSERT INTO photos (path, mtime, size, tags, captions, raw_metadata) VALUES (?, ?, ?, ?, ?, ?)",
-                     (paths.stored(photo), stat.st_mtime, stat.st_size, json.dumps([]), json.dumps([]), json.dumps({})))
-        conn.commit()
-    finally:
-        conn.close()
+    """The photo's row as the indexer leaves it (photo_rows.add_read): its stamp, what it holds, and its folder. It was an
+    INSERT of the photo alone, with no folder row: a shape nothing real makes."""
+    db.write_with_connection(library_path, lambda conn: photo_rows.add_read(conn, photo, {}))
 
 
 class WhichFoldersALibraryHas(unittest.TestCase):

@@ -109,6 +109,20 @@ class AnAddedFolder(unittest.TestCase):
         self.assertIn(paths.key(self.trip), listed)
         self.assertEqual(0, listed[paths.key(self.trip)]["own_photos"])
 
+    def test_remove_folders_list_reads_the_folders_not_every_photo(self):
+        """#501: the library's folders were counted from every photo's path (0.6 s on the 59,519-photo library); the
+        derived folders answer it in one statement, the same in the three libraries (counted 2026-10-15)."""
+        said, real = [], db.connect
+
+        def traced(*args, **kwargs):
+            conn = real(*args, **kwargs)
+            conn.set_trace_callback(said.append)
+            return conn
+        with mock.patch.object(db, "connect", traced):
+            listed = {paths.key(entry["path"]): entry["own_photos"] for entry in photo_actions.indexed_folders(self.library)}
+        self.assertEqual(1, listed[paths.key(self.regatta)])
+        self.assertEqual([], [sql for sql in said if "SELECT path FROM photos" in sql], "every photo's path was read")
+
     def test_an_ignored_folder_under_it_is_not_the_librarys(self):
         self.assertEqual([self.scans], library_actions.not_held(self.library, [self.scanned], leave_out_ignored=False))
         with self.assertRaises(NotHeld):
