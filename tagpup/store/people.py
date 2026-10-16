@@ -65,16 +65,15 @@ def _differences(conn, photo_ids, known):
                 "SELECT photo_id, tag_id, name, source FROM photo_people"
                 " WHERE photo_id IN (%s) ORDER BY photo_id, position" % marks, chunk):
             held[photo_id].append((held_id, name, source))
-        for photo_id, raw_json, tags_json in conn.execute(
-                "SELECT id, raw_metadata, tags FROM photos WHERE id IN (%s)" % marks, chunk).fetchall():
+        for photo_id, tags_json in conn.execute(
+                "SELECT id, tags FROM photos WHERE id IN (%s)" % marks, chunk).fetchall():
             try:
-                raw = json.loads(raw_json) if raw_json else {}
                 tags = json.loads(tags_json) if tags_json else []
             except (TypeError, ValueError):
-                raw, tags = {}, []
+                tags = []
             if not isinstance(tags, list):
                 tags = []   # a damaged read wrote null, or a string: no keywords, as derived.keywords_of reads it
-            rows = vocabulary.people_rows(raw, tags, named.get(photo_id, []), known)
+            rows = vocabulary.people_rows(tags, named.get(photo_id, []), known)
             people = [(ref.id, ref.name, source) for ref, source in rows if ref.id is not None]
             if people != held.get(photo_id, []):
                 yield photo_id, people

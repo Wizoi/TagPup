@@ -124,23 +124,23 @@ class TestExtractPeopleWithoutADatabase(unittest.TestCase):
     (docs/findings.md, #66)."""
 
     def test_takes_the_leaf_of_a_hierarchical_people_tag(self):
-        people = extract_people({}, ["People/Immediate/Jane Doe"], people_vocabulary(""))
+        people = extract_people(["People/Immediate/Jane Doe"], people_vocabulary(""))
         self.assertEqual(people, ["Jane Doe"])
 
     def test_family_and_friends_are_not_face_roots_without_a_library(self):
         # docs/findings.md, #66: only a library's tree says Family or Friends hold faces.
-        self.assertEqual(extract_people({}, ["Family/Immediate/Jane Doe"], people_vocabulary("")), [])
-        self.assertEqual(extract_people({}, ["Friends/Bob Roe"], people_vocabulary("")), [])
+        self.assertEqual(extract_people(["Family/Immediate/Jane Doe"], people_vocabulary("")), [])
+        self.assertEqual(extract_people(["Friends/Bob Roe"], people_vocabulary("")), [])
 
     def test_handles_backslash_and_pipe_separators(self):
-        self.assertEqual(extract_people({}, [r"People\Jane Doe"], people_vocabulary("")), ["Jane Doe"])
-        self.assertEqual(extract_people({}, ["People|Bob Roe"], people_vocabulary("")), ["Bob Roe"])
+        self.assertEqual(extract_people([r"People\Jane Doe"], people_vocabulary("")), ["Jane Doe"])
+        self.assertEqual(extract_people(["People|Bob Roe"], people_vocabulary("")), ["Bob Roe"])
 
     def test_ignores_non_people_hierarchies(self):
-        self.assertEqual(extract_people({}, ["Trips/Texas"], people_vocabulary("")), [])
+        self.assertEqual(extract_people(["Trips/Texas"], people_vocabulary("")), [])
 
     def test_ignores_a_bare_root_with_no_leaf(self):
-        self.assertEqual(extract_people({}, ["People"], people_vocabulary("")), [])
+        self.assertEqual(extract_people(["People"], people_vocabulary("")), [])
 
     def test_no_database_means_no_taxonomy_resolution(self):
         """Without a database there must be no implicit fallback to another library.
@@ -148,8 +148,8 @@ class TestExtractPeopleWithoutADatabase(unittest.TestCase):
         extract_people used to default to data/photo_index.db, so a caller working on
         one database silently resolved people against the default library's taxonomy.
         """
-        self.assertEqual(extract_people({}, ["Some Person"], people_vocabulary("")), [])
-        self.assertEqual(extract_people({}, ["Some Person"]), [])
+        self.assertEqual(extract_people(["Some Person"], people_vocabulary("")), [])
+        self.assertEqual(extract_people(["Some Person"]), [])
 
 
 
@@ -207,7 +207,7 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
 
     def test_people_are_extracted_under_a_custom_face_root(self):
         self.add_tag("Crew", "Crew", has_face=1)
-        people = extract_people({}, ["Crew/Jane Doe"], people_vocabulary(self.db_path))
+        people = extract_people(["Crew/Jane Doe"], people_vocabulary(self.db_path))
         self.assertEqual(people, ["Jane Doe"])
 
     def test_a_flat_tag_marked_as_a_person_resolves_to_that_person(self):
@@ -217,27 +217,27 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
         self.add_tag("People/Cora Ingersoll", "Cora Ingersoll", has_face=1)
         self.add_tag("Tamsin Marlowe", "Tamsin Marlowe", has_face=1)
         known = people_vocabulary(self.db_path)
-        self.assertEqual(extract_people({}, ["Tamsin Marlowe"], known), ["Tamsin Marlowe"])
-        self.assertEqual(extract_people({}, ["Cora Ingersoll"], known), [])
-        self.assertEqual(extract_people({}, ["People/Cora Ingersoll"], known), ["Cora Ingersoll"])
+        self.assertEqual(extract_people(["Tamsin Marlowe"], known), ["Tamsin Marlowe"])
+        self.assertEqual(extract_people(["Cora Ingersoll"], known), [])
+        self.assertEqual(extract_people(["People/Cora Ingersoll"], known), ["Cora Ingersoll"])
 
     def test_a_face_root_category_never_resolves_as_a_person(self):
         """"Family" is a category -- a face root with tags under it; a photo tagged with it gains no person named Family.
         (One with nothing under it is a person of the top level: tests/test_top_level_person.py.)"""
         self.add_tag("Family", "Family", has_face=1)
         self.add_tag("Family/Jane Doe", "Jane Doe", has_face=1)
-        self.assertEqual(extract_people({}, ["Family"], people_vocabulary(self.db_path)), [])
+        self.assertEqual(extract_people(["Family"], people_vocabulary(self.db_path)), [])
 
     def test_a_person_under_a_face_root_still_resolves(self):
         self.add_tag("Family", "Family", has_face=1)
         self.add_tag("Family/Jane Doe", "Jane Doe", has_face=1)
         self.assertEqual(
-            extract_people({}, ["Family/Jane Doe"], people_vocabulary(self.db_path)), ["Jane Doe"]
+            extract_people(["Family/Jane Doe"], people_vocabulary(self.db_path)), ["Jane Doe"]
         )
 
     def test_a_flat_tag_that_is_not_a_person_is_ignored(self):
         self.add_tag("Trips/Texas", "Texas", has_face=0)
-        self.assertEqual(extract_people({}, ["Texas"], people_vocabulary(self.db_path)), [])
+        self.assertEqual(extract_people(["Texas"], people_vocabulary(self.db_path)), [])
 
     def test_an_existing_connection_is_reused_instead_of_opening_another(self):
         """Opening a second connection inside a write transaction deadlocks SQLite."""
@@ -249,7 +249,7 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
                 "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
                 ("Crew/Temp", None, "Temp", 1),
             )
-            people = extract_people({}, ["Crew/Jane Doe"], people_vocabulary(conn=conn))
+            people = extract_people(["Crew/Jane Doe"], people_vocabulary(conn=conn))
             self.assertEqual(people, ["Jane Doe"])
         finally:
             conn.rollback()

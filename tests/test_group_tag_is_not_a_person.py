@@ -38,27 +38,27 @@ class TheRule(unittest.TestCase):
             ["Family"], [("Family", "Family"), (FAMILY, "Marlowe"), (PERSON, CORA)], group_tags)
 
     def test_a_group_tag_names_nobody(self):
-        self.assertEqual([], vocabulary.extract_people({}, [FAMILY], self.known()))
+        self.assertEqual([], vocabulary.extract_people([FAMILY], self.known()))
 
     def test_the_group_beside_its_person_names_only_the_person(self):
-        self.assertEqual([CORA], vocabulary.extract_people({}, [FAMILY, PERSON], self.known()))
+        self.assertEqual([CORA], vocabulary.extract_people([FAMILY, PERSON], self.known()))
 
     def test_a_flat_keyword_spelled_like_the_group_names_nobody(self):
-        self.assertEqual([], vocabulary.extract_people({}, ["Marlowe"], self.known()))
-        self.assertEqual([], vocabulary.extract_people({}, ["marlowe"], self.known()))
+        self.assertEqual([], vocabulary.extract_people(["Marlowe"], self.known()))
+        self.assertEqual([], vocabulary.extract_people(["marlowe"], self.known()))
 
     def test_a_group_is_read_by_the_spelling_a_file_gives_it(self):
-        self.assertEqual([], vocabulary.extract_people({}, ["family\\marlowe"], self.known()))
+        self.assertEqual([], vocabulary.extract_people(["family\\marlowe"], self.known()))
 
     def test_a_person_of_the_groups_name_elsewhere_is_named_by_their_own_path(self):
         known = vocabulary.PeopleVocabulary.from_rows(
             ["Family", "Friends"], [(FAMILY, "Marlowe"), (PERSON, CORA), ("Friends/Marlowe", "Marlowe")], [FAMILY])
-        self.assertEqual([], vocabulary.extract_people({}, ["Marlowe", FAMILY], known), "a bare name is a path of its own")
-        self.assertEqual(["Marlowe"], vocabulary.extract_people({}, ["Friends/Marlowe", FAMILY], known))
+        self.assertEqual([], vocabulary.extract_people(["Marlowe", FAMILY], known), "a bare name is a path of its own")
+        self.assertEqual(["Marlowe"], vocabulary.extract_people(["Friends/Marlowe", FAMILY], known))
 
     def test_a_face_named_so_is_a_name_and_stays_listed(self):
         # Faces carry names, not tags: a name no person node has is the owner's to settle (#985), not dropped here.
-        self.assertEqual(["Marlowe"], vocabulary.people_in_photo({}, [FAMILY], [vocabulary.Ref(None, "Marlowe")], self.known()))
+        self.assertEqual(["Marlowe"], vocabulary.people_in_photo([FAMILY], [vocabulary.Ref(None, "Marlowe")], self.known()))
 
 
 class InTheLibrary(unittest.TestCase):
@@ -181,7 +181,7 @@ class TopLevelPerson(unittest.TestCase, people_by_id.TwoSams):
         people_by_id.write(self.path, empty)
         self.assertIsNone(self.read(lambda conn: person_ids.resolve(conn, "People")))
         self.assertNotIn("people", taxonomy.people_filing(self.path)[0])
-        self.assertEqual([], vocabulary.extract_refs({}, ["People"], self.read(taxonomy.read_people_vocabulary)))
+        self.assertEqual([], vocabulary.extract_refs(["People"], self.read(taxonomy.read_people_vocabulary)))
 
     def test_a_top_level_person_becomes_a_group_when_a_node_goes_under_it(self):
         def under(conn):
@@ -193,9 +193,9 @@ class TopLevelPerson(unittest.TestCase, people_by_id.TwoSams):
 
     def test_a_keyword_that_is_a_top_level_person_names_them(self):
         known = self.read(taxonomy.read_people_vocabulary)
-        refs = vocabulary.extract_refs({}, [SOLO.lower()], known)
+        refs = vocabulary.extract_refs([SOLO.lower()], known)
         self.assertEqual([vocabulary.Ref(self.solo_id, SOLO)], refs)
-        self.assertEqual([], vocabulary.extract_refs({}, ["Family"], known))
+        self.assertEqual([], vocabulary.extract_refs(["Family"], known))
 
     def test_a_photo_carrying_the_top_level_person_lists_them(self):
         def add(conn):

@@ -53,7 +53,7 @@ class TheIndexResolvesPeople(unittest.TestCase):
         meta = {"path": path, "tags": tags, "captions": [], "raw_metadata": raw,
                 "mtime": 1.0, "size": 1,
                 # What the reader gives when it is not told which library: neither.
-                "people": extract_people(raw, tags)}
+                "people": extract_people(tags)}
         self.assertEqual([], meta["people"], "fixture: the reader alone finds nobody")
 
         self.index.build_or_update([[0.1] * 512], [meta])

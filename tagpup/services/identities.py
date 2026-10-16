@@ -230,8 +230,7 @@ def resolve(photo_index, on_step=None):
             continue
         guessed = guessed_by_path.get(face_path, set())
         if guessed:
-            written = {ref.id for ref in tag_vocabulary.extract_refs(meta.get("raw_metadata") or {},
-                                                                     meta.get("tags") or [], vocabulary)}
+            written = {ref.id for ref in tag_vocabulary.extract_refs(meta.get("tags") or [], vocabulary)}
             written |= manual_by_path.get(face_path, set())
             meta = dict(meta, people=[p for p in meta.get("people", [])
                                       if p not in guessed or p in written])

@@ -50,15 +50,15 @@ class PeopleVocabularyCase(unittest.TestCase):
         vocabulary = people_vocabulary(self.db_path)
         for tags in self.CASES:
             with self.subTest(tags=tags):
-                self.assertEqual(extract_people({}, tags, people_vocabulary(self.db_path)),
-                                 extract_people({}, tags, vocabulary))
+                self.assertEqual(extract_people(tags, people_vocabulary(self.db_path)),
+                                 extract_people(tags, vocabulary))
 
     def test_what_it_resolves(self):
         vocabulary = people_vocabulary(self.db_path)
-        self.assertEqual(["Biscuit"], extract_people({}, ["Pets/Biscuit"], vocabulary))
-        self.assertEqual([], extract_people({}, ["Imogen Vale"], vocabulary))
-        self.assertEqual(["Imogen Vale"], extract_people({}, ["People/Imogen Vale"], vocabulary))
-        self.assertEqual([], extract_people({}, ["Pets", "People"], vocabulary))
+        self.assertEqual(["Biscuit"], extract_people(["Pets/Biscuit"], vocabulary))
+        self.assertEqual([], extract_people(["Imogen Vale"], vocabulary))
+        self.assertEqual(["Imogen Vale"], extract_people(["People/Imogen Vale"], vocabulary))
+        self.assertEqual([], extract_people(["Pets", "People"], vocabulary))
 
 
 if __name__ == "__main__":
