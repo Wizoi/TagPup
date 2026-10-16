@@ -22,7 +22,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
-from face_rows import add_face, add_people, photo_id  # noqa: E402
+from face_rows import add_people, photo_id  # noqa: E402
 from shipped_sources import ROOT  # noqa: E402
 
 from mcp import types  # noqa: E402
@@ -31,6 +31,7 @@ from mcp.shared.memory import create_connected_server_and_client_session  # noqa
 from tagpup.core import processes  # noqa: E402
 from tagpup.mcp import server  # noqa: E402
 from tagpup.store import checks, db, derived, person_ids, schema  # noqa: E402
+from tagpup.store import faces  # noqa: E402
 
 LIBRARY = "harbour"
 
@@ -99,22 +100,27 @@ class McpServer(unittest.TestCase):
                 "camp2": _photo(conn, os.path.join(cls.gone, "camp_002.jpg"), []),
             }
             add_people(conn, cls.sailing, ["Rowan Thackeray"])
+            # The faces are made by the store's writers, as the indexer and a person's decision make them (the people are
+            # the tree's nodes: Rowan 2, Pell 8, Maren 9).
+            camp1, camp2 = os.path.join(cls.gone, "camp_001.jpg"), os.path.join(cls.gone, "camp_002.jpg")
             cls.faces = {
-                "rowan": add_face(conn, cls.sailing, (10, 20, 110, 140), name="Rowan Thackeray",
-                                  name_source="manual", prob=0.99, embedding=b"\x00" * 16),
-                "stranger": add_face(conn, cls.sailing, (200, 20, 260, 90), excluded=1,
-                                     excluded_reason="background", prob=0.91, embedding=b"\x00" * 16),
-                # Named and excluded: what the doctor's named_and_excluded finds (#3).
-                "both": add_face(conn, cls.dinghy, name="Pell Quarrington", excluded=1, excluded_reason="background"),
+                "rowan": faces.insert(conn, cls.sailing, [10, 20, 110, 140], b"\x00" * 16, prob=0.99),
+                "stranger": faces.insert(conn, cls.sailing, [200, 20, 260, 90], b"\x00" * 16, prob=0.91),
+                "both": faces.insert(conn, cls.dinghy, [0, 0, 10, 10], None),
                 # #42: names on the rows of a folder whose files are gone.
-                "camp1": add_face(conn, os.path.join(cls.gone, "camp_001.jpg"), name="Maren Oakhollow",
-                                  name_source="manual"),
-                "camp2": add_face(conn, os.path.join(cls.gone, "camp_002.jpg"), name="Maren Oakhollow",
-                                  name_source="manual"),
-                "camp2b": add_face(conn, os.path.join(cls.gone, "camp_002.jpg")),
+                "camp1": faces.insert(conn, camp1, [0, 0, 10, 10], None),
+                "camp2": faces.insert(conn, camp2, [0, 0, 10, 10], None),
+                "camp2b": faces.insert(conn, camp2, [0, 0, 10, 10], None),
             }
-            add_people(conn, os.path.join(cls.gone, "camp_001.jpg"), ["Maren Oakhollow"], source="face")
-            add_people(conn, os.path.join(cls.gone, "camp_002.jpg"), ["Maren Oakhollow"], source="face")
+            faces.name(conn, [cls.faces["rowan"]], 2)
+            faces.exclude(conn, [cls.faces["stranger"]], "background")
+            faces.name(conn, [cls.faces["camp1"], cls.faces["camp2"]], 9)
+            # Named and excluded: what the doctor's named_and_excluded finds (#3). No writer makes it (exclude takes the name
+            # off, name leaves an excluded face alone): it is the broken shape, so the name is put back on a face that was
+            # named, then excluded, the shape the doctor exists to find.
+            faces.name(conn, [cls.faces["both"]], 8)
+            faces.exclude(conn, [cls.faces["both"]], "background")
+            conn.execute("UPDATE faces SET name = 'Pell Quarrington', tag_id = 8 WHERE id = ?", (cls.faces["both"],))
             derived.rebuild_all(conn)   # a library at rest: its derived tables are what its photos say
             person_ids.sync(conn)       # and its faces and people hold the ids their names give
             conn.commit()
@@ -211,7 +217,7 @@ class McpServer(unittest.TestCase):
             conn.close()
         self.assertEqual({k: answer[k] for k in printed}, printed)
         self.assertEqual((answer["photos"], answer["faces"], answer["named"], answer["manual"], answer["excluded"]),
-                         (5, 6, 4, 3, 2))
+                         (5, 6, 4, 5, 2))
         self.assertEqual(answer["schema_version"], schema.MIGRATIONS[-1].version)
         self.assertEqual(answer["tree_nodes"], 9)
         self.assertEqual(answer["without_a_vector"], 5)
