@@ -1,8 +1,8 @@
 """The photo rows as the library holds them -- their path in row form, and the stamp of the file
-they were read from -- for Verify (tagpup.services.roots_verify; docs/ARCHITECTURE.md, "Roots and
-machines").
+they were read from -- for the sample Change location shows (tagpup.services.roots_sample;
+docs/ARCHITECTURE.md, "Roots and machines").
 
-Verify asks where a root WOULD live, a place the machine's map does not say yet, so it cannot
+The sample asks where a root WOULD live, a place the machine's map does not say yet, so it cannot
 read the rows through the connection's Roots, which converts by the map as it is: it reads what
 the library holds and converts by the hypothetical map it was given. Read-only; the path, mtime
 and size columns only (never the BLOBs).

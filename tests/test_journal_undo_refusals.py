@@ -6,12 +6,12 @@
 - An undo whose row would break a UNIQUE constraint (tag_taxonomy.tag, photos.path) is
   refused naming the row and the column, before writing; and an IntegrityError SQLite
   raises all the same is a refusal, never a traceback.
-- The maintenance services carry their errors in the Result (the refresh, in
-  tests/test_refresh_rows_guards.py).
+- The maintenance services carry their errors in the Result: held once, on the scaffold they all run on
+  (tests/test_maintenance.py; the refresh, in tests/test_refresh_rows_guards.py).
 - journal.rehearse works for every shape of insert the journal allows.
 - A refresh skips a row saved during its run instead of refusing the whole change
   (journal: skippable edits; tests/test_refresh_rows_guards.py).
-- One keyword spelling, in tagpup.core.vocabulary.
+- One keyword spelling, in tagpup.core.vocabulary: tests/test_vocabulary.py.
 - journal.history of one change lists its keys without reading its values.
 """
 import json
@@ -26,11 +26,9 @@ sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from journal_library import MODEL, JournalLibrary, jpeg, vector  # noqa: E402
 
-from tagpup.core import vocabulary  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
-from tagpup.services import duplicate_faces, maintenance, person_tags  # noqa: E402
 from tagpup.services import journal as library_journal  # noqa: E402
-from tagpup.store import journal, people  # noqa: E402
+from tagpup.store import journal  # noqa: E402
 
 SECRETS = ("Rowan Thackeray", "Imogen Vale", "Maren Oakhollow", "regatta_00")
 
@@ -148,7 +146,6 @@ class UniqueValues(Checked):
         self.assertIn("UNIQUE constraint failed: tag_taxonomy.tag", rehearsed.refused)
 
     def test_the_services_undo_answers_a_refusal_not_a_traceback(self):
-        from tagpup.core.library import Library
         bare = self.ids["Rowan Thackeray"]
         applied = journal.apply(self.db_path, "t", [journal.delete("tag_taxonomy", (bare,), {})])
         self.execute("INSERT INTO tag_taxonomy (tag, name) VALUES ('Rowan Thackeray', 'Rowan Thackeray')")
@@ -170,8 +167,8 @@ class InsertsRehearsed(Checked):
             "a photo, keyed by SQLite": journal.insert("photos", photo),
             "a photo with its key": journal.insert("photos", dict(photo, id=500)),
             "a face, keyed by SQLite": journal.insert("faces", {"photo_id": prize, "box": "[1, 2, 3, 4]",
-                                                                "embedding": vector(9), "name": "Imogen Vale",
-                                                                "name_source": "manual", "excluded": 0}),
+                                                                "embedding": vector(9), "name_source": "manual",
+                                                                "excluded": 0}),
             "a node with its tag and name": journal.insert("tag_taxonomy", {
                 "tag": "Friends/Maren Oakhollow", "parent_id": self.ids["Friends"], "name": "Maren Oakhollow",
                 "has_face": 1}),
@@ -253,87 +250,6 @@ class SkippableEdits(JournalLibrary):
                     if "skippable=True" in handle.read():
                         using.append(name)
         self.assertEqual(["face_people.py", "refresh_rows.py", "relink_photos.py"], using)
-
-
-class ServicesReportErrors(JournalLibrary):
-    """#3: dedupe and merge carry result.errors (the refresh's, in tests/test_refresh_rows_guards.py)."""
-
-    def run_service(self, service, apply=False):
-        return service(Library(self.db_path), apply=apply)
-
-    def dedupe_ready(self):
-        self.execute("INSERT INTO faces (photo_id, box, embedding, prob, excluded)"
-                     " SELECT photo_id, box, embedding, prob, 0 FROM faces WHERE id = ?", (self.ids["copy"],))
-
-    def failed_write(self, service):
-        before = self.dump()
-        with mock.patch.object(journal, "_write", side_effect=RuntimeError("disk I/O error")):
-            result = self.run_service(service, apply=True)
-        self.assertEqual(1, len(result.errors), result.errors)
-        self.assertIn("FAILED: the write: RuntimeError: disk I/O error", maintenance.failed(result))
-        self.assertIn("Nothing was recorded", maintenance.recorded(result, self.db_path))
-        self.assertEqual(before, self.dump())
-
-    def failed_rebuild(self, service):
-        with mock.patch.object(journal, "_derive", side_effect=RuntimeError("database is locked")):
-            with self.assertLogs("tagpup.store.journal", "ERROR"):
-                result = self.run_service(service, apply=True)
-        self.assertEqual(1, len(result.errors), result.errors)
-        self.assertIsInstance(result.details["change"], int)
-        self.assertTrue(any(line.startswith("FAILED: the people and dates of the photos it touched: not rebuilt yet")
-                            for line in maintenance.failed(result)), maintenance.failed(result))
-        self.assertEqual("derived_pending", self.changes()[0][2])
-
-    def test_merge_a_failed_write(self):
-        self.failed_write(person_tags.merge_duplicate_person_tags)
-
-    def test_merge_a_failed_rebuild(self):
-        self.failed_rebuild(person_tags.merge_duplicate_person_tags)
-
-    def test_dedupe_a_failed_write(self):
-        self.dedupe_ready()
-        self.failed_write(duplicate_faces.dedupe_faces)
-
-    def test_dedupe_a_failed_rebuild(self):
-        self.dedupe_ready()
-        self.failed_rebuild(duplicate_faces.dedupe_faces)
-
-    def test_a_failed_rehearsal_is_reported_too(self):
-        with mock.patch.object(journal, "rehearse", side_effect=RuntimeError("disk I/O error")):
-            result = self.run_service(person_tags.merge_duplicate_person_tags)
-        self.assertIn("FAILED: the rehearsal: RuntimeError: disk I/O error", maintenance.failed(result))
-
-    def test_a_clean_apply_has_no_errors(self):
-        result = self.run_service(person_tags.merge_duplicate_person_tags, apply=True)
-        self.assertEqual([], maintenance.failed(result))
-
-    def test_recorded_copes_with_no_change(self):
-        from tagpup.core.result import Result
-        self.assertEqual("Nothing was recorded: no change was written.",
-                         maintenance.recorded(Result(details={"change": None}), self.db_path))
-
-
-class OneKeywordSpelling(unittest.TestCase):
-    """#6: the keyword spelling extract_people looks up by, and people.follow_tree and
-    photos_named_by find photos by, is vocabulary.keyword_key -- one copy."""
-
-    def test_the_spelling(self):
-        self.assertEqual("people/rowan thackeray", vocabulary.keyword_key("  People" + chr(92) + "Rowan Thackeray "))
-
-    def test_no_copy_of_it_elsewhere(self):
-        spelled = 'replace("' + chr(92) * 2 + '", "/").strip().lower()'
-        found = []
-        for folder in ("tagpup", "scripts"):
-            for root, _dirs, names in os.walk(os.path.join(WORKSPACE_DIR, folder)):
-                for name in names:
-                    if name.endswith(".py"):
-                        path = os.path.join(root, name)
-                        with open(path, encoding="utf-8") as handle:
-                            count = handle.read().count(spelled)
-                        if count:
-                            found.append((os.path.relpath(path, WORKSPACE_DIR), count))
-        self.assertEqual([(os.path.join("tagpup", "core", "vocabulary.py"), 1)], found)
-        self.assertFalse(hasattr(people, "_spelled"))
 
 
 class HistoryReadsKeysOnly(JournalLibrary):

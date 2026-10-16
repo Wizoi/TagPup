@@ -148,7 +148,7 @@ _FILES = {
             "test_faces_detected_record "
             "test_folder_membership test_journal_undo_refusals "
             "test_mcp_photo_against_file test_path_locker "
-            "test_roots_unplaced test_roots_verify test_search_words "
+            "test_roots_sample test_roots_unplaced test_search_words "
             "test_services_refuse_what_the_rules_refuse "
             "test_sync_records test_the_tree_is_the_librarys test_validation test_view_indexes"
         ),

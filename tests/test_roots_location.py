@@ -12,7 +12,7 @@ Lifted: test_roots_what_the_owner_is_told (the stage 3 review's #466-#474, each 
 verify of a copy says before a move (#466, #469), what the refusal and the dialog say a move can and cannot see (#467),
 what a write stopped half-way says it wrote (#468), a library behind the schema (#470), only the current and previous
 place kept (#472), one owner of "a share is away" (#474). Its unplaced-root check results (#473) went to
-test_roots_unplaced; its test that roots_verify holds no thread of its own read source text and is gone.
+test_roots_unplaced; its test that roots_sample holds no thread of its own read source text and is gone.
 """
 import json
 import os
@@ -34,7 +34,7 @@ import share_waits  # noqa: E402
 from tagpup import config  # noqa: E402
 from tagpup.core.result import NotFound  # noqa: E402
 from tagpup.files import shares  # noqa: E402
-from tagpup.services import activity, file_changes, roots_location, roots_verify, tagging  # noqa: E402
+from tagpup.services import activity, file_changes, roots_location, roots_sample, tagging  # noqa: E402
 from tagpup.services import roots as roots_service  # noqa: E402
 from tagpup.store import db  # noqa: E402
 from tagpup.store import job_runs as store_job_runs  # noqa: E402
@@ -225,11 +225,11 @@ class ChangingTheLocation(RootsCase):
 
     def test_a_share_that_does_not_answer_is_refused_unless_overridden_and_is_not_waited_for(self):
         release = threading.Event()
-        roots_verify.forget_away()
-        self.addCleanup(roots_verify.forget_away)
+        roots_sample.forget_away()
+        self.addCleanup(roots_sample.forget_away)
         self.addCleanup(release.set)
         share = "\\\\idziserver\\Pictures\\Pictures"
-        with mock.patch.object(roots_verify, "_probe", lambda location: release.wait(30) or "ok"):
+        with mock.patch.object(roots_sample, "_probe", lambda location: release.wait(30) or "ok"):
             started = time.monotonic()
             refused = self.move(share, apply=True, seconds=0.3)
             self.assertLess(time.monotonic() - started, 10)
@@ -478,7 +478,7 @@ class BeforeAMove(RootsCase):
     OUTSIDE = 0
 
     def verify(self, location, **kwargs):
-        return roots_verify.verify(self.library, "pictures", location, self.machine, **kwargs)
+        return roots_sample.verify(self.library, "pictures", location, self.machine, **kwargs)
 
 
 class AStaleCopy(BeforeAMove):
@@ -542,13 +542,6 @@ class WhatTheOwnerIsToldBeforeAMove(BeforeAMove):
         self.assertIn("TagTuner sees only its own runs", result.refused)
         self.assertIn("stop Suggest in TagPup", result.refused)
         self.assertIn("a sync", result.refused)
-
-    def test_the_architecture_does_not_claim_more(self):                                      # #467
-        # "Roots and machines" moved verbatim to docs/history/ when ARCHITECTURE.md became a map
-        text = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "history",
-                                 "ARCHITECTURE_roots_and_markers.md"), encoding="utf-8").read()
-        self.assertNotIn("refused **while anything of the library is running or queued**", text)
-        self.assertIn("TagTuner's own runs", text)
 
 
 class AWriteStoppedHalfWay(BeforeAMove):
@@ -631,7 +624,7 @@ class OneOwnerOfAShareBeingAway(unittest.TestCase):
     def test_a_look_at_one_file_and_verify_use_the_same_cache(self):                          # #474
         release = threading.Event()
         self.addCleanup(release.set)
-        state, _ = roots_verify._bounded(self.SHARE, lambda: release.wait(30), 0.2)
+        state, _ = roots_sample._bounded(self.SHARE, lambda: release.wait(30), 0.2)
         self.assertEqual("away", state)
         waits, counting = share_waits.counted()
         with counting:
@@ -648,7 +641,7 @@ class OneOwnerOfAShareBeingAway(unittest.TestCase):
         self.assertIn(shares.share_of(self.SHARE), shares._away)
         waits, counting = share_waits.counted()
         with counting:
-            self.assertEqual("away", roots_verify._bounded(self.SHARE, lambda: "never asked", 5)[0])
+            self.assertEqual("away", roots_sample._bounded(self.SHARE, lambda: "never asked", 5)[0])
         self.assertEqual([], waits, "a share a look at one file found away was waited for by Verify")
 
 

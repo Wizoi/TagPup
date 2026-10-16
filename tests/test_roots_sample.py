@@ -1,4 +1,4 @@
-"""A sample of a place: how well it holds the files a root's rows describe (tagpup.services.roots_verify;
+"""A sample of a place: how well it holds the files a root's rows describe (tagpup.services.roots_sample;
 docs/ARCHITECTURE.md, "Roots and machines", TagTuner's Roots).
 
 The library is made as the roots tests make it (tests/roots_library.py: rows the indexer's code
@@ -28,7 +28,7 @@ import share_waits  # noqa: E402
 
 from tagpup import config  # noqa: E402
 from tagpup.core.result import NotFound, Refused  # noqa: E402
-from tagpup.services import roots_verify  # noqa: E402
+from tagpup.services import roots_sample  # noqa: E402
 
 WINDOWS = os.name == "nt"
 
@@ -46,7 +46,7 @@ class SampleCase(unittest.TestCase):
     REAL, BULK = 6, 0
 
     def setUp(self):
-        self.home = own_home.for_test(self, prefix="roots_verify_")
+        self.home = own_home.for_test(self, prefix="roots_sample_")
         self.side = rl.Side(self.home, "photo_index", real=self.REAL, bulk=self.BULK, outside=2)
         result = self.side.adopt()
         self.assertIsNone(result.refused, result.refused)
@@ -54,7 +54,7 @@ class SampleCase(unittest.TestCase):
         self.map_file = config.machine_roots_path()
 
     def verify(self, location=None, **kwargs):
-        return roots_verify.verify(self.side.library, "pictures", location or self.side.pictures, self.machine,
+        return roots_sample.verify(self.side.library, "pictures", location or self.side.pictures, self.machine,
                                    **kwargs)
 
     def copy_of_pictures(self, keep_times=True, name="Copy"):
@@ -183,7 +183,7 @@ class WhatItCounts(SampleCase):
 
     def test_a_root_the_library_does_not_have_is_not_found(self):
         with self.assertRaises(NotFound):
-            roots_verify.verify(self.side.library, "scans", self.side.pictures, self.machine)
+            roots_sample.verify(self.side.library, "scans", self.side.pictures, self.machine)
 
 
 @unittest.skipUnless(WINDOWS, "spellings below are Windows paths")
@@ -194,8 +194,8 @@ class ASampleSpreadsOverTheRows(SampleCase):
         """The first rows of a library are in the first folder; a sample of them says nothing of the
         rest. Here 3 folders hold 51 rows each and the sample asks for 6."""
         looked = []
-        real = roots_verify.shares.stamp_of
-        with mock.patch.object(roots_verify.shares, "stamp_of", lambda path: looked.append(path) or real(path)):
+        real = roots_sample.shares.stamp_of
+        with mock.patch.object(roots_sample.shares, "stamp_of", lambda path: looked.append(path) or real(path)):
             found = self.verify(sample=6)
             first = list(looked)
             del looked[:]
@@ -207,7 +207,7 @@ class ASampleSpreadsOverTheRows(SampleCase):
 
     def test_a_sample_that_runs_out_of_time_says_so_and_counts_what_it_saw(self):
         clock = types.SimpleNamespace(monotonic=iter([0.0, 0.0, 0.0, 100.0, 100.0]).__next__)
-        with mock.patch.object(roots_verify, "time", clock), mock.patch.object(roots_verify, "SAMPLE_BUDGET", 10):
+        with mock.patch.object(roots_sample, "time", clock), mock.patch.object(roots_sample, "SAMPLE_BUDGET", 10):
             found = self.verify(sample=6)
         self.assertEqual("time", found["stopped"])
         self.assertEqual(2, found["checked"])
@@ -245,11 +245,11 @@ class APlaceThatCannotBeReached(SampleCase):
             release.wait(30)
             return "ok"
 
-        roots_verify.forget_away()
-        self.addCleanup(roots_verify.forget_away)
+        roots_sample.forget_away()
+        self.addCleanup(roots_sample.forget_away)
         self.addCleanup(release.set)
         waits, counting = share_waits.counted()
-        with mock.patch.object(roots_verify, "_probe", hang), counting:
+        with mock.patch.object(roots_sample, "_probe", hang), counting:
             started = time.monotonic()
             found = self.verify("\\\\idziserver\\Pictures\\Pictures", seconds=0.3)
             first = time.monotonic() - started
@@ -266,14 +266,14 @@ class APlaceThatCannotBeReached(SampleCase):
 
     def test_a_share_that_stops_answering_half_way_says_so_and_counts_nothing_unlooked_at_as_missing(self):
         copy = self.copy_of_pictures()
-        real = roots_verify.shares.stamp_of
+        real = roots_sample.shares.stamp_of
         seen = []
 
         def flaky(path):
             seen.append(path)
-            return real(path) if len(seen) <= 4 else roots_verify.shares.UNANSWERED
+            return real(path) if len(seen) <= 4 else roots_sample.shares.UNANSWERED
 
-        with mock.patch.object(roots_verify.shares, "stamp_of", flaky):
+        with mock.patch.object(roots_sample.shares, "stamp_of", flaky):
             found = self.verify(copy)
         self.assertEqual("unreachable", found["stopped"])
         self.assertFalse(found["reachable"])
@@ -284,10 +284,10 @@ class APlaceThatCannotBeReached(SampleCase):
 
 class ALibraryWithNoRoots(unittest.TestCase):
     def test_a_library_that_has_not_adopted_a_root_is_told_so(self):
-        home = own_home.for_test(self, prefix="roots_verify_none_")
+        home = own_home.for_test(self, prefix="roots_sample_none_")
         side = rl.Side(home, "plain", real=1, bulk=0, outside=0)
         with self.assertRaises(NotFound):
-            roots_verify.verify(side.library, "pictures", side.pictures, rl.machine())
+            roots_sample.verify(side.library, "pictures", side.pictures, rl.machine())
 
 
 if __name__ == "__main__":

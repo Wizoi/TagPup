@@ -10,6 +10,7 @@ files: tests/test_refresh_rows.py).
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -109,6 +110,7 @@ class TheScaffold(LibraryCase):
         self.assertEqual([(3,)], self.query("SELECT COUNT(*) FROM change_rows WHERE change_id = ?", (change,)))
         self.assertFalse(result.details["dry_run"])
         self.assertEqual((3, 3), (result.attempted, result.changed))
+        self.assertEqual([], maintenance.failed(result))
 
     def test_changed_is_what_the_write_changed_not_the_plan(self):
         plan, _edits = self.operation(3)
@@ -157,15 +159,31 @@ class TheScaffold(LibraryCase):
         self.assertEqual(["[]", '["Quay"]', "[]"], self.captions())
         self.assertEqual([], self.changes())
 
-    def test_an_apply_whose_write_fails_says_so_and_writes_nothing(self):
-        import sqlite3
+    def test_a_failed_rehearsal_write_or_rebuild_is_said_with_what_was_recorded(self):
+        """#3: each operation carries its failures in result.errors, as the line a script prints (maintenance.failed), and
+        says what was recorded. Every operation runs on this scaffold, so the cases are held here once (dedupe's and
+        merge's copies went: tests/test_journal_undo_refusals)."""
         plan, edits = self.operation(2)
+        with mock.patch.object(journal, "rehearse", side_effect=RuntimeError("disk I/O error")):
+            result = maintenance.run(self.library, "test_op", plan, edits)
+        self.assertEqual(["FAILED: the rehearsal: RuntimeError: disk I/O error"], maintenance.failed(result))
+
         with mock.patch.object(journal, "_write", side_effect=sqlite3.OperationalError("disk I/O error")):
             result = maintenance.run(self.library, "test_op", plan, edits, apply=True)
-        self.assertFalse(result.ok)
+        self.assertEqual(["FAILED: the write: OperationalError: disk I/O error"], maintenance.failed(result))
         self.assertEqual(0, result.changed)
-        self.assertIn("disk I/O error", result.errors[0][1])
+        self.assertEqual("Nothing was recorded: no change was written.", maintenance.recorded(result, self.db))
         self.assertEqual((["[]"] * 2, []), (self.captions(), self.changes()))
+
+        with mock.patch.object(journal, "_derive", side_effect=RuntimeError("database is locked")):
+            with self.assertLogs("tagpup.store.journal", "ERROR"):
+                result = maintenance.run(self.library, "test_op", plan, edits, apply=True)
+        self.assertEqual(["FAILED: the people and dates of the photos it touched: not rebuilt yet; they are, the next time "
+                          "the library is opened"], maintenance.failed(result))
+        change = result.details["change"]
+        self.assertEqual([(change, "test_op", "derived_pending")], self.changes())
+        self.assertEqual(['["Harbour"]'] * 2, self.captions(), "the rows were written; only their derived rows wait")
+        self.assertIn("Recorded as change %d" % change, maintenance.recorded(result, self.db))
 
     def test_remaining_is_read_after_the_write(self):
         plan, edits = self.operation(2)

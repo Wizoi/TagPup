@@ -359,9 +359,7 @@ def _target(conn, person, known=None):
     from tagpup.store import taxonomy   # taxonomy imports this module's neighbours
     if vocabulary.SEPARATOR in name:
         raise ValueError("%r is a tag's path, not a person's name: a face is named by a person's id or a bare name" % name)
-    node_id = taxonomy.ensure_node(conn, name, person=True)[0]
-    if node_id is None:   # person_ids.target refuses a group's name and a name two people have before this
-        raise ValueError("no person can be made of %r: the face is not named" % name)
+    node_id = taxonomy.ensure_node(conn, name, person=True)[0]   # target refused a group's name and a shared one first
     return node_id, conn.execute("SELECT name FROM tag_taxonomy WHERE id = ?", (node_id,)).fetchone()[0]
 
 
@@ -741,7 +739,7 @@ def unnamed_counts(conn, folder):
 
 def counts_by_person(conn):
     """[(Ref, faces)] for everyone named, most faces first: a person is the node (the id), so two people called alike are two
-    rows. A face with a name and no id (from before ids) is no person and is not counted."""
+    rows. Only a face with an id is counted: a name alone is nobody."""
     return sorted(((Ref(tag_id, name), count) for tag_id, name, count in conn.execute(
         "SELECT tag_id, name, COUNT(*) FROM faces WHERE tag_id IS NOT NULL GROUP BY tag_id, name").fetchall()),
         key=lambda found: -found[1])

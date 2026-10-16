@@ -114,8 +114,8 @@ class TheAnswers(Library):
         self.photo = self.vl.photo("A", "sams.jpg", tags=[SAM_T, WREN])
         self.other = self.vl.photo("A", "other.jpg", tags=[SAM_I])
         self.path = self.vl.path_of(self.photo)
-        # A face whose node left keeps its name and no id (person_ids.follow_tree): the shape under test, so no person_of.
-        self.sam_face = add_face(self.vl.conn, self.path, name="Sam", tag_id=None, embedding=unit(1, 0, 0, 0), box=(0, 0, 10, 10))
+        # A face that names nobody (a name alone would be nobody too: owner, 2026-10-15).
+        self.sam_face = add_face(self.vl.conn, self.path, embedding=unit(1, 0, 0, 0), box=(0, 0, 10, 10))
         self.wren_face = add_face(self.vl.conn, self.path, name="Wren", embedding=unit(0, 1, 0, 0), box=(20, 0, 30, 10))
         self.stranger = add_face(self.vl.conn, self.path, embedding=unit(0, 1, 0, 0.1), box=(40, 0, 50, 10))
         # Wren on another photo too: a suggestion is the nearest name ELSEWHERE in the library.
