@@ -106,3 +106,12 @@ For every feature or change in your domain, or touching its contract, ask in thi
 healthy? does it add debt: a second copy of a rule, a branch for a case with no instance, a reach into another domain's
 internals, a concept the domain already has under another name, a test of code where a scenario belongs? If yes, the change
 is not done: it removes that debt in the same branch, or it is refused. Say so in the review.
+
+## Planning a domain pass (owner, 2026-10-15)
+A domain's queue is planned once, whole, before any code: (1) re-verify every open row and every unmet condition against
+the trunk and a live count (read-only); drop what is stale; (2) for each rule or kind violated, sweep: list EVERY
+instance (grep, AST scan, count), not the ones a finding names; (3) say the single place that should own each rule
+(the second round's ownership question, asked in the first); (4) write the brief the worker will get: the sweep lists, the
+owner decisions already made (cite DECISIONS), what NOT to touch (other domains), the live counts, the tests to lift or delete
+(scenarios, owned and mapped), the order of commits; (5) review the worker's branch once, against the seven conditions,
+and say merge or not. A `low` is fixed or by design, with the reason.
