@@ -60,15 +60,11 @@ _bringing_guard = threading.Lock()
 _waiting = {}
 
 
-def _key(db_path):
-    return paths.key(db_path)
-
-
 def updating(db_path):
     """Is the library at `db_path` being brought up to date by this process just now -- migrating, or still to be looked
     at by the startup thread? A cheap read; a request for it waits (503) instead of holding a thread on the write lock."""
     with _bringing_guard:
-        if _waiting.get(_key(db_path), 0) > 0:
+        if _waiting.get(db.key(db_path), 0) > 0:
             return True
     return schema.migrating(db_path)
 
@@ -95,7 +91,7 @@ def bring_up_to_date_in_background(libraries_served):
     with _bringing_guard:
         _bringing += len(there)
         for library in there:
-            _waiting[_key(library.path)] = _waiting.get(_key(library.path), 0) + 1
+            _waiting[db.key(library.path)] = _waiting.get(db.key(library.path), 0) + 1
 
     def run():
         global _bringing
@@ -111,7 +107,7 @@ def bring_up_to_date_in_background(libraries_served):
             finally:
                 with _bringing_guard:
                     _bringing -= 1
-                    _waiting[_key(library.path)] -= 1
+                    _waiting[db.key(library.path)] -= 1
 
     thread = threading.Thread(target=run, name="BringUpToDateThread", daemon=True)
     thread.start()
