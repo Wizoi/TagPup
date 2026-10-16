@@ -143,9 +143,19 @@ def _missing_by_folder(missing):
 
 
 def _under_any(folder, folders):
-    """Is `folder` one of `folders` ({key: spelling}), or under one?"""
-    key = paths.key(folder)
-    return key in folders or any(paths.is_under(folder, other) for other in folders.values())
+    """Is `folder` one of `folders` ({key: spelling}), or under one? Its parents are asked of the keys, one each: a
+    sync whose listing failed for a thousand folders asks it of every row it did not see (_unseen)."""
+    current = paths.stored(folder)
+    while folders:
+        key = paths.key(current)
+        # A share's own folder is keyed without its last separator, and is its parents' dirname with it.
+        if key in folders or key.rstrip(os.sep) in folders or key + os.sep in folders:
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return False
 
 
 def folder_state(folder):

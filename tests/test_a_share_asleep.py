@@ -33,6 +33,7 @@ import share_waits  # noqa: E402
 import web_client  # noqa: E402
 from view_library import ViewLibrary  # noqa: E402
 
+from tagpup.core import paths  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
 from tagpup.files import recycle_bin, shares  # noqa: E402
 from tagpup.services import activity, inspect, library_view, settings, sync, tagging  # noqa: E402
@@ -293,6 +294,26 @@ class ASyncThatCannotLookAtAFolder(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1.0, "the request waited on the share")
         self.assertIn("not answering", result.refused or "")
         self.assertEqual([], queued)
+
+    def test_a_share_whose_listing_failed_for_a_thousand_folders_sorts_its_rows_within_a_second(self):
+        """#1442: each row the walk did not see was compared with every folder not looked at (two paths.key each), so
+        1,282 unlisted folders of the 2,564-folder library cost about 125 s; its parents are asked of the folders' keys."""
+        share = os.path.join(self.home.root, "NAS", "Pictures")
+        folders = [os.path.join(share, "%04d Regatta" % n, "Day %d" % (n % 7)) for n in range(1000)]
+        rows = {}
+        for n in range(3000):
+            path = os.path.join(folders[n % 1000] if n % 2 else os.path.join(share, "Elsewhere", "%04d" % n),
+                                "IMG_%04d.jpg" % n)
+            rows[paths.key(path)] = (n + 1, path, THEN, 100)
+        started = time.perf_counter()
+        missing, unseen = sync._unseen(rows, {}, folders)
+        self.assertLess(time.perf_counter() - started, 1.0)
+        self.assertEqual((1500, 1500), (len(missing), len(unseen)))
+        unc = os.sep * 2 + "nas" + os.sep + "photos"
+        for folder, under, answer in ((unc + os.sep + "2019", unc, True), (unc + "2" + os.sep + "2019", unc, False),
+                                      (unc, unc + os.sep, True), (os.path.join("C:" + os.sep, "a"), "C:" + os.sep, True),
+                                      (os.path.join("C:" + os.sep, "ab"), os.path.join("C:" + os.sep, "a"), False)):
+            self.assertEqual(answer, sync._under_any(folder, {paths.key(under): under}), (folder, under))
 
     def test_a_listing_that_drops_part_way_leaves_the_photos_it_did_not_reach_not_looked_at(self):
         pictures = os.path.join(self.home.root, "Pictures")
