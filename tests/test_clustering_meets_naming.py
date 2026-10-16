@@ -58,7 +58,7 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
     def test_a_face_named_by_hand_while_clustering_runs_keeps_the_owners_name(self):
         first, second = self.two_faces_of_jane()
 
-        heard = self.run_while(lambda conn: store_faces.name(conn, [second], "Bob Roe"))
+        heard = self.run_while(lambda conn: store_faces.name(conn, [second], face_rows.person_of(conn, "Bob Roe")))
 
         self.assertEqual(("Bob Roe", "manual"), self.row(second), "the owner's naming was overwritten by the guess")
         self.assertEqual(("Jane Doe", None), self.row(first), "the face nobody touched is named as before")
@@ -67,7 +67,7 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
     def test_a_face_another_run_named_meanwhile_is_not_written_over(self):
         first, second = self.two_faces_of_jane()
 
-        heard = self.run_while(lambda conn: store_faces.name_if_unnamed(conn, second, "Bob Roe"))
+        heard = self.run_while(lambda conn: store_faces.name_if_unnamed(conn, second, face_rows.person_of(conn, "Bob Roe")))
 
         self.assertEqual("Bob Roe", self.row(second)[0], "a face that carries another person than the one read is left")
         self.assertEqual([1], heard)
@@ -133,7 +133,7 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
     def test_the_summary_counts_the_faces_written_not_the_faces_meant(self):
         first, second = self.two_faces_of_jane()
 
-        self.run_while(lambda conn: store_faces.name(conn, [second], "Bob Roe"))
+        self.run_while(lambda conn: store_faces.name(conn, [second], face_rows.person_of(conn, "Bob Roe")))
 
         self.assertEqual({"Jane Doe": 1}, self.stats, "a face the owner named meanwhile was counted as linked")
 
@@ -177,6 +177,33 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
             "UPDATE photos SET tags = ?, raw_metadata = ? WHERE path = ?",
             (json.dumps(tags), json.dumps({"XMP:HierarchicalSubject": tags}), photo)))
         return photo
+
+    def test_a_photo_retagged_as_the_run_reads_the_library_is_read_whole(self):
+        """#1372: the owner retags a photo in another window just as cluster-faces reads the library. The run reads each photo's
+        people and its keywords in one statement, so its lone face is not named after the person just taken off. Mutation: the
+        people read in a statement of their own before the rows (store.people.listed_ids) named the face Mara Quill."""
+        from unittest import mock
+        from tagpup.store import people as store_people
+        from tagpup.store import photos as store_photos
+        photo = self.photo_tagged("solo.jpg", ["Mara Quill"])
+        face = self.add_face(photo, identity_vector(21))
+        db.write_with_connection(self.db_path, lambda conn: taxonomy.add_path(conn, "People/Tobin Ash"))
+        real = store_photos.records
+
+        def retag(conn):
+            """The other window's keyword write: the photo's keywords, and its people rebuilt in the same transaction."""
+            photo_id = conn.execute("SELECT id FROM photos WHERE path = ?", (photo,)).fetchone()[0]
+            conn.execute("UPDATE photos SET tags = ?, raw_metadata = ? WHERE id = ?",
+                         (json.dumps(["People/Tobin Ash"]), json.dumps({"XMP:HierarchicalSubject": ["People/Tobin Ash"]}), photo_id))
+            store_people.rebuild(conn, [photo_id])
+
+        def retagged_first(*args, **kwargs):
+            db.write_with_connection(self.db_path, retag)
+            return real(*args, **kwargs)
+        with mock.patch.object(store_photos, "records", retagged_first):
+            self.run_while(lambda conn: None)
+
+        self.assertEqual("Tobin Ash", self.row(face)[0], "the face was named after the person taken off its photo")
 
     def test_two_people_no_face_is_known_for_leave_the_two_faces_of_their_photo_unnamed(self):
         """#1374: the owner tags a photo with two people and the indexer finds two faces in it; neither person has a face known

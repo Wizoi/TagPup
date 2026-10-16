@@ -17,6 +17,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import face_rows  # noqa: E402
 import library_dump  # noqa: E402
 import test_analyse_only_suggest as base  # noqa: E402
 
@@ -283,14 +284,15 @@ class TheYearPromptsAreKeptInMemory(Base):
 
 
 class APersonIsFiledAsTheChipFilesThem(Base):
-    """#546: Apply All wrote a bare name for a named face whose node the tree lacks. A face named gets its node when it is
-    named (every tag has an id, 2026-10-10): directly under the tree's root, so Apply All and a click on the chip file it by
-    that node's path until the owner merges it into a branch. The run itself makes no node."""
+    """#546: Apply All wrote a bare name for a named face whose node the tree lacks. A face is named by a person who has a
+    node (every tag has an id, 2026-10-10): here one directly under the tree's root, so Apply All and a click on the chip file
+    it by that node's path until the owner merges it into a branch. The run itself makes no node."""
 
     def know_wren(self):
         conn = db.connect(self.library.path)
         try:
-            store_faces.insert(conn, self.held[1], [0, 0, 100, 100], base.WREN.tobytes(), name="Wren Okafor", prob=0.99)
+            store_faces.insert(conn, self.held[1], [0, 0, 100, 100], base.WREN.tobytes(),
+                               name=face_rows.person_of(conn, "Wren Okafor"), prob=0.99)
             conn.commit()
         finally:
             conn.close()

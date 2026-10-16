@@ -59,40 +59,27 @@ def add_path(conn, path, root_has_face=0):
     return parent_id
 
 
-def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
-    """THE one place a name or a keyword that has no node gets one (owner, 2026-10-10: every tag has an id; 2026-10-11: only the id):
-    (the node's id, whether a node was made or, for a name, marked as a person), or (None, False) for a text with no levels, a
-    name that is the path of a group, and a keyword that would go under a person that faces or photos use. The caller commits.
+def ensure_node(conn, text, tree=None, edited=False):
+    """THE one place a keyword that has no node gets one (owner, 2026-10-10: every tag has an id; 2026-10-11: only the id): (the
+    node's id, whether a node was made), or (None, False) for a text with no levels and a keyword that would go under a person
+    that faces or photos use. A new PERSON named on a face is made by tagpup.services.face_people.made (the tag first, at the
+    path the filer chooses); the store's face writers make no node. The caller commits.
     The edit is a tree_edit, so what follows it follows: the photos carrying the keyword get their rows (person_ids.follow_tree
     renames and removes; nothing links a name to the person made: a row has the id or is not a person, owner 2026-10-11).
 
     A keyword IS its path: it is found as the tree spells it, else without case, in one Unicode form and as
     `vocabulary.normalize` spells it (derived.Tree), so a level that exists is never made a second time under another case; one
     that does not is made with each missing level above it (add_path), a root without the flag. A bare keyword is a node of its
-    own at the top, never a person's name. A NAME (`person`; a bare one) is the one person called it if exactly one is; else
-    -- none, two, or a group's leaf, which are other paths -- the node of that path directly under the tree's root, marked as a
-    person (a childless word tag of that name there is marked as one); the name of a node with nodes under it is a group's, and
-    is given none. `tree` is the derived.Tree the caller holds (kept up to date here); `known` the person_ids.People, read here
-    when it is needed and not given. `edited`: the caller is inside a tree_edit of its own (derived's batch makes many
-    nodes in one). Idempotent: the second call finds the node the first made."""
+    own at the top, never a person's name. `tree` is the derived.Tree the caller holds (kept up to date here). `edited`: the
+    caller is inside a tree_edit of its own (derived's batch makes many nodes in one). Idempotent: the second call finds the
+    node the first made."""
     path = vocabulary.normalize(text)
     if not path:
         return None, False
     tree = tree or derived.Tree.read(conn)
-    bare = vocabulary.SEPARATOR not in path
-    if bare and person:
-        # A name two people have, a group's or the empty People's raises (People.person): a name found here is no group.
-        found = (known or person_ids.read(conn)).person(path)
-        if found is not None:
-            return found.id, False
     spelled, level, hit = _walk(tree, path)
     parts = vocabulary.segments(path)
     if hit is not None:
-        if person and bare:
-            if not conn.execute("SELECT has_face FROM tag_taxonomy WHERE id = ?", (hit,)).fetchone()[0]:
-                with contextlib.nullcontext() if edited else people.tree_edit(conn):
-                    conn.execute("UPDATE tag_taxonomy SET has_face = 1 WHERE id = ?", (hit,))
-                return hit, True
         return hit, False
     new = unicodedata.normalize("NFC", vocabulary.SEPARATOR.join(([spelled] if spelled else []) + parts[level:]))   # one form
     try:
@@ -102,7 +89,7 @@ def ensure_node(conn, text, person=False, tree=None, known=None, edited=False):
     with contextlib.nullcontext() if edited else people.tree_edit(conn):
         if not tree_has_nodes(conn):   # a tree with no node says People is the face root (people_roots): its first node keeps that
             add_path(conn, vocabulary.NEW_LIBRARY_FACE_ROOT, root_has_face=1)
-        node_id = add_path(conn, new, root_has_face=1 if person and bare else 0)
+        node_id = add_path(conn, new, root_has_face=0)
     for each in vocabulary.lineage(new):
         found = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (each,)).fetchone()
         tree.add(found[0], each)
@@ -176,7 +163,7 @@ def people_filing(db_path):
         top = set(top_level_people(conn))   # a person at the top is no root that people are filed under
         roots = {name.strip().lower(): name.strip() for (name,) in conn.execute(
             "SELECT name FROM tag_taxonomy WHERE has_face = 1 AND tag NOT LIKE '%/%'") if name and name not in top}
-        found, groups = {}, set(group_tags(conn))
+        found, groups = {}, {group.tag for group in person_ids.read(conn).groups.values()}
         for tag_path in tags(conn):
             if tag_path in groups:
                 continue   # a group of people is not filed as a person (#986)
@@ -211,23 +198,21 @@ def people_vocabulary(db_path=None, conn=None):
             own.close()
 
 
-def group_tags(conn):
-    """The tags of the face nodes that have a node under them: group tags, which are not people
-    (#986). The same reading as person_ids.People's `parents`."""
-    return [tag for (tag,) in conn.execute(
-        "SELECT tag FROM tag_taxonomy WHERE has_face = 1 AND id IN"
-        " (SELECT DISTINCT parent_id FROM tag_taxonomy WHERE parent_id IS NOT NULL)") if tag]
+def vocabulary_of(known):
+    """The PeopleVocabulary of the tree's people `known` (person_ids.People, the one owner of who is a person and who a
+    group): the face roots are the face nodes at the top -- a group, a new library's empty People, or a person at the top."""
+    tops = [name for _id, tag, name in known.listing if vocabulary.SEPARATOR not in tag]
+    tops += [group.name for group in known.groups.values() if vocabulary.SEPARATOR not in group.tag]
+    tops += list(known.filing_roots.values())
+    return PeopleVocabulary.of_people(tops, known.listing, [group.tag for group in known.groups.values()])
 
 
-def read_people_vocabulary(conn):
-    """The PeopleVocabulary of the library open on `conn`: a new library's while its tree
-    is empty (people_roots)."""
+def read_people_vocabulary(conn, known=None):
+    """The PeopleVocabulary of the library open on `conn` (vocabulary_of; `known` its person_ids.People when the caller has
+    read them in this transaction): a new library's while its tree is empty (people_roots)."""
     if not tree_has_nodes(conn):
         return PeopleVocabulary.defaults()
-    roots = [name for (name,) in conn.execute(
-        "SELECT name FROM tag_taxonomy WHERE (parent_id IS NULL OR tag NOT LIKE '%/%') AND has_face = 1")]
-    faces = conn.execute("SELECT id, tag, name FROM tag_taxonomy WHERE has_face = 1").fetchall()
-    return PeopleVocabulary.from_rows(roots, faces, group_tags(conn))
+    return vocabulary_of(known or person_ids.read(conn))
 
 
 # ---- The tree's nodes ------------------------------------------------------------------

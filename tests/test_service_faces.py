@@ -12,6 +12,7 @@ from unittest import mock
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 from face_rows import add_face, people_of  # noqa: E402
 
@@ -85,7 +86,8 @@ class FacesCase(unittest.TestCase):
 class NamingAFace(FacesCase):
     def test_the_fingerprints_either_side_say_what_the_grids_must_drop(self):
         face = self.face(self.photo("a.jpg"))
-        result = faces.name_face(self.lib.library, face, "Wren Halloway")
+        wren = db.write_with_connection(self.lib.library.path, lambda conn: face_rows.person_of(conn, "Wren Halloway"))
+        result = faces.name_face(self.lib.library, face, wren)
         before, after = result.details["fingerprints"]
         self.assertNotEqual(before, after)
         self.assertEqual(result.details["face_ids"], [face])
@@ -252,6 +254,16 @@ class AnAccountedWrite(FacesCase):
                 write.conn.execute("UPDATE faces SET name = 'Wren Halloway' WHERE id = ?", (face,))
                 raise RuntimeError("stop")
         self.assertIsNone(self.face_row(face)[0])
+
+
+class ADetectionIsRecordedUnderTheModelsSettings(unittest.TestCase):
+    def test_the_settings_a_detection_is_told_apart_by_are_those_a_face_model_is_made_from(self):
+        """services.faces.DETECTOR_SETTINGS spells the keys of LibrarySettings.faces again (importing either owner from the
+        other is an import cycle, or torch): a setting added to one and not the other would let a changed setting reuse an old
+        detection. Held equal here."""
+        from tagpup.services import settings as library_settings
+        made_from = library_settings.LibrarySettings(dict(library_settings.DEFAULTS)).faces
+        self.assertEqual(tuple(made_from), faces.DETECTOR_SETTINGS)
 
 
 if __name__ == "__main__":

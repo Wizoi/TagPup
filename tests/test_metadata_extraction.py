@@ -181,11 +181,13 @@ class TestExtractPeopleWithATaxonomy(unittest.TestCase):
         except Exception:
             pass
 
-    def add_tag(self, tag, name, has_face, parent_id=None):
+    def add_tag(self, tag, name, has_face):
+        """A node under its parent's node, as the tree files it (a path whose parent is not in the tree has none: 0 live)."""
         conn = sqlite3.connect(self.db_path)
+        parent = conn.execute("SELECT id FROM tag_taxonomy WHERE tag = ?", (tag.rpartition("/")[0],)).fetchone()
         conn.execute(
             "INSERT INTO tag_taxonomy (tag, parent_id, name, has_face) VALUES (?, ?, ?, ?)",
-            (tag, parent_id, name, has_face),
+            (tag, parent[0] if parent else None, name, has_face),
         )
         conn.commit()
         conn.close()

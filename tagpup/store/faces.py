@@ -27,7 +27,6 @@ import logging
 import os
 import types
 
-from tagpup.core import vocabulary
 from tagpup.core.vocabulary import Ref
 from tagpup.store import db, faces_detected, generations, people, person_ids
 from tagpup.store import roots as store_roots
@@ -296,8 +295,8 @@ def remove_for_photo(conn, photo_path):
 
 def insert(conn, photo_path, box, embedding, name=None, crop=None, prob=None):
     """Record one detected face: `box` as a list, `embedding` as float32 bytes, and its
-    crop, if one was cut, in face_crops. `name` is a person (an id, a tag path or a name:
-    person_ids.target), or None. Returns the face's id. The caller commits."""
+    crop, if one was cut, in face_crops. `name` is a person who has a node (the id; _target), or None. Returns the face's
+    id. The caller commits."""
     from tagpup.store import photos   # photos imports this module
     photo_id = photos.ensure_row(conn, photo_path)
     tag_id, name = _target(conn, name) if name is not None else (None, None)
@@ -351,27 +350,22 @@ def in_photo(conn, photo_path):
 
 
 def _target(conn, person, known=None):
-    """person_ids.target, for a WRITER: a name no node is called is given its node first (taxonomy.ensure_node: every tag has an
-    id), so a face is never written with a name and no id."""
+    """person_ids.target, for a WRITER: the person of a node. A name no node is called is refused, nothing written: a new
+    person is made, with their tag, by the one maker of a new person (tagpup.services.face_people.made), so a face is never
+    written with a name and no id and a store writer makes no node."""
     tag_id, name = person_ids.target(conn, person, known)
-    if tag_id is not None or not name:
-        return tag_id, name
-    from tagpup.store import taxonomy   # taxonomy imports this module's neighbours
-    if vocabulary.SEPARATOR in name:
-        raise ValueError("%r is a tag's path, not a person's name: a face is named by a person's id or a bare name" % name)
-    node_id = taxonomy.ensure_node(conn, name, person=True)[0]   # target refused a group's name and a shared one first
-    return node_id, conn.execute("SELECT name FROM tag_taxonomy WHERE id = ?", (node_id,)).fetchone()[0]
+    if tag_id is None and name:
+        raise ValueError("%r is no person's node: a face is named by the id of a person (face_people.made makes a new one)"
+                         % name)
+    return tag_id, name
 
 
 def _targets(conn, persons, known=None):
     """({person: (id, name)} for each distinct person among `persons`, the People read for it): the tree is read once,
     inside the caller's transaction (or is `known`, which the caller read in it), and each distinct person is resolved once
-    (_target); read again when a node was made for one."""
+    (_target)."""
     known = known or person_ids.read(conn)
-    targets = {person: _target(conn, person, known) for person in set(persons)}
-    if any(tag_id is not None and tag_id not in known.node_names for tag_id, _name in targets.values()):
-        known = person_ids.read(conn)
-    return targets, known
+    return {person: _target(conn, person, known) for person in set(persons)}, known
 
 
 #: The SET fragment that gives a face a person (name then id), and the one that takes it off.
@@ -517,8 +511,8 @@ def put_decisions(conn, values):
 
 def name(conn, face_ids, person):
     """Name faces as a person's decision (name_source 'manual'), which re-clustering does
-    not revise. `person` is an id, a tag path or a name (person_ids.target: refused when the id is stale, the name two
-    people have, or it is a group). Excluded faces are left alone. Returns rows named. The caller commits."""
+    not revise. `person` is a person who has a node (the id; _target: refused when the id is stale or a group). Excluded
+    faces are left alone. Returns rows named. The caller commits."""
     targets, known = _targets(conn, [person])
     given = _pair(targets[person])
     changed = sum(conn.execute(

@@ -52,23 +52,23 @@ class PhotoPeople(unittest.TestCase):
 
     def test_naming_a_face_adds_them(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], ODA))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, ODA)))
         self.assertEqual([WREN, ODA], self.listed())
 
     def test_unnaming_a_face_keeps_someone_a_keyword_still_names(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], WREN))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, WREN)))
         self.write(lambda conn: faces.unname(conn, [face_id]))
         self.assertEqual([WREN], self.listed())
 
     def test_a_face_named_in_another_case_is_not_listed_twice(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], WREN.upper()))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, WREN.upper())))
         self.assertEqual([WREN], self.listed())
 
     def test_excluding_a_face_takes_its_name_off(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], ODA))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, ODA)))
         self.assertEqual([WREN, ODA], self.listed())
         self.write(lambda conn: faces.exclude(conn, [face_id], "stranger"))
         self.assertEqual([WREN], self.listed())
@@ -81,14 +81,14 @@ class PhotoPeople(unittest.TestCase):
 
     def test_detecting_the_faces_again_takes_off_whom_only_a_face_named(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], ODA))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, ODA)))
         self.assertEqual([WREN, ODA], self.listed())
         self.write(lambda conn: faces.remove_for_photo(conn, self.photo))
         self.assertEqual([WREN], self.listed())
 
     def test_a_keyword_write_keeps_whom_a_face_names(self):
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], ODA))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, ODA)))
         photo_rows.tag(self.lib.library.path, self.photo, ["Places/Dunes"])
         self.assertEqual([ODA], self.listed())
 
@@ -124,7 +124,7 @@ class PhotoPeople(unittest.TestCase):
     def test_a_change_moves_the_photos_generation(self):
         before = self.read(lambda conn: generations.value(conn, "photos"))
         face_id = self.face()
-        self.write(lambda conn: faces.name(conn, [face_id], ODA))
+        self.write(lambda conn: faces.name(conn, [face_id], person_of(conn, ODA)))
         self.assertGreater(self.read(lambda conn: generations.value(conn, "photos")), before)
 
     def test_readers_see_them_as_the_list_they_always_had(self):

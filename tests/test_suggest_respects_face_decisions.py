@@ -27,7 +27,7 @@ from face_rows import person_of  # noqa: E402
 ROWAN = [1.0, 0.0, 0.0]
 
 
-class CountingFaceProcessor:
+class CountingFaceProcessor(stand_in_models.Faces):
     def __init__(self):
         self.calls = 0
 

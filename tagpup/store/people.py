@@ -30,6 +30,11 @@ PEOPLE_JSON = ("(SELECT json_group_array(name) FROM (SELECT name FROM photo_peop
 PEOPLE_REFS_JSON = ("(SELECT json_group_array(json_array(tag_id, name)) FROM (SELECT tag_id, name FROM photo_people"
                     " WHERE photo_id = p.id ORDER BY position))")
 
+#: A photo's people as a JSON list of the ids of their nodes, in order, for a query whose photos are `p`: who a photo lists,
+#: by node and nothing else (clustering, through store.photos.records' `people_ids`: two people called alike are two).
+PEOPLE_IDS_JSON = ("(SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM photo_people"
+                   " WHERE photo_id = p.id AND tag_id IS NOT NULL ORDER BY position))")
+
 #: How many photos one pass of rebuild reads at a time.
 CHUNK = 500
 
@@ -46,12 +51,13 @@ def _faces_named(conn, photo_ids):
     return named
 
 
-def _differences(conn, photo_ids, known):
+def _differences(conn, photo_ids, known, ids=None):
     """(photo id, its people by the rule as [(id, name, source)]) of each photo in `photo_ids` -- every photo, without --
-    whose rows say otherwise. A person the rule names with no id (a keyword with no node) is not listed."""
+    whose rows say otherwise. A person the rule names with no id (a keyword with no node) is not listed. `known` is the
+    tree's PeopleVocabulary, made from `ids` (its person_ids.People) when the caller has those and not it."""
     if known is None:
         from tagpup.store import taxonomy   # taxonomy imports this module
-        known = taxonomy.read_people_vocabulary(conn)
+        known = taxonomy.read_people_vocabulary(conn, ids)
     if photo_ids is None:
         photo_ids = [photo_id for (photo_id,) in conn.execute("SELECT id FROM photos")]
     photo_ids = sorted(set(photo_ids))
@@ -88,7 +94,7 @@ def rebuild(conn, photo_ids=None, known=None, ids=None):
     no node is (the writer of a keyword makes its node), a group's name -- is not listed, so no row is written with a name and no
     id. Returns how many photos' people changed. The caller commits."""
     written = []
-    for photo_id, people in list(_differences(conn, photo_ids, known)):
+    for photo_id, people in list(_differences(conn, photo_ids, known, ids)):
         conn.execute("DELETE FROM photo_people WHERE photo_id = ?", (photo_id,))
         conn.executemany("INSERT INTO photo_people (photo_id, position, name, source, tag_id) VALUES (?, ?, ?, ?, ?)",
                          [(photo_id, n, name, source, tag_id) for n, (tag_id, name, source) in enumerate(people)])
@@ -99,16 +105,6 @@ def rebuild(conn, photo_ids=None, known=None, ids=None):
     # The people are words a search finds (tagpup.store.search_index): of the photos whose people changed.
     search_index.refresh(conn, written)
     return len(written)
-
-
-def listed_ids(conn):
-    """{photo id: [the id of each person it lists, in order]} of every photo that lists someone (photo_people, by its key):
-    who each photo names, by node, for clustering, which reads every photo once."""
-    found = {}
-    for photo_id, tag_id in conn.execute(
-            "SELECT photo_id, tag_id FROM photo_people WHERE tag_id IS NOT NULL ORDER BY photo_id, position"):
-        found.setdefault(photo_id, []).append(tag_id)
-    return found
 
 
 def stale(conn):
@@ -206,7 +202,7 @@ def photos_named_by(conn, nodes):
     follow_tree compares the tree's people from before an edit with after; a change the
     journal finishes at start (tagpup.store.journal) has only its rows, not the tree from
     before. A keyword whose person changes is one some changed node spells, by tag or by
-    name (PeopleVocabulary.from_rows), or one under a root that changed, so this finds
+    name (taxonomy.vocabulary_of), or one under a root that changed, so this finds
     every photo follow_tree would, and some it would not, which rebuild leaves alone.
     """
     keys, roots = set(), set()
@@ -290,9 +286,9 @@ def tree_edit(conn):
     # does not reach across processes; SQLite's does, and the busy timeout waits for it.
     if not conn.in_transaction:
         db.begin(conn, immediate=True)
-    before = taxonomy.read_people_vocabulary(conn)
-    nodes = derived.tree_before(conn)
     ids = person_ids.read(conn)
+    before = taxonomy.read_people_vocabulary(conn, ids)
+    nodes = derived.tree_before(conn)
     yield
     follow_tree(conn, before)
     derived.follow_tree(conn, nodes)

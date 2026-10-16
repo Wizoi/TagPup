@@ -25,8 +25,10 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stand_in_models  # noqa: E402
 
 import damaged_photos  # noqa: E402
+import face_rows  # noqa: E402
 import library_dump  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
@@ -82,7 +84,7 @@ class FakeClip:
         return [0.0, 0.0, 0.0, 1.0]
 
 
-class FakeFaces:
+class FakeFaces(stand_in_models.Faces):
     """The face model: a face of Rowan in a photo whose name ends 01 or 02, one of Wren in 03."""
 
     def __init__(self):
@@ -557,7 +559,8 @@ class WhatIsAppliedIsWhatTheFileHoldsNow(Base):
     def test_a_person_named_at_the_top_of_the_tree_is_filed_by_that_node_and_the_tree_is_untouched(self):
         conn = db.connect(self.library.path)
         try:
-            store_faces.insert(conn, self.held[1], [0, 0, 100, 100], WREN.tobytes(), name="Wren Okafor", prob=0.99)
+            store_faces.insert(conn, self.held[1], [0, 0, 100, 100], WREN.tobytes(),
+                               name=face_rows.person_of(conn, "Wren Okafor"), prob=0.99)
             conn.commit()
         finally:
             conn.close()

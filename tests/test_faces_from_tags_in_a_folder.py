@@ -283,7 +283,7 @@ class ThePlanAndTheApply(JobInFolders):
         self.assertEqual(6, faces_from_tags.plan(self.library).counts["faces"],
                          "the whole library would name every photo of the fixture")
 
-    def test_it_is_the_clis_plan_for_the_folder(self):
+    def test_it_is_the_services_plan_for_the_folder(self):
         counts = faces_from_tags.plan(self.library, folder=self.run).counts
         plan = self.start().status()["plan"]
         self.assertEqual((counts["faces"], counts["named_by_the_tag_alone"]), (plan["faces"], plan["by_tag"]))

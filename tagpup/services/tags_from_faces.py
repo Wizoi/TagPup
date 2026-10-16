@@ -68,7 +68,7 @@ def plan(library, guesses=False, folder=None):
         if not decided and not guesses:
             guessed += 1
         else:
-            work.append((photo_path, person))
+            work.append((photo_path, person.id))
     result = Result(attempted=len(photo_set))
     result.details.update(
         dry_run=True, work=work,

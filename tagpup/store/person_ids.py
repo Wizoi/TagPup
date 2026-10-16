@@ -96,15 +96,6 @@ class GroupNotPerson(PersonProblem):
         super().__init__("%s is a group of people, not a person." % tag)
 
 
-def wire(ref):
-    """A person as it travels in a plan, a job's state or a request: the id of the node (None for a Ref or a Person with none:
-    a name alone is nobody). A typed name is passed on as it is, for `target` to resolve. `ref` is a Ref,
-    a Person, an id or a name."""
-    if isinstance(ref, (vocabulary.Ref, Person)):
-        return ref.id
-    return ref
-
-
 class People:
     """The tree's people as names are matched to them: {name's key: the node's id}, or AMBIGUOUS
     when two nodes are called it; the people by id and by tag; and the groups -- has_face nodes with

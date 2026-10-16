@@ -35,7 +35,7 @@ For new code, this document wins over [DEVELOPMENT.md](DEVELOPMENT.md) (how to w
 | A library's settings; where the libraries are | `tagpup/services/settings.py`; `tagpup/config.py` | `tests/test_config_single_owner.py` |
 | What may be set (one rule per kind of input) | `tagpup/core/validation.py`, `web/common/validate.js` | `tests/test_validation.py` |
 | Derived tables (`photo_tags`, `folders`, `photo_folder`, the search words) | `tagpup/store/derived.py`, `tagpup/store/search_index.py` | `tests/test_derived_writers.py` |
-| Who is who (clustering, a face's name looking wrong) | `tagpup/core/clustering.py`, `tagpup/services/identities.py` | `tests/test_face_values_have_one_owner.py` |
+| Who is who (clustering, a face's name looking wrong) | `tagpup/core/clustering.py`, `tagpup/services/identities.py` | `tests/test_rules_have_one_owner.py`, `tests/test_face_values_have_one_owner.py` |
 | Keeping a library in step with its folders | `tagpup/services/sync.py`, `tagpup/jobs/watching.py` | `tests/test_sync.py` |
 | A folder renamed outside the apps | `tagpup/services/sync.py` (pairs the files by name, size and modified time; a folder renamed and re-saved is reported missing and renamed back by hand) | `tests/test_sync.py` |
 | Roots (where a library's folders are, per machine) | `tagpup/services/roots*.py`, `tagpup/store/roots_check.py`, `tagpup/config.py` | `tests/test_roots*.py` |
@@ -234,10 +234,10 @@ steps after it, from 33, in `tagpup.store.schema`; each runs in one transaction 
 **Ids.** A photo is `photos.id` (an integer kept across renames and moves; `path` is an attribute, and
 `document_id` is the XMP identity the file may carry). A face is `faces.id`, pointing at `photos.id`. **A
 person is the id of a node in the tag tree** (`tag_taxonomy.id`): `faces.tag_id` and `photo_people.tag_id`
-are the key and `name` a cache of the node's leaf. **Every tag has an id** (owner, 2026-10-10): a name or a keyword
-first seen with no node is given one by `taxonomy.ensure_node` -- a name a node directly under the tree's root marked as a
-person, a keyword its own path; a name two people have, a group's and a new library's empty People are refused -- so no row
-holds a name and no id: a name alone is nobody (owner, 2026-10-15), and `person_ids.People.settle` makes one it meets nobody (the
+are the key and `name` a cache of the node's leaf. **Every tag has an id** (owner, 2026-10-10): a keyword first seen with no
+node is given one by `taxonomy.ensure_node`, its own path; a new person typed to name a face is made by
+`face_people.made` (the tag first, at the filer's path), the one maker of a person, and the store's face writers refuse a name no
+node has; a name two people have, a group's and a new library's empty People are refused -- so no row holds a name and no id: a name alone is nobody (owner, 2026-10-15), and `person_ids.People.settle` makes one it meets nobody (the
 doctor counts it among the rows whose name is not their person's). A person is a face node with no node under it, wherever it sits (a top-level one is filed by its own tag until
 the owner merges it into a branch); a branch is a group, never a person. A batch of reads makes its nodes in one tree edit
 and none when it would make more than 500 (`derived.MAX_NEW_NODES_PER_BATCH`): a folder from another program with thousands

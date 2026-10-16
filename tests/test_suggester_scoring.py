@@ -20,6 +20,7 @@ import unittest
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WORKSPACE_DIR)
 sys.path.insert(0, os.path.join(WORKSPACE_DIR, "scripts"))
+from tests import stand_in_models  # noqa: E402
 
 from unittest import mock
 
@@ -74,7 +75,7 @@ class StubEmbedder:
         return [0.0, 0.0, 1.0]
 
 
-class StubFaceProcessor:
+class StubFaceProcessor(stand_in_models.Faces):
     """The face model a suggester is handed: finds no face in any photo."""
 
     def ready(self):

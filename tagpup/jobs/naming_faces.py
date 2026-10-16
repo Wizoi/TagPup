@@ -4,7 +4,7 @@ A photo's person tag names its face on a save (#788), and this job and `cluster-
 already in a library, from the command line. The apps' button, here, does both, on a thread of its own in the process that
 was asked, and the page asks how it is getting on. Nothing is run on the owner's data without an answer:
 
-1. **Plan.** The plan of faces-from-tags (tagpup.services.faces_from_tags.plan) -- how many faces a photo's tag names alone,
+1. **Plan.** The plan of the naming (tagpup.services.faces_from_tags.plan) -- how many faces a photo's tag names alone,
    how many by looking like the person's confirmed faces, how many photos are left -- read from the library and written
    nowhere. On photo_index it is about 13 s, so it is the job's first step, with its progress and Cancel, never a request.
    The job then WAITS FOR AN ANSWER with the plan in memory and no claim held (a question left open for a day holds nothing up):

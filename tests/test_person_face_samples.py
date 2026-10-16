@@ -13,6 +13,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 from service_fixture import TempLibrary  # noqa: E402
 from face_rows import add_face  # noqa: E402
 
@@ -118,7 +119,8 @@ class WhenTheFacesChange(Case):
         first = self.face(0, WREN)
         second = self.face(40, WREN)
         self.assertEqual({first, second}, set(self.samples()[WREN]))
-        faces.name_face(self.lib.library, first, INES)
+        faces.name_face(self.lib.library, first, db.write_with_connection(self.lib.library.path,
+                                                                           lambda conn: face_rows.person_of(conn, INES)))
         got = self.samples()
         self.assertEqual([second], got[WREN])
         self.assertEqual([first], got[INES])

@@ -8,9 +8,7 @@ cannot survive re-clustering. This is the column-based replacement.
 """
 import os
 import sys
-import json
 import shutil
-import sqlite3
 import tempfile
 import unittest
 
@@ -25,12 +23,13 @@ from tagpup.services.search import PhotoIndex
 from tests.test_face_clustering_rules import identity_vector, near
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import own_home  # noqa: E402
+import photo_rows  # noqa: E402
 import tuner_client  # noqa: E402
-from face_rows import add_face, people_of  # noqa: E402
+from face_rows import people_of  # noqa: E402
 import fake_exiftool  # noqa: E402
 
-from tagpup.store import derived  # noqa: E402
-from tagpup.store import people as store_people  # noqa: E402
+from tagpup.store import db  # noqa: E402
+from tagpup.store import faces as store_faces  # noqa: E402
 from tagpup.store import taxonomy  # noqa: E402
 
 
@@ -57,7 +56,7 @@ class ExclusionTestBase(unittest.TestCase):
         # A cached grid or matrix from an earlier test describes rows this one deletes.
         tuner_client.forget(self.TEST_DB)
         self.requests = tuner_client.Requests(self.app)
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         conn.execute("DELETE FROM faces")
         conn.execute("DELETE FROM photos")
         conn.execute("DELETE FROM tag_taxonomy")   # a name given to a face makes its node (2026-10-10): not for the next test
@@ -78,37 +77,27 @@ class ExclusionTestBase(unittest.TestCase):
         return taxonomy.add_path(conn, "People/" + name)
 
     def add_photo(self, name, people=()):
-        """A photo whose keywords name `people`, its people rebuilt from them."""
+        """A photo whose keywords name `people`, as the indexer records its read: the nodes of its keywords, its people."""
         from PIL import Image
 
-        # As the indexer writes it: absolute, native separators.
         path = os.path.abspath(os.path.join(self.tmpdir, name))
         Image.new("RGB", (64, 64), (80, 90, 100)).save(path, "JPEG")
-        conn = sqlite3.connect(self.TEST_DB)
-        tags = ["People/" + person for person in people]
-        conn.execute(
-            "INSERT OR REPLACE INTO photos (path, mtime, size, tags, captions, raw_metadata)"
-            " VALUES (?, 1.0, 1, ?, '[]', '{}')",
-            (path, json.dumps(tags)),
-        )
-        derived.make_nodes(conn, [tags])   # the nodes of its keywords, as the index makes them when it reads the file
-        store_people.rebuild_photos(conn, [path])
+        conn = db.connect(self.TEST_DB)
+        photo_rows.add_read(conn, path, {"XMP:Subject": ["People/" + person for person in people]})
         conn.commit()
         conn.close()
         return path
 
     def add_face(self, photo, embedding, name=None, box=(0, 0, 100, 100)):
-        conn = sqlite3.connect(self.TEST_DB)
-        if name:
-            self.person(conn, name)
-        fid = add_face(conn, photo, box=box, embedding=embedding.tobytes(), name=name, prob=0.99)
-        store_people.rebuild_photos(conn, [photo])   # as the store does, inserting a named face
+        conn = db.connect(self.TEST_DB)
+        person = self.person(conn, name) if name else None
+        fid = store_faces.insert(conn, photo, list(box), embedding.tobytes(), name=person, prob=0.99)
         conn.commit()
         conn.close()
         return fid
 
     def row(self, face_id):
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         r = conn.execute(
             "SELECT name, excluded, excluded_reason, name_source FROM faces WHERE id = ?",
             (face_id,),
@@ -117,7 +106,7 @@ class ExclusionTestBase(unittest.TestCase):
         return {"name": r[0], "excluded": r[1], "reason": r[2], "source": r[3]}
 
     def photo_people(self, photo):
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         listed = people_of(conn, photo)
         conn.close()
         return listed
@@ -183,7 +172,7 @@ class TestExcludedFacesAreInvisibleToIdentityWork(ExclusionTestBase):
         before = self.get(f"/api/face-matches?id={query}")
         self.assertTrue(before, "no baseline match")
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         named_id = conn.execute(
             "SELECT id FROM faces WHERE name = 'Jane Doe'"
         ).fetchone()[0]
@@ -286,7 +275,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
         finally:
             pi.close()
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         rows = conn.execute(
             "SELECT name, name_source, excluded FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (photo,)
         ).fetchall()
@@ -311,7 +300,7 @@ class TestDetectedFacesArePersisted(ExclusionTestBase):
         self.assertEqual(inserted, 0, "existing face rows were added to")
         self.assertEqual(self.row(kept)["name"], "Jane Doe")
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         count = conn.execute(
             "SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (photo,)
         ).fetchone()[0]
@@ -418,7 +407,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
     def test_a_manual_name_survives_reindexing(self):
         photo = self.add_photo("a.jpg", people=["Jane Doe"])
         face = self.add_face(photo, identity_vector(1), name="Jane Doe")
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         conn.execute("UPDATE faces SET name_source='manual' WHERE id=?", (face,))
         conn.commit()
         conn.close()
@@ -456,7 +445,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
         finally:
             pi.close()
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         count = conn.execute(
             "SELECT COUNT(*) FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (photo,)
         ).fetchone()[0]
@@ -474,7 +463,7 @@ class TestReindexingPreservesFaceCuration(ExclusionTestBase):
         finally:
             pi.close()
 
-        conn = sqlite3.connect(self.TEST_DB)
+        conn = db.connect(self.TEST_DB)
         rows = conn.execute(
             "SELECT name FROM faces WHERE photo_id = (SELECT id FROM photos WHERE path = ?)", (photo,)
         ).fetchall()

@@ -1,6 +1,7 @@
-"""Grouping keeps a name its photo's own keywords confirm, even below 0.80 (docs/findings.md, #855; the owner, 2026-10-08).
+"""Clustering keeps a name its photo's own keywords confirm, even below 0.80 (docs/findings.md, #855; the owner, 2026-10-08).
 
-Grouping (tagpup.services.identities.resolve) kept a name it gave only while the face reached 0.80 of the person
+Clustering (tagpup.services.identities.resolve, which the indexer's cluster-faces runs after every index; the Group button it
+was first written for is gone) kept a name it gave only while the face reached 0.80 of the person
 (clustering.names_unasked), so the 0.70 to 0.80 names the photos' tags had given -- faces-from-tags writes them -- were among
 those it took away: 2,639 fewer named faces than before it ran, on a copy of photo_index. A name the photo's keywords
 bear out is the tag's own evidence; it stays whatever the likeness, as is every name given by hand.

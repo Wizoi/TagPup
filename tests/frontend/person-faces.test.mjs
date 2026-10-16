@@ -273,7 +273,8 @@ describe("TagTuner's lists of who a face resembles", () => {
         faces: [FACE], total: 1, total_count: 1, unclustered_total: 1, unclustered_shown: 1, has_more: false, page: 1, limit: -1,
       })
       .on("/api/people-with-counts", [])
-      .on("/api/people", [])
+      // The people the server tells of the tree whose Jane the match names (#1467: no server names a person it lists nobody for).
+      .on(PEOPLE_ROUTE, peopleRecordsOf(TREE))
       .on("/api/photo-details", { tags: [], people: [], size: [100, 100] })
       .on("/api/face-matches", [{ name: JANE, person: JANE_P, similarity: 0.91, band: "likely" }])
       .first("/api/people-face-samples", SAMPLES);

@@ -342,8 +342,7 @@ def queue(library, cache):
 
 
 def grid(library, cache, progress, name, progress_key=None):
-    """A person's grid (tagpup.services.identify.grid; `name` is a bucket, or the person as person_ids.wire has them: the id
-    of their node, or the name of one no node is), from the cache when the faces table has not moved since it was built; else
+    """A person's grid (tagpup.services.identify.grid; `name` is a bucket, or the id of the person's node), from the cache when the faces table has not moved since it was built; else
     built, its progress published under `progress_key` (what the request called it; `name` as text) from here until it is
     done, and cached."""
     key = "matches:%s" % name

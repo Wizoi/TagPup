@@ -29,7 +29,6 @@ from tagpup.core import vocabulary as tag_vocabulary
 from tagpup.core.library import Library
 from tagpup.store import person_ids
 from tagpup.store import faces as store_faces
-from tagpup.store import people as store_people
 from tagpup.store import taxonomy as store_taxonomy
 
 logger = logging.getLogger("tagpup_cli.faces")
@@ -204,9 +203,9 @@ def resolve(photo_index, on_step=None):
     # spell its photo apart from the row, and a raw lookup missed it and lost the
     # photo's people tags -- the anchors and votes this whole resolution runs on.
     # Read once for the run: the index keeps no records (PhotoIndex.records).
-    # Each photo's people are the ids it lists (photo_people), not the names "people" spells: two people called alike are two.
-    listed = store_people.listed_ids(photo_index.conn)
-    meta_by_key = {paths.key(meta["path"]): dict(meta, people=listed.get(meta["id"], [])) for meta in photo_index.records()}
+    # Each photo's people are the ids it lists (photo_people), "people_ids", read in the statement that reads its keywords:
+    # two people called alike are two, and a keyword write meanwhile cannot set the two apart (#1372).
+    meta_by_key = {paths.key(meta["path"]): meta for meta in photo_index.records(people_ids=True)}
 
     # What counts as evidence of who is in a photo: its keywords, and names given
     # to its faces by hand. `people` also holds the names on its faces, and some of
@@ -234,7 +233,7 @@ def resolve(photo_index, on_step=None):
         if guessed:
             written = {ref.id for ref in tag_vocabulary.extract_refs(meta.get("tags") or [], vocabulary)}
             written |= manual_by_path.get(face_path, set())
-            meta = dict(meta, people=[p for p in meta.get("people", [])
+            meta = dict(meta, people_ids=[p for p in meta.get("people_ids", [])
                                       if p not in guessed or p in written])
         meta_by_path[face_path] = meta
     
@@ -254,7 +253,7 @@ def resolve(photo_index, on_step=None):
         p_path = face["photo_path"]
         meta = meta_by_path.get(p_path)
         if meta:
-            people = meta.get("people", [])
+            people = meta.get("people_ids", [])
             if face_counts_by_photo.get(p_path, 0) == 1 and len(people) == 1:
                 direct_anchors[face["id"]] = people[0]
 
@@ -289,7 +288,7 @@ def resolve(photo_index, on_step=None):
             # Also gather people tags on parent photos of this cluster (for majority vote fallback)
             meta = meta_by_path.get(path)
             if meta:
-                people = meta.get("people", [])
+                people = meta.get("people_ids", [])
                 photo_people_tags.extend(people)
 
         resolved_name = None
@@ -319,7 +318,7 @@ def resolve(photo_index, on_step=None):
                 method = "cluster_majority_vote"
                 for face in cluster_faces:
                     path = face["photo_path"]
-                    people = meta_by_path.get(path, {}).get("people", []) if meta_by_path.get(path) else []
+                    people = meta_by_path.get(path, {}).get("people_ids", []) if meta_by_path.get(path) else []
                     if resolved_name in people:
                         trigger_photos.append(path)
 
@@ -329,7 +328,7 @@ def resolve(photo_index, on_step=None):
             for face in cluster_faces:
                 p_path = face["photo_path"]
                 meta = meta_by_path.get(p_path)
-                photo_people = meta.get("people", []) if meta else []
+                photo_people = meta.get("people_ids", []) if meta else []
                 
                 if resolved_name in photo_people:
                     initial_resolved_names[face["id"]] = resolved_name
@@ -392,7 +391,7 @@ def resolve(photo_index, on_step=None):
         p_path = face["photo_path"]
         meta = meta_by_path.get(p_path)
         if meta:
-            photo_tags = set(meta.get("people", []))
+            photo_tags = set(meta.get("people_ids", []))
             if photo_tags:
                 curr_name = current_resolved_names.get(fid)
                 if curr_name and curr_name not in photo_tags:
@@ -459,7 +458,7 @@ def resolve(photo_index, on_step=None):
                 step("propagating", iteration, MAX_ITERATIONS)
             # Get photo metadata people tags
             meta = meta_by_path.get(p_path)
-            photo_tags = set(meta.get("people", [])) if meta else set()
+            photo_tags = set(meta.get("people_ids", [])) if meta else set()
             unpaired.pop(p_path, None)
 
             # Map of face_id -> resolved_name in this photo
@@ -667,7 +666,7 @@ def resolve(photo_index, on_step=None):
 
             # Check parent photo metadata for people tags
             meta = meta_by_path.get(p_path)
-            photo_tags = set(meta.get("people", [])) if meta else set()
+            photo_tags = set(meta.get("people_ids", [])) if meta else set()
 
             if photo_tags:
                 # Photo is tagged with people. We only match if the best matching name is in those tags.

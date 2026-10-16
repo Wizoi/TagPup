@@ -38,11 +38,11 @@ EXCLUSION_REASONS = validation.EXCLUSION_REASONS
 
 
 def who_is(library, person, result):
-    """(the person as a store writer takes it -- the node's id, or a name no person is filed under --, the name to show) for
-    `person`: an id, a Person, a Ref or a name. None, with `result` refused, for what is refused before anything else
-    is asked: a name that is not a name, a name two people have, a group. NotFound for an id that is no person (merged or
-    removed in another window; nobody is made of it)."""
-    person = person_ids.wire(person)
+    """THE door of a face action for the person a request names: (the node's id, or -- for a typed name no person is filed
+    under -- that name, which face_people.made makes the person of; the name to show) for `person`, the id of a node or a typed
+    name. None, with `result` refused, for what is refused before anything else is asked: a name that is not a name, a name
+    two people have, a group. NotFound for an id that is no person (merged or removed in another window; nobody is made of
+    it)."""
     if isinstance(person, str) or person is None:
         # A name is a name: "People/Sam" is a tag, and names nobody (tagpup.core.validation).
         text = (person or "").strip()
@@ -67,9 +67,8 @@ def who_is(library, person, result):
 
 
 def name_face(library, face_id, person):
-    """Name one face. Clicking a suggestion, or typing a name, on a face card. `person` is the person's id (a page that has
-    them), or a tag path or a name (the CLI, the MCP, a page not reloaded since the update): a name two people have is refused
-    naming them, a group is refused, an id that is no person is NotFound and makes nobody.
+    """Name one face as the person whose node is `person` (face_people.name_face makes a new person's node first, the tag
+    first): an id that is no person is NotFound and makes nobody, a group is refused.
 
     A person chose this, so it is recorded as a manual decision: re-clustering re-derives
     every name from scratch and must not discard it -- also when the face already carries
@@ -409,7 +408,7 @@ def _automatch(library, named, photo_path=None, folder=None, rehearse=False):
 
 
 def _shown(conn, persons, known=None):
-    """{person: the name to show} for the persons (wire form: an id, or a name no person is filed under) of a guess."""
+    """{person: the name to show} for the persons (the ids of their nodes) of a guess."""
     names = (known or person_ids.read(conn)).node_names
     return {person: names.get(person, str(person)) for person in persons}
 
@@ -587,10 +586,11 @@ def panel(library, photo_path, named):
 # (tagpup.ml.faces), and the named faces a new one is compared with. PhotoIndex held a
 # wrapper for each (docs/ARCHITECTURE.md, phase 5.5).
 
-def _insert_detected(conn, photo_path, face, name=None):
+def _insert_detected(conn, photo_path, face):
+    """A face as the face model found it: unnamed (a detection names nobody; its photo's tag may name it after: face_tags)."""
     faces.insert(conn, photo_path, face.get("box", []),
                  np.array(face["embedding"], dtype=np.float32).tobytes(),
-                 name=name, crop=face.get("crop_image"), prob=face.get("prob"))
+                 crop=face.get("crop_image"), prob=face.get("prob"))
 
 
 #: What a face model is told apart by: the settings it detects with (tagpup.ml.faces.SETTINGS).
@@ -598,17 +598,10 @@ DETECTOR_SETTINGS = ("min_face_size", "confidence_threshold", "mtcnn_thresholds"
 
 
 def detector_of(model):
-    """The name the detections of face model `model` are recorded under
-    (tagpup.store.faces_detected): its settings. A setting it does not hold reads as None."""
-    settings = {}
-    for key in DETECTOR_SETTINGS:
-        value = getattr(model, key, None)
-        if isinstance(value, tuple):
-            value = list(value)
-        if not isinstance(value, (int, float, str, list, type(None))) or isinstance(value, bool):
-            value = None
-        settings[key] = value
-    return faces_detected.detector(settings)
+    """The name the detections of face model `model` are recorded under (tagpup.store.faces_detected): its settings, which a
+    tagpup.ml.faces.FaceModel always holds (a test's stand-in holds them too)."""
+    values = {key: getattr(model, key) for key in DETECTOR_SETTINGS}
+    return faces_detected.detector({key: list(value) if isinstance(value, tuple) else value for key, value in values.items()})
 
 
 def ran(detected):
@@ -706,7 +699,7 @@ def record_batch(conn, batch, overwrite=False, detector=None):
             faces.remove_for_photo(conn, photo_path)
             _record_detection(conn, photo_path, detector, detected)
             for face in detected:
-                _insert_detected(conn, photo_path, face, name=face.get("name"))
+                _insert_detected(conn, photo_path, face)
             if detected:
                 recorded.append(photo_path)
         # The photos' person tags name their faces (#788), once the batch's faces are all there.

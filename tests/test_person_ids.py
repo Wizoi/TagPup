@@ -18,6 +18,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import face_rows  # noqa: E402
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 
@@ -135,11 +136,14 @@ class WritesKeepTheId(Library):
         made = write(self.path, lambda conn: faces.insert(conn, self.other, [5, 5, 9, 9], b"\x03" * 8, name=WREN))
         self.assertEqual(node_id(self.path, "People/" + WREN), self.face_id(made))
 
-    def test_a_name_filed_twice_is_refused_and_one_filed_nowhere_gets_its_node(self):
-        """A name two people have is refused when a face is named by it (nobody is guessed). A name no node has is given
-        one when a face is named by it (2026-10-10), at the top of the tree."""
+    def test_a_name_filed_twice_is_refused_and_one_filed_nowhere_is_made_first(self):
+        """A name two people have is refused when a face is named by it (nobody is guessed). A name no node has is refused by
+        the store's writer (face_people.made makes the person, the tag first: #1252); named once the node is there."""
         with self.assertRaises(person_ids.AmbiguousPerson):
             self.name([self.faces[0]], ASH)
+        with self.assertRaises(ValueError):
+            self.name([self.faces[2]], NOBODY)
+        write(self.path, lambda conn: face_rows.person_of(conn, NOBODY))
         self.name([self.faces[2]], NOBODY)
         self.assertEqual([None, node_id(self.path, NOBODY)], [self.face_id(self.faces[0]), self.face_id(self.faces[2])])
         self.assertIsNotNone(node_id(self.path, NOBODY))
@@ -212,10 +216,11 @@ class WritesKeepTheId(Library):
         self.assertEqual([0, 0], in_step(self.path))
 
     def test_a_tag_in_a_file_the_tree_lacks_gets_a_new_node_never_an_old_id(self):
-        """A face named by a name the tree lacks makes the node (taxonomy.ensure_node). The node made is new: an id SQLite has
-        given before -- even the highest, deleted -- is never given again."""
+        """A person the tree lacks is made with a new node: an id SQLite has given before -- even the highest, deleted -- is
+        never given again."""
         highest = look(self.path, "SELECT MAX(id) FROM tag_taxonomy")[0][0]
         write(self.path, lambda conn: taxonomy.remove_node(conn, "Trips/Coast"))
+        write(self.path, lambda conn: face_rows.person_of(conn, NOBODY))
         self.name([self.faces[2]], NOBODY)
         self.assertEqual(NOBODY, look(self.path, "SELECT name FROM faces WHERE id = ?", (self.faces[2],))[0][0])
         made = look(self.path, "SELECT id FROM tag_taxonomy WHERE name = ?", (NOBODY,))[0][0]

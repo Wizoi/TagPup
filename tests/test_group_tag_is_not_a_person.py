@@ -4,7 +4,8 @@ photo is ordinary tagging and names nobody (owner, 2026-10-09; docs/findings.md,
 On photo_index 4 such tags sat on 65 photos and each made a `photo_people` row, so the photo's
 people listed a family, and tags-from-faces, faces-from-tags and the names to review took the
 family for a person. The one rule is tagpup.core.vocabulary.extract_people / people_in_photo,
-fed the tree's groups by tagpup.store.taxonomy.read_people_vocabulary; everything that lists
+fed the tree's people and groups as tagpup.store.person_ids.People tells them apart
+(tagpup.store.taxonomy.vocabulary_of); everything that lists
 people reads `photo_people`, which `people.rebuild` writes by that rule, and the doctor's
 people_out_of_date asks the same rule.
 
@@ -32,10 +33,17 @@ FAMILY = "Family/Marlowe"          # a group: Cora is filed under it
 PERSON = FAMILY + "/" + CORA
 
 
+def tree(*tags):
+    """The PeopleVocabulary of a tree of face nodes `tags` (ids in order; a node with a node under it is a group), as
+    person_ids.People tells its people and groups apart."""
+    nodes = [(number, tag, vocabulary.leaf_of(tag)) for number, tag in enumerate(tags, 1)]
+    parents = {number for number, tag, _name in nodes if any(other.startswith(tag + "/") for other in tags)}
+    return taxonomy.vocabulary_of(person_ids.People(nodes, parents))
+
+
 class TheRule(unittest.TestCase):
-    def known(self, group_tags=(FAMILY,)):
-        return vocabulary.PeopleVocabulary.from_rows(
-            ["Family"], [("Family", "Family"), (FAMILY, "Marlowe"), (PERSON, CORA)], group_tags)
+    def known(self):
+        return tree("Family", FAMILY, PERSON)
 
     def test_a_group_tag_names_nobody(self):
         self.assertEqual([], vocabulary.extract_people([FAMILY], self.known()))
@@ -51,8 +59,7 @@ class TheRule(unittest.TestCase):
         self.assertEqual([], vocabulary.extract_people(["family\\marlowe"], self.known()))
 
     def test_a_person_of_the_groups_name_elsewhere_is_named_by_their_own_path(self):
-        known = vocabulary.PeopleVocabulary.from_rows(
-            ["Family", "Friends"], [(FAMILY, "Marlowe"), (PERSON, CORA), ("Friends/Marlowe", "Marlowe")], [FAMILY])
+        known = tree("Family", "Friends", FAMILY, PERSON, "Friends/Marlowe")
         self.assertEqual([], vocabulary.extract_people(["Marlowe", FAMILY], known), "a bare name is a path of its own")
         self.assertEqual(["Marlowe"], vocabulary.extract_people(["Friends/Marlowe", FAMILY], known))
 

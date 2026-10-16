@@ -1350,7 +1350,7 @@ class TestFolderRemovalBySpelling(TunerAPITestBase):
         conn = db.connect(self.TEST_DB)
         try:
             store_faces.insert(conn, photo.swapcase(), [10, 10, 50, 50], unit_vector(911).tobytes(),
-                               name="Tamsin Okafor")
+                               name=face_rows.person_of(conn, "Tamsin Okafor"))
             conn.commit()
         finally:
             conn.close()

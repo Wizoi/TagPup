@@ -328,7 +328,7 @@ class NoIndex:
         return []
 
 
-class OneFace:
+class OneFace(stand_in_models.Faces):
     def ready(self):
         """The run's turn on the graphics card (tagpup.runtime._OnTheCard): nothing to wait for here."""
 
