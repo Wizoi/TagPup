@@ -177,11 +177,14 @@ export class PeopleDirectory {
         return found && found.length === 1 ? found[0] : null;
     }
 
-    /** The person a text names: a tag path exactly, a bare name when it is one person's. Null for neither. */
+    /**
+     * The person a text names: a tag path exactly, a bare name when it is one person's. Null for neither. A bare text that is a
+     * person's own tag (a person at the top of the tree) is that person, whoever else is called alike (#1408).
+     */
     ofText(text) {
         const value = String(text ?? '').trim();
         if (!value) return null;
-        return value.includes('/') ? this.ofTag(value) : this.only(value);
+        return value.includes('/') ? this.ofTag(value) : (this.ofTag(value) || this.only(value));
     }
 
     /**

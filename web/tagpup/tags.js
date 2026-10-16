@@ -327,6 +327,10 @@ export async function resolveTagOrPerson(inputName, isPersonField = false, { pro
     const matches = state.taxonomyNodes.filter(n => n.name.toLowerCase() === inputName.toLowerCase());
     
     if (isPersonField) {
+        // A person at the top of the tree is named by their own tag: that is them, whoever else is called alike
+        // (vocabulary.person_tag, #1408).
+        const own = state.people.ofTag(inputName);
+        if (own) return own.tag;
         if (matches.length > 0) {
             const peopleMatches = matches.filter(m => {
                 const rootName = rootOf(m.tag);

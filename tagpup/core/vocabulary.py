@@ -166,8 +166,8 @@ def person_tag(name, filed, roots):
     fed (tests/test_person_filing_table.py, tests/frontend/person-filing-table.test.mjs).
 
     `filed` are the paths the tree files the name under, under its people roots; `roots` the
-    people roots' names as the tree spells them. A name the tree files once is that path; filed
-    twice, None (which folder?). Not filed: under the one people root, under People when the tree
+    people roots' names as the tree spells them. A name that is one of those paths (a person at the top
+    of the tree) is that path; a name the tree files once is that path; filed twice, None (which folder?). Not filed: under the one people root, under People when the tree
     has none, and None when it has several. A name that is already a path is as it is. The name is
     trimmed, as the page's resolveTagOrPerson trims it, and a name with nothing in it is None."""
     name = (name or "").strip()
@@ -175,6 +175,11 @@ def person_tag(name, filed, roots):
         return None
     if "/" in name:
         return name
+    # A person at the top of the tree is suggested by their own tag, which has no "/": that tag is that person, whoever
+    # else is called alike under a people root (#1408).
+    exact = [path for path in filed if key(path) == key(name)]
+    if len(exact) == 1:
+        return exact[0]
     if len(filed) == 1:
         return filed[0]
     if len(filed) > 1:
