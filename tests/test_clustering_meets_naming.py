@@ -1,7 +1,10 @@
 """A hand-run cluster-faces reads the faces at its start and writes their names at its end (53 minutes on the
 68,000-photo library). A person who names a face in TagTuner in between keeps that name: the clustering's guess does not
 overwrite it, the photo's keyword and the face stay in step, and the run says how many faces it left (docs/findings.md, #832).
+A photo whose keywords name two people nobody's face is known for keeps its two faces unnamed, and the run says how many it
+left so (#1374).
 """
+import json
 import os
 import sys
 import unittest
@@ -30,6 +33,9 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
                 db.write_with_connection(self.db_path, meanwhile, label="a person names a face")
             if stage == "left":
                 heard.append(done)
+            if stage == "unpaired":
+                self.unpaired.append(done)
+        self.unpaired = []
         from tagpup.services import identities
         self.stats = identities.resolve(self.index, on_step=on_step)
         return heard
@@ -157,6 +163,66 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
         self.assertEqual((None, None), self.row(first), "a person who is gone was given to a face")
         self.assertEqual((None, None), self.row(second))
         self.assertEqual([2], heard)
+
+    def photo_tagged(self, name, people):
+        """A photo whose keywords are People/<person> for each of `people`, as the index records a file it read: the tree's nodes,
+        the keywords, the photo's people."""
+        tags = ["People/" + person for person in people]
+        db.write_with_connection(self.db_path, lambda conn: [taxonomy.add_path(conn, "People", root_has_face=1)]
+                                 + [taxonomy.add_path(conn, tag) for tag in tags])
+        photo = self.add_photo(name, people=people)
+        db.write_with_connection(self.db_path, lambda conn: conn.execute(
+            "UPDATE photos SET tags = ?, raw_metadata = ? WHERE path = ?",
+            (json.dumps(tags), json.dumps({"XMP:HierarchicalSubject": tags}), photo)))
+        return photo
+
+    def test_two_people_no_face_is_known_for_leave_the_two_faces_of_their_photo_unnamed(self):
+        """#1374: the owner tags a photo with two people and the indexer finds two faces in it; neither person has a face known
+        anywhere. Nothing tells which face is whose, so both stay unnamed -- they were paired by the order of the people's ids, a
+        coin toss written as a name -- and the run says how many faces it left for that reason."""
+        photo = self.photo_tagged("pair.jpg", ["Mara Quill", "Tobin Ash"])
+        left_face = self.add_face(photo, identity_vector(21), box=(0, 0, 200, 200))
+        right_face = self.add_face(photo, identity_vector(22), box=(300, 0, 500, 200))
+
+        heard = self.run_while(lambda conn: None)
+
+        self.assertEqual([(None, None), (None, None)], [self.row(left_face), self.row(right_face)],
+                         "a face was given one of two people with nothing to tell them apart")
+        self.assertEqual({}, self.stats, "the summary counted a face as named")
+        self.assertEqual([2], self.unpaired, "the run did not say it left the two faces unnamed")
+        self.assertEqual([], heard)
+
+    def test_a_pairing_an_earlier_run_guessed_for_two_unknown_people_is_taken_back(self):
+        """The owner's library after an earlier run paired them: the two guesses are unnamed, and counted as left so."""
+        photo = self.photo_tagged("pair.jpg", ["Mara Quill", "Tobin Ash"])
+        conn = db.connect(self.db_path)
+        try:
+            guessed = [face_rows.add_face(conn, photo, box=(0, 0, 200, 200), embedding=identity_vector(21).tobytes(),
+                                          name="Mara Quill", prob=0.99),
+                       face_rows.add_face(conn, photo, box=(300, 0, 500, 200), embedding=identity_vector(22).tobytes(),
+                                          name="Tobin Ash", prob=0.99)]
+            conn.commit()
+        finally:
+            conn.close()
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual([(None, None), (None, None)], [self.row(face) for face in guessed],
+                         "a coin-toss pairing of an earlier run was kept")
+        self.assertEqual([2], self.unpaired)
+
+    def test_one_face_left_and_one_person_left_on_a_photo_is_still_named(self):
+        """The case #1374 keeps: every other face of the photo is somebody known, so the one face left is the one person left."""
+        jane = identity_vector(1)
+        self.add_face(self.photo_tagged("one.jpg", ["Jane Doe"]), jane)
+        photo = self.photo_tagged("pair.jpg", ["Jane Doe", "Mara Quill"])
+        known = self.add_face(photo, near(jane, 2), box=(0, 0, 200, 200))
+        other = self.add_face(photo, identity_vector(21), box=(300, 0, 500, 200))
+
+        self.run_while(lambda conn: None)
+
+        self.assertEqual([("Jane Doe", None), ("Mara Quill", None)], [self.row(known), self.row(other)])
+        self.assertEqual([], self.unpaired)
 
 
 if __name__ == "__main__":
