@@ -103,7 +103,10 @@ _SCENARIO_FILES = {
     "F5": "test_scenario_two_libraries_share_a_folder",
     "F6": "test_index_progress_end_to_end test_partial_writes_leave_rows_unread test_refresh_rows",
     "F7": "test_a_share_asleep",
-    "F8": "test_delete_a_photo test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules test_just_look_edits",
+    "F8": (
+        "test_bulk_delete test_delete_a_photo test_just_look_bin_and_long_names test_just_look_delete_and_rename_rules "
+        "test_just_look_edits"
+    ),
     "F9": "test_roots_old_place test_roots_pinned_runs",
     "F10": "test_one_photo_whatever_its_spelling",
     "F11": "test_index_progress_end_to_end",
@@ -197,7 +200,6 @@ _FILES = {
             "test_a_cut_keyword_is_not_planned_again "
             "test_a_row_describes_its_file_one_way "
             "test_batches_go_through_the_model "
-            "test_bulk_delete "
             "test_dates test_derived_file_changes "
             "test_exiftool_encoding test_exiftool_says_why test_exiftool_session "
             "test_index_adds_the_folder_it_is_given "

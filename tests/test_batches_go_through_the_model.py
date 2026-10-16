@@ -40,7 +40,8 @@ BATCHES = {
                           "(face_people.write_tags)",
 }
 
-#: Routes that reach write_fields for one photo, or a few at a time (tagpup.services.face_people writes batches.CHUNK photos a change).
+#: Routes that reach write_fields for one photo, or a few at a time (tagpup.services.face_people.write_tags: one change, a batch
+#: over batches.CHUNK).
 SMALL = {
     "/api/photo/save-metadata": "one photo",
     "/api/face/match": "one face's photo",
