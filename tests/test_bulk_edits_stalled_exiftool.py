@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_bulk_edits as T  # noqa: E402
 
 from tagpup.files import exiftool_session, field_values, metadata  # noqa: E402
-from tagpup.services import file_changes, relink_photos  # noqa: E402
+from tagpup.services import batches, file_changes, relink_photos  # noqa: E402
 
 
 class StalledSession:
@@ -125,6 +125,18 @@ class AStalledExifTool(T.Bulk):
         order = self.order()
         self.assertEqual(2, len([photo_id for photo_id in order if "Trips/Coast" in self.tags(photo_id)]))
         self.assertEqual("applied", self.changes("bulk tags%")[0][2], "what was written is one change, finished")
+
+    def test_a_batch_cancelled_while_it_reads_its_files_stops_reading_and_writes_nothing(self):
+        """#1200: the read a batch plans from (about 53 ms a photo, 4.5 minutes for 5,000) could not be stopped: Cancel or
+        a hand-over took effect only when it ended. It stops at the next batch of reads."""
+        def cancel_at_the_first_read(_path, _n):
+            batches.current().stop.set()
+        self.files.on_read = cancel_at_the_first_read
+        with mock.patch.object(field_values, "READ_BATCH", 10):
+            done = self.tags_edit(add=["Trips/Coast"])
+        self.assertEqual((0, 0), (done["changed"], self.files.writes))
+        self.assertEqual(1, self.files.read_calls, "one batch of reads of the six, not all of them")
+        self.assertIn("Stopped as asked before anything was written", done["errors"][0]["why"])
 
     def test_the_edit_after_a_stalled_one_writes_the_rest(self):
         self.stall(write_at=3)

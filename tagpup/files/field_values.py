@@ -46,13 +46,16 @@ def _held(row, wanted):
     return {field: fields.field_values(row.get(fields.read_key(field))) for field in wanted}
 
 
-def read(et, photo_paths, wanted, also=(), records=None):
+def read(et, photo_paths, wanted, also=(), records=None, stop=None):
     """{paths.key(path): {field: its values}} of each photo in `photo_paths`, for the
     fields in `wanted`; an Unreadable in place of the fields of a photo that could not be
     read (NotAnswered, of a batch ExifTool did not answer for). Read in batches; a batch ExifTool refuses is read again a
     photo at a time, so one bad file does not cost the others. The one batch reader: the indexer's
     (tagpup.files.metadata.MetadataExtractor) and sync's pairing (tagpup.services.relink_photos) read through it. `also` are fields asked as well, answered only
     in `records`, when given: {paths.key(path): ExifTool's record} of each photo read.
+
+    `stop`, a threading.Event: once it is set no more batches are read, and the photos not reached are left out of the
+    answer (a batch asked to stop while it plans, tagpup.services.file_changes).
 
     The file is not scanned to its end first: a JPEG whose picture stops short takes a write of its fields, and its
     picture data is left as it was (DECISIONS 2026-10-15); a file ExifTool cannot write fails that write."""
@@ -63,6 +66,8 @@ def read(et, photo_paths, wanted, also=(), records=None):
     found = {}
     photo_paths = list(photo_paths)
     for start in range(0, len(photo_paths), READ_BATCH):
+        if stop is not None and stop.is_set():
+            break
         batch = photo_paths[start:start + READ_BATCH]
         try:
             rows = et.get_tags(batch, tags=asked)

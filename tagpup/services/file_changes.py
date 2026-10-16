@@ -338,7 +338,11 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         result.refuse(problem)
         return result
     stored = [paths.stored(p) for p in photo_paths]
-    held = fresh if fresh is not None else field_values.read(et, stored, read)
+    batch = batches.current()
+    # A batch asked to stop while it reads the files it plans from stops at the next batch of reads (#1200).
+    held = fresh if fresh is not None else field_values.read(et, stored, read, stop=batch.stop if batch else None)
+    if batch is not None and batch.stop.is_set():
+        return _stopped_before_writing(result)
     planned, followed = [], []
     for path in stored:
         now = held.get(paths.key(path))
@@ -373,12 +377,8 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
     wrote, read_whole = {}, ({} if whole else None)
     if not planned:
         return result
-    batch = batches.current()
     if batch is not None and batch.stop.is_set():
-        # Asked to stop while the files were read: nothing is planned, nothing written.
-        result.refuse("Stopped as asked before anything was written.")
-        result.details["cancelled"] = True
-        return result
+        return _stopped_before_writing(result)
     found = _rows_of(library, [path for path, _b, _a, _d in planned])
     change_id, rows = file_journal.plan(library.path, operation, [
         {"photo_id": (found.get(paths.key(path)) or (None,))[0], "path": path, "before": before, "after": after}
@@ -432,6 +432,13 @@ def _write_fields(et, library, operation, exiftool_path, photo_paths, read, plan
         file_journal.release(library.path, change_id)
         raise
     logger.info("%s: change %d, %s, wrote %d file(s)", library.path, change_id, operation, result.changed)
+    return result
+
+
+def _stopped_before_writing(result):
+    """`result`, refused: a batch asked to stop while it read and planned its files; nothing is planned, nothing written."""
+    result.refuse("Stopped as asked before anything was written.")
+    result.details["cancelled"] = True
     return result
 
 
