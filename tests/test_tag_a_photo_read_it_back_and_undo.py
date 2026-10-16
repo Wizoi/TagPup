@@ -40,7 +40,7 @@ from test_file_journal import EXIFTOOL, ExifToolSession, field_of, keywords_of, 
 
 from tagpup.files import exiftool_session  # noqa: E402
 from tagpup.files.metadata import MetadataExtractor  # noqa: E402
-from tagpup.services import photos as photo_actions, tagging  # noqa: E402
+from tagpup.services import file_changes, photos as photo_actions, tagging  # noqa: E402
 from tagpup.store import db, photos as store_photos  # noqa: E402
 
 PRESERVED = "XMP-xmpMM:PreservedFileName"
@@ -270,6 +270,23 @@ class TaggingAPhoto(ReadFilesCase):
         self.assertEqual(["Beach"], keywords_of(a))
         self.assertIsNone(field_of(a, "XMP:Description"))
         self.assertEqual(["Beach"], self.indexed(a))
+
+    def test_a_save_stopped_once_its_file_is_done_leaves_the_row_whole_as_the_indexer_makes_it(self):
+        """#1368: a save's row is recorded once, whole and stamped, in the transaction that marks its file done. It was
+        recorded a second time after the write, so a save stopped in between left a row of the fields written alone."""
+        a = self.make_read("a.jpg")
+
+        def stopped(step):
+            if step == "file recorded":
+                raise KeyboardInterrupt("the server was closed")
+
+        with mock.patch.object(file_changes, "_reached", side_effect=stopped), self.assertRaises(KeyboardInterrupt):
+            tagging.save_photo(self.library, a, "Quay at dusk", ["Beach", "Places/Quay"], "2019-06-15T10:30:00", EXIFTOOL, "")
+
+        raw = json.loads(self.rows("SELECT raw_metadata FROM photos WHERE path = ?", (a,))[0][0])
+        self.assertEqual(MetadataExtractor(exiftool_path=EXIFTOOL).batch_read([a])[0]["raw_metadata"], raw)
+        self.assertEqual(["Beach", "Places/Quay"], self.indexed(a))
+        self.assert_row_describes_file(a)
 
     def test_a_caption_that_renames_the_photo_is_a_change_that_undo_reverses_with_the_row(self):
         a = self.make_read("IMG_0001.jpg")

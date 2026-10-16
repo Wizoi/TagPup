@@ -190,7 +190,8 @@ class OtherWritersOfAPhoto(WithALibrary):
         with open(self.photo, "wb") as handle:
             handle.write(b"not really a photo")   # a save stamps the row with its file's
         raw = photo_rows.as_read(self.photo, {"XMP:Subject": ["Trips/Lake"], "XMP:Rating": 3})["raw_metadata"]
-        photos.record_saved(self.path, self.photo, ["Trips/Lake"], [], raw)
+        db.write_with_connection(self.path, lambda conn: photos.follow_fields(
+            conn, self.photo, {"XMP:Subject": ["Trips/Lake"]}, os.stat(self.photo), whole=raw))
         self.assertEqual(["Trips/Lake"], self.tags_of(self.one))
         self.agrees()
 

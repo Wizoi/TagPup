@@ -140,12 +140,12 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         plan = lambda _path, _held: file_changes.Plan(after=after)   # noqa: E731
         if files_only:
             written = file_only.write_fields(exiftool_path, [photo_path], list(after), plan, et=et,
-                                             held={paths.key(photo_path): now}, read_back_also=fields.METADATA_FIELDS)
+                                             held={paths.key(photo_path): now})
         else:
+            # Read back whole and recorded so, stamped, as the file is marked done: the save's row, once.
             written = file_changes.write_fields(library, "save photo", exiftool_path, [photo_path], list(after),
                                                 plan, summary={"photos": 1}, et=et,
-                                                held={paths.key(photo_path): now},
-                                                read_back_also=fields.METADATA_FIELDS)
+                                                held={paths.key(photo_path): now}, whole=True)
         if not written.ok:
             result.errors.extend(written.errors)
             result.changed = written.changed
@@ -164,31 +164,15 @@ def save_photo(library, photo_path, title, tags, date_taken, exiftool_path, rena
         touched = 1 if (written.changed or renamed) else 0
         result.details.update({file_only.FILE_ONLY: touched if files_only else 0,
                                file_only.WITH_ROWS: 0 if files_only else touched})
-        try:
-            # What the write's read back found; where nothing was written, or the file
-            # was renamed since (its SourceFile is its old name), a read now.
-            record = None if renamed else written.details["read_back"].get(paths.key(photo_path))
-            raw_meta = metadata.raw_metadata(et, new_path, record)
-        except Exception as e:
-            logger.warning("Could not read back %s: %s", new_path, e)
-            return result
     if files_only:
         return result   # no row to tell: the index reads the file when the folder is added
-    try:
-        recorded_tags = vocabulary.extract_tags(raw_meta)
-        if skipped:
-            result.details["index_warning"] = (
-                "Renamed, but the index already has a photo at %s; its rows were left as they were."
-                % new_path)
-        else:
-            # The journaled write carried its vectors over the write already.
-            photos.record_saved(library.path, new_path, recorded_tags, [title] if title else [], raw_meta)
-            # A person really taken off the photo is off its faces, one really put back is on its face again (#908), once the
-            # index says what the file holds.
-            if written.changed:
-                follow_people(library, result, moved={photo_path: new_path})
-    except Exception as e:
-        logger.warning("Failed to update SQLite database metadata for %s: %s", new_path, e)
+    if skipped:
+        result.details["index_warning"] = (
+            "Renamed, but the index already has a photo at %s; its rows were left as they were." % new_path)
+    elif written.changed:
+        # A person really taken off the photo is off its faces, one really put back is on its face again (#908), now that
+        # the index says what the file holds (the write recorded its row, the rename moved it).
+        follow_people(library, result, moved={photo_path: new_path})
     return result
 
 

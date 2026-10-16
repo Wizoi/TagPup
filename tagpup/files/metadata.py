@@ -353,20 +353,11 @@ def title_filename(photo_path: str, new_title: str, rename_format: str, preserve
         return photo_path
 
 
-def raw_metadata(et, photo_path, record=None):
-    """A photo's metadata as a save records it in the index: every field the reader
-    reads, in the shape the indexer records it in (structured). Read in the session
-    given -- or taken from `record`, an ExifTool record of the photo read with more
-    fields than the reader asks (tagpup.services.file_changes' read back), of which
-    only those the scan reads (fields.scan_reads) are kept."""
-    if record is None:
-        found = et.get_tags([photo_path], tags=METADATA_FIELDS)
-        cleaned = structured(found[0] if found else {})
-    else:
-        cleaned = structured({key: value for key, value in record.items()
-                              if key == "SourceFile" or fields.scan_reads(key)})
-        if any(record.get(key) for key in READ_ERROR_KEYS):
-            return cleaned   # the error is not among the fields kept, but the read it came from was no read of them
-    # Both are a read of every field in METADATA_FIELDS (the save asks its read back for them all), and
-    # replace the row's raw_metadata whole.
+def raw_metadata(record):
+    """A photo's metadata as a save records it in the index, from `record`, an ExifTool record
+    of the photo read with more fields than the reader asks (tagpup.services.file_changes'
+    whole read back): every field the scan reads (fields.scan_reads), in the shape the indexer
+    records it in (structured). It replaces the row's raw_metadata whole."""
+    cleaned = structured({key: value for key, value in record.items()
+                          if key == "SourceFile" or fields.scan_reads(key)})
     return cleaned

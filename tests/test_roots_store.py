@@ -294,7 +294,8 @@ class EveryWriteConverts(unittest.TestCase):
     def test_a_save_stamps_the_row_and_keeps_its_raw_metadata_source_file(self):
         path = self.side.real[0]
         raw = {"SourceFile": path.replace(os.sep, "/"), "XMP:Subject": ["A"], "Subject": ["A"]}
-        store_photos.record_saved(self.side.db_path, path, ["A"], [], raw)
+        db.write_with_connection(self.side.db_path, lambda conn: store_photos.follow_fields(
+            conn, path, {"XMP:Subject": ["A"]}, os.stat(path), whole=raw))
         held = json.loads(self.side.rows("SELECT raw_metadata FROM photos WHERE path = ?",
                                          ("@pictures/2024 Regatta/IMG_1001.jpg",))[0][0])
         self.assertEqual("@pictures/2024 Regatta/IMG_1001.jpg", held["SourceFile"])
