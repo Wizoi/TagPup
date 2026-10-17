@@ -189,6 +189,8 @@ class KnownFaces:
         self._faces = {}     # name -> [(unit embedding, year or None, photo key or None)]
         self._arrays = {}    # name -> (matrix, years, photos), made when first asked
         self._everyone = None   # everyone's faces in one matrix (likeness_table), made when first asked
+        self._photos = {}    # name -> the keys of the photos they have a face in, made when first asked
+        self._eras = {}      # (name, year) -> _chosen for a photo they have no face in, made when first asked
         #: {name: what the caller calls that person}, for a caller that keys the people by something that is not what it shows
         #: (a person's id): see `add`'s label.
         self.labels = {}
@@ -208,7 +210,10 @@ class KnownFaces:
         self._faces.setdefault(name, []).append(
             (_unit(embedding), year, paths.key(photo) if photo else None))
         self._arrays.pop(name, None)
+        self._photos.pop(name, None)
         self._everyone = None
+        if self._eras:
+            self._eras = {}
         if label is not None:
             self.labels.setdefault(name, label)
 
@@ -228,10 +233,27 @@ class KnownFaces:
                 np.array([p or "" for _e, _y, p in faces], dtype=object))
         return arrays
 
-    def _chosen(self, name, year, photo):
-        """Which of `name`'s faces a face of `photo`, taken in `year`, is compared with."""
+    def _chosen(self, name, year, key):
+        """Which of `name`'s faces a face of the photo `key` (its paths.key, or None), taken in `year`, is compared with.
+        The same for every photo the person has no face in: worked out once a person and a year, and again only for a
+        photo they have a face in, without it. Clustering's rounds asked it once a face and a person, 620,000 times on
+        photo_index (#1530)."""
         _matrix, years, photos = self._of(name)
-        usable = photos != paths.key(photo) if photo else np.ones(len(photos), dtype=bool)
+        if key is not None:
+            inside = self._photos.get(name)
+            if inside is None:
+                inside = self._photos[name] = frozenset(p for _e, _y, p in self._faces[name] if p)
+            if key in inside:
+                return self._in_era(years, photos != key, year)
+        found = self._eras.get((name, year))
+        if found is None:
+            found = self._eras[(name, year)] = self._in_era(years, np.ones(len(photos), dtype=bool), year)
+        return found
+
+    @staticmethod
+    def _in_era(years, usable, year):
+        """Of the faces `usable`, taken in `years`, those of the years around `year`: the window for the person's age then,
+        widened to five years until it holds five faces, else every usable one."""
         if year is None:
             return usable
         dated = usable & ~np.isnan(years)
@@ -268,7 +290,7 @@ class KnownFaces:
             for row, (_e, year, photo) in zip(similarities, block):
                 key = (year, paths.key(photo) if photo else None)
                 if key not in masks:
-                    masks[key] = self._chosen(name, year, photo)
+                    masks[key] = self._chosen(name, year, key[1])
                 chosen = masks[key]
                 found.append(float(row[chosen].max()) if chosen.any() else None)
         return found
@@ -295,7 +317,8 @@ class KnownFaces:
         column a person in names()' order, NaN where likeness is None. A block of faces against everyone's faces is one
         matrix product, and the faces of one year share each person's years around it (`_chosen`, worked out once a
         year); only a person with a face in the face's own photo is chosen again, without it. Clustering's last pass
-        asked likeness once a face and a person: 110,000 faces by 281 people, half an hour (docs/findings.md, #1530)."""
+        asked likeness once a face and a person: 96,000 faces by 281 people on photo_index, over half an hour
+        (docs/findings.md, #1530)."""
         names, matrix, starts, by_photo, eras = self._table()
         table = np.full((len(faces), len(names)), np.nan, dtype=np.float32)
         if not names or not faces:
@@ -313,7 +336,7 @@ class KnownFaces:
                 key = paths.key(photo) if photo else None
                 for column in by_photo.get(key, ()):
                     name = names[column]
-                    picked = self._chosen(name, year, photo)
+                    picked = self._chosen(name, year, key)
                     segment = row[starts[column]:starts[column] + len(picked)]
                     out[column] = segment[picked].max() if picked.any() else np.nan
         return table
