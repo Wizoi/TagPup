@@ -67,6 +67,10 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
 
 ## By design
 
+- **photo_index holds no `faces_detected` row, so a photo of it with no face is detected again by the first Suggest
+  that looks at it** (#1573; owner, 2026-10-16). That Suggest records the detection (with the library's detector
+  name), and the photo is settled from then on; the row set fills as the owner suggests. Live count 2026-10-16: 0
+  rows, 10,492 photos with no face row; cap or no cap, the cost is one detection each (about a second).
 - **Suggest alternating between two libraries on different model sets reloads the models at each switch.** The process
   keeps one set at a time (#761; DECISIONS 2026-10-15): two ViT-H-14-sized sets do not share the owner's card with
   the owner's other programs. Cost today: 0 (1 set across the 3 libraries). Keeping two sets is the owner's call.
