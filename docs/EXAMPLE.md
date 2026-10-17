@@ -83,7 +83,7 @@ run.bat index "D:\Photos\Tagged_Archive" --reset
 
 ## Scenario B: Self-Tuning Face Identity Resolution
 An index that recorded a photo is followed by this at once: `index` clusters the library's faces and resolves their names
-itself (Scenario A). The command is there to run it again by hand:
+itself (Scenario A). Run the command by hand only to try again after that clustering failed or stopped:
 
 ```cmd
 # Cluster and assign identities using photo-level tags (Self-Tuning)
