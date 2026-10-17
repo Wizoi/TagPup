@@ -148,6 +148,35 @@ class ThePhotoStages(unittest.TestCase):
         self.assertEqual(0.4, table["1-3"]["MTCNN"]["mean"])
 
 
+class WhatACapLoses(unittest.TestCase):
+    """Phase 1a: a capped run against the one without a cap, photo by photo by its number in the sample."""
+
+    def photo(self, number, boxes, stored=(), stratum="10+"):
+        return {"number": number, "stratum": stratum, "boxes": [list(b) for b in boxes], "stored": [list(s) for s in stored]}
+
+    def test_a_face_is_one_face_at_half_overlap_each_paired_once(self):
+        self.assertAlmostEqual(1.0, stages.iou([0, 0, 10, 10], [0, 0, 10, 10]))
+        self.assertEqual(0.0, stages.iou([0, 0, 10, 10], [20, 20, 30, 30]))
+        self.assertEqual({0: 1}, stages.pairs([[0, 0, 10, 10]], [[40, 40, 50, 50], [1, 0, 11, 10]]))
+        # Two boxes over one face: only one keeps it.
+        self.assertEqual(1, len(stages.pairs([[0, 0, 10, 10], [1, 1, 10, 10]], [[0, 0, 10, 10]])))
+
+    def test_lost_faces_are_named_by_the_stored_face_they_match_and_gained_ones_are_counted(self):
+        named, unnamed, excluded = [100, 100, 140, 150], [300, 300, 312, 316], [500, 500, 540, 550]
+        off = {"photos": [self.photo(0, [named, unnamed, excluded],
+                                     stored=[(named, True, False), (unnamed, False, False), (excluded, True, True)]),
+                          self.photo(1, [[0, 0, 30, 30]], stratum="1-3")]}
+        capped = {"photos": [self.photo(0, [excluded, [700, 700, 760, 770]]),
+                             self.photo(1, [[1, 1, 30, 30]], stratum="1-3")]}
+        table = stages.compared(off, capped)
+        row = table["10+"]
+        self.assertEqual((3, 1, 2), (row["found_off"], row["named_off"], row["found"]))
+        # An excluded face is nobody: lost, it would count as unnamed.
+        self.assertEqual((1, 1, 1), (row["lost_named"], row["lost_unnamed"], row["gained"]))
+        self.assertEqual(50, row["lost_sides"]["max"])
+        self.assertEqual((2, 1, 1), (table["all"]["photos"], table["all"]["lost_named"], table["all"]["gained"]))
+
+
 class TheNamedFaceHoldOut(unittest.TestCase):
     def test_a_face_is_never_matched_with_its_own_photo(self):
         # Person 1's two faces are in one photo; person 2 has faces in two photos; person 3 is near person 1's.
