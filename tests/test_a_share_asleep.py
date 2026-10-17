@@ -402,8 +402,116 @@ class ADriveThatSaysNotFound(unittest.TestCase):
             with mock.patch("tagpup.files.shares.os.stat", side_effect=FileNotFoundError(2, "not found")), \
                     mock.patch("tagpup.files.shares.os.path.exists", return_value=drive_answers), \
                     mock.patch.object(shares, "on_a_network_drive", return_value=network):
+                shares.forget()   # the share found away by the case before is not the one asked now
                 present, left_out = tagging.leave_out_missing([path])
             self.assertEqual((not gone, gone), (present == [path], left_out != []), (path, network, drive_answers))
+
+
+class AServerThatSaysNotFoundAtOnce(unittest.TestCase):
+    """A server asleep answers WinError 53 at once, not by hanging (#1543): the share is away, not its files unreadable.
+    Counted 2026-10-17: 1,309 photos of one live library sit on a UNC root, the shape stood in for here. Break:
+    _stat_state answering CANNOT_READ."""
+
+    SERVER = "\\\\NAS\\PICTURES"
+    PHOTOS = ["\\\\Nas\\Pictures\\p%d.jpg" % n for n in range(4)]
+
+    def setUp(self):
+        shares.forget()
+        self.addCleanup(shares.forget)
+        self.reads = []
+        self.server_up = False
+        self.file_there = False
+        real_stat, real_exists, real_isdir = os.stat, os.path.exists, os.path.isdir
+
+        def on_the_server(path):
+            return str(path).upper().startswith(self.SERVER)
+
+        def stat(path, *args, **kwargs):
+            if not on_the_server(path):
+                return real_stat(path, *args, **kwargs)
+            self.reads.append(path)
+            if self.server_up and self.file_there:
+                return os.stat_result((0, 0, 0, 1, 0, 0, 7, 0, 5, 0))
+            raise FileNotFoundError(53, "The network path was not found")
+
+        def isdir(path):
+            if not on_the_server(path):
+                return real_isdir(path)
+            self.reads.append(path)
+            return self.server_up
+        # Only the server's paths are stood in for: the test's own library, in a home of its own, is on the disk.
+        for patcher in (mock.patch.object(os, "stat", stat), mock.patch.object(os.path, "isdir", isdir),
+                        mock.patch.object(os.path, "exists",
+                                          lambda path: self.server_up if on_the_server(path) else real_exists(path)),
+                        mock.patch.object(shares, "on_a_network_drive", on_the_server)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_a_walk_over_a_share_asleep_reports_it_away_once_and_reads_none_of_the_other_photos(self):
+        walk = shares.Walk()
+        found = [walk.stamp_of(path) for path in self.PHOTOS]
+        self.assertEqual([shares.UNANSWERED] * 4, found)
+        self.assertEqual(([shares.share_of(self.PHOTOS[0])], 1, 4), (walk.away, len(self.reads), walk.skipped))
+        self.assertIs(shares.UNANSWERED, shares.stamp_of(self.PHOTOS[0]), "a look outside the walk is answered at once")
+        self.assertEqual(1, len(self.reads))
+
+    def test_a_server_that_answers_and_a_file_really_missing_is_still_gone_not_away(self):
+        self.server_up = True
+        walk = shares.Walk()
+        self.assertEqual([None] * 4, [walk.stamp_of(path) for path in self.PHOTOS])
+        self.assertEqual(([], 0, 4), (walk.away, walk.skipped, len(self.reads)))
+
+    def test_a_file_found_away_answers_a_folder_of_the_server_at_once_and_the_reverse_for_thirty_seconds(self):
+        """One place learns that a server saying not found at once is away (_share_answers), so a look at a file (a page of
+        cards, a write) and a look at a folder (a sync, each folder it walks) share it: the second is answered without
+        asking the server, until AWAY_SECONDS from when it was FOUND away -- the looks answered meanwhile come from the
+        memo (bounded) and never reach the mark, so they do not slide the window. Break: the share marked in stamp_of alone (a folder look asks again), or bounded clearing what its
+        own look learned."""
+        folder, clock = "\\\\Nas\\Pictures\\2019", [1000.0]
+        with mock.patch.object(shares, "time", mock.Mock(monotonic=lambda: clock[0])):
+            self.assertIs(shares.UNANSWERED, shares.stamp_of(self.PHOTOS[0]))
+            self.assertEqual(["unanswered", 1], [shares.folder_state(folder), len(self.reads)], "the folder asked again")
+            clock[0] += 20
+            self.assertEqual([shares.UNANSWERED, 1], [shares.stamp_of(self.PHOTOS[1]), len(self.reads)])
+            clock[0] += 11   # 31 s after it was found away, 11 after the last look answered
+            self.assertEqual(["unanswered", 2], [shares.folder_state(folder), len(self.reads)], "the window slid")
+            shares.forget()   # what Retry does
+            del self.reads[:]
+            self.assertEqual("unanswered", shares.folder_state(folder))
+            self.assertEqual([shares.UNANSWERED, 1], [shares.stamp_of(self.PHOTOS[2]), len(self.reads)],
+                             "a file of the server found away by a folder look was asked")
+
+    def test_a_tag_write_to_its_photos_stats_once_reads_none_and_touches_no_row_or_journal(self):
+        """The journaled write (file_changes.write_fields; here a TagTuner face write, face_people.write_tags, the path
+        a bulk tag, rename, rotate and delete share): each photo of the server that said not found at once is left out
+        with AWAY_WHY after ONE stat for the whole selection -- no ExifTool read, no row touched, no change journaled.
+        Break: _stat_state answering CANNOT_READ for it (the trunk before #1543: each photo stat'ed and read)."""
+        from tagpup.services import face_people, file_changes
+        vl = ViewLibrary(self)
+        for path in self.PHOTOS:
+            vl.photo("", "", taken="2024:06:01 10:00:00", tags=["Trips/Harbour"], at=path)
+        before = vl.rows("SELECT * FROM photos ORDER BY id")
+        journal = vl.rows("SELECT id, status FROM changes ORDER BY id")   # the new library's settings stamp
+        del self.reads[:]   # the seeding's own stamps
+        session = mock.MagicMock()
+        with mock.patch("tagpup.files.exiftool_session.ExifToolSession", session):
+            done = face_people.write_tags(vl.library, {path: (["Trips/Coast"], ()) for path in self.PHOTOS},
+                                          face_people.Writer("exiftool"), "person added for a named face",
+                                          stop_at_first_error=False)
+        self.assertEqual(1, len(self.reads), "the server was asked more than once")
+        self.assertEqual(0, session.return_value.__enter__.return_value.get_tags.call_count, "a photo was read")
+        self.assertEqual(0, done.changed)
+        self.assertEqual([file_changes.AWAY_WHY] * 4, [str(why) for _, why in done.errors])
+        self.assertEqual(before, vl.rows("SELECT * FROM photos ORDER BY id"), "a row was touched")
+        self.assertEqual(journal, vl.rows("SELECT id, status FROM changes ORDER BY id"), "a change was journaled")
+
+    def test_a_share_that_comes_back_is_asked_again_by_the_next_walk(self):
+        self.assertIs(shares.UNANSWERED, shares.Walk().stamp_of(self.PHOTOS[0]))
+        self.server_up = self.file_there = True
+        shares.forget()   # what Retry does, or AWAY_SECONDS passing
+        again = shares.Walk()
+        self.assertEqual([(5, 7)] * 2, [tuple(again.stamp_of(path)) for path in self.PHOTOS[:2]])
+        self.assertEqual(([], 0), (again.away, again.skipped))
 
 
 class OneWalkAtATime(unittest.TestCase):

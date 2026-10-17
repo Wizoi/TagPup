@@ -99,7 +99,10 @@ def bounded(location, call, seconds, away_seconds=None):
             _away[share] = time.monotonic()
         return "away", None
     with _guard:
-        _away.pop(share, None)
+        # The share answered: an away taken before this look is over, but not one the look itself learned (a server
+        # that said "not found" at once, _share_answers).
+        if share in _away and _away[share] == since:
+            del _away[share]
         if _reading.get(share) is thread:
             del _reading[share]
     if "error" in box:
@@ -119,11 +122,19 @@ def _share_answers(photo_path):
     (WinError 53), a share name that is not there (67) and a mapped drive that is not connected, the same words it
     uses for a file that was deleted: a file on a share is gone only when the share is there. Asked of a network path
     alone: a local drive letter that is not connected is a drive gone, and what was on it gone (owner, 2026-10-15: no
-    USB drives; #1387)."""
+    USB drives; #1387). The one place that learns a share is away from a quick "not found": one that does not answer
+    is taken as away for AWAY_SECONDS from now, as one that did not answer in time is, so the next look -- at a file
+    (stamp_of) or a folder (folder_state) -- is answered at once without asking it (#1543)."""
     root = os.path.splitdrive(photo_path)[0]
     if not root:
         return True
-    return os.path.exists(root + os.sep)
+    if os.path.exists(root + os.sep):
+        return True
+    share, now = share_of(root), time.monotonic()
+    with _guard:
+        _away[share] = now   # a look answered from the memo never gets here (bounded), so the window runs from this look
+    logger.info("%s said it is not there; its share is taken as away for %s s.", root, AWAY_SECONDS)
+    return False
 
 
 def _folder_state(folder, on_a_share):
@@ -146,12 +157,13 @@ def folder_state(folder, seconds=None):
 
 
 def _stat_state(photo_path, on_a_share):
-    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError, and for a file "not found"
-    on a network share that does not answer (it is not known to be gone)."""
+    """(mtime, size); None for a file that is not there; CANNOT_READ for any other OSError; UNANSWERED for a file "not
+    found" on a network share that does not answer (a server asleep, WinError 53: not known to be gone, and the share
+    is away, not the file unreadable; #1543)."""
     try:
         stat = os.stat(photo_path)
     except (FileNotFoundError, NotADirectoryError):
-        return CANNOT_READ if on_a_share and not _share_answers(photo_path) else None
+        return UNANSWERED if on_a_share and not _share_answers(photo_path) else None
     except OSError:
         return CANNOT_READ
     return (stat.st_mtime, stat.st_size)
@@ -168,3 +180,28 @@ def stamp_of(photo_path):
         return _stat_state(photo_path, False)
     state, found = bounded(photo_path, lambda: _stat_state(photo_path, True), SHARE_WAIT, AWAY_SECONDS)
     return found if state == "ok" else UNANSWERED
+
+
+class Walk:
+    """One pass over many photos (a warm, a repair): each share found away is asked ONCE, its photos counted as
+    skipped, not asked again and never counted as unreadable. The one owner of this rule; the passes used to write it
+    each (#1543). `away` names the shares found away (share_of: a drive, or \\\\server\\share), in the order found;
+    `skipped` counts their photos."""
+
+    def __init__(self):
+        self.away = []
+        self.skipped = 0
+        self._shares = set()
+
+    def stamp_of(self, photo_path):
+        """`stamp_of(photo_path)`, except UNANSWERED at once, unasked, for a share this walk found away."""
+        share = share_of(photo_path) if on_a_network_drive(photo_path) else None
+        if share is not None and share in self._shares:
+            self.skipped += 1
+            return UNANSWERED
+        stamp = stamp_of(photo_path)
+        if stamp is UNANSWERED:
+            self._shares.add(share)
+            self.away.append(share)
+            self.skipped += 1
+        return stamp

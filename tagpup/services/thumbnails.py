@@ -300,7 +300,8 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
               "stopped_unwritable": False, "bytes_cached": bytes_cached, "bytes_made": 0, "estimate": 0, "stopped": False, "average": average}
     conn = _look(library)
     try:
-        away, stop = set(), threading.Event()
+        walk, stop = shares.Walk(), threading.Event()
+        counts["away"] = walk.away
         after = 0
         with ThreadPoolExecutor(max_workers=workers) as pool:
             while not counts["stopped"]:
@@ -311,15 +312,9 @@ def warm(library, folder=None, limit=None, apply=False, progress=None, workers=W
                 jobs = []
                 for photo_id, row_path, path in batch:
                     counts["photos"] += 1
-                    share = shares.share_of(path) if shares.on_a_share(path) else None
-                    if share in away:
-                        counts["skipped_away"] += 1   # asked once: not asked again for each of its photos
-                        continue
-                    stamp = shares.stamp_of(path)
+                    stamp = walk.stamp_of(path)   # a share found away is asked once, its photos skipped
                     if stamp is shares.UNANSWERED:
-                        away.add(share)
-                        counts["away"].append(path.split("\\")[2] if path.startswith("\\") else share)
-                        counts["skipped_away"] += 1
+                        counts["skipped_away"] = walk.skipped
                         continue
                     if stamp is shares.CANNOT_READ:
                         counts["failed"] += 1
