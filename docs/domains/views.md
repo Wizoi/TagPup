@@ -85,6 +85,14 @@ All three libraries name the same set of models (CLIP and face settings): 1 set.
   clustering is rewriting, and the clustering names this folder's new faces from their tags: started before it ends, the
   run would read names half rewritten and offer people the clustering is about to name. The wait says what it waits for
   (its status line carries the clustering's progress), and Cancel stops it.
+- **Phase 0 times the pipeline through hooks, not by importing the stages** (#1527). A program under `scripts/` may not
+  import store, files or ml, nor hold SQL (`tests/test_layers.py`), so `measure_pipeline_stages` hooks the objects the
+  runtime and services hand it, and the census reads through services. A later brief that needs a stage the hooks cannot
+  reach needs a store read or an ml helper of its own, not a wider import.
+- **The census strata count a photo's faces in play, not every face found** (#1528): named, or unnamed and not excluded
+  (`services.identify.photos_waiting`). The services expose no all-faces count without the vectors. The difference is
+  27 excluded faces on photo_index and 5,788 of 9,850 on kr-track (counted 2026-10-16), so kr-track's strata read
+  low; the census output says so.
 
 ## Unit files that stay, and the rule each holds
 
