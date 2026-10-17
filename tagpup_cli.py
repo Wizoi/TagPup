@@ -603,16 +603,16 @@ def _read_again(conn, metas, given, exiftool_path):
     """The fields of each photo of `metas` that was `given` its identity, read from the file again (refresh_rows.
     read_files, stamped before its own read), so its row is recorded as the file is after the write: the next index
     finds it current and reads nothing, and its vector and faces are kept. The batch read was up to 500 photos
-    earlier, and a keyword saved into the file since then is read here (docs/findings.md, #1599). A photo not read in
-    full now -- a share gone away mid-run (tests/test_a_share_asleep.py) -- keeps the record of the batch read, stamped
-    before that read: the next index reads it once more."""
+    earlier, and a keyword saved into the file since then is read here (docs/findings.md, #1599). A photo left unread
+    now (no stamp: a share gone away mid-run, tests/test_a_share_asleep.py) keeps the record of the batch read, stamped
+    before that read: the next index reads it once more. One ExifTool refuses is recorded as batch_read records it."""
     again = [meta["path"] for meta in metas if meta["path"] in given]
     if not again:
         return
     records = refresh_rows.read_files(conn, again, exiftool_path)
     for meta in metas:
         record = records.get(meta["path"])
-        if record is not None and record["mtime"] is not None and not record.get("read_error"):
+        if record is not None and record["mtime"] is not None:
             meta.update(record)
 
 
