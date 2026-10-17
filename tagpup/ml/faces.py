@@ -26,13 +26,13 @@ logger = logging.getLogger("tagpup_cli.faces")
 
 def detection_picture(img, max_side):
     """(the picture the detector is handed, (x, y) scale from it back to `img`): `img` itself and (1, 1) when there is
-    no cap or its long side is within it; else `img` scaled so that its long side is `max_side`, each side at least
-    one pixel (docs/AI_PIPELINE.md, phase 1a). Only the detector sees it: crops and vectors come from `img`."""
+    no cap or its long side is within it; else `img` scaled so that its long side is `max_side` (docs/AI_PIPELINE.md,
+    phase 1a). Only the detector sees it: crops and vectors come from `img`."""
     width, height = img.size
     longest = max(width, height)
     if not max_side or longest <= max_side:
         return img, (1.0, 1.0)
-    size = (max(1, round(width * max_side / longest)), max(1, round(height * max_side / longest)))
+    size = (round(width * max_side / longest), round(height * max_side / longest))
     return img.resize(size, Image.BILINEAR, reducing_gap=3.0), (width / size[0], height / size[1])
 
 

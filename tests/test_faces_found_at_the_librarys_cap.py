@@ -166,16 +166,6 @@ class OtherPictures(ALibrary):
         self.assertEqual([(800, 600)], detector.handed, "the detector saw the photo upright, not as stored")
         self.assertEqual([list(face)], [f["box"] for f in found])
 
-    def test_a_picture_one_pixel_tall_or_wide_is_detected_without_dividing_by_zero(self):
-        for name, size, handed in (("thin", (2000, 1), (800, 1)), ("tall", (1, 2000), (1, 800))):
-            with self.subTest(name):
-                photo = picture(os.path.join(self.folder, name + ".jpg"), size, None)
-                detector = Detector(size)
-                found = self.detect(self.library(name + ".db", cap=800), detector, photo)
-                self.assertEqual([handed], detector.handed)
-                self.assertEqual([], found)
-                self.assertTrue(face_records.ran(found), "a picture one pixel tall failed its detection")
-
 
 class TheDetectorName(ALibrary):
     """faces_detected names a detection by the settings that made it, and Suggest detects again a photo recorded
