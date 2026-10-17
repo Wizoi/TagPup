@@ -89,17 +89,18 @@ def _excluded_face_ids(photo_index):
 def _save_face_names(photo_index, face_updates, as_read):
     """Write the people resolved, (the person's id or None, face id) each. A face is written only while it is still what was
     read (`as_read`: {face id: the person's id it carried}, store_faces.set_names): one a person named meanwhile keeps its
-    name. Returns (the ids of the faces written, how many were left, {face id: the tag of the person written} of those)."""
+    name. Returns (the ids of the faces written, the ids taken off their guess and left unnamed, how many were left as they
+    were, {face id: the tag of the person written} of those written)."""
     if photo_index.conn is None or not face_updates:
-        return [], 0, {}
+        return [], [], 0, {}
     try:
         conn = photo_index.conn
         wanted = {face_id: person for person, face_id in face_updates}
-        written, left = store_faces.set_names(conn, wanted, as_read)
+        written, unnamed, left = store_faces.set_names(conn, wanted, as_read)
         tags = person_ids.read(conn).by_id   # in the write's transaction: each person written is a node of it
         given = {face_id: tags[wanted[face_id]].tag for face_id in written if wanted[face_id] is not None}
         conn.commit()
-        return written, len(left), given
+        return written, unnamed, len(left), given
     except Exception as e:
         logger.error(f"Error updating face names: {e}")
         photo_index.conn.rollback()
@@ -125,9 +126,10 @@ def resolve(photo_index, on_step=None):
     `on_step(stage, done, total)`, if given, hears where it has got -- "reading", "grouping" (one call of
     DBSCAN: no count inside it), "voting", "propagating", "matching" and "saving", then "unpaired" (total: the faces
     left unnamed because their photo names people no face is known for and nothing tells which is whose, #1374, #1454;
-    done: how many of them carried a guess this run took back, #1455) and "left" (done: the faces not written because
-    the library changed under the run: a person named the face, or another face of its photo, or merged the person
-    away) -- and may raise to stop it. Every stage before "saving" only reads; the names are written in one commit
+    done: how many of them carried a guess this run took back, #1455) and "left" (two counts of the faces not given what the
+    run found because the library changed under the run -- a person named the face, or another face of its photo, or merged
+    the person away -- not progress: done, those left as they were; total, those that lost the guess they carried and are
+    unnamed, store_faces.set_names) -- and may raise to stop it. Every stage before "saving" only reads; the names are written in one commit
     after it is announced, so a stop is nothing written or all of it, never part (the job behind the apps' button,
     tagpup.jobs.naming_faces).
     """
@@ -741,12 +743,13 @@ def resolve(photo_index, on_step=None):
 
     # Apply name updates to the SQLite database: the last place to stop
     step("saving", 0, 1)
-    written, left = [], 0
+    written, unnamed, left = [], [], 0
     if face_updates:
-        written, left, given = _save_face_names(photo_index, face_updates, as_read)
+        written, unnamed, left, given = _save_face_names(photo_index, face_updates, as_read)
         for tag in given.values():
             resolved_stats[tag] = resolved_stats.get(tag, 0) + 1
-        logger.info("Wrote %d face(s); %d left as they were.", len(written), left)
+        logger.info("Wrote %d face(s); %d taken off their guess and left unnamed, %d left as they were.",
+                    len(written), len(unnamed), left)
     # What the run did to them (#1455): a guess it wrote off is taken back; a face it meant to write off and found changed
     # under it is the "left" below, not one it left unnamed.
     meant = {face_id for _, face_id in face_updates}
@@ -757,8 +760,8 @@ def resolve(photo_index, on_step=None):
         logger.info("%d face(s) left unnamed, %d guess(es) taken back: their photo names people no face is known for.",
                     len(left_unpaired), taken_back)
         step("unpaired", taken_back, len(left_unpaired))
-    if left:
-        step("left", left, len(face_updates))   # the library changed under them while this ran
+    if left or unnamed:
+        step("left", left, len(unnamed))
         
     # Save traces to JSON
     try:

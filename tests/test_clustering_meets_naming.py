@@ -121,12 +121,12 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
         finally:
             conn.close()
 
-        written, left = db.write_with_connection(
+        written, unnamed, left = db.write_with_connection(
             self.db_path, lambda conn: store_faces.set_names(conn, {low: jane, high: None}, {low: None, high: jane}),
             label="a run moves the guess")
 
         self.assertEqual([low, high], sorted(written))
-        self.assertEqual([], left)
+        self.assertEqual(([], []), (unnamed, left))
         self.assertEqual(jane, self.id_of(low))
         self.assertIsNone(self.id_of(high))
 
@@ -165,6 +165,42 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
         self.assertEqual((None, None), self.row(first), "a person who is gone was given to a face")
         self.assertEqual((None, None), self.row(second))
         self.assertEqual([2], heard)
+
+    def test_the_cli_says_how_many_faces_it_left_and_how_many_of_them_lost_their_guess(self):
+        """The owner runs cluster-faces and, while it runs, names Jane by hand on a face of a photo an earlier run had guessed as
+        Bob's. The run takes the wrong guess off and is then refused Jane for that face (she is on the photo now): the face is
+        unnamed, and the CLI's last word says so, beside the face the owner named under it."""
+        import io
+        import types
+        from unittest import mock
+        from rich.console import Console
+        import tagpup_cli
+        from tagpup.services import identities
+        jane = identity_vector(1)
+        self.add_face(self.add_photo("one.jpg", people=["Jane Doe"]), jane)
+        photo = self.add_photo("two.jpg", people=["Jane Doe"])
+        wrong = self.add_face(photo, near(jane, 2), box=(0, 0, 50, 50))
+        chosen = self.add_face(photo, identity_vector(5), box=(60, 0, 110, 50))
+        db.write_with_connection(self.db_path, lambda conn: conn.execute(
+            "UPDATE faces SET name = 'Bob Roe', tag_id = ? WHERE id = ?", (face_rows.person_of(conn, "Bob Roe"), wrong)),
+            label="an earlier run guessed")
+        self.index.close()
+        real = identities.resolve
+
+        def resolve(photo_index, on_step=None):
+            def heard(stage, done=0, total=1):
+                if stage == "saving":
+                    db.write_with_connection(self.db_path, lambda conn: store_faces.name(conn, [chosen], "Jane Doe"))
+                on_step(stage, done, total)
+            return real(photo_index, on_step=heard)
+        said = io.StringIO()
+        with mock.patch.object(identities, "resolve", resolve), \
+                mock.patch.object(tagpup_cli, "console", Console(file=said, width=400, color_system=None)):
+            tagpup_cli._resolve_identities(types.SimpleNamespace(model_key=lambda library: None), self.db_path)
+
+        self.assertEqual([(None, None), ("Jane Doe", "manual")], [self.row(wrong), self.row(chosen)])
+        self.assertIn("1 face(s) were not given what this run found: the library changed under them while it ran; 1 of them"
+                      " lost the guess they carried and are unnamed.", said.getvalue())
 
     def photo_tagged(self, name, people):
         """A photo whose keywords are People/<person> for each of `people`, as the index records a file it read: the tree's nodes,
@@ -331,6 +367,167 @@ class ClusteringMeetsNaming(FaceClusteringTestBase):
         self.assertEqual((None, None), self.row(other))
         self.assertEqual([("Ivo Marsh", None), ("Ines Marsh", None)], [self.row(face) for face in solos])
         self.assertEqual([], self.unpaired)
+
+
+class ARunRewritesTheGuessesOfAPhoto(FaceClusteringTestBase):
+    """#1582: a re-run of cluster-faces rewrites the guesses it wrote before. Its write (store_faces.set_names) takes off every
+    guess it changes before it gives any, so a face is refused a person only for a face outside the run's plan -- one the owner
+    named meanwhile -- never for a sibling the same plan rewrites. On photo_index's run of 2026-10-16, 62 faces of 31 photos whose
+    guesses the run exchanged were refused for ever, and 91 more by the order of the writes."""
+
+    def guessed(self, name, *people):
+        """A photo tagged with `people` whose faces an earlier run guessed as `people`, in order (None: a face it left unnamed);
+        returns their ids."""
+        photo = self.add_photo(name, people=[person for person in people if person])
+        conn = db.connect(self.db_path)
+        try:
+            faces = [face_rows.add_face(conn, photo, box=(index * 300, 0, index * 300 + 200, 200),
+                                        embedding=identity_vector(60 + index).tobytes(), prob=0.99,
+                                        **({"name": person} if person else {}))
+                     for index, person in enumerate(people)]
+            conn.commit()
+        finally:
+            conn.close()
+        return faces
+
+    def person(self, name):
+        def made(conn):
+            return face_rows.person_of(conn, name)
+        return db.write_with_connection(self.db_path, made, label="the tree has the person")
+
+    def carried(self):
+        conn = db.connect(db.readonly_uri(self.db_path), uri=True)
+        try:
+            return dict(conn.execute("SELECT id, tag_id FROM faces").fetchall())
+        finally:
+            conn.close()
+
+    def write(self, plan, meanwhile=None):
+        """The run's write of `plan` ({face id: person id or None}), against the faces as they were before `meanwhile`."""
+        as_read = self.carried()
+        if meanwhile:
+            db.write_with_connection(self.db_path, meanwhile, label="the owner, meanwhile")
+        return db.write_with_connection(self.db_path, lambda conn: store_faces.set_names(conn, plan, {face: as_read[face]
+                                                                                                    for face in plan}),
+                                        label="the run writes its guesses")
+
+    def test_two_faces_whose_guesses_the_run_exchanges_are_both_written(self):
+        first, second = self.guessed("pair.jpg", "Mara Quill", "Tobin Ash")
+        mara, tobin = self.person("Mara Quill"), self.person("Tobin Ash")
+
+        outcome = self.write({first: tobin, second: mara})
+
+        self.assertEqual((tobin, mara), (self.carried()[first], self.carried()[second]), "a swap was refused for ever")
+        written, unnamed, left = outcome
+        self.assertEqual(([first, second], [], []), (sorted(written), unnamed, left))
+
+    def test_a_person_moved_to_an_unnamed_face_from_a_face_given_another_is_written_whatever_the_order(self):
+        """A none -> Mara, B Mara -> Tobin, B's id after A's: A was refused while B still carried Mara."""
+        first, second = self.guessed("pair.jpg", None, "Mara Quill")
+        mara, tobin = self.person("Mara Quill"), self.person("Tobin Ash")
+
+        outcome = self.write({first: mara, second: tobin})
+
+        self.assertEqual((mara, tobin), (self.carried()[first], self.carried()[second]), "a face was refused by the order of writes")
+        written, unnamed, left = outcome
+        self.assertEqual(([first, second], [], []), (sorted(written), unnamed, left))
+
+    def test_a_face_another_run_changed_meanwhile_is_left_as_it_found_it(self):
+        """The face carries another person than the run read (another run's guess): it is not taken off nor overwritten."""
+        first, second = self.guessed("pair.jpg", "Mara Quill", "Tobin Ash")
+        mara, tobin, pell = self.person("Mara Quill"), self.person("Tobin Ash"), self.person("Pell Varga")
+
+        written, unnamed, left = self.write({first: tobin, second: mara},
+                                            meanwhile=lambda conn: store_faces.set_names(conn, {first: pell}, {first: mara}))
+
+        self.assertEqual(([second], [], [first]), (written, unnamed, left))
+        self.assertEqual((pell, mara), (self.carried()[first], self.carried()[second]), "a face changed meanwhile was overwritten")
+
+    def test_a_person_the_owner_named_on_another_face_meanwhile_is_not_given_twice_and_the_guess_is_taken_off(self):
+        """The sibling test means what it says: a face outside the plan carries the person. The face the run moved away from its
+        guess is left unnamed, not with the guess the run rejected (as the propagation does with a guess it no longer bears)."""
+        first, second, third = self.guessed("three.jpg", "Mara Quill", "Tobin Ash", None)
+        mara, tobin = self.person("Mara Quill"), self.person("Tobin Ash")
+
+        written, unnamed, left = self.write({first: tobin, second: mara},
+                                            meanwhile=lambda conn: store_faces.name(conn, [third], mara))
+
+        self.assertEqual(([first], [second], []), (written, unnamed, left))
+        self.assertEqual((tobin, None, mara), tuple(self.carried()[face] for face in (first, second, third)))
+
+    def test_a_face_named_by_hand_meanwhile_is_untouched(self):
+        first, second = self.guessed("pair.jpg", "Mara Quill", "Tobin Ash")
+        mara, tobin = self.person("Mara Quill"), self.person("Tobin Ash")
+
+        written, unnamed, left = self.write({first: tobin, second: mara},
+                                            meanwhile=lambda conn: store_faces.name(conn, [first], mara))
+
+        self.assertEqual(([], [second], [first]), (written, unnamed, left))
+        self.assertEqual((mara, None), (self.carried()[first], self.carried()[second]), "a face named by hand was rewritten")
+
+    def test_a_person_merged_away_meanwhile_is_given_to_nobody_and_their_face_keeps_its_guess(self):
+        first, second = self.guessed("pair.jpg", "Mara Quill", "Tobin Ash")
+        mara, tobin, pell = self.person("Mara Quill"), self.person("Tobin Ash"), self.person("Pell Varga")
+
+        def merge(conn):
+            tobin_tag, pell_tag = (conn.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (node,)).fetchone()[0]
+                                   for node in (tobin, pell))
+            taxonomy.move_branch(conn, tobin_tag, pell_tag)
+
+        written, unnamed, left = self.write({first: tobin, second: mara}, meanwhile=merge)
+
+        self.assertEqual(([], [], [first, second]), (written, unnamed, sorted(left)), "a person merged away was given")
+        self.assertEqual((mara, pell), (self.carried()[first], self.carried()[second]))
+
+    def test_a_merge_the_owner_makes_as_the_write_reads_the_tree_waits_for_it_and_no_guess_is_lost(self):
+        """The owner merges Tobin into Pell in TagTuner just as the run's write reads the People tree. The write reads the tree
+        inside its own transaction, so the merge cannot land between that read and the first UPDATE: it waits (here: is
+        refused at once and made after), and the faces end as a merge after the run leaves them. Before, the merge landed in
+        the gap: the write still took Tobin for a person, took Mara off the first face and was then refused Tobin, so the face
+        lost its guess."""
+        from unittest import mock
+        import sqlite3
+        from tagpup.store import person_ids
+        first, second = self.guessed("pair.jpg", "Mara Quill", "Tobin Ash")
+        mara, tobin, pell = self.person("Mara Quill"), self.person("Tobin Ash"), self.person("Pell Varga")
+        as_read = self.carried()
+        real = person_ids.read
+        waited, asked = [], []
+
+        def merge(conn):
+            tobin_tag, pell_tag = (conn.execute("SELECT tag FROM tag_taxonomy WHERE id = ?", (node,)).fetchone()[0]
+                                   for node in (tobin, pell))
+            taxonomy.move_branch(conn, tobin_tag, pell_tag)
+
+        def read_then_the_owner_merges(conn, *args, **kwargs):
+            known = real(conn, *args, **kwargs)
+            if not asked:   # once: the merge reads the tree too
+                asked.append(True)
+                owner = db.connect(self.db_path)
+                try:
+                    owner.execute("PRAGMA busy_timeout = 0")
+                    try:
+                        merge(owner)
+                        owner.commit()
+                        waited.append(False)
+                    except sqlite3.OperationalError:
+                        owner.rollback()
+                        waited.append(True)
+                finally:
+                    owner.close()
+            return known
+
+        with mock.patch.object(person_ids, "read", read_then_the_owner_merges):
+            written, unnamed, left = db.write_with_connection(
+                self.db_path, lambda conn: store_faces.set_names(conn, {first: tobin, second: mara},
+                                                                 {first: as_read[first], second: as_read[second]}),
+                label="the run writes its guesses")
+        if waited == [True]:
+            db.write_with_connection(self.db_path, merge, label="the owner's merge, after the write")
+
+        self.assertEqual([], unnamed, "a face lost its guess to a merge in the gap")
+        self.assertEqual((pell, mara), (self.carried()[first], self.carried()[second]))
+        self.assertEqual([True], waited, "the merge landed between the write's read of the tree and its first UPDATE")
 
 
 if __name__ == "__main__":

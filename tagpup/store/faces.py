@@ -384,15 +384,30 @@ def set_names(conn, persons_by_id, as_read):
     is still what the caller read: `as_read` is {id: the person's id the face carried then, or None}, and a face a person
     decided meanwhile (name_source 'manual') or one that carries another person now is left alone. Clustering reads the
     faces at its start and writes at its end, 53 minutes later on the 68,000-photo library; a face the owner named in
-    between is theirs. So is a photo's person: a face is not given a person another face of its photo carries now (the
-    owner named that one meanwhile), and a person merged away meanwhile is nobody to give (#1271, #1272). The persons
-    are ids, read when the caller read the faces: a rename meanwhile changes no id. A name or a tag path is refused before
-    anything is written: a name two people have is one of them only by chance (#1357). Returns (the ids written, the ids
-    skipped). The caller commits."""
+    between is theirs. So is a photo's person: a face is not given a person another face of its photo carries now -- a face
+    outside this plan, or one of it left alone (the owner named that one meanwhile) -- and a person merged away meanwhile is
+    nobody to give, nor is their face's guess taken off (#1271, #1272). The persons are ids, read when the caller read the
+    faces: a rename meanwhile changes no id. A name or a tag path is refused before anything is written: a name two people
+    have is one of them only by chance (#1357).
+
+    Two passes: every face of the plan that carried someone is first taken off them (still as read, not manual), then each
+    face planned a person is given them. So a plan that exchanges the guesses of two faces of a photo, or moves a person
+    from one face to another that is given someone else, is not refused for a person a face it rewrites still carries
+    (#1582). A face taken off whose person is then refused (a face outside the plan carries them now) stays unnamed, not
+    with the guess the run rejected: what the run's propagation does with a guess it no longer bears (identities.resolve).
+
+    The tree that says who is gone is read inside the write's transaction, opened here with the write lock (BEGIN
+    IMMEDIATE), so the read, the guards and both passes see one library: a merge the owner makes meanwhile lands before it or
+    waits for its commit, never between the read and the first UPDATE, where a person still read as known would be taken off
+    a face and then refused. `conn` holds no transaction when called.
+
+    Returns (the ids written as planned, the ids taken off and left unnamed, the ids left as they were). The caller
+    commits."""
     named_otherwise = [person for person in persons_by_id.values()
                        if person is not None and (isinstance(person, bool) or not isinstance(person, int))]
     if named_otherwise:
         raise TypeError("a face is given the id of a person here, not %r" % (named_otherwise[0],))
+    db.begin(conn, immediate=True)
     known = person_ids.read(conn)
     gone = set()
     for person in set(persons_by_id.values()):
@@ -400,25 +415,34 @@ def set_names(conn, persons_by_id, as_read):
             known.person(person)
         except person_ids.StalePerson:
             gone.add(person)
-    targets, known = _targets(conn, [person for person in persons_by_id.values() if person not in gone], known)
-    written = []
-    # Takings-off first: a person moved from one face of a photo to another is off the first before the second is given them,
-    # or the second would be refused for a person the first still carried. The index is named: the sibling test must read the
-    # photo's faces (idx_faces_photo_id), not the person's (idx_faces_tag: 23 ms for a person of 7,468 faces).
-    for want_off in (True, False):
-        for face_id, person in persons_by_id.items():
-            if person in gone or (person is None) != want_off:
-                continue
-            tag_id, name = targets[person]
-            if conn.execute("UPDATE faces SET " + ASSIGN + " WHERE id = ? AND COALESCE(name_source, '') <> 'manual'"
-                            " AND tag_id IS ? AND (? IS NULL OR EXISTS (SELECT 1 FROM tag_taxonomy WHERE id = ?))"
-                            " AND NOT EXISTS (SELECT 1 FROM faces other INDEXED BY idx_faces_photo_id"
-                            " WHERE other.photo_id = faces.photo_id AND other.id <> faces.id AND other.tag_id = ?)",
-                            (name, tag_id, face_id, as_read[face_id], tag_id, tag_id, tag_id)).rowcount:
-                written.append(face_id)
-    _rebuilt(conn, _photos_of(conn, written), bool(written), known=known)
-    done = set(written)
-    return written, [face_id for face_id in persons_by_id if face_id not in done]
+    plan = {face_id: person for face_id, person in persons_by_id.items() if person not in gone}
+    targets, known = _targets(conn, plan.values(), known)
+    taken_off = set()
+    for face_id in plan:
+        if as_read[face_id] is not None and conn.execute(
+                "UPDATE faces SET " + UNASSIGN + " WHERE id = ? AND COALESCE(name_source, '') <> 'manual' AND tag_id IS ?",
+                (face_id, as_read[face_id])).rowcount:
+            taken_off.add(face_id)
+    # The index is named: the sibling test must read the photo's faces (idx_faces_photo_id), not the person's (idx_faces_tag:
+    # 23 ms for a person of 7,468 faces). A face that carried someone is given only if it was taken off above.
+    given = set()
+    for face_id, person in plan.items():
+        if person is None or (as_read[face_id] is not None and face_id not in taken_off):
+            continue
+        tag_id, name = targets[person]
+        if conn.execute("UPDATE faces SET " + ASSIGN + " WHERE id = ? AND COALESCE(name_source, '') <> 'manual'"
+                        " AND tag_id IS NULL AND EXISTS (SELECT 1 FROM tag_taxonomy WHERE id = ?)"
+                        " AND NOT EXISTS (SELECT 1 FROM faces other INDEXED BY idx_faces_photo_id"
+                        " WHERE other.photo_id = faces.photo_id AND other.id <> faces.id AND other.tag_id = ?)",
+                        (name, tag_id, face_id, tag_id, tag_id)).rowcount:
+            given.add(face_id)
+    written = [face_id for face_id in persons_by_id
+               if face_id in given or (face_id in taken_off and persons_by_id[face_id] is None)]
+    unnamed = [face_id for face_id in persons_by_id if face_id in taken_off and persons_by_id[face_id] is not None
+               and face_id not in given]
+    _rebuilt(conn, _photos_of(conn, written + unnamed), bool(written or unnamed), known=known)
+    changed = set(written) | set(unnamed)
+    return written, unnamed, [face_id for face_id in persons_by_id if face_id not in changed]
 
 
 # ---- What the face actions read and write (tagpup.services.faces) ------------------------

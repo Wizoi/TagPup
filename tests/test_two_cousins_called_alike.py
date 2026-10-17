@@ -432,7 +432,8 @@ class TwoSamsAreGuessedApart(unittest.TestCase):
         self.assertEqual({self.FAMILY: 2, self.FRIENDS: 2}, stats, "the summary names each person by their path")
         changed = sum(1 for face_id in after if after[face_id] != before[face_id])
         wrote = [line for line in heard.output if "Wrote " in line]
-        self.assertEqual(["INFO:tagpup_cli.faces:Wrote %d face(s); 0 left as they were." % changed], wrote,
+        self.assertEqual(["INFO:tagpup_cli.faces:Wrote %d face(s); 0 taken off their guess and left unnamed, 0 left as they were."
+                          % changed], wrote,
                          "the run counts the faces it changed, not the faces it meant")
 
     def test_clustering_s_write_takes_a_person_s_id_and_refuses_a_name_before_it_writes(self):
