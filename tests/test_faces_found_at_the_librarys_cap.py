@@ -25,6 +25,7 @@ import unittest
 from unittest import mock
 
 import numpy as np
+from click.testing import CliRunner
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -32,7 +33,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import own_home  # noqa: E402
 import photo_rows  # noqa: E402
 
+import tagpup_cli  # noqa: E402
 from tagpup.core.library import Library  # noqa: E402
+from tagpup.ml import clip, faces as face_models  # noqa: E402
 from tagpup.runtime import Runtime  # noqa: E402
 from tagpup.services import faces as face_records  # noqa: E402
 from tagpup.services import libraries as library_actions  # noqa: E402
@@ -238,6 +241,46 @@ class TwoLibrariesDifferingOnlyInTheCap(ALibrary):
         self.assertEqual([1600, 3000], self.handed)
         self.assertEqual(1, settings.change(meadow, {"faces.detect_max_side": ""}, acknowledged=["faces"]).changed)
         self.assertEqual(LIVE_DETECTOR, self.detector_name(meadow))
+
+
+@unittest.skipIf(own_home.installed_exiftool() is None, "ExifTool not installed")
+class TheCommandLineIndexReadsTheCapToo(ALibrary):
+    """The CLI index reads the cap by its own path (tagpup_cli.index), not through the server's Suggest: in a library
+    with the cap on, each photo is detected at it and recorded under the capped name; with none, as before."""
+
+    def index(self, library, folder):
+        """`tagpup_cli.py index` of `folder` in `library`, CLIP and the face models stood in for; the `max_side` each
+        detection was handed."""
+        handed = []
+
+        def detect(model, path, max_side=None):
+            handed.append(max_side)
+            return []
+        with mock.patch.object(clip.ClipModel, "_init_model"), \
+                mock.patch.object(clip.ClipModel, "embed_picture", return_value=[0.1] * 8), \
+                mock.patch.object(face_models.FaceModel, "_init_models"), \
+                mock.patch.object(face_models.FaceModel, "detect_and_embed_faces", detect):
+            result = CliRunner().invoke(tagpup_cli.cli, ["--db", library.path, "index", folder])
+        self.assertEqual(0, result.exit_code, result.output)
+        return handed
+
+    def test_the_cap_is_handed_to_each_detection_and_is_in_the_name_it_is_recorded_under(self):
+        for name, cap in (("meadow.db", 800), ("harbour.db", None)):
+            with self.subTest(cap=cap):
+                library = self.library(name, cap=cap)
+                folder = os.path.join(self.folder, name)
+                os.makedirs(folder)
+                picture(os.path.join(folder, "quay.jpg"), (64, 48), None)
+                self.assertEqual([cap], self.index(library, folder))
+                expected = json.loads(LIVE_DETECTOR)
+                if cap is not None:
+                    expected["detect_max_side"] = cap
+                conn = db.connect(db.readonly_uri(library.path), uri=True)
+                try:
+                    names = [json.loads(row[0]) for row in conn.execute("SELECT detector FROM faces_detected")]
+                finally:
+                    conn.close()
+                self.assertEqual([expected], names)
 
 
 if __name__ == "__main__":
